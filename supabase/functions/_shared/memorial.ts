@@ -65,7 +65,7 @@ export function corpoMemorial(d: DadosMemorial): Run[] {
   for (let i = 0; i < n; i++) {
     const seg = d.segs[i];
     const prox = d.ring[(i + 1) % n];
-    const desc = d.ring[i].iniciaTrechoDescritivo;
+    const desc = d.ring[i].iniciaTrechoDescritivo?.trim();
     if (desc) {
       runs.push(t(`deste segue confrontando com a propriedade de ${desc}, com azimute de `));
     } else {

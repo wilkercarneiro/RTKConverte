@@ -253,6 +253,14 @@ label > input, label > select { font-weight: 400; color: var(--texto); }
 .botao-download:hover { border-color: var(--primaria); color: var(--primaria); transform: translateY(-1px); }
 .botao-download .ext { font-size: 11px; font-weight: 700; color: #fff; background: var(--primaria); border-radius: 6px; padding: 2px 7px; }
 
+/* Campos obrigatórios pendentes (após tentativa de geração) */
+.campo-pendente { border-color: var(--perigo) !important; background: #fff6f5 !important; box-shadow: 0 0 0 3px rgb(217 45 32 / 12%) !important; }
+.flash { animation: flash-pendencia 1.6s ease; }
+@keyframes flash-pendencia {
+  0%, 40% { outline: 3px solid var(--perigo); outline-offset: 3px; }
+  100% { outline: 3px solid transparent; outline-offset: 3px; }
+}
+
 /* ===== Preview (rodapé fixo) ===== */
 .preview {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
@@ -276,3 +284,9 @@ label > input, label > select { font-weight: 400; color: var(--texto); }
 .preview button.principal { background: linear-gradient(135deg, var(--acento) 0%, #0da45c 100%); color: #05130c; border: none; }
 .preview button.principal:hover:not(:disabled) { color: #041008; }
 .preview .stats .acoes { margin-left: auto; display: flex; gap: 10px; }
+.pendencias-lista { margin-top: 8px; font-size: 12.5px; color: #ffd9a8; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.link-pendencia {
+  background: rgb(255 255 255 / 6%); border: 1px solid rgb(255 217 168 / 35%);
+  color: #ffd9a8; border-radius: 999px; padding: 3px 12px; font-size: 12px;
+}
+.link-pendencia:hover { border-color: #ffd9a8; color: #fff; background: rgb(255 217 168 / 12%); }

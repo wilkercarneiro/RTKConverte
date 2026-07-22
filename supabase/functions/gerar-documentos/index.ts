@@ -51,10 +51,6 @@ Deno.serve(async (req) => {
     const faltando = obrig.filter(([, v]) => !v).map(([k]) => k);
     if (faltando.length) return json({ erro: `Campos obrigatórios ausentes: ${faltando.join(", ")}` }, 422);
     if (!vertRows?.length) return json({ erro: "Serviço sem vértices" }, 422);
-    if (!trechoRows?.length) return json({ erro: "Defina os trechos de confrontantes" }, 422);
-    if (trechoRows.some((t: { descritivo: string | null }) => !t.descritivo)) {
-      return json({ erro: "Todos os trechos precisam de descritivo formal" }, 422);
-    }
     for (const v of vertRows) {
       if (v.inserido_manual && !v.codigo) return json({ erro: `Vértice inserido (ordem ${v.ordem}) sem código` }, 422);
     }
@@ -102,9 +98,11 @@ Deno.serve(async (req) => {
       prefixo: cred.prefixo_vertice,
       contadores,
       vertices,
-      trechos: trechoRows.map((t) => ({
+      // descritivo é opcional: sem ele, usa o apelido; sem ambos, o memorial
+      // segue sem a cláusula "confrontando com a propriedade de"
+      trechos: (trechoRows ?? []).map((t) => ({
         verticeInicioOrdem: t.vertice_inicio_ordem,
-        descritivo: t.descritivo,
+        descritivo: t.descritivo || t.apelido_txt || "",
         tipoLimite: t.tipo_limite,
         cns: t.cns,
         matricula: t.matricula,
@@ -138,7 +136,7 @@ Deno.serve(async (req) => {
       rtTrt: rt?.trt ?? "",
       ring: calc.memorialRing,
       segs: calc.segs,
-      confrontantesDescritivos: calc.trechosOrdenados.map((t) => t.descritivo),
+      confrontantesDescritivos: calc.trechosOrdenados.map((t) => t.descritivo).filter((d) => d.trim() !== ""),
     };
     const zipDocx = new JSZip();
     const tplDocx = await supa.storage.from("templates").download("memorial-template.docx");

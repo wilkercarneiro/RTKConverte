@@ -62,16 +62,28 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   );
 
   const pendencias = useMemo(() => {
-    const p: string[] = [];
-    if (!servico.credenciado_id) p.push("selecione o credenciado");
-    if (!servico.detentor_nome) p.push("informe o detentor");
-    if (!servico.denominacao) p.push("informe a denominação");
-    if (!servico.municipio || !servico.uf) p.push("informe município/UF");
-    const semDesc = trechos.filter((t) => !t.descritivo).length;
-    if (semDesc > 0) p.push(`${semDesc} trecho(s) sem descritivo`);
-    if (trechos.length === 0) p.push("defina os confrontantes");
+    const p: { msg: string; alvo: string }[] = [];
+    if (!servico.credenciado_id) p.push({ msg: "selecione o Credenciado", alvo: "campo-credenciado" });
+    if (!servico.detentor_nome) p.push({ msg: "informe o Detentor", alvo: "campo-detentor" });
+    if (!servico.denominacao) p.push({ msg: "informe a Denominação", alvo: "campo-denominacao" });
+    if (!servico.municipio) p.push({ msg: "informe o Município", alvo: "campo-municipio" });
+    if (!servico.uf) p.push({ msg: "informe a UF", alvo: "campo-uf" });
+    // confrontantes (descritivo/apelido) são opcionais — sem eles o memorial
+    // segue sem a cláusula "confrontando com a propriedade de"
     return p;
-  }, [servico, trechos]);
+  }, [servico]);
+
+  const [tentouGerar, setTentouGerar] = useState(false);
+
+  function irParaPendencia(alvo: string) {
+    const el = document.getElementById(alvo);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    el?.classList.add("flash");
+    setTimeout(() => el?.classList.remove("flash"), 1600);
+  }
+
+  // destaca campo obrigatório vazio depois de uma tentativa de geração
+  const obg = (v: string | null) => (tentouGerar && !v ? "campo-pendente" : "");
 
   function campo<K extends keyof Servico>(k: K, v: Servico[K]) {
     setServico((s) => ({ ...s, [k]: v }));
@@ -142,6 +154,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   }
 
   async function gerar() {
+    if (pendencias.length > 0) {
+      setTentouGerar(true);
+      setErro(`Para gerar, resolva:\n• ${pendencias.map((p) => p.msg).join("\n• ")}`);
+      irParaPendencia(pendencias[0].alvo);
+      return;
+    }
     setOcupado(true);
     setErro(null);
     setMsg(null);
@@ -215,8 +233,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <span className="desc">identificação SIGEF do detentor e da área</span>
         </header>
         <div className="grade">
-          <label>Credenciado
-            <select value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
+          <label>Credenciado *
+            <select id="campo-credenciado" className={obg(servico.credenciado_id)}
+              value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
               <option value="">—</option>
               {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
             </select>
@@ -229,8 +248,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           </label>
           <label>Natureza do serviço {sel(servico.natureza_servico, NATUREZAS_SERVICO, (v) => campo("natureza_servico", v))}</label>
           <label>Tipo pessoa {sel(servico.tipo_pessoa, TIPOS_PESSOA, (v) => campo("tipo_pessoa", v))}</label>
-          <label>Detentor
-            <input list="detentores" value={servico.detentor_nome ?? ""} onChange={(e) => {
+          <label>Detentor *
+            <input id="campo-detentor" className={obg(servico.detentor_nome)} list="detentores" value={servico.detentor_nome ?? ""} onChange={(e) => {
               campo("detentor_nome", e.target.value);
               const d = detentores.find((x) => x.nome === e.target.value);
               if (d?.cpf) campo("detentor_cpf", d.cpf);
@@ -238,7 +257,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <datalist id="detentores">{detentores.map((d) => <option key={d.nome} value={d.nome} />)}</datalist>
           </label>
           <label>CPF/CNPJ <input value={servico.detentor_cpf ?? ""} onChange={(e) => campo("detentor_cpf", e.target.value)} /></label>
-          <label>Denominação <input value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} /></label>
+          <label>Denominação * <input id="campo-denominacao" className={obg(servico.denominacao)} value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} /></label>
           <label>Situação {sel(servico.situacao, SITUACOES, (v) => campo("situacao", v))}</label>
           <label>Natureza da área {sel(servico.natureza_area, NATUREZAS_AREA, (v) => campo("natureza_area", v))}</label>
           <label>Código SNCR <input value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
@@ -247,8 +266,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <datalist id="cartorios">{cartorios.map((c) => <option key={c} value={c} />)}</datalist>
           </label>
           <label>Matrícula <input value={servico.matricula ?? ""} onChange={(e) => campo("matricula", e.target.value)} /></label>
-          <label>Município <input value={servico.municipio ?? ""} onChange={(e) => campo("municipio", e.target.value)} /></label>
-          <label>UF {sel(servico.uf, UFS, (v) => campo("uf", v))}</label>
+          <label>Município * <input id="campo-municipio" className={obg(servico.municipio)} value={servico.municipio ?? ""} onChange={(e) => campo("municipio", e.target.value)} /></label>
+          <label>UF *
+            <select id="campo-uf" className={obg(servico.uf)} value={servico.uf ?? ""} onChange={(e) => campo("uf", e.target.value)}>
+              <option value="">—</option>
+              {UFS.map((u) => <option key={u}>{u}</option>)}
+            </select>
+          </label>
           <label>Denominação da parcela <input value={servico.denominacao_parcela ?? ""} placeholder="Parte 1" onChange={(e) => campo("denominacao_parcela", e.target.value)} /></label>
           <label>Parcela número <input value={servico.parcela_numero ?? ""} placeholder="001" onChange={(e) => campo("parcela_numero", e.target.value)} /></label>
           <label>Lado {sel(servico.lado, LADOS, (v) => campo("lado", v))}</label>
@@ -256,7 +280,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       </section>
 
       {/* ---------------- Bloco 2: confrontantes ---------------- */}
-      <section className="bloco">
+      <section className="bloco" id="bloco-confrontantes">
         <header>
           <span className="num-bloco">2</span>
           <h3>Confrontantes</h3>
@@ -291,10 +315,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                     <span style={{ flex: 1 }} />
                     <button className="remover" title="Remover trecho" onClick={() => removeTrecho(t)}>✕ remover</button>
                   </div>
-                  <textarea className={t.descritivo ? "" : "pendente"}
-                    placeholder={"Descritivo formal, ex.: (MATR.432/CNS.00.770-8) FAZENDA LAMEIRO\\ RUDSON PINTO FERREIRA\\ CPF:791.234.145-53"}
+                  <textarea
+                    placeholder={"Descritivo formal (opcional), ex.: (MATR.432/CNS.00.770-8) FAZENDA LAMEIRO\\ RUDSON PINTO FERREIRA\\ CPF:791.234.145-53"}
                     value={t.descritivo} onChange={(e) => setTrecho(t, { descritivo: e.target.value })} />
-                  {!t.descritivo && <div className="pendencia">⚠ descritivo obrigatório para gerar (inicia no pt {v ? nomePonto(v) : "?"})</div>}
+                  {!t.descritivo && <div className="pendencia" style={{ color: "var(--texto-2)" }}>descritivo vazio — o memorial usará o apelido {t.apelido_txt ? `"${t.apelido_txt}"` : "(vazio: segue sem cláusula de confrontação)"} · inicia no pt {v ? nomePonto(v) : "?"}</div>}
                 </div>
               );
             })}
@@ -429,13 +453,20 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <span className="stat"><span className="rotulo">M / P / V</span><span className="valor">{preview.qtdM} / {preview.qtdP} / {preview.qtdV}</span></span>
           <span className="acoes">
             <button disabled={ocupado} onClick={apenasSalvar}>Salvar rascunho</button>
-            <button disabled={ocupado || pendencias.length > 0} className="principal" onClick={gerar}
-              title={pendencias.length ? `Pendências: ${pendencias.join("; ")}` : "Gerar Memorial DOCX + Planilha ODS"}>
+            <button disabled={ocupado} className="principal" onClick={gerar}
+              title={pendencias.length ? `Pendências: ${pendencias.map((p) => p.msg).join("; ")}` : "Gerar Memorial DOCX + Planilha ODS"}>
               {ocupado ? "Gerando…" : "⚡ Gerar documentos"}
             </button>
           </span>
         </div>
-        {pendencias.length > 0 && <div className="erro" style={{ padding: "5px 10px" }}>Antes de gerar: {pendencias.join(" · ")}</div>}
+        {pendencias.length > 0 && (
+          <div className="pendencias-lista">
+            Antes de gerar:{" "}
+            {pendencias.map((p, i) => (
+              <button key={i} className="link-pendencia" onClick={() => irParaPendencia(p.alvo)}>{p.msg}</button>
+            ))}
+          </div>
+        )}
         {preview.erro
           ? <div className="erro">{preview.erro}</div>
           : <div className="paragrafo">{preview.primeiroParagrafo}</div>}

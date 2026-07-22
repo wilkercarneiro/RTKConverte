@@ -63,7 +63,11 @@ export interface ServicoCalculado {
 }
 
 export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado {
-  if (inp.trechos.length === 0) throw new Error("Defina ao menos um trecho de confrontante");
+  // Confrontantes são opcionais: sem nenhum trecho, todo o perímetro pertence a
+  // um trecho sintético vazio (LA1, sem descritivo).
+  if (inp.trechos.length === 0) {
+    inp = { ...inp, trechos: [{ verticeInicioOrdem: inp.verticeInicialOrdem, descritivo: "", tipoLimite: "LA1" }] };
+  }
   const entradas: EntradaVertice[] = inp.vertices.map((v) => ({
     numTxt: v.numTxt,
     e: v.e ?? undefined,
@@ -90,12 +94,11 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
     if (!posNoRing.has(t.verticeInicioOrdem)) throw new Error(`Trecho aponta para vértice inexistente (ordem=${t.verticeInicioOrdem})`);
   }
   const trechosOrdenados = [...inp.trechos].sort((a, b) => posNoRing.get(a.verticeInicioOrdem)! - posNoRing.get(b.verticeInicioOrdem)!);
-  if (posNoRing.get(trechosOrdenados[0].verticeInicioOrdem) !== 0) {
-    throw new Error("O vértice inicial do memorial deve iniciar um trecho de confrontante");
-  }
 
   const inicioPorOrdem = new Map<number, TrechoServico>(trechosOrdenados.map((t) => [t.verticeInicioOrdem, t]));
-  let trechoAtual = trechosOrdenados[0];
+  // se nenhum trecho inicia exatamente no vértice inicial, o começo do anel
+  // pertence ao último trecho (continuação, dando a volta no perímetro)
+  let trechoAtual = trechosOrdenados[trechosOrdenados.length - 1];
   const ring: VerticeMontado[] = ring0.map((v) => {
     const inicia = inicioPorOrdem.get(v.ordem) ?? null;
     if (inicia) trechoAtual = inicia;
