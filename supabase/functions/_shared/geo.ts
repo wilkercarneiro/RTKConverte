@@ -57,10 +57,12 @@ export function parseTxt(content: string): PontoTxt[] {
     const parts = line.split(";");
     if (parts.length < 6) throw new Error(`Linha ${i + 1}: esperados 6 campos separados por ';', obtidos ${parts.length}`);
     const idField = parts[0].trim();
-    const m = idField.match(/^(\d+)(?:\s+(.+))?$/);
+    // rótulo pode vir separado por espaço ("9 Estrada/Justiliano") ou colado
+    // ao número ("5ramon/faz,caguido") — aceitar ambos os padrões
+    const m = idField.match(/^(\d+)\s*(.*)$/);
     if (!m) throw new Error(`Linha ${i + 1}: campo ID inválido: "${idField}"`);
     const num = parseInt(m[1], 10);
-    const rotulo = m[2] ? m[2].trim() : null;
+    const rotulo = m[2].trim() ? m[2].trim() : null;
     const e = parseDecimalBR(parts[1]);
     const n = parseDecimalBR(parts[2]);
     const h = parseDecimalBR(parts[3]);
@@ -71,6 +73,15 @@ export function parseTxt(content: string): PontoTxt[] {
     pontos.push({ num, rotulo, e, n, h, sigmaPos, sigmaH });
   }
   if (pontos.length < 3) throw new Error("TXT precisa de pelo menos 3 pontos");
+  // O ID define a ordem do perímetro (seção 2 da spec). Alguns arquivos trazem
+  // pontos medidos depois anexados ao FIM do TXT (ex.: THEREZA.txt, ponto 12 na
+  // última linha) — normalizamos ordenando por ID.
+  pontos.sort((a, b) => a.num - b.num);
+  for (let i = 1; i < pontos.length; i++) {
+    if (pontos[i].num === pontos[i - 1].num) {
+      throw new Error(`Ponto ${pontos[i].num} duplicado no TXT`);
+    }
+  }
   return pontos;
 }
 

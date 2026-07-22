@@ -93,6 +93,44 @@ test("códigos de vértice", () => {
   assert.equal(codigoVertice("DSBN", "V", 758), "DSBN-V-0758");
 });
 
+test("THEREZA.txt: rótulos colados ao número e ponto 12 anexado ao fim", () => {
+  const txtT = readFileSync(new URL("../reference/THEREZA.txt", import.meta.url), "utf8");
+  const pts = parseTxt(txtT);
+  assert.equal(pts.length, 64);
+  // normalização: ordenado por ID (o 12 estava na última linha do arquivo)
+  assert.deepEqual(pts.map((p) => p.num), Array.from({ length: 64 }, (_, i) => i + 1));
+  const p12 = pts[11];
+  assert.equal(p12.num, 12);
+  assert.equal(p12.e, 466755.779);
+  assert.equal(p12.n, 8651665.532);
+  // rótulos sem espaço separador
+  const rotulos = pts.filter((p) => p.rotulo).map((p) => [p.num, p.rotulo]);
+  assert.deepEqual(rotulos, [
+    [5, "ramon/faz,caguido"],
+    [28, "faz,caguido/ze mota"],
+    [35, "ze mota/tone"],
+    [39, "tone/estrada"],
+    [40, "estrada/tone"],
+    [58, "tone/ramon"],
+  ]);
+  // pipeline completo roda sem erro e produz área plausível
+  const vs = calcularVertices(
+    pts.map((p) => ({ numTxt: p.num, e: p.e, n: p.n, h: p.h, sigmaPos: p.sigmaPos, sigmaH: p.sigmaH })),
+    24, proj4,
+  );
+  const area = calcularAreaHa(vs);
+  const per = calcularPerimetroM(calcularSegmentos(vs));
+  console.log(`    THEREZA: área ${fmtBR(area, 4)} ha | perímetro ${fmtBR(per, 2)} m`);
+  assert.ok(area > 50 && area < 500, `área implausível: ${area}`);
+});
+
+test("parse: ponto duplicado é rejeitado", () => {
+  assert.throws(
+    () => parseTxt("1;491199,572;8738840,077;318,435;0,0026;0,004\n2;491159,978;8738824,912;319,376;0,0024;0,0043\n2;491124,084;8738816,159;319,783;0,0083;0,014"),
+    /duplicado/,
+  );
+});
+
 test("GMS: round-trip e carry no arredondamento", () => {
   const g = degToGmsCanonical(-11.999999999); // ≈ -12° → carry total
   assert.equal(g.d, 12);
