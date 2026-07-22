@@ -1,0 +1,30 @@
+{
+  "name": "rtkconverte-geo",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test:engine": "node --test tests/engine.test.mjs",
+    "make:docx-template": "node scripts/make-docx-template.mjs",
+    "upload:templates": "node scripts/upload-templates.mjs",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "proj4": "^2.15.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/proj4": "^2.5.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jszip": "^3.10.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}
