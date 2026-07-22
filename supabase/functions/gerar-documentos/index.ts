@@ -199,8 +199,10 @@ Deno.serve(async (req) => {
     if (u2.error) throw u2.error;
     await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
 
-    const s1 = await supa.storage.from("gerados").createSignedUrl(pDocx, 3600);
-    const s2 = await supa.storage.from("gerados").createSignedUrl(pOds, 3600);
+    // URLs assinadas com download direto (Content-Disposition: attachment)
+    const nomeBase = (servico.denominacao ?? "documento").replace(/[\\/:*?"<>|]/g, "-").trim();
+    const s1 = await supa.storage.from("gerados").createSignedUrl(pDocx, 3600, { download: `Memorial - ${nomeBase}.docx` });
+    const s2 = await supa.storage.from("gerados").createSignedUrl(pOds, 3600, { download: `Planilha SIGEF - ${nomeBase}.ods` });
     return json({
       ok: true,
       memorial_docx: s1.data?.signedUrl,
