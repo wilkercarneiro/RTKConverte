@@ -10,7 +10,7 @@ import {
 import { calcularPreviewLocal } from "../lib/preview";
 import type { Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
 import type { ResultadoParse } from "./Upload";
-import { MapaSVG } from "./MapaSVG";
+import { CORES, MapaSVG } from "./MapaSVG";
 
 interface Gerado {
   memorial_docx: string;
@@ -51,31 +51,46 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
 
   const credenciado = credenciados.find((c) => c.id === servico.credenciado_id) ?? null;
   const verticeInicial = servico.vertice_inicial ?? 0;
+  const trechosOrdenados = useMemo(
+    () => [...trechos].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem),
+    [trechos],
+  );
 
   const preview = useMemo(
     () => calcularPreviewLocal(servico.fuso_utm ?? 24, vertices, trechos, verticeInicial, credenciado),
     [servico.fuso_utm, vertices, trechos, verticeInicial, credenciado],
   );
 
+  const pendencias = useMemo(() => {
+    const p: string[] = [];
+    if (!servico.credenciado_id) p.push("selecione o credenciado");
+    if (!servico.detentor_nome) p.push("informe o detentor");
+    if (!servico.denominacao) p.push("informe a denominação");
+    if (!servico.municipio || !servico.uf) p.push("informe município/UF");
+    const semDesc = trechos.filter((t) => !t.descritivo).length;
+    if (semDesc > 0) p.push(`${semDesc} trecho(s) sem descritivo`);
+    if (trechos.length === 0) p.push("defina os confrontantes");
+    return p;
+  }, [servico, trechos]);
+
   function campo<K extends keyof Servico>(k: K, v: Servico[K]) {
     setServico((s) => ({ ...s, [k]: v }));
   }
 
   // ------- Bloco 2: trechos -------
-  function setTrecho(i: number, patch: Partial<Trecho>) {
-    setTrechos((ts) => ts.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+  function setTrecho(t: Trecho, patch: Partial<Trecho>) {
+    setTrechos((ts) => ts.map((x) => (x === t ? { ...x, ...patch } : x)));
   }
   function addTrecho(ordem: number) {
     if (trechos.some((t) => t.vertice_inicio_ordem === ordem)) return;
     setTrechos((ts) => [...ts, {
-      servico_id: servico.id, vertice_inicio_ordem: ordem, apelido_txt: "(manual)",
+      servico_id: servico.id, vertice_inicio_ordem: ordem, apelido_txt: "",
       descritivo: "", tipo_limite: "LA1", cns: null, matricula: null,
-    }].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem));
+    }]);
     setVertices((vs) => vs.map((v) => (v.ordem === ordem && v.tipo === "P" ? { ...v, tipo: "M" } : v)));
   }
-  function removeTrecho(i: number) {
-    const t = trechos[i];
-    setTrechos((ts) => ts.filter((_, j) => j !== i));
+  function removeTrecho(t: Trecho) {
+    setTrechos((ts) => ts.filter((x) => x !== t));
     setVertices((vs) => vs.map((v) => (v.ordem === t.vertice_inicio_ordem && v.tipo === "M" ? { ...v, tipo: "P" } : v)));
   }
 
@@ -85,7 +100,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   }
   function inserirV() {
     const apos = Number(novoV.aposOrdem);
-    if (!novoV.codigo || !novoV.lat || !novoV.lon || Number.isNaN(apos)) {
+    if (!novoV.codigo || !novoV.lat || !novoV.lon || Number.isNaN(apos) || novoV.aposOrdem === "") {
       setErro("Preencha posição, código e coordenadas do vértice V");
       return;
     }
@@ -103,6 +118,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     setTrechos((ts) => ts.map((t) => (t.vertice_inicio_ordem > apos ? { ...t, vertice_inicio_ordem: t.vertice_inicio_ordem + 1 } : t)));
     if (verticeInicial > apos) campo("vertice_inicial", verticeInicial + 1);
     setNovoV({ aposOrdem: "", codigo: "", lat: "", lon: "", h: "", sigmaH: "0,02" });
+    setMsg("Vértice V inserido.");
   }
   function removerV(ordem: number) {
     setVertices((vs) => vs.filter((v) => v.ordem !== ordem).map((v) => (v.ordem > ordem ? { ...v, ordem: v.ordem - 1 } : v)));
@@ -136,6 +152,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       setMsg("Documentos gerados com sucesso.");
       const { data } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
       if (data) setVertices(data as Vertice[]);
+      requestAnimationFrame(() => document.querySelector(".gerados")?.scrollIntoView({ behavior: "smooth", block: "center" }));
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -162,25 +179,41 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       {opcoes.map((o) => <option key={o}>{o}</option>)}
     </select>
   );
+  const nomePonto = (v: Vertice) => v.num_txt ?? v.codigo ?? `V(${v.ordem})`;
+  const corDoTrecho = (t: Trecho) => CORES[trechosOrdenados.indexOf(t) % CORES.length];
 
   return (
     <div className="conferencia">
+      <div className="stepper">
+        <span className="step feita"><span className="num">✓</span> Upload</span>
+        <span className="step-seta">→</span>
+        <span className="step ativa"><span className="num">2</span> Conferência</span>
+        <span className="step-seta">→</span>
+        <span className={`step ${gerado ? "ativa" : ""}`}><span className="num">3</span> Documentos</span>
+      </div>
+
       <header className="topo">
-        <button onClick={onVoltar}>← Novo upload</button>
-        <span>{servico.nome_arquivo_txt} — fuso {servico.fuso_utm}S</span>
-        <span>
-          Fuso UTM:{" "}
+        <button className="fantasma" onClick={onVoltar}>← Novo upload</button>
+        <span className="arquivo">📄 {servico.nome_arquivo_txt}</span>
+        <span className="esticar" />
+        <label>Fuso UTM{" "}
           <select value={servico.fuso_utm ?? 24} onChange={(e) => campo("fuso_utm", Number(e.target.value))}>
-            {[18, 19, 20, 21, 22, 23, 24, 25].map((z) => <option key={z} value={z}>{z}S {inicial.preview.candidatos.includes(z) ? "•" : ""}</option>)}
+            {[18, 19, 20, 21, 22, 23, 24, 25].map((z) => (
+              <option key={z} value={z}>{z}S{inicial.preview.candidatos.includes(z) ? " •" : ""}</option>
+            ))}
           </select>
-          {inicial.preview.fusoAmbiguo && <em className="alerta"> fuso ambíguo — confirme pelo município</em>}
-          {inicial.preview.foraDaUf && <em className="alerta"> coordenadas fora da UF informada!</em>}
-        </span>
+        </label>
+        {inicial.preview.fusoAmbiguo && <em className="alerta">fuso ambíguo — confirme pelo município</em>}
+        {inicial.preview.foraDaUf && <em className="alerta">coordenadas fora da UF informada!</em>}
       </header>
 
       {/* ---------------- Bloco 1: dados do serviço ---------------- */}
       <section className="bloco">
-        <h3>1. Dados do serviço</h3>
+        <header>
+          <span className="num-bloco">1</span>
+          <h3>Dados do serviço</h3>
+          <span className="desc">identificação SIGEF do detentor e da área</span>
+        </header>
         <div className="grade">
           <label>Credenciado
             <select value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
@@ -224,136 +257,185 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
 
       {/* ---------------- Bloco 2: confrontantes ---------------- */}
       <section className="bloco">
-        <h3>2. Confrontantes</h3>
+        <header>
+          <span className="num-bloco">2</span>
+          <h3>Confrontantes</h3>
+          <span className="desc">trechos detectados pelos rótulos do TXT — apelidos editáveis; cores correspondem ao mapa</span>
+        </header>
         <div className="confrontantes">
           <div className="trechos">
-            {trechos.map((t, i) => {
+            {trechosOrdenados.map((t) => {
               const v = vertices.find((x) => x.ordem === t.vertice_inicio_ordem);
               return (
-                <div className="trecho" key={`${t.vertice_inicio_ordem}-${i}`}>
+                <div className="trecho" key={`t-${t.vertice_inicio_ordem}`}
+                  style={{ ["--cor-trecho" as string]: corDoTrecho(t) }}>
                   <div className="linha">
                     <label>Ponto inicial
                       <select value={t.vertice_inicio_ordem}
-                        onChange={(e) => setTrecho(i, { vertice_inicio_ordem: Number(e.target.value) })}>
-                        {vertices.map((x) => <option key={x.ordem} value={x.ordem}>{x.num_txt ?? `V(${x.ordem})`}</option>)}
+                        onChange={(e) => setTrecho(t, { vertice_inicio_ordem: Number(e.target.value) })}>
+                        {vertices.map((x) => <option key={x.ordem} value={x.ordem}>{nomePonto(x)}</option>)}
                       </select>
                     </label>
-                    <span className="apelido">apelido: <b>{t.apelido_txt ?? "—"}</b> {v ? `(pt ${v.num_txt ?? "V"})` : ""}</span>
+                    <label>Apelido
+                      <input value={t.apelido_txt ?? ""} placeholder="ex.: Varguim Serra"
+                        style={{ width: 150 }}
+                        onChange={(e) => setTrecho(t, { apelido_txt: e.target.value || null })} />
+                    </label>
                     <label>Tipo limite
-                      <select value={t.tipo_limite} onChange={(e) => setTrecho(i, { tipo_limite: e.target.value })}>
+                      <select value={t.tipo_limite} onChange={(e) => setTrecho(t, { tipo_limite: e.target.value })}>
                         {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
                       </select>
                     </label>
-                    <label>CNS <input value={t.cns ?? ""} onChange={(e) => setTrecho(i, { cns: e.target.value || null })} /></label>
-                    <label>Matrícula <input value={t.matricula ?? ""} onChange={(e) => setTrecho(i, { matricula: e.target.value || null })} /></label>
-                    <button onClick={() => removeTrecho(i)}>remover</button>
+                    <label>CNS <input style={{ width: 110 }} value={t.cns ?? ""} onChange={(e) => setTrecho(t, { cns: e.target.value || null })} /></label>
+                    <label>Matrícula <input style={{ width: 100 }} value={t.matricula ?? ""} onChange={(e) => setTrecho(t, { matricula: e.target.value || null })} /></label>
+                    <span style={{ flex: 1 }} />
+                    <button className="remover" title="Remover trecho" onClick={() => removeTrecho(t)}>✕ remover</button>
                   </div>
-                  <textarea placeholder={"Descritivo formal, ex.: (MATR.432/CNS.00.770-8) FAZENDA LAMEIRO\\ RUDSON PINTO FERREIRA\\ CPF:791.234.145-53"}
-                    value={t.descritivo} onChange={(e) => setTrecho(i, { descritivo: e.target.value })} />
+                  <textarea className={t.descritivo ? "" : "pendente"}
+                    placeholder={"Descritivo formal, ex.: (MATR.432/CNS.00.770-8) FAZENDA LAMEIRO\\ RUDSON PINTO FERREIRA\\ CPF:791.234.145-53"}
+                    value={t.descritivo} onChange={(e) => setTrecho(t, { descritivo: e.target.value })} />
+                  {!t.descritivo && <div className="pendencia">⚠ descritivo obrigatório para gerar (inicia no pt {v ? nomePonto(v) : "?"})</div>}
                 </div>
               );
             })}
             <div className="add-trecho">
-              Adicionar transição no ponto:{" "}
+              <span>Nova transição de confrontante no ponto</span>
               <select id="novo-trecho-ordem" defaultValue="">
                 <option value="" disabled>—</option>
                 {vertices.filter((v) => !trechos.some((t) => t.vertice_inicio_ordem === v.ordem))
-                  .map((v) => <option key={v.ordem} value={v.ordem}>{v.num_txt ?? `V(${v.ordem})`}</option>)}
-              </select>{" "}
+                  .map((v) => <option key={v.ordem} value={v.ordem}>{nomePonto(v)}</option>)}
+              </select>
               <button onClick={() => {
                 const el = document.getElementById("novo-trecho-ordem") as HTMLSelectElement;
-                if (el.value !== "") addTrecho(Number(el.value));
-              }}>adicionar transição</button>
+                if (el.value !== "") { addTrecho(Number(el.value)); el.value = ""; }
+              }}>+ adicionar transição</button>
             </div>
           </div>
           <div className="mapa">
             <MapaSVG vertices={vertices} trechos={trechos} verticeInicial={verticeInicial} />
+            <div className="legenda">
+              {trechosOrdenados.map((t) => (
+                <span className="item" key={`leg-${t.vertice_inicio_ordem}`}>
+                  <span className="ponto-cor" style={{ background: corDoTrecho(t) }} />
+                  {t.apelido_txt || `pt ${nomePonto(vertices.find((v) => v.ordem === t.vertice_inicio_ordem) ?? vertices[0])}`}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </section>
 
       {/* ---------------- Bloco 3: vértices ---------------- */}
       <section className="bloco">
-        <h3>3. Vértices</h3>
+        <header>
+          <span className="num-bloco">3</span>
+          <h3>Vértices</h3>
+          <span className="desc">códigos definitivos são alocados dos contadores do credenciado na geração</span>
+        </header>
         <div className="acoes-vertices">
           <label>Vértice inicial do memorial:{" "}
             <select value={verticeInicial} onChange={(e) => campo("vertice_inicial", Number(e.target.value))}>
               {vertices.filter((v) => v.tipo === "M").map((v) => (
-                <option key={v.ordem} value={v.ordem}>{v.num_txt ?? `V(${v.ordem})`}</option>
+                <option key={v.ordem} value={v.ordem}>{nomePonto(v)}</option>
               ))}
             </select>
           </label>
           <fieldset className="inserir-v">
-            <legend>Inserir vértice pré-existente (tipo V, método PA1)</legend>
+            <legend>Inserir vértice pré-existente (tipo V · método PA1)</legend>
             <label>após o ponto
               <select value={novoV.aposOrdem} onChange={(e) => setNovoV({ ...novoV, aposOrdem: e.target.value })}>
                 <option value="">—</option>
-                {vertices.map((v) => <option key={v.ordem} value={v.ordem}>{v.num_txt ?? `V(${v.ordem})`}</option>)}
+                {vertices.map((v) => <option key={v.ordem} value={v.ordem}>{nomePonto(v)}</option>)}
               </select>
             </label>
-            <input placeholder="código (ex.: DSBN-V-0758)" value={novoV.codigo} onChange={(e) => setNovoV({ ...novoV, codigo: e.target.value })} />
-            <input placeholder='lat GMS (ex.: 11 24 30,375 S)' value={novoV.lat} onChange={(e) => setNovoV({ ...novoV, lat: e.target.value })} />
-            <input placeholder='lon GMS (ex.: 39 4 47,198 W)' value={novoV.lon} onChange={(e) => setNovoV({ ...novoV, lon: e.target.value })} />
-            <input placeholder="h (m)" value={novoV.h} onChange={(e) => setNovoV({ ...novoV, h: e.target.value })} />
-            <input placeholder="sigma h" value={novoV.sigmaH} onChange={(e) => setNovoV({ ...novoV, sigmaH: e.target.value })} />
-            <button onClick={inserirV}>inserir</button>
+            <label>código
+              <input placeholder="DSBN-V-0758" value={novoV.codigo} onChange={(e) => setNovoV({ ...novoV, codigo: e.target.value })} />
+            </label>
+            <label>latitude GMS
+              <input placeholder="11 24 30,375 S" value={novoV.lat} onChange={(e) => setNovoV({ ...novoV, lat: e.target.value })} />
+            </label>
+            <label>longitude GMS
+              <input placeholder="39 4 47,198 W" value={novoV.lon} onChange={(e) => setNovoV({ ...novoV, lon: e.target.value })} />
+            </label>
+            <label>h (m)
+              <input placeholder="289,765" style={{ width: 100 }} value={novoV.h} onChange={(e) => setNovoV({ ...novoV, h: e.target.value })} />
+            </label>
+            <label>sigma h
+              <input style={{ width: 80 }} value={novoV.sigmaH} onChange={(e) => setNovoV({ ...novoV, sigmaH: e.target.value })} />
+            </label>
+            <button onClick={inserirV}>+ inserir</button>
           </fieldset>
         </div>
-        <table className="tabela-vertices">
-          <thead>
-            <tr><th>nº TXT</th><th>código</th><th>tipo</th><th>método</th><th>lat (GMS)</th><th>lon (GMS)</th><th>h</th><th></th></tr>
-          </thead>
-          <tbody>
-            {vertices.map((v) => (
-              <tr key={v.ordem} className={v.ordem === verticeInicial ? "inicial" : ""}>
-                <td>{v.num_txt ?? "—"}{v.rotulo_txt ? ` (${v.rotulo_txt})` : ""}</td>
-                <td>{v.codigo ?? "(alocado na geração)"}</td>
-                <td>
-                  {v.inserido_manual ? "V" : (
-                    <select value={v.tipo} onChange={(e) => setVertice(v.ordem, { tipo: e.target.value as Vertice["tipo"] })}>
-                      <option>M</option><option>P</option><option>V</option>
+        <div className="tabela-wrap">
+          <table className="tabela-vertices">
+            <thead>
+              <tr><th>nº TXT</th><th>código</th><th>tipo</th><th>método</th><th>latitude</th><th>longitude</th><th>h (m)</th><th></th></tr>
+            </thead>
+            <tbody>
+              {vertices.map((v) => (
+                <tr key={v.ordem} className={v.ordem === verticeInicial ? "inicial" : ""}>
+                  <td>{v.num_txt ?? "—"}{v.rotulo_txt ? ` · ${v.rotulo_txt}` : ""}{v.ordem === verticeInicial ? " ★" : ""}</td>
+                  <td className="mono">{v.codigo ?? <span style={{ color: "var(--texto-2)" }}>na geração</span>}</td>
+                  <td>
+                    {v.inserido_manual ? <span className="chip V">V</span> : (
+                      <select value={v.tipo} onChange={(e) => setVertice(v.ordem, { tipo: e.target.value as Vertice["tipo"] })}>
+                        <option>M</option><option>P</option><option>V</option>
+                      </select>
+                    )}
+                  </td>
+                  <td>
+                    <select value={v.metodo} onChange={(e) => setVertice(v.ordem, { metodo: e.target.value })}>
+                      {METODOS_POSICIONAMENTO.map((m) => <option key={m}>{m}</option>)}
                     </select>
-                  )}
-                </td>
-                <td>
-                  <select value={v.metodo} onChange={(e) => setVertice(v.ordem, { metodo: e.target.value })}>
-                    {METODOS_POSICIONAMENTO.map((m) => <option key={m}>{m}</option>)}
-                  </select>
-                </td>
-                <td>{v.lat_gms}</td>
-                <td>{v.lon_gms}</td>
-                <td>{String(v.h).replace(".", ",")}</td>
-                <td>{v.inserido_manual && <button onClick={() => removerV(v.ordem)}>×</button>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  </td>
+                  <td className="mono">{v.lat_gms}</td>
+                  <td className="mono">{v.lon_gms}</td>
+                  <td className="mono">{String(v.h).replace(".", ",")}</td>
+                  <td>{v.inserido_manual && <button className="remover" title="Remover vértice inserido" onClick={() => removerV(v.ordem)}>✕</button>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {gerado && (
         <section className="bloco gerados">
-          <h3>Documentos gerados</h3>
-          <p>
-            <a href={gerado.memorial_docx} target="_blank" rel="noreferrer">⬇ Memorial Descritivo (DOCX)</a>{" — "}
-            <a href={gerado.planilha_ods} target="_blank" rel="noreferrer">⬇ Planilha SIGEF (ODS)</a>
+          <header>
+            <span className="num-bloco">✓</span>
+            <h3>Documentos gerados</h3>
+            <span className="desc">regeração ilimitada — os arquivos são sobrescritos a cada geração</span>
+          </header>
+          <div className="downloads">
+            <a className="botao-download" href={gerado.memorial_docx} target="_blank" rel="noreferrer">
+              <span className="ext">DOCX</span> Memorial Descritivo GEO
+            </a>
+            <a className="botao-download" href={gerado.planilha_ods} target="_blank" rel="noreferrer">
+              <span className="ext">ODS</span> Planilha SIGEF
+            </a>
+          </div>
+          <p style={{ color: "var(--texto-2)" }}>
+            Vértice inicial {gerado.resumo.verticeInicial} · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
           </p>
-          <p>Vértice inicial {gerado.resumo.verticeInicial} — M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}.
-            Regeração ilimitada: os arquivos são sobrescritos a cada geração.</p>
         </section>
       )}
 
       {/* ---------------- Preview (rodapé fixo) ---------------- */}
       <footer className="preview">
         <div className="stats">
-          <span><b>Fuso:</b> {servico.fuso_utm}S (MC-{Math.abs(6 * (servico.fuso_utm ?? 24) - 183)}°W)</span>
-          <span><b>Área:</b> {preview.areaHa} ha</span>
-          <span><b>Perímetro:</b> {preview.perimetroM} m</span>
-          <span><b>M/P/V:</b> {preview.qtdM}/{preview.qtdP}/{preview.qtdV}</span>
-          <button disabled={ocupado} onClick={apenasSalvar}>Salvar rascunho</button>
-          <button disabled={ocupado} className="principal" onClick={gerar}>
-            {ocupado ? "Gerando..." : "Gerar documentos"}
-          </button>
+          <span className="stat"><span className="rotulo">Fuso</span><span className="valor">{servico.fuso_utm}S · MC-{Math.abs(6 * (servico.fuso_utm ?? 24) - 183)}°W</span></span>
+          <span className="stat"><span className="rotulo">Área</span><span className="valor">{preview.areaHa} ha</span></span>
+          <span className="stat"><span className="rotulo">Perímetro</span><span className="valor">{preview.perimetroM} m</span></span>
+          <span className="stat"><span className="rotulo">M / P / V</span><span className="valor">{preview.qtdM} / {preview.qtdP} / {preview.qtdV}</span></span>
+          <span className="acoes">
+            <button disabled={ocupado} onClick={apenasSalvar}>Salvar rascunho</button>
+            <button disabled={ocupado || pendencias.length > 0} className="principal" onClick={gerar}
+              title={pendencias.length ? `Pendências: ${pendencias.join("; ")}` : "Gerar Memorial DOCX + Planilha ODS"}>
+              {ocupado ? "Gerando…" : "⚡ Gerar documentos"}
+            </button>
+          </span>
         </div>
+        {pendencias.length > 0 && <div className="erro" style={{ padding: "5px 10px" }}>Antes de gerar: {pendencias.join(" · ")}</div>}
         {preview.erro
           ? <div className="erro">{preview.erro}</div>
           : <div className="paragrafo">{preview.primeiroParagrafo}</div>}

@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import type { Trecho, Vertice } from "../lib/types";
 
-const CORES = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#01796f", "#9a6324", "#800000", "#808000", "#000075"];
+export const CORES = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#01796f", "#9a6324", "#800000", "#808000", "#000075"];
 
 interface Props {
   vertices: Vertice[];
