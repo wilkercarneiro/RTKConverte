@@ -124,6 +124,39 @@ test("THEREZA.txt: rótulos colados ao número e ponto 12 anexado ao fim", () =>
   assert.ok(area > 50 && area < 500, `área implausível: ${area}`);
 });
 
+test("ANTONIO.txt: separador vírgula com decimal ponto", () => {
+  const txtA = readFileSync(new URL("../reference/ANTONIO.txt", import.meta.url), "utf8");
+  const pts = parseTxt(txtA);
+  assert.equal(pts.length, 5);
+  assert.deepEqual(pts.map((p) => p.num), [1, 2, 3, 4, 5]);
+  assert.equal(pts[0].e, 497318.611);
+  assert.equal(pts[0].n, 8658085.635);
+  assert.equal(pts[0].h, 240.944);
+  assert.equal(pts[0].sigmaPos, 0.0042);
+  assert.equal(pts[0].sigmaH, 0.0084);
+  const rotulos = pts.filter((p) => p.rotulo).map((p) => [p.num, p.rotulo]);
+  assert.deepEqual(rotulos, [
+    [1, "roque/estrada"],
+    [2, "estrada/maria"],
+    [5, "maria/roque"],
+  ]);
+  // pipeline completo roda e produz área > 0
+  const vs = calcularVertices(
+    pts.map((p) => ({ numTxt: p.num, e: p.e, n: p.n, h: p.h, sigmaPos: p.sigmaPos, sigmaH: p.sigmaH })),
+    24, proj4,
+  );
+  const area = calcularAreaHa(vs);
+  const per = calcularPerimetroM(calcularSegmentos(vs));
+  console.log(`    ANTONIO: área ${fmtBR(area, 4)} ha | perímetro ${fmtBR(per, 2)} m`);
+  assert.ok(area > 0, "área nula");
+});
+
+test("parse: rótulo contendo o separador vírgula em arquivo vírgula-decimal-ponto", () => {
+  const pts = parseTxt("1faz,bonita/estrada,497318.611,8658085.635,240.944,0.0042,0.0084\n2,497336.251,8658085.250,240.891,0.005,0.009\n3,497341.866,8658112.334,240.582,0.0197,0.0377");
+  assert.equal(pts[0].rotulo, "faz,bonita/estrada");
+  assert.equal(pts[0].e, 497318.611);
+});
+
 test("parse: ponto duplicado é rejeitado", () => {
   assert.throws(
     () => parseTxt("1;491199,572;8738840,077;318,435;0,0026;0,004\n2;491159,978;8738824,912;319,376;0,0024;0,0043\n2;491124,084;8738816,159;319,783;0,0083;0,014"),

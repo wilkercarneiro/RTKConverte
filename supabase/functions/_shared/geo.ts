@@ -46,30 +46,46 @@ export function parseDecimalBR(s: string): number {
   return v;
 }
 
+export function parseDecimalDot(s: string): number {
+  const v = Number(s.trim());
+  if (!Number.isFinite(v)) throw new Error(`Número inválido: "${s}"`);
+  return v;
+}
+
 export function parseTxt(content: string): PontoTxt[] {
   // trata BOM (utf-8-sig)
   const clean = content.replace(/^﻿/, "");
   const pontos: PontoTxt[] = [];
   const lines = clean.split(/\r?\n/);
+  // Duas convenções de máquina são aceitas (detecção pelo 1º registro):
+  //   ";" como separador + decimal com vírgula (LARISSA/THEREZA)
+  //   "," como separador + decimal com ponto  (ANTONIO)
+  const primeira = lines.find((l) => l.trim());
+  if (!primeira) throw new Error("TXT vazio");
+  const sep = primeira.includes(";") ? ";" : ",";
+  const parseNum = sep === ";" ? parseDecimalBR : parseDecimalDot;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
-    const parts = line.split(";");
-    if (parts.length < 6) throw new Error(`Linha ${i + 1}: esperados 6 campos separados por ';', obtidos ${parts.length}`);
-    const idField = parts[0].trim();
+    const parts = line.split(sep);
+    if (parts.length < 6) throw new Error(`Linha ${i + 1}: esperados 6 campos separados por '${sep}', obtidos ${parts.length}`);
+    // os 5 últimos campos são E;N;h;sigma_pos;sigma_h — o que sobra à esquerda é
+    // ID[+rótulo], mesmo que o rótulo contenha o próprio separador
+    const nums = parts.slice(-5);
+    const idField = parts.slice(0, parts.length - 5).join(sep).trim();
     // rótulo pode vir separado por espaço ("9 Estrada/Justiliano") ou colado
-    // ao número ("5ramon/faz,caguido") — aceitar ambos os padrões
+    // ao número ("5ramon/faz,caguido", "1roque/estrada") — aceitar ambos
     const m = idField.match(/^(\d+)\s*(.*)$/);
     if (!m) throw new Error(`Linha ${i + 1}: campo ID inválido: "${idField}"`);
     const num = parseInt(m[1], 10);
     const rotulo = m[2].trim() ? m[2].trim() : null;
-    const e = parseDecimalBR(parts[1]);
-    const n = parseDecimalBR(parts[2]);
-    const h = parseDecimalBR(parts[3]);
-    const sigmaPos = parseDecimalBR(parts[4]);
-    const sigmaH = parseDecimalBR(parts[5]);
-    if (e < LIMITES.eMin || e > LIMITES.eMax) throw new Error(`Linha ${i + 1}: E=${parts[1]} fora dos limites SIGEF (${LIMITES.eMin}–${LIMITES.eMax})`);
-    if (n < LIMITES.nMin || n > LIMITES.nMax) throw new Error(`Linha ${i + 1}: N=${parts[2]} fora dos limites SIGEF`);
+    const e = parseNum(nums[0]);
+    const n = parseNum(nums[1]);
+    const h = parseNum(nums[2]);
+    const sigmaPos = parseNum(nums[3]);
+    const sigmaH = parseNum(nums[4]);
+    if (e < LIMITES.eMin || e > LIMITES.eMax) throw new Error(`Linha ${i + 1}: E=${nums[0]} fora dos limites SIGEF (${LIMITES.eMin}–${LIMITES.eMax})`);
+    if (n < LIMITES.nMin || n > LIMITES.nMax) throw new Error(`Linha ${i + 1}: N=${nums[1]} fora dos limites SIGEF`);
     pontos.push({ num, rotulo, e, n, h, sigmaPos, sigmaH });
   }
   if (pontos.length < 3) throw new Error("TXT precisa de pelo menos 3 pontos");
