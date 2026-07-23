@@ -105,14 +105,14 @@ function caixaTitulo(c: Ctx, x: number, y: number, w: number, h: number, titulo:
   return y + h - th; // topo útil
 }
 
-// quebra o descritivo em linhas de rótulo
+// quebra o descritivo em linhas de rótulo (sempre em MAIÚSCULAS)
 function linhasDescritivo(descritivo: string): string[] {
   const partes = descritivo.split("\\").map((p) => p.trim()).filter(Boolean);
   const out: string[] = [];
   const m = partes[0]?.match(/^(\([^)]*\))\s*(.+)$/);
   if (m) { out.push(m[1]); out.push(m[2]); } else if (partes[0]) out.push(partes[0]);
   for (const p of partes.slice(1)) out.push(p);
-  return out;
+  return out.map((l) => l.toUpperCase());
 }
 
 // ---------------------------------------------------------------------------
@@ -138,8 +138,8 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const vs = d.vertices;
   const minE = Math.min(...vs.map((v) => v.e)), maxE = Math.max(...vs.map((v) => v.e));
   const minN = Math.min(...vs.map((v) => v.n)), maxN = Math.max(...vs.map((v) => v.n));
-  const spanE = (maxE - minE) * 1.30 || 100; // folga p/ rótulos externos
-  const spanN = (maxN - minN) * 1.22 || 100;
+  const spanE = (maxE - minE) * 1.45 || 100; // folga p/ os rótulos grandes dos confrontantes
+  const spanN = (maxN - minN) * 1.40 || 100;
   const mPorPtMin = Math.max(spanE / dArea.w, spanN / dArea.h);
   const escala = escalaProporcional(mPorPtMin);
   const mPorPt = escala * 0.000352778;
@@ -201,37 +201,57 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     let nx = X(v.e) - dcx, ny = Y(v.n) - dcy;
     const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
     void prev; void next;
-    texto(c, v.codigo, X(v.e) + nx * 8, Y(v.n) + ny * 8 - 2, 5, { cor: PRETO });
+    texto(c, v.codigo, X(v.e) + nx * 8, Y(v.n) + ny * 8 - 2, 6.5, { cor: PRETO });
   }
 
   // ------------------- divisões de confrontação + rótulos -------------------
   const centroLinhas = [
     `(MATR.${d.matricula}/CNS.${d.cns})`,
-    d.denominacao.toUpperCase(),
-    ...d.proprietarios.flatMap((p) => [p.nome.toUpperCase(), `CPF:${p.cpf}`]),
+    d.denominacao,
+    ...d.proprietarios.flatMap((p) => [p.nome, `CPF:${p.cpf}`]),
     `ÁREA:${d.areaFmt} HA/ ${d.tarefasFmt} TAREFAS`,
-  ];
+  ].map((l) => l.toUpperCase());
   // bloco do imóvel no centroide
   {
-    let ty = dcy + (centroLinhas.length * 13) / 2;
+    let ty = dcy + (centroLinhas.length * 26) / 2;
     for (const [li, lt] of centroLinhas.entries()) {
-      texto(c, lt, dcx, ty, 10, { bold: li === 1, center: true });
-      ty -= 13;
+      texto(c, lt, dcx, ty, 20, { bold: li === 1, center: true });
+      ty -= 26;
     }
   }
   for (const t of d.trechos) {
-    const meioIdx = t.fimIdx >= t.inicioIdx
-      ? Math.floor((t.inicioIdx + t.fimIdx) / 2)
-      : Math.floor((t.inicioIdx + t.fimIdx + nv) / 2) % nv;
-    const v = vs[meioIdx % nv];
-    let nx = X(v.e) - dcx, ny = Y(v.n) - dcy;
+    // ponto médio GEOMÉTRICO do trecho: metade do comprimento da linha do
+    // confrontante — o rótulo fica centralizado no "raio" da confrontação
+    const idxs: number[] = [];
+    for (let i = t.inicioIdx % nv; i !== t.fimIdx % nv; i = (i + 1) % nv) {
+      idxs.push(i);
+      if (idxs.length >= nv) break;
+    }
+    if (idxs.length === 0) for (let i = 0; i < nv; i++) idxs.push((t.inicioIdx + i) % nv);
+    const segLens = idxs.map((i) => {
+      const a = vs[i], b = vs[(i + 1) % nv];
+      return Math.hypot(X(b.e) - X(a.e), Y(b.n) - Y(a.n));
+    });
+    let alvo = segLens.reduce((s, l) => s + l, 0) / 2;
+    let mx = X(vs[idxs[0]].e), my = Y(vs[idxs[0]].n), angSeg = 0;
+    for (const [k, i] of idxs.entries()) {
+      if (alvo <= segLens[k] || k === idxs.length - 1) {
+        const a = vs[i], b = vs[(i + 1) % nv];
+        const fr = segLens[k] > 0 ? alvo / segLens[k] : 0;
+        mx = X(a.e) + (X(b.e) - X(a.e)) * fr;
+        my = Y(a.n) + (Y(b.n) - Y(a.n)) * fr;
+        angSeg = Math.atan2(Y(b.n) - Y(a.n), X(b.e) - X(a.e)) * 180 / Math.PI;
+        break;
+      }
+      alvo -= segLens[k];
+    }
+    let nx = mx - dcx, ny = my - dcy;
     const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+
     if (t.isEstrada) {
-      // nome da via rotacionado ao longo do segmento
-      const b = vs[(meioIdx + 1) % nv];
-      const ang = Math.atan2(Y(b.n) - Y(v.n), X(b.e) - X(v.e)) * 180 / Math.PI;
+      // nome da via rotacionado ao longo do segmento do ponto médio
       const nome = linhasDescritivo(t.descritivo)[0] ?? "";
-      texto(c, nome, X(v.e) + nx * 24, Y(v.n) + ny * 24, 12, { bold: true, cor: PRETO, rot: ang > 90 || ang < -90 ? ang + 180 : ang });
+      texto(c, nome, mx + nx * 32, my + ny * 32, 20, { bold: true, cor: PRETO, rot: angSeg > 90 || angSeg < -90 ? angSeg + 180 : angSeg });
       continue;
     }
     // linha verde de divisão no INÍCIO do trecho
@@ -249,23 +269,23 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
       if (k + 1 < lts.length && /^CPF/i.test(lts[k + 1])) pessoas.push({ nome: lts[k], cpf: lts[k + 1] });
       else header.push(lts[k]);
     }
-    const ASS_W = 170;                       // largura da linha de assinatura
-    const H_HEADER = 11, H_PESSOA = 34;
-    const altura = header.length * H_HEADER + 6 + Math.max(pessoas.length, 1) * H_PESSOA;
-    const lx = X(v.e) + nx * 115;
-    let ty = Y(v.n) + ny * 70 + altura / 2;  // bloco centralizado no ponto médio do trecho
+    const ASS_W = 300;                       // largura da linha de assinatura
+    const H_HEADER = 22, H_PESSOA = 64;
+    const altura = header.length * H_HEADER + 8 + Math.max(pessoas.length, 1) * H_PESSOA;
+    const lx = mx + nx * 130;
+    let ty = my + ny * 130 + altura / 2;     // bloco centralizado no ponto médio do trecho
     for (const [hi, ht] of header.entries()) {
-      texto(c, ht, lx, ty, 9, { center: true, bold: hi === header.length - 1 });
+      texto(c, ht, lx, ty, 18, { center: true, bold: hi === header.length - 1 });
       ty -= H_HEADER;
     }
-    ty -= 6;
+    ty -= 8;
     if (pessoas.length === 0) {
-      linha(c, lx - ASS_W / 2, ty, lx + ASS_W / 2, ty, 0.9);
+      linha(c, lx - ASS_W / 2, ty, lx + ASS_W / 2, ty, 1.1);
     } else {
       for (const p of pessoas) {
-        linha(c, lx - ASS_W / 2, ty, lx + ASS_W / 2, ty, 0.9);
-        texto(c, p.nome, lx, ty - 10, 8.5, { center: true, bold: true });
-        texto(c, p.cpf, lx, ty - 19, 8, { center: true });
+        linha(c, lx - ASS_W / 2, ty, lx + ASS_W / 2, ty, 1.1);
+        texto(c, p.nome, lx, ty - 19, 17, { center: true, bold: true });
+        texto(c, p.cpf, lx, ty - 36, 15, { center: true });
         ty -= H_PESSOA;
       }
     }
