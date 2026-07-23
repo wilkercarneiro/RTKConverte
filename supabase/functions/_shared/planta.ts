@@ -47,6 +47,7 @@ export interface DadosPlanta {
   desenhista: string;
   dataStr: string;
   logo?: { bytes: Uint8Array; tipo: "png" | "jpg" } | null;
+  satelite?: { bytes: Uint8Array; tipo: "png" | "jpg" } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +62,9 @@ const VERDE = rgb(0.05, 0.65, 0.15);
 const PRETO = rgb(0, 0, 0);
 const CINZA = rgb(0.45, 0.45, 0.45);
 
-const ESCALAS = [500, 1000, 2000, 2500, 5000, 7500, 10000, 15000, 20000, 25000, 50000];
+// degraus finos p/ a escala acompanhar o tamanho da propriedade (polígono
+// ocupando o máximo da área de desenho, sem "saltos" grandes entre escalas)
+const ESCALAS = [250, 500, 750, 1000, 1250, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 7500, 10000, 12500, 15000, 20000, 25000, 30000, 40000, 50000];
 
 function letraFuso(latDeg: number): string {
   const bandas = "CDEFGHJKLMNPQRSTUVWX";
@@ -130,8 +133,8 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const vs = d.vertices;
   const minE = Math.min(...vs.map((v) => v.e)), maxE = Math.max(...vs.map((v) => v.e));
   const minN = Math.min(...vs.map((v) => v.n)), maxN = Math.max(...vs.map((v) => v.n));
-  const spanE = (maxE - minE) * 1.55 || 100; // folga p/ rótulos externos
-  const spanN = (maxN - minN) * 1.35 || 100;
+  const spanE = (maxE - minE) * 1.38 || 100; // folga p/ rótulos externos
+  const spanN = (maxN - minN) * 1.25 || 100;
   const mPorPtMin = Math.max(spanE / dArea.w, spanN / dArea.h);
   const escala = ESCALAS.find((s) => s * 0.000352778 >= mPorPtMin) ?? ESCALAS[ESCALAS.length - 1];
   const mPorPt = escala * 0.000352778;
@@ -262,34 +265,65 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const alturas = { quadro: 0.30, situacao: 0.16, carimbo: 0.15, planimetrico: 0.27, rodape: 0.12 };
   let yCursor = sbTop;
 
-  // ---- QUADRO ANALÍTICO ----
+  // ---- QUADRO ANALÍTICO (tabela com grade, colunas centradas) ----
   {
     const h = (sbTop - sbBot) * alturas.quadro;
     const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "QUADRO ANALÍTICO");
-    const cols = [58, 92, 72, 72, 52, 52, 44];
-    const heads = ["Vértices", "LADOS", "Longitude", "Latitude", "Azim.(SGL)", "Dist.(m)", "Altit."];
-    const innerX = sbX + 6;
-    let hx = innerX;
-    const headY = topoUtil - 12;
-    for (const [i, hh] of heads.entries()) { texto(c, hh, hx, headY, 5, { bold: true }); hx += cols[i]; }
-    const maxLinhas = Math.floor((headY - (yCursor - h) - 8) / 5.4);
+    const heads = ["VÉRTICE", "LADO", "LONGITUDE", "LATITUDE", "AZIMUTE", "DIST.(m)", "ALTIT."];
+    const cols = [54, 88, 70, 70, 56, 48, 40];
+    const tw = cols.reduce((a, b) => a + b, 0);
+    const tx0 = sbX + (SB_W - tw) / 2;
+    const headH = 11;
+    const rowH = 7;
+    const tableTop = topoUtil - 5;
+    const maxLinhas = Math.max(1, Math.floor((tableTop - headH - (yCursor - h) - 12) / rowH));
     const linhasQ = vs.slice(0, maxLinhas);
-    let qy = headY - 7;
-    for (const v of linhasQ) {
-      const vals = [v.codigo, `${v.codigo}-${v.vante}`, v.lonFmt, v.latFmt, v.azFmt, v.distFmt, v.alt];
-      let vx = innerX;
-      for (const [i, val] of vals.entries()) { texto(c, val, vx, qy, 4.2); vx += cols[i]; }
-      qy -= 5.4;
+    const tableBot = tableTop - headH - linhasQ.length * rowH;
+    // moldura, linha do cabeçalho e divisões verticais
+    caixa(c, tx0, tableBot, tw, tableTop - tableBot, 1);
+    linha(c, tx0, tableTop - headH, tx0 + tw, tableTop - headH, 1);
+    let vx = tx0;
+    for (const w of cols.slice(0, -1)) { vx += w; linha(c, vx, tableBot, vx, tableTop, 0.6); }
+    // divisões horizontais entre as linhas
+    for (let r = 1; r < linhasQ.length; r++) {
+      const ly = tableTop - headH - r * rowH;
+      linha(c, tx0, ly, tx0 + tw, ly, 0.35, CINZA);
     }
-    if (vs.length > maxLinhas) texto(c, `… +${vs.length - maxLinhas} vértices (ver memorial tabular)`, innerX, qy, 4.5, { cor: CINZA });
+    // cabeçalho centrado por coluna
+    let hx = tx0;
+    for (const [i, hh] of heads.entries()) {
+      texto(c, hh, hx + cols[i] / 2, tableTop - headH + 3.2, 6, { bold: true, center: true });
+      hx += cols[i];
+    }
+    // valores centrados por coluna
+    for (const [r, v] of linhasQ.entries()) {
+      const vals = [v.codigo, `${v.codigo}-${v.vante}`, v.lonFmt, v.latFmt, v.azFmt, v.distFmt, v.alt];
+      const ty = tableTop - headH - (r + 1) * rowH + 2;
+      let cx2 = tx0;
+      for (const [i, val] of vals.entries()) { texto(c, val, cx2 + cols[i] / 2, ty, 5, { center: true }); cx2 += cols[i]; }
+    }
+    if (vs.length > linhasQ.length) {
+      texto(c, `… +${vs.length - linhasQ.length} vértices (ver memorial tabular)`, tx0, tableBot - 7, 5, { cor: CINZA });
+    }
     yCursor -= h;
   }
 
-  // ---- PLANTA DE SITUAÇÃO ----
+  // ---- PLANTA DE SITUAÇÃO (imagem de satélite enviada na geração) ----
   {
     const h = (sbTop - sbBot) * alturas.situacao;
-    caixaTitulo(c, sbX, yCursor - h, SB_W, h, "PLANTA DE SITUAÇÃO");
-    texto(c, "(imagem de satélite — opcional)", sbX + SB_W / 2, yCursor - h / 2, 7, { cor: CINZA, center: true });
+    const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "PLANTA DE SITUAÇÃO");
+    if (d.satelite) {
+      const img = d.satelite.tipo === "png" ? await pdf.embedPng(d.satelite.bytes) : await pdf.embedJpg(d.satelite.bytes);
+      const maxW = SB_W - 12, maxH = topoUtil - (yCursor - h) - 10;
+      const sc = Math.min(maxW / img.width, maxH / img.height);
+      page.drawImage(img, {
+        x: sbX + (SB_W - img.width * sc) / 2,
+        y: (yCursor - h) + 5 + (maxH - img.height * sc) / 2,
+        width: img.width * sc, height: img.height * sc,
+      });
+    } else {
+      texto(c, "(envie a imagem de satélite ao gerar a planta)", sbX + SB_W / 2, yCursor - h / 2, 7, { cor: CINZA, center: true });
+    }
     yCursor -= h;
   }
 

@@ -52,6 +52,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [erroPecas, setErroPecas] = useState<string | null>(null);
   const [plantaUrl, setPlantaUrl] = useState<string | null>(null);
   const [gerandoPlanta, setGerandoPlanta] = useState(false);
+  const [sigefB64, setSigefB64] = useState<string | null>(null);
+  const [sigefNome, setSigefNome] = useState<string | null>(null);
+  const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
 
   const [clientes, setClientes] = useState<Cliente[]>([]);
 
@@ -72,6 +75,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         setCartorios([...cs]);
       });
   }, [inicial.servico.id]);
+
+  // etapa 1 concluída: documentos (ODS+DOCX) já gerados nesta sessão ou em sessão anterior
+  const docsProntos = gerado !== null || servico.status === "gerado";
 
   const credenciado = credenciados.find((c) => c.id === servico.credenciado_id) ?? null;
   const rtSel = rts.find((r) => r.id === servico.rt_id) ?? null;
@@ -191,13 +197,36 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     }
   }
 
-  // ------- planta A1 -------
+  // ------- etapa 2: documento do SIGEF -------
+  async function carregarSigef(file: File) {
+    setSigefB64(bufParaBase64(await file.arrayBuffer()));
+    setSigefNome(file.name);
+    setErroPecas(null);
+    setMsg("PDF do SIGEF carregado — agora gere a Planta A1 e as peças técnicas.");
+  }
+
+  async function carregarSatelite(file: File) {
+    const ehPng = /png$/i.test(file.type) || /\.png$/i.test(file.name);
+    if (!ehPng && !/jpe?g$/i.test(file.type) && !/\.jpe?g$/i.test(file.name)) {
+      setErro("Envie a imagem de satélite em PNG ou JPG");
+      return;
+    }
+    setErro(null);
+    setSatelite({ b64: bufParaBase64(await file.arrayBuffer()), tipo: ehPng ? "png" : "jpg", nome: file.name });
+  }
+
+  // ------- etapa 3A: planta A1 -------
   async function gerarPlanta() {
+    if (!sigefB64) { setErro("Envie o PDF do SIGEF na etapa anterior"); return; }
+    if (!satelite) { setErro("Envie a imagem de satélite para gerar a planta"); return; }
     setGerandoPlanta(true);
     setErro(null);
     try {
       await salvar();
-      const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", { servico_id: servico.id });
+      const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", {
+        servico_id: servico.id, pdf_base64: sigefB64,
+        satelite_base64: satelite.b64, satelite_tipo: satelite.tipo,
+      });
       setPlantaUrl(r.planta_pdf);
       setMsg("Planta A1 gerada.");
     } catch (e) {
@@ -207,14 +236,14 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     }
   }
 
-  // ------- peças técnicas -------
-  async function gerarPecas(file: File) {
+  // ------- etapa 3B: peças técnicas -------
+  async function gerarPecas() {
+    if (!sigefB64) { setErroPecas("Envie o PDF do SIGEF na etapa anterior"); return; }
     setGerandoPecas(true);
     setErroPecas(null);
     try {
       await salvar();
-      const pdf_base64 = bufParaBase64(await file.arrayBuffer());
-      const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64 });
+      const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64: sigefB64 });
       setPecas(r);
     } catch (e) {
       setErroPecas(e instanceof Error ? e.message : String(e));
@@ -277,7 +306,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         <span className="step-seta">→</span>
         <span className="step ativa"><span className="num">2</span> Conferência</span>
         <span className="step-seta">→</span>
-        <span className={`step ${gerado ? "ativa" : ""}`}><span className="num">3</span> Documentos</span>
+        <span className={`step ${docsProntos ? "feita" : ""}`}><span className="num">{docsProntos ? "✓" : "3"}</span> Documentos</span>
+        <span className="step-seta">→</span>
+        <span className={`step ${sigefB64 ? "feita" : docsProntos ? "ativa" : ""}`}><span className="num">{sigefB64 ? "✓" : "4"}</span> PDF do SIGEF</span>
+        <span className="step-seta">→</span>
+        <span className={`step ${sigefB64 ? "ativa" : ""}`}><span className="num">5</span> Planta & Peças</span>
       </div>
 
       <header className="topo">
@@ -513,7 +546,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         <section className="bloco gerados">
           <header>
             <span className="num-bloco">✓</span>
-            <h3>Documentos gerados</h3>
+            <h3>Etapa 1 — Documentos gerados</h3>
             <span className="desc">regeração ilimitada — os arquivos são sobrescritos a cada geração</span>
           </header>
           <div className="downloads">
@@ -523,15 +556,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <a className="botao-download" href={gerado.planilha_ods} target="_blank" rel="noreferrer">
               <span className="ext">ODS</span> Planilha SIGEF
             </a>
-            {plantaUrl ? (
-              <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
-                <span className="ext">PDF</span> Planta A1
-              </a>
-            ) : (
-              <button disabled={gerandoPlanta} onClick={gerarPlanta}>
-                {gerandoPlanta ? "Gerando planta…" : "🗺 Gerar Planta A1 (PDF)"}
-              </button>
-            )}
           </div>
           <p style={{ color: "var(--texto-2)" }}>
             Vértice inicial {gerado.resumo.verticeInicial} · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
@@ -539,12 +563,85 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         </section>
       )}
 
-      {/* ---------------- Bloco 4: peças técnicas ---------------- */}
+      {/* ---------------- Etapa 2: documento do SIGEF (só após gerar os documentos) ---------------- */}
+      {!docsProntos ? (
+        <section className="bloco" style={{ opacity: 0.6 }}>
+          <header>
+            <span className="num-bloco">4</span>
+            <h3>Próximas etapas</h3>
+            <span className="desc">liberadas após a geração dos documentos</span>
+          </header>
+          <p style={{ color: "var(--texto-2)", margin: 0 }}>
+            1) Gere o Memorial (DOCX) e a Planilha (ODS) no botão "⚡ Gerar documentos" abaixo ·{" "}
+            2) certifique no SIGEF e envie aqui o PDF · 3) gere a Planta A1 e as peças técnicas.
+          </p>
+        </section>
+      ) : (
+        <section className="bloco" id="bloco-sigef">
+          <header>
+            <span className="num-bloco">4</span>
+            <h3>Etapa 2 — Documento do SIGEF</h3>
+            <span className="desc">após certificar a planilha no SIGEF, envie o PDF de prévia/certificação — ele libera a planta e as peças</span>
+          </header>
+          {sigefB64 ? (
+            <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+              <span className="ok" style={{ margin: 0 }}>📄 {sigefNome} carregado</span>
+              <label style={{ cursor: "pointer", color: "var(--primaria)" }}>
+                trocar PDF
+                <input type="file" accept=".pdf" hidden
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSigef(f); e.target.value = ""; }} />
+              </label>
+            </div>
+          ) : (
+            <label className="dropzone dropzone-pdf" style={{ padding: "26px 20px" }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSigef(f); }}>
+              <b>📄 Arraste ou clique para enviar o PDF de prévia do SIGEF</b>
+              <span>com ele o sistema gera a Planta A1 e as 7 peças técnicas</span>
+              <input type="file" accept=".pdf" hidden
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSigef(f); e.target.value = ""; }} />
+            </label>
+          )}
+        </section>
+      )}
+
+      {/* ---------------- Etapa 3A: planta A1 ---------------- */}
+      {docsProntos && sigefB64 && (
+        <section className="bloco" id="bloco-planta">
+          <header>
+            <span className="num-bloco">5</span>
+            <h3>Etapa 3A — Planta A1</h3>
+            <span className="desc">escala automática proporcional ao tamanho da propriedade · carimbo e desenhista vêm das Configurações</span>
+          </header>
+          <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+            <label className="dropzone" style={{ padding: "14px 18px", flex: "1 1 280px" }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
+              {satelite
+                ? <b>🛰 {satelite.nome}</b>
+                : <><b>🛰 Enviar imagem de satélite (PNG/JPG)</b><span>obrigatória — entra no quadro PLANTA DE SITUAÇÃO</span></>}
+              <input type="file" accept="image/png,image/jpeg" hidden
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
+            </label>
+            <button className="principal" disabled={gerandoPlanta} onClick={gerarPlanta}>
+              {gerandoPlanta ? "Gerando planta…" : "🗺 Gerar Planta A1 (PDF)"}
+            </button>
+            {plantaUrl && (
+              <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
+                <span className="ext">PDF</span> Planta A1
+              </a>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ---------------- Etapa 3B: peças técnicas ---------------- */}
+      {docsProntos && sigefB64 && (
       <section className="bloco" id="bloco-pecas">
         <header>
-          <span className="num-bloco">4</span>
-          <h3>Peças técnicas</h3>
-          <span className="desc">envie o PDF de prévia do SIGEF e gere as peças (memorial, tabular, cartas, declarações, requerimento)</span>
+          <span className="num-bloco">6</span>
+          <h3>Etapa 3B — Peças técnicas</h3>
+          <span className="desc">os dados abaixo + o memorial + o PDF do SIGEF viram as 7 peças (memorial, tabular, cartas, declarações, requerimento)</span>
         </header>
         <div className="grade" style={{ marginBottom: 12 }}>
           <label>Situação do imóvel
@@ -597,18 +694,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <input value={rtExtras.cpf} onChange={(e) => setRtExtras({ ...rtExtras, cpf: e.target.value })} />
           </label>
         </div>
-        <label className="dropzone dropzone-pdf" style={{ padding: "26px 20px" }}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && !gerandoPecas) gerarPecas(f); }}>
-          {gerandoPecas ? (
-            <><span className="spinner" /> <b>Gerando as 7 peças técnicas…</b><span>lendo o PDF do SIGEF e preenchendo os modelos</span></>
-          ) : (
-            <><b>📄 Arraste ou clique para enviar o PDF de prévia do SIGEF</b>
-              <span>os dados acima + o memorial gerado + o PDF viram as 7 peças prontas</span></>
-          )}
-          <input type="file" accept=".pdf" hidden disabled={gerandoPecas}
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) gerarPecas(f); e.target.value = ""; }} />
-        </label>
+        <button className="principal" disabled={gerandoPecas} onClick={gerarPecas}>
+          {gerandoPecas ? "Gerando as 7 peças técnicas…" : "⚡ Gerar peças técnicas"}
+        </button>
         {erroPecas && <div className="erro">{erroPecas}</div>}
         {pecas && (
           <div className="gerados" style={{ border: "none", background: "transparent", padding: "12px 0 0" }}>
@@ -626,6 +714,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           </div>
         )}
       </section>
+      )}
 
       {/* ---------------- Histórico de documentos ---------------- */}
       <section className="bloco">

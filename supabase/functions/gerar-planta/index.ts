@@ -46,7 +46,7 @@ function gmsPdfParaDeg(s: string): number {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { servico_id, pdf_base64 } = await req.json();
+    const { servico_id, pdf_base64, satelite_base64, satelite_tipo } = await req.json();
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -88,11 +88,18 @@ Deno.serve(async (req) => {
           azFmt: l.azimute, distFmt: l.dist, vante: l.vante,
         };
       });
-      // trechos: por codigo_inicio (serviço pecas) ou mudança de confrontação
+      // trechos: por codigo_inicio (serviço pecas), pelo código do vértice de
+      // início (serviço geo, códigos já alocados) ou mudança de confrontação
       const idxDe = new Map(sigef.linhas.map((l, i) => [l.codigo, i]));
+      const codPorOrdem = new Map((vertRows ?? []).filter((v) => v.codigo).map((v) => [v.ordem, v.codigo as string]));
       let starts: { idx: number; descritivo: string; tipoLimite: string }[] = (trechoRows ?? [])
-        .filter((t) => t.codigo_inicio && idxDe.has(t.codigo_inicio))
-        .map((t) => ({ idx: idxDe.get(t.codigo_inicio)!, descritivo: t.descritivo || "", tipoLimite: t.tipo_limite }));
+        .map((t) => {
+          const cod = t.codigo_inicio ?? codPorOrdem.get(t.vertice_inicio_ordem) ?? null;
+          return cod && idxDe.has(cod)
+            ? { idx: idxDe.get(cod)!, descritivo: t.descritivo || t.apelido_txt || "", tipoLimite: t.tipo_limite }
+            : null;
+        })
+        .filter((s): s is { idx: number; descritivo: string; tipoLimite: string } => s !== null);
       if (starts.length === 0) {
         let ultima = "";
         sigef.linhas.forEach((l, i) => {
@@ -185,6 +192,9 @@ Deno.serve(async (req) => {
       desenhista: cfgDes?.value ?? "",
       dataStr: dataHojeBR(),
       logo,
+      satelite: satelite_base64
+        ? { bytes: b64ToBytes(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
+        : null,
     };
 
     const pdfBytes = await gerarPlantaPdf(dados);

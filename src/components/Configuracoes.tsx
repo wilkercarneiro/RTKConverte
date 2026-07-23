@@ -62,8 +62,8 @@ export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
         <p className="sub">Identidade da empresa usada nos documentos gerados.</p>
 
         <div>
-          <b>Logo da empresa</b>
-          <p className="sub" style={{ margin: "2px 0 8px" }}>aparece no "Carimbo da Empresa" da planta (PNG ou JPG, fundo claro)</p>
+          <b>Carimbo da empresa (logo)</b>
+          <p className="sub" style={{ margin: "2px 0 8px" }}>aparece no quadro "Carimbo da Empresa" de todas as plantas geradas (PNG ou JPG, fundo claro)</p>
           {logoUrl && (
             <div style={{ border: "1px solid var(--borda)", borderRadius: 10, padding: 14, marginBottom: 10, textAlign: "center", background: "#fff" }}>
               <img src={logoUrl} alt="logo da empresa" style={{ maxHeight: 90, maxWidth: "80%" }} />

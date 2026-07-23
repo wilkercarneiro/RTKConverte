@@ -37,6 +37,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   const [msg, setMsg] = useState<string | null>(null);
   const [pecas, setPecas] = useState<PecasGeradas | null>(null);
   const [plantaUrl, setPlantaUrl] = useState<string | null>(null);
+  const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
 
   useEffect(() => {
     supabase.from("responsaveis_tecnicos").select().then(({ data }) => setRts((data as RT[]) ?? []));
@@ -147,14 +148,28 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     }
   }
 
+  async function carregarSatelite(file: File) {
+    const ehPng = /png$/i.test(file.type) || /\.png$/i.test(file.name);
+    if (!ehPng && !/jpe?g$/i.test(file.type) && !/\.jpe?g$/i.test(file.name)) {
+      setErro("Envie a imagem de satélite em PNG ou JPG");
+      return;
+    }
+    setErro(null);
+    setSatelite({ b64: bufParaBase64(await file.arrayBuffer()), tipo: ehPng ? "png" : "jpg", nome: file.name });
+  }
+
   async function gerarPlanta() {
     if (!servico) return;
     if (!pdfB64) { setErro("Envie o PDF do SIGEF para gerar a planta"); return; }
+    if (!satelite) { setErro("Envie a imagem de satélite para gerar a planta"); return; }
     setOcupado("Gerando a Planta A1…");
     setErro(null);
     try {
       await salvar();
-      const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", { servico_id: servico.id, pdf_base64: pdfB64 });
+      const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", {
+        servico_id: servico.id, pdf_base64: pdfB64,
+        satelite_base64: satelite.b64, satelite_tipo: satelite.tipo,
+      });
       setPlantaUrl(r.planta_pdf);
       setMsg("Planta A1 gerada.");
     } catch (e) {
@@ -291,6 +306,11 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
           <button className="principal" disabled={!!ocupado} onClick={() => gerar()}>
             {ocupado ? "Gerando…" : "⚡ Gerar peças técnicas"}
           </button>
+          <label style={{ cursor: "pointer", color: "var(--primaria)" }}>
+            🛰 {satelite ? satelite.nome : "imagem de satélite (obrigatória p/ planta)"}
+            <input type="file" accept="image/png,image/jpeg" hidden
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
+          </label>
           <button disabled={!!ocupado} onClick={gerarPlanta}>🗺 Gerar Planta A1 (PDF)</button>
           {plantaUrl && (
             <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
