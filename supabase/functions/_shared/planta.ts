@@ -62,9 +62,14 @@ const VERDE = rgb(0.05, 0.65, 0.15);
 const PRETO = rgb(0, 0, 0);
 const CINZA = rgb(0.45, 0.45, 0.45);
 
-// degraus finos p/ a escala acompanhar o tamanho da propriedade (polígono
-// ocupando o máximo da área de desenho, sem "saltos" grandes entre escalas)
-const ESCALAS = [250, 500, 750, 1000, 1250, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 7500, 10000, 12500, 15000, 20000, 25000, 30000, 40000, 50000];
+// escala proporcional ao desenho: menor escala redonda em que o polígono cabe
+// (passo 50/100/500 conforme a ordem de grandeza) — sem saltar p/ degraus
+// padrão distantes, que deixavam o polígono pequeno e a folha vazia
+function escalaProporcional(mPorPtMin: number): number {
+  const raw = mPorPtMin / 0.000352778;
+  const passo = raw <= 1000 ? 50 : raw <= 5000 ? 100 : 500;
+  return Math.max(100, Math.ceil(raw / passo) * passo);
+}
 
 function letraFuso(latDeg: number): string {
   const bandas = "CDEFGHJKLMNPQRSTUVWX";
@@ -94,9 +99,9 @@ function caixa(c: Ctx, x: number, y: number, w: number, h: number, esp = 1) {
 
 function caixaTitulo(c: Ctx, x: number, y: number, w: number, h: number, titulo: string): number {
   caixa(c, x, y, w, h);
-  const th = 14;
-  caixa(c, x + w / 2 - 90, y + h - th, 180, th, 1);
-  texto(c, titulo, x + w / 2, y + h - th + 4, 8, { bold: true, center: true });
+  const th = 16;
+  caixa(c, x + w / 2 - 100, y + h - th, 200, th, 1);
+  texto(c, titulo, x + w / 2, y + h - th + 4.5, 9, { bold: true, center: true });
   return y + h - th; // topo útil
 }
 
@@ -133,10 +138,10 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const vs = d.vertices;
   const minE = Math.min(...vs.map((v) => v.e)), maxE = Math.max(...vs.map((v) => v.e));
   const minN = Math.min(...vs.map((v) => v.n)), maxN = Math.max(...vs.map((v) => v.n));
-  const spanE = (maxE - minE) * 1.38 || 100; // folga p/ rótulos externos
-  const spanN = (maxN - minN) * 1.25 || 100;
+  const spanE = (maxE - minE) * 1.30 || 100; // folga p/ rótulos externos
+  const spanN = (maxN - minN) * 1.22 || 100;
   const mPorPtMin = Math.max(spanE / dArea.w, spanN / dArea.h);
-  const escala = ESCALAS.find((s) => s * 0.000352778 >= mPorPtMin) ?? ESCALAS[ESCALAS.length - 1];
+  const escala = escalaProporcional(mPorPtMin);
   const mPorPt = escala * 0.000352778;
   const cxE = (minE + maxE) / 2, cxN = (minN + maxN) / 2;
   const dcx = dArea.x + dArea.w / 2, dcy = dArea.y + dArea.h / 2;
@@ -151,13 +156,13 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const n0 = Math.ceil((cxN - dArea.h / 2 * mPorPt) / passo) * passo;
   for (let e = e0; X(e) < dArea.x + dArea.w; e += passo) {
     linha(c, X(e), dArea.y, X(e), dArea.y + dArea.h, 0.4, CINZA, [2, 4]);
-    texto(c, `E=${fmtMilhar(e)}`, X(e) + 3, dArea.y + dArea.h - 40, 7, { cor: CINZA, rot: -90 });
-    texto(c, `E=${fmtMilhar(e)}`, X(e) + 3, dArea.y + 8, 7, { cor: CINZA, rot: -90 });
+    texto(c, `E=${fmtMilhar(e)}`, X(e) + 3, dArea.y + dArea.h - 46, 8, { cor: CINZA, rot: -90 });
+    texto(c, `E=${fmtMilhar(e)}`, X(e) + 3, dArea.y + 8, 8, { cor: CINZA, rot: -90 });
   }
   for (let n = n0; Y(n) < dArea.y + dArea.h; n += passo) {
     linha(c, dArea.x, Y(n), dArea.x + dArea.w, Y(n), 0.4, CINZA, [2, 4]);
-    texto(c, `N=${fmtMilhar(n)}`, dArea.x + 2, Y(n) + 2, 7, { cor: CINZA });
-    texto(c, `N=${fmtMilhar(n)}`, dArea.x + dArea.w - 62, Y(n) + 2, 7, { cor: CINZA });
+    texto(c, `N=${fmtMilhar(n)}`, dArea.x + 2, Y(n) + 2, 8, { cor: CINZA });
+    texto(c, `N=${fmtMilhar(n)}`, dArea.x + dArea.w - 70, Y(n) + 2, 8, { cor: CINZA });
   }
 
   // ------------------- trechos de estrada (linha dupla vermelha) -------------------
@@ -196,7 +201,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     let nx = X(v.e) - dcx, ny = Y(v.n) - dcy;
     const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
     void prev; void next;
-    texto(c, v.codigo, X(v.e) + nx * 6, Y(v.n) + ny * 6 - 1.5, 3.6, { cor: PRETO });
+    texto(c, v.codigo, X(v.e) + nx * 8, Y(v.n) + ny * 8 - 2, 5, { cor: PRETO });
   }
 
   // ------------------- divisões de confrontação + rótulos -------------------
@@ -208,10 +213,10 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   ];
   // bloco do imóvel no centroide
   {
-    let ty = dcy + (centroLinhas.length * 11) / 2;
+    let ty = dcy + (centroLinhas.length * 13) / 2;
     for (const [li, lt] of centroLinhas.entries()) {
-      texto(c, lt, dcx, ty, 8, { bold: li === 1, center: true });
-      ty -= 11;
+      texto(c, lt, dcx, ty, 10, { bold: li === 1, center: true });
+      ty -= 13;
     }
   }
   for (const t of d.trechos) {
@@ -226,24 +231,43 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
       const b = vs[(meioIdx + 1) % nv];
       const ang = Math.atan2(Y(b.n) - Y(v.n), X(b.e) - X(v.e)) * 180 / Math.PI;
       const nome = linhasDescritivo(t.descritivo)[0] ?? "";
-      texto(c, nome, X(v.e) + nx * 22, Y(v.n) + ny * 22, 11, { bold: true, cor: PRETO, rot: ang > 90 || ang < -90 ? ang + 180 : ang });
+      texto(c, nome, X(v.e) + nx * 24, Y(v.n) + ny * 24, 12, { bold: true, cor: PRETO, rot: ang > 90 || ang < -90 ? ang + 180 : ang });
       continue;
     }
     // linha verde de divisão no INÍCIO do trecho
     const vi = vs[t.inicioIdx % nv];
     let gx = X(vi.e) - dcx, gy = Y(vi.n) - dcy;
     const gl = Math.hypot(gx, gy) || 1; gx /= gl; gy /= gl;
-    linha(c, X(vi.e), Y(vi.n), X(vi.e) + gx * 55, Y(vi.n) + gy * 55, 1.2, VERDE);
-    // rótulo do confrontante no meio do trecho, deslocado p/ fora
+    linha(c, X(vi.e), Y(vi.n), X(vi.e) + gx * 65, Y(vi.n) + gy * 65, 1.4, VERDE);
+    // rótulo do confrontante: cabeçalho (matrícula + imóvel) e, por pessoa,
+    // linha de assinatura larga com nome e CPF centralizados embaixo
     const lts = linhasDescritivo(t.descritivo);
-    const lx = X(v.e) + nx * 95, lyTop = Y(v.n) + ny * 60 + lts.length * 9;
-    let ty = lyTop;
-    for (const lt of lts) { texto(c, lt, lx - 60, ty, 7.5); ty -= 9.5; }
-    // linhas de assinatura (uma por pessoa)
-    const pessoas = lts.filter((l) => /^CPF/i.test(l)).length || 1;
-    for (let s = 0; s < pessoas; s++) {
-      linha(c, lx - 60, ty - 2, lx + 90, ty - 2, 0.8);
-      ty -= 13;
+    const header: string[] = [];
+    const pessoas: { nome: string; cpf: string }[] = [];
+    for (let k = 0; k < lts.length; k++) {
+      if (/^CPF/i.test(lts[k])) continue;
+      if (k + 1 < lts.length && /^CPF/i.test(lts[k + 1])) pessoas.push({ nome: lts[k], cpf: lts[k + 1] });
+      else header.push(lts[k]);
+    }
+    const ASS_W = 170;                       // largura da linha de assinatura
+    const H_HEADER = 11, H_PESSOA = 34;
+    const altura = header.length * H_HEADER + 6 + Math.max(pessoas.length, 1) * H_PESSOA;
+    const lx = X(v.e) + nx * 115;
+    let ty = Y(v.n) + ny * 70 + altura / 2;  // bloco centralizado no ponto médio do trecho
+    for (const [hi, ht] of header.entries()) {
+      texto(c, ht, lx, ty, 9, { center: true, bold: hi === header.length - 1 });
+      ty -= H_HEADER;
+    }
+    ty -= 6;
+    if (pessoas.length === 0) {
+      linha(c, lx - ASS_W / 2, ty, lx + ASS_W / 2, ty, 0.9);
+    } else {
+      for (const p of pessoas) {
+        linha(c, lx - ASS_W / 2, ty, lx + ASS_W / 2, ty, 0.9);
+        texto(c, p.nome, lx, ty - 10, 8.5, { center: true, bold: true });
+        texto(c, p.cpf, lx, ty - 19, 8, { center: true });
+        ty -= H_PESSOA;
+      }
     }
   }
 
@@ -273,8 +297,8 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     const cols = [54, 88, 70, 70, 56, 48, 40];
     const tw = cols.reduce((a, b) => a + b, 0);
     const tx0 = sbX + (SB_W - tw) / 2;
-    const headH = 11;
-    const rowH = 7;
+    const headH = 12;
+    const rowH = 8;
     const tableTop = topoUtil - 5;
     const maxLinhas = Math.max(1, Math.floor((tableTop - headH - (yCursor - h) - 12) / rowH));
     const linhasQ = vs.slice(0, maxLinhas);
@@ -292,7 +316,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     // cabeçalho centrado por coluna
     let hx = tx0;
     for (const [i, hh] of heads.entries()) {
-      texto(c, hh, hx + cols[i] / 2, tableTop - headH + 3.2, 6, { bold: true, center: true });
+      texto(c, hh, hx + cols[i] / 2, tableTop - headH + 3.5, 6.5, { bold: true, center: true });
       hx += cols[i];
     }
     // valores centrados por coluna
@@ -300,7 +324,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
       const vals = [v.codigo, `${v.codigo}-${v.vante}`, v.lonFmt, v.latFmt, v.azFmt, v.distFmt, v.alt];
       const ty = tableTop - headH - (r + 1) * rowH + 2;
       let cx2 = tx0;
-      for (const [i, val] of vals.entries()) { texto(c, val, cx2 + cols[i] / 2, ty, 5, { center: true }); cx2 += cols[i]; }
+      for (const [i, val] of vals.entries()) { texto(c, val, cx2 + cols[i] / 2, ty, 5.5, { center: true }); cx2 += cols[i]; }
     }
     if (vs.length > linhasQ.length) {
       texto(c, `… +${vs.length - linhasQ.length} vértices (ver memorial tabular)`, tx0, tableBot - 7, 5, { cor: CINZA });
@@ -353,15 +377,15 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     const colEsq = sbX + 8, colDir = sbX + SB_W / 2 + 8;
     let py = topoUtil - 14;
     const campo = (rot: string, val: string, x: number, y: number) => {
-      texto(c, rot, x, y, 6, { bold: true, cor: CINZA });
-      texto(c, val, x, y - 8, 7.5);
+      texto(c, rot, x, y, 6.5, { bold: true, cor: CINZA });
+      texto(c, val, x, y - 9, 8.5);
     };
     campo("Denominação:", d.denominacao.toUpperCase(), colEsq, py);
     campo("TRT:", d.trt, colDir, py);
     py -= 22;
-    texto(c, "Proprietário(s):", colEsq, py, 6, { bold: true, cor: CINZA });
-    let ppy = py - 8;
-    for (const p of d.proprietarios) { texto(c, p.nome.toUpperCase(), colEsq, ppy, 7); ppy -= 9; }
+    texto(c, "Proprietário(s):", colEsq, py, 6.5, { bold: true, cor: CINZA });
+    let ppy = py - 9;
+    for (const p of d.proprietarios) { texto(c, p.nome.toUpperCase(), colEsq, ppy, 8); ppy -= 10; }
     campo("Matrícula do Imóvel:", d.matricula, colDir, py);
     campo("Código do Cartório (CNS):", d.cns, colDir, py - 22);
     campo("Código INCRA:", d.sncr, colDir, py - 44);
@@ -369,18 +393,18 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     // RT
     const rtY = yCursor - h + 44;
     linha(c, sbX, rtY + 24, sbX + SB_W, rtY + 24, 0.8);
-    texto(c, "RESPONSÁVEL TÉCNICO", colEsq, rtY + 15, 6, { bold: true, cor: CINZA });
-    texto(c, d.rt.nome.toUpperCase(), colEsq, rtY + 6, 7.5, { bold: true });
-    texto(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, rtY - 3, 6.5);
-    texto(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}   TRT: ${d.trt}`, colEsq, rtY - 12, 6.5);
+    texto(c, "RESPONSÁVEL TÉCNICO", colEsq, rtY + 15, 6.5, { bold: true, cor: CINZA });
+    texto(c, d.rt.nome.toUpperCase(), colEsq, rtY + 5, 8.5, { bold: true });
+    texto(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, rtY - 4, 7);
+    texto(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}   TRT: ${d.trt}`, colEsq, rtY - 13, 7);
     // selos
     const seloW = (SB_W - 24) / 2;
     for (const [i, p] of d.proprietarios.slice(0, 2).entries()) {
       const sx = sbX + 8 + i * (seloW + 8);
-      caixa(c, sx, yCursor - h + 4, seloW, 34, 0.8);
-      texto(c, "SELO DE RECONHECIMENTO — CARTÓRIO", sx + seloW / 2, yCursor - h + 28, 5, { bold: true, center: true, cor: CINZA });
-      texto(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 18, 5.5, { center: true });
-      texto(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 10, 5.5, { center: true });
+      caixa(c, sx, yCursor - h + 4, seloW, 36, 0.8);
+      texto(c, "SELO DE RECONHECIMENTO — CARTÓRIO", sx + seloW / 2, yCursor - h + 30, 5.5, { bold: true, center: true, cor: CINZA });
+      texto(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 19, 6.5, { center: true });
+      texto(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 10, 6.5, { center: true });
     }
     yCursor -= h;
   }
@@ -404,8 +428,8 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
       const col = i % 4, row = Math.floor(i / 4);
       const ix = sbX + col * cw + 6;
       const iy = yCursor - 16 - row * (h / 2 - 4);
-      texto(c, rot, ix, iy, 5.5, { bold: true, cor: CINZA });
-      texto(c, val, ix, iy - 10, val.length > 22 ? 5.5 : 7);
+      texto(c, rot, ix, iy, 6, { bold: true, cor: CINZA });
+      texto(c, val, ix, iy - 10, val.length > 22 ? 6 : 8);
       if (col > 0) linha(c, sbX + col * cw, yCursor - h, sbX + col * cw, yCursor, 0.5);
     }
     linha(c, sbX, yCursor - h / 2, sbX + SB_W, yCursor - h / 2, 0.5);
@@ -413,19 +437,19 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
 
   // legenda no canto inferior esquerdo da área de desenho
   {
-    const lx = dArea.x + 6, lyTop = dArea.y + 74;
-    caixa(c, lx - 4, dArea.y + 2, 190, 78, 0.8);
-    texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 6, 6.5, { bold: true });
+    const lx = dArea.x + 6, lyTop = dArea.y + 84;
+    caixa(c, lx - 4, dArea.y + 2, 214, 88, 0.8);
+    texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 6, 7.5, { bold: true });
     const itens: [ReturnType<typeof rgb>, string][] = [
       [VERMELHO, "ESTRADA"], [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
     ];
-    let lyy = lyTop - 18;
+    let lyy = lyTop - 19;
     for (const [cor, nome] of itens) {
       linha(c, lx, lyy + 2, lx + 26, lyy + 2, 2, cor);
-      texto(c, nome, lx + 32, lyy, 6);
-      lyy -= 12;
+      texto(c, nome, lx + 32, lyy, 7);
+      lyy -= 13;
     }
-    texto(c, "MATR. = MATRÍCULA", lx, lyy, 6);
+    texto(c, "MATR. = MATRÍCULA", lx, lyy, 7);
   }
 
   return await pdf.save();
