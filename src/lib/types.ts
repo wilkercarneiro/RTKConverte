@@ -1,5 +1,30 @@
+export interface Cliente {
+  id: string;
+  created_at?: string;
+  nome: string;
+  cpf_cnpj: string | null;
+  genero: "M" | "F";
+  endereco: string | null;
+  telefone: string | null;
+  email: string | null;
+  observacoes: string | null;
+}
+
+export interface DocumentoGerado {
+  id: string;
+  servico_id: string;
+  versao: number;
+  tipo: string;
+  titulo: string;
+  path: string;
+  created_at: string;
+}
+
 export interface Servico {
   id: string;
+  created_at?: string;
+  tipo: "geo" | "pecas";
+  cliente_id?: string | null;
   status: "rascunho" | "gerado";
   nome_arquivo_txt: string | null;
   fuso_utm: number | null;
@@ -21,6 +46,14 @@ export interface Servico {
   parcela_numero: string | null;
   lado: string | null;
   denominacao_parcela: string | null;
+  // peças técnicas
+  detentor_genero: "M" | "F" | null;
+  requerente2_nome: string | null;
+  requerente2_cpf: string | null;
+  requerente2_genero: "M" | "F" | null;
+  endereco_detentor: string | null;
+  area_matricula_ha: string | null;
+  via_dominio: string | null;
 }
 
 export interface Vertice {
@@ -46,6 +79,7 @@ export interface Trecho {
   id?: string;
   servico_id: string;
   vertice_inicio_ordem: number;
+  codigo_inicio?: string | null;
   apelido_txt: string | null;
   descritivo: string;
   tipo_limite: string;
@@ -68,6 +102,10 @@ export interface RT {
   crea: string | null;
   trt: string | null;
   cpf: string | null;
+  formacao: string | null;
+  conselho_sigla: string | null;
+  conselho_numero: string | null;
+  identidade: string | null;
 }
 
 export interface PreviewParse {

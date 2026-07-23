@@ -11,7 +11,7 @@ export interface ResultadoParse {
   preview: PreviewParse;
 }
 
-export function Upload({ onParsed }: { onParsed: (r: ResultadoParse) => void }) {
+export function Upload({ onParsed, onVoltar }: { onParsed: (r: ResultadoParse) => void; onVoltar?: () => void }) {
   const [arrastando, setArrastando] = useState(false);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -44,7 +44,8 @@ export function Upload({ onParsed }: { onParsed: (r: ResultadoParse) => void }) 
         <span className="step"><span className="num">3</span> Documentos</span>
       </div>
       <div className="upload-card">
-        <h2>Novo serviço de georreferenciamento</h2>
+        {onVoltar && <button className="fantasma" style={{ justifySelf: "start" }} onClick={onVoltar}>← Dashboard</button>}
+        <h2>Serviço 1 — Georreferenciamento</h2>
         <p className="sub">Envie o TXT gerado pela máquina de topografia. O sistema detecta o fuso,
           converte as coordenadas e sugere os trechos de confrontantes pelos rótulos.</p>
         <label>

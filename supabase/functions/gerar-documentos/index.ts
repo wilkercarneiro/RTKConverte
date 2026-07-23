@@ -186,9 +186,13 @@ Deno.serve(async (req) => {
     zipOds.file("content.xml", patched, { compression: "DEFLATE" });
     const odsBuf = await zipOds.generateAsync({ type: "uint8array" });
 
-    // ------------------------- upload + status -------------------------
-    const pDocx = `${servico_id}/memorial.docx`;
-    const pOds = `${servico_id}/planilha.ods`;
+    // ------------------------- upload + status + histórico -------------------------
+    // cada geração é uma nova VERSÃO preservada (histórico em documentos_gerados)
+    const { data: vmax } = await supa.from("documentos_gerados").select("versao")
+      .eq("servico_id", servico_id).order("versao", { ascending: false }).limit(1);
+    const versao = ((vmax?.[0]?.versao as number | undefined) ?? 0) + 1;
+    const pDocx = `${servico_id}/v${versao}/memorial.docx`;
+    const pOds = `${servico_id}/v${versao}/planilha.ods`;
     const u1 = await supa.storage.from("gerados").upload(pDocx, docxBuf, {
       upsert: true, contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
@@ -198,6 +202,10 @@ Deno.serve(async (req) => {
     });
     if (u2.error) throw u2.error;
     await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
+    await supa.from("documentos_gerados").insert([
+      { servico_id, versao, tipo: "memorial_docx", titulo: "Memorial Descritivo (DOCX)", path: pDocx },
+      { servico_id, versao, tipo: "planilha_ods", titulo: "Planilha SIGEF (ODS)", path: pOds },
+    ]);
 
     // URLs assinadas com download direto (Content-Disposition: attachment)
     const nomeBase = (servico.denominacao ?? "documento").replace(/[\\/:*?"<>|]/g, "-").trim();

@@ -8,14 +8,29 @@ import {
   SITUACOES, TIPOS_LIMITE, TIPOS_PESSOA, UFS,
 } from "../lib/domains";
 import { calcularPreviewLocal } from "../lib/preview";
-import type { Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
+import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
 import type { ResultadoParse } from "./Upload";
 import { CORES, MapaSVG } from "./MapaSVG";
+import { HistoricoDocs } from "./HistoricoDocs";
 
 interface Gerado {
   memorial_docx: string;
   planilha_ods: string;
   resumo: { areaHa: number; perimetroM: number; qtdM: number; qtdP: number; qtdV: number; verticeInicial: string };
+}
+
+interface PecasGeradas {
+  arquivos: { titulo: string; url: string }[];
+  resumo: { areaHa: string; perimetro: string; trt: string; vertices: number; cartas: number; via: string | null };
+}
+
+function bufParaBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
 }
 
 export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; onVoltar: () => void }) {
@@ -31,10 +46,19 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [erro, setErro] = useState<string | null>(null);
   const [gerado, setGerado] = useState<Gerado | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const [rtExtras, setRtExtras] = useState({ formacao: "", conselho_sigla: "CFTA", conselho_numero: "", identidade: "", cpf: "" });
+  const [pecas, setPecas] = useState<PecasGeradas | null>(null);
+  const [gerandoPecas, setGerandoPecas] = useState(false);
+  const [erroPecas, setErroPecas] = useState<string | null>(null);
+  const [plantaUrl, setPlantaUrl] = useState<string | null>(null);
+  const [gerandoPlanta, setGerandoPlanta] = useState(false);
+
+  const [clientes, setClientes] = useState<Cliente[]>([]);
 
   useEffect(() => {
     supabase.from("credenciados").select().then(({ data }) => setCredenciados(data ?? []));
     supabase.from("responsaveis_tecnicos").select().then(({ data }) => setRts(data ?? []));
+    supabase.from("clientes").select().order("nome").then(({ data }) => setClientes((data as Cliente[]) ?? []));
     // autocomplete a partir de serviços anteriores
     supabase.from("servicos").select("detentor_nome, detentor_cpf, cns").neq("id", inicial.servico.id)
       .then(({ data }) => {
@@ -50,6 +74,17 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   }, [inicial.servico.id]);
 
   const credenciado = credenciados.find((c) => c.id === servico.credenciado_id) ?? null;
+  const rtSel = rts.find((r) => r.id === servico.rt_id) ?? null;
+
+  // carrega extras do RT quando o RT selecionado muda
+  useEffect(() => {
+    if (rtSel) {
+      setRtExtras({
+        formacao: rtSel.formacao ?? "", conselho_sigla: rtSel.conselho_sigla ?? "CFTA",
+        conselho_numero: rtSel.conselho_numero ?? "", identidade: rtSel.identidade ?? "", cpf: rtSel.cpf ?? "",
+      });
+    }
+  }, [servico.rt_id, rts.length]);
   const verticeInicial = servico.vertice_inicial ?? 0;
   const trechosOrdenados = useMemo(
     () => [...trechos].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem),
@@ -151,6 +186,41 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     if (e4) throw e4;
     const { error: e5 } = await supabase.from("trechos_confrontantes").insert(trechos.map(({ id: _tid, ...t }) => t));
     if (e5) throw e5;
+    if (servico.rt_id) {
+      await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
+    }
+  }
+
+  // ------- planta A1 -------
+  async function gerarPlanta() {
+    setGerandoPlanta(true);
+    setErro(null);
+    try {
+      await salvar();
+      const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", { servico_id: servico.id });
+      setPlantaUrl(r.planta_pdf);
+      setMsg("Planta A1 gerada.");
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGerandoPlanta(false);
+    }
+  }
+
+  // ------- peças técnicas -------
+  async function gerarPecas(file: File) {
+    setGerandoPecas(true);
+    setErroPecas(null);
+    try {
+      await salvar();
+      const pdf_base64 = bufParaBase64(await file.arrayBuffer());
+      const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64 });
+      setPecas(r);
+    } catch (e) {
+      setErroPecas(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGerandoPecas(false);
+    }
   }
 
   async function gerar() {
@@ -211,7 +281,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       </div>
 
       <header className="topo">
-        <button className="fantasma" onClick={onVoltar}>← Novo upload</button>
+        <button className="fantasma" onClick={onVoltar}>← Dashboard</button>
         <span className="arquivo">📄 {servico.nome_arquivo_txt}</span>
         <span className="esticar" />
         <label>Fuso UTM{" "}
@@ -233,6 +303,22 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <span className="desc">identificação SIGEF do detentor e da área</span>
         </header>
         <div className="grade">
+          <label>Cliente
+            <select value={servico.cliente_id ?? ""} onChange={(e) => {
+              const cli = clientes.find((c) => c.id === e.target.value) ?? null;
+              setServico((s) => ({
+                ...s,
+                cliente_id: cli?.id ?? null,
+                ...(cli ? {
+                  detentor_nome: cli.nome, detentor_cpf: cli.cpf_cnpj,
+                  detentor_genero: cli.genero, endereco_detentor: cli.endereco,
+                } : {}),
+              }));
+            }}>
+              <option value="">— (sem vínculo)</option>
+              {clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            </select>
+          </label>
           <label>Credenciado *
             <select id="campo-credenciado" className={obg(servico.credenciado_id)}
               value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
@@ -437,12 +523,107 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <a className="botao-download" href={gerado.planilha_ods} target="_blank" rel="noreferrer">
               <span className="ext">ODS</span> Planilha SIGEF
             </a>
+            {plantaUrl ? (
+              <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
+                <span className="ext">PDF</span> Planta A1
+              </a>
+            ) : (
+              <button disabled={gerandoPlanta} onClick={gerarPlanta}>
+                {gerandoPlanta ? "Gerando planta…" : "🗺 Gerar Planta A1 (PDF)"}
+              </button>
+            )}
           </div>
           <p style={{ color: "var(--texto-2)" }}>
             Vértice inicial {gerado.resumo.verticeInicial} · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
           </p>
         </section>
       )}
+
+      {/* ---------------- Bloco 4: peças técnicas ---------------- */}
+      <section className="bloco" id="bloco-pecas">
+        <header>
+          <span className="num-bloco">4</span>
+          <h3>Peças técnicas</h3>
+          <span className="desc">envie o PDF de prévia do SIGEF e gere as 7 peças (memorial, tabular, cartas, declarações, requerimento)</span>
+        </header>
+        <div className="grade" style={{ marginBottom: 12 }}>
+          <label>Gênero do detentor
+            <select value={servico.detentor_genero ?? "M"} onChange={(e) => campo("detentor_genero", e.target.value as "M" | "F")}>
+              <option value="M">Masculino</option><option value="F">Feminino</option>
+            </select>
+          </label>
+          <label>Requerente 2 (opcional)
+            <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} />
+          </label>
+          <label>CPF do requerente 2
+            <input value={servico.requerente2_cpf ?? ""} onChange={(e) => campo("requerente2_cpf", e.target.value || null)} />
+          </label>
+          <label>Gênero do requerente 2
+            <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
+              <option value="M">Masculino</option><option value="F">Feminino</option>
+            </select>
+          </label>
+          <label style={{ gridColumn: "span 2" }}>Endereço dos requerentes
+            <input placeholder="Rua ..., Nº ..., Bairro, Cidade, Estado, CEP:..." value={servico.endereco_detentor ?? ""} onChange={(e) => campo("endereco_detentor", e.target.value || null)} />
+          </label>
+          <label>Área constante na matrícula (ha)
+            <input placeholder="ex.: 86" value={servico.area_matricula_ha ?? ""} onChange={(e) => campo("area_matricula_ha", e.target.value || null)} />
+          </label>
+          <label>Via da faixa de domínio
+            <input placeholder="ex.: BA 408" value={servico.via_dominio ?? ""} onChange={(e) => campo("via_dominio", e.target.value || null)} />
+          </label>
+          <label>Formação do RT
+            <input placeholder="Técnico em Agropecuária" value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} />
+          </label>
+          <label>Conselho (sigla)
+            <input placeholder="CFTA / CREA" value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} />
+          </label>
+          <label>Conselho (número)
+            <input placeholder="0578839458-9" value={rtExtras.conselho_numero} onChange={(e) => setRtExtras({ ...rtExtras, conselho_numero: e.target.value })} />
+          </label>
+          <label>Identidade do RT
+            <input placeholder="00.000.000-00 SSP/BA" value={rtExtras.identidade} onChange={(e) => setRtExtras({ ...rtExtras, identidade: e.target.value })} />
+          </label>
+          <label>CPF do RT
+            <input value={rtExtras.cpf} onChange={(e) => setRtExtras({ ...rtExtras, cpf: e.target.value })} />
+          </label>
+        </div>
+        <label className="dropzone dropzone-pdf" style={{ padding: "26px 20px" }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && !gerandoPecas) gerarPecas(f); }}>
+          {gerandoPecas ? (
+            <><span className="spinner" /> <b>Gerando as 7 peças técnicas…</b><span>lendo o PDF do SIGEF e preenchendo os modelos</span></>
+          ) : (
+            <><b>📄 Arraste ou clique para enviar o PDF de prévia do SIGEF</b>
+              <span>os dados acima + o memorial gerado + o PDF viram as 7 peças prontas</span></>
+          )}
+          <input type="file" accept=".pdf" hidden disabled={gerandoPecas}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) gerarPecas(f); e.target.value = ""; }} />
+        </label>
+        {erroPecas && <div className="erro">{erroPecas}</div>}
+        {pecas && (
+          <div className="gerados" style={{ border: "none", background: "transparent", padding: "12px 0 0" }}>
+            <p style={{ color: "var(--texto-2)", margin: "4px 0 8px" }}>
+              Área SGL {pecas.resumo.areaHa} ha · perímetro {pecas.resumo.perimetro} m · TRT {pecas.resumo.trt} ·{" "}
+              {pecas.resumo.vertices} vértices · {pecas.resumo.cartas} carta(s) de anuência{pecas.resumo.via ? ` · via ${pecas.resumo.via}` : ""}
+            </p>
+            <div className="downloads">
+              {pecas.arquivos.map((a) => (
+                <a key={a.titulo} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
+                  <span className="ext">DOCX</span> {a.titulo}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ---------------- Histórico de documentos ---------------- */}
+      <section className="bloco">
+        <header><h3>📁 Histórico de documentos deste serviço</h3>
+          <span className="desc">cada geração vira uma versão preservada — baixe qualquer uma a qualquer momento</span></header>
+        <HistoricoDocs servicoId={servico.id} />
+      </section>
 
       {/* ---------------- Preview (rodapé fixo) ---------------- */}
       <footer className="preview">

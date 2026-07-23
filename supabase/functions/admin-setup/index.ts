@@ -4,9 +4,17 @@
 // Aceita SOMENTE os dois nomes fixos de template.
 import { createClient } from "@supabase/supabase-js";
 
+const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PERMITIDOS: Record<string, string> = {
   "planta-template.ods": "application/vnd.oasis.opendocument.spreadsheet",
-  "memorial-template.docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "memorial-template.docx": DOCX,
+  "pecas/1-memorial-descritivo.docx": DOCX,
+  "pecas/2-memorial-tabular.docx": DOCX,
+  "pecas/3-cartas-anuencia.docx": DOCX,
+  "pecas/4-declaracao-tecnico.docx": DOCX,
+  "pecas/5-declaracao-proprietario.docx": DOCX,
+  "pecas/6-requerimento.docx": DOCX,
+  "pecas/7-declaracao-faixa-dominio.docx": DOCX,
 };
 
 Deno.serve(async (req) => {
