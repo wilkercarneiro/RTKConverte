@@ -47,6 +47,8 @@ export interface Servico {
   lado: string | null;
   denominacao_parcela: string | null;
   // peças técnicas
+  tipo_imovel: "matricula" | "posse" | null;
+  detentor_rg: string | null;
   detentor_genero: "M" | "F" | null;
   requerente2_nome: string | null;
   requerente2_cpf: string | null;

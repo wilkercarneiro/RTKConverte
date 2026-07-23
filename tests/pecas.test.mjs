@@ -61,9 +61,29 @@ test("montagem dos trechos a partir do PDF", () => {
 test("parseDescritivo e área por extenso", () => {
   const p = parseDescritivo(DESCS["DSBN-M-3608"].descritivo);
   assert.equal(p.posse, true);
+  assert.equal(p.ehVia, false);
   assert.equal(p.imovelLabel, "FAZENDA PAU D'ÁGUA (POSSE)");
   assert.equal(areaPorExtenso("84,0638"), "oitenta e quatro hectares e seis ares e trinta e oito centiares");
   assert.equal(areaPorExtenso("86"), "oitenta e seis hectares");
+});
+
+test("parseDescritivo: confrontante sem rótulo de imóvel e faixa de domínio", () => {
+  // caso ANTONIO: o descritivo é só "NOME\ CPF:..." (sem "(MATR...) FAZENDA")
+  const pessoa = parseDescritivo("MARIA NINA DA SILVA COSTA\\ CPF:666.186.815-53");
+  assert.equal(pessoa.ehVia, false);
+  assert.equal(pessoa.pessoas.length, 1);
+  assert.equal(pessoa.pessoas[0].nome, "MARIA NINA DA SILVA COSTA");
+  assert.equal(pessoa.pessoas[0].cpf, "666.186.815-53");
+  // vias: reconhecidas por palavra-chave (estrada, corredor, rio, BR/BA nnn…)
+  for (const via of ["ESTRADA VICINAL", "BA 408", "CORREDOR", "RIO ITAPICURU"]) {
+    const v = parseDescritivo(via);
+    assert.equal(v.ehVia, true, `${via} deveria ser via`);
+    assert.equal(v.pessoas.length, 0);
+  }
+  // nome de pessoa sem CPF não vira via
+  const semCpf = parseDescritivo("VALDETE DOS SANTOS");
+  assert.equal(semCpf.ehVia, false);
+  assert.equal(semCpf.pessoas.length, 1);
 });
 
 // ---------- geração das 7 peças ----------
@@ -73,6 +93,7 @@ const dados = {
     { nome: "MARIA DE TESTE SILVA", cpf: "111.222.333-44", genero: "F" },
     { nome: "JOSE DE TESTE SILVA", cpf: "555.666.777-88", genero: "M" },
   ],
+  rg: null,
   endereco: "Rua das Palmeiras, Nº 100, Centro, Serrinha, Bahia, CEP:48.700-000",
   municipio: "Araci", uf: "BA",
   denominacao: "FAZENDA TESTE", matricula: "9.999", cns: "01.234-5",
@@ -142,9 +163,41 @@ test("peças: substituições aplicadas e dados de exemplo removidos", () => {
   // 6: áreas por extenso
   assert.ok(textos[6].includes("86 ha (oitenta e seis hectares)"), "área da matrícula");
   assert.ok(textos[6].includes("oitenta e quatro hectares e seis ares e trinta e oito centiares"), "área nova por extenso");
-  // 7: via correta e tabela só com segmentos da via
+  // 1: vias citadas como faixa de domínio no corpo do memorial
+  assert.ok(textos[1].includes("confrontando com a faixa de domínio do BA 408"), "memorial cita a faixa BA 408");
+  assert.ok(textos[1].includes("confrontando com a faixa de domínio do CORREDOR"), "memorial cita o corredor");
+  // 7: uma declaração POR VIA (BA 408 e CORREDOR), cada uma com sua tabela
   assert.ok(textos[7].includes("faixa de domínio do BA 408"), "via de domínio");
-  assert.ok(textos[7].includes("DSBN-M-3609"), "tabela da faixa");
+  assert.ok(textos[7].includes("faixa de domínio do CORREDOR"), "declaração do corredor");
+  const nDecl = (textos[7].match(/vem à presença de V\. Sa\./g) ?? []).length;
+  assert.equal(nDecl, 2, `declarações: ${nDecl}`);
+  assert.ok(textos[7].includes("DSBN-M-3609"), "tabela da faixa BA 408");
   assert.ok(textos[7].includes("DSBN-V-0758"), "V dentro da faixa");
-  assert.ok(!textos[7].includes("DSBN-M-3605"), "faixa não deve ter trecho de fazenda");
+  assert.ok(textos[7].includes("DSBN-M-3610"), "tabela do corredor");
+  // vértice interno do trecho TERRA NOVA não pode aparecer na faixa
+  // (o M-3605 aparece só como vante do fechamento do anel, o que é correto)
+  assert.ok(!textos[7].includes("DSBN-P-13130"), "faixa não deve ter trecho de fazenda");
+});
+
+// ---------- 1 requerente: frases no singular e sem assinaturas do 2º ----------
+test("peças com um único requerente", async () => {
+  const tpl = {};
+  for (let i = 1; i <= 7; i++) {
+    const zip = await JSZip.loadAsync(readFileSync(new URL(`../reference/pecas/${NOMES[i - 1]}.docx`, import.meta.url)));
+    tpl[String(i)] = await zip.file("word/document.xml").async("string");
+  }
+  const xmls = gerarPecasXml(tpl, { ...dados, requerentes: [dados.requerentes[0]], rg: "11.222.333-4" });
+  for (const i of [1, 2, 3, 4, 5, 6, 7]) {
+    const t = dec((xmls[String(i)] ?? "").replace(/<[^>]+>/g, ""));
+    assert.ok(!t.includes("GILBERTO GONCALVES"), `peça ${i} ainda tem o 2º proprietário de exemplo`);
+    assert.ok(!t.includes("JOSE DE TESTE"), `peça ${i} não deveria ter 2º requerente`);
+  }
+  const t7 = dec(xmls["7"].replace(/<[^>]+>/g, ""));
+  assert.ok(t7.includes("residente e domiciliada"), "qualificação no singular");
+  assert.ok(!t7.includes("residentes e domiciliados"), "não deve sobrar plural");
+  assert.ok(t7.includes("legítima proprietária"), "proprietária no singular");
+  const t3 = dec(xmls["3"].replace(/<[^>]+>/g, ""));
+  assert.ok(t3.includes("proprietária do imóvel rural denominado FAZENDA TESTE"), "carta no singular");
+  const t1 = dec(xmls["1"].replace(/<[^>]+>/g, ""));
+  assert.ok(t1.includes("– RG: 11.222.333-4"), "RG opcional no cabeçalho");
 });

@@ -22,30 +22,46 @@ const enc = (s: string) =>
 const RE_WT_CONTEUDO = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
 const RE_WT_REESCRITA = /(<w:t(?:\s[^>]*)?)(\/>|>[\s\S]*?<\/w:t>)/g;
 
-// Substitui pares [busca, novo] no texto concatenado de cada parágrafo.
-// O texto substituído é gravado no PRIMEIRO run (mantendo sua formatação);
-// os demais runs do parágrafo ficam vazios.
+// Substitui pares [busca, novo] no texto concatenado de cada parágrafo,
+// PRESERVANDO a formatação de cada run: cada trecho substituído é gravado no
+// run onde o texto encontrado começa; os runs seguintes perdem só a parte que
+// pertencia ao texto buscado (o negrito de um nome não "vaza" para o resto).
 export function substituirEmParagrafos(xml: string, pares: [string, string][]): string {
   return xml.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, (par) => {
-    const ts = [...par.matchAll(RE_WT_CONTEUDO)];
-    if (ts.length === 0) return par;
-    let texto = dec(ts.map((t) => t[1]).join(""));
+    // um pedaço de texto por <w:t> (self-closed = ""), na ordem de RE_WT_REESCRITA
+    const pecas: string[] = [];
+    par.replace(RE_WT_REESCRITA, (all, _abre: string, corpo: string) => {
+      pecas.push(corpo === "/>" ? "" : dec(corpo.slice(1, -"</w:t>".length)));
+      return all;
+    });
+    if (pecas.length === 0) return par;
     let mudou = false;
     for (const [busca, novo] of pares) {
-      if (busca && texto.includes(busca)) {
-        texto = texto.split(busca).join(novo);
+      if (!busca) continue;
+      let desde = 0;
+      for (;;) {
+        const texto = pecas.join("");
+        const pos = texto.indexOf(busca, desde);
+        if (pos < 0) break;
         mudou = true;
+        let off = 0;
+        for (let i = 0; i < pecas.length; i++) {
+          const ini = off, fim = off + pecas[i].length;
+          off = fim;
+          const a = Math.max(ini, pos), b = Math.min(fim, pos + busca.length);
+          if (a >= b) continue;
+          const antes = pecas[i].slice(0, a - ini);
+          const depois = pecas[i].slice(b - ini);
+          pecas[i] = a === pos ? antes + novo + depois : antes + depois;
+        }
+        desde = pos + novo.length;
       }
     }
     if (!mudou) return par;
-    let primeiro = true;
+    let i = 0;
     return par.replace(RE_WT_REESCRITA, (all, abre: string) => {
       const tag = abre.replace(/ xml:space="preserve"/, "") + ' xml:space="preserve"';
-      if (primeiro) {
-        primeiro = false;
-        return `${tag}>${enc(texto)}</w:t>`;
-      }
-      return `${tag}></w:t>`;
+      return `${tag}>${enc(pecas[i++] ?? "")}</w:t>`;
     });
   });
 }
@@ -139,11 +155,13 @@ export interface TrechoPecas {
   pessoas: PessoaConfrontante[];
   imovelLabel: string;      // "FAZENDA TERRA NOVA (MATR.4.403/CNS.00.803-7)" | "FAZENDA LAMEIRO (POSSE)"
   posse: boolean;
+  ehVia: boolean;           // estrada/corredor/rio etc. (faixa de domínio pública)
   linhas: LinhaSigef[];     // segmentos (do PDF) pertencentes ao trecho
 }
 
 export interface DadosPecas {
   requerentes: Requerente[];      // 1 ou 2
+  rg: string | null;              // RG do requerente 1 (opcional)
   endereco: string;
   municipio: string;              // "Araci"
   uf: string;                     // "BA"
@@ -165,23 +183,45 @@ export interface DadosPecas {
   confrontacaoDe: (codigoVertice: string) => string; // descritivo completo p/ tabela do doc 2
 }
 
-// Extrai pessoas e rótulo do imóvel a partir do descritivo formal
-// "(MATR.4.403/CNS.00.803-7) FAZENDA TERRA NOVA\ CARLOS...\ CPF:...\ DIVALDO...\ CPF:..."
-export function parseDescritivo(descritivo: string): { pessoas: PessoaConfrontante[]; imovelLabel: string; posse: boolean } {
+// Faixa de domínio pública: estrada, corredor, rio, rodovia etc.
+const RE_VIA =
+  /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|RIO|RIACHO|C[ÓO]RREGO|LAGOA?|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
+
+// "do BA 408" / "da ESTRADA VICINAL" — artigo usado em "faixa de domínio ..."
+export function artigoVia(rotulo: string): string {
+  return /^(ESTRADA|RODOVIA|SERVID[ÃA]O|LAGOA|AVENIDA|RUA|FAIXA)/i.test(rotulo.trim()) ? "da" : "do";
+}
+
+// Extrai pessoas e rótulo do imóvel a partir do descritivo formal.
+// Formatos aceitos:
+//   "(MATR.4.403/CNS.00.803-7) FAZENDA TERRA NOVA\ CARLOS...\ CPF:...\ DIVALDO...\ CPF:..."
+//   "MARIA NINA DA SILVA COSTA\ CPF:666.186.815-53"  (confrontante sem rótulo de imóvel)
+//   "ESTRADA VICINAL" | "BA 408" | "CORREDOR"        (faixa de domínio pública)
+export function parseDescritivo(descritivo: string): { pessoas: PessoaConfrontante[]; imovelLabel: string; posse: boolean; ehVia: boolean } {
   const partes = descritivo.split("\\").map((p) => p.trim()).filter(Boolean);
   const m = partes[0]?.match(/^\(([^)]*)\)\s*(.+)$/);
-  if (!m) return { pessoas: [], imovelLabel: descritivo.trim(), posse: false };
-  const tag = m[1].trim();
-  const nomeImovel = m[2].trim();
-  const pessoas: PessoaConfrontante[] = [];
-  for (const p of partes.slice(1)) {
-    if (/^CPF\s*:/i.test(p)) {
-      if (pessoas.length) pessoas[pessoas.length - 1].cpf = p.replace(/^CPF\s*:/i, "").trim();
-    } else {
-      pessoas.push({ nome: p, cpf: null });
+  const lerPessoas = (ps: string[]): PessoaConfrontante[] => {
+    const pessoas: PessoaConfrontante[] = [];
+    for (const p of ps) {
+      if (/^CPF\s*:/i.test(p)) {
+        if (pessoas.length) pessoas[pessoas.length - 1].cpf = p.replace(/^CPF\s*:/i, "").trim();
+      } else {
+        pessoas.push({ nome: p, cpf: null });
+      }
     }
+    return pessoas;
+  };
+  if (m) {
+    const tag = m[1].trim();
+    const nomeImovel = m[2].trim();
+    return { pessoas: lerPessoas(partes.slice(1)), imovelLabel: `${nomeImovel} (${tag})`, posse: /^POSSE$/i.test(tag), ehVia: false };
   }
-  return { pessoas, imovelLabel: `${nomeImovel} (${tag})`, posse: /^POSSE$/i.test(tag) };
+  // sem "(TAG) imóvel": ou é faixa de domínio pública, ou lista de pessoas
+  const temCpf = partes.some((p) => /^CPF\s*:/i.test(p));
+  if (!temCpf && partes.length === 1 && RE_VIA.test(partes[0])) {
+    return { pessoas: [], imovelLabel: partes[0], posse: false, ehVia: true };
+  }
+  return { pessoas: lerPessoas(partes), imovelLabel: "", posse: false, ehVia: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -274,12 +314,42 @@ function inscrito(r: Requerente): string { return r.genero === "F" ? "inscrita" 
 export function mapaComum(d: DadosPecas): [string, string][] {
   const r1 = d.requerentes[0];
   const r2 = d.requerentes[1] ?? r1;
+  const um = d.requerentes.length === 1;
+  const o = r1.genero === "F" ? "a" : "o";
   const muniUp = d.municipio.toUpperCase();
   const ufExt = UF_EXTENSO[d.uf.toUpperCase()] ?? d.uf;
   const nomesJuntos = d.requerentes.map((r) => r.nome).join("/ ");
-  const cpfsJuntos = d.requerentes.map((r) => r.cpf).join("/ ");
+  // RG (opcional) entra na célula de CPF do cabeçalho quando há 1 requerente
+  const cpfsJuntos = d.requerentes.map((r) => r.cpf).join("/ ") + (um && d.rg ? ` – RG: ${d.rg}` : "");
   const tarefas = calcTarefas(d.areaHa);
+  // Com um único requerente, as frases conjuntas dos modelos viram singulares
+  // e as menções ao 2º proprietário de exemplo são absorvidas aqui (as
+  // assinaturas dele são removidas por removerBlocosSegundoRequerente).
+  const paresUmRequerente: [string, string][] = !um ? [] : [
+    // 7-declaração faixa de domínio: qualificação conjunta
+    [`${EX.nome1}, maior, capaz, inscrita no CPF nº:${EX.cpf1} e  ${EX.nome2}, maior, capaz, inscrito no CPF nº:${EX.cpf2}, residentes e domiciliados`,
+      `${r1.nome}, maior, capaz, ${inscrito(r1)} no CPF nº:${r1.cpf}, residente e domiciliad${o}`],
+    [`${EX.nome1}, maior, capaz, inscrita no CPF nº:${EX.cpf1} e ${EX.nome2}, maior, capaz, inscrito no CPF nº:${EX.cpf2}, residentes e domiciliados`,
+      `${r1.nome}, maior, capaz, ${inscrito(r1)} no CPF nº:${r1.cpf}, residente e domiciliad${o}`],
+    ["legítimos proprietários do imóvel", `legítim${o} proprietári${o} do imóvel`],
+    // 3-cartas: dupla de proprietários
+    [`Eu, Proprietária ${EX.nome1}, CPF nº:${EX.cpf1}, Eu, Proprietário ${EX.nome2}, CPF nº:${EX.cpf2},  proprietários do imóvel rural denominado`,
+      `Eu, ${rotProp(r1)} ${r1.nome}, CPF nº:${r1.cpf}, proprietári${o} do imóvel rural denominado`],
+    [`Eu, Proprietária ${EX.nome1}, CPF nº:${EX.cpf1}, Eu, Proprietário ${EX.nome2}, CPF nº:${EX.cpf2}, proprietários do imóvel rural denominado`,
+      `Eu, ${rotProp(r1)} ${r1.nome}, CPF nº:${r1.cpf}, proprietári${o} do imóvel rural denominado`],
+    // 5-declaração do proprietário
+    [`Eu, ${EX.nome1}, CPF nº:${EX.cpf1}, BRASILEIRA, MAIOR, CAPAZ e Eu, ${EX.nome2}, CPF nº:${EX.cpf2}, BRASILEIRO, MAIOR, CAPAZ.`,
+      `Eu, ${r1.nome}, CPF nº:${r1.cpf}, ${nacional(r1)}, MAIOR, CAPAZ.`],
+    [`${EX.nome1}, ${EX.nome2}.`, `${r1.nome}.`],
+    // 4-declaração do técnico
+    [`propriedade dos Srs. ${EX.nome1}, CPF nº:${EX.cpf1}, ${EX.nome2}, CPF nº:${EX.cpf2}.`,
+      `propriedade d${o} Sr${r1.genero === "F" ? "a" : ""}. ${r1.nome}, CPF nº:${r1.cpf}.`],
+    // 6-requerimento
+    [`Proprietário: ${EX.nome1}, CPF nº:${EX.cpf1}, BRASILEIRA, MAIOR, CAPAZ, ${EX.nome2}, CPF nº:${EX.cpf2}, BRASILEIRO, MAIOR, CAPAZ e ainda,`,
+      `${rotProp(r1)}: ${r1.nome}, CPF nº:${r1.cpf}, ${nacional(r1)}, MAIOR, CAPAZ e ainda,`],
+  ];
   const pares: [string, string][] = [
+    ...paresUmRequerente,
     // compostos com gênero — SEMPRE antes dos nomes isolados
     [`Proprietária: ${EX.nome1}`, `${rotProp(r1)}: ${r1.nome}`],
     [`Proprietário: ${EX.nome2}`, `${rotProp(r2)}: ${r2.nome}`],
@@ -362,9 +432,33 @@ function linhaVertice7(l: LinhaSigef): string[] {
 // geração das 7 peças (entrada/saída: document.xml de cada modelo)
 // ---------------------------------------------------------------------------
 
-export function gerarPecasXml(tpl: Record<string, string>, d: DadosPecas): Record<string, string> {
+// Remove as assinaturas do 2º proprietário de exemplo quando o serviço tem um
+// único requerente (a linha "Proprietário:/Requerente: NOME2", o "CPF nº:..."
+// seguinte e a linha de sublinhado anterior).
+export function removerBlocosSegundoRequerente(xml: string): string {
+  const paras = xml.match(/<w:p[ >][\s\S]*?<\/w:p>/g) ?? [];
+  const remover = new Set<number>();
+  paras.forEach((p, i) => {
+    const t = textoDoTrecho(p).trim();
+    if (t === `Proprietário: ${EX.nome2}` || t === `Requerente: ${EX.nome2}` || t === `Proprietária: ${EX.nome2}`) {
+      remover.add(i);
+      const ant = textoDoTrecho(paras[i - 1] ?? "").replace(/\s+/g, "");
+      if (/^_+$/.test(ant)) remover.add(i - 1);
+      const seg = textoDoTrecho(paras[i + 1] ?? "").trim();
+      if (seg === `CPF nº:${EX.cpf2}`) remover.add(i + 1);
+    }
+  });
+  let out = xml;
+  for (const i of [...remover].sort((a, b) => b - a)) out = out.replace(paras[i], "");
+  return out;
+}
+
+export function gerarPecasXml(tpl: Record<string, string>, d: DadosPecas): Record<string, string | null> {
   const mapa = mapaComum(d);
-  const out: Record<string, string> = {};
+  const out: Record<string, string | null> = {};
+  if (d.requerentes.length === 1) {
+    tpl = Object.fromEntries(Object.entries(tpl).map(([k, v]) => [k, removerBlocosSegundoRequerente(v)]));
+  }
 
   // ---- 1. MEMORIAL DESCRITIVO (corpo reescrito com azimutes/distâncias do SIGEF)
   {
@@ -393,12 +487,12 @@ export function gerarPecasXml(tpl: Record<string, string>, d: DadosPecas): Recor
   // ---- 3. CARTAS DE ANUÊNCIA (uma carta por trecho com pessoas)
   out["3"] = gerarCartas(tpl["3"], d, mapa);
 
-  // ---- 4/5. DECLARAÇÕES (tabela NOME COMPLETO | IMÓVEL)
+  // ---- 4/5. DECLARAÇÕES (tabela NOME COMPLETO | IMÓVEL — só confrontantes-pessoa)
   for (const n of ["4", "5"]) {
     let xml = tpl[n];
     const linhas = d.trechos
-      .filter((t) => t.pessoas.length > 0)
-      .map((t) => [t.pessoas.map((p) => p.nome).join("\\ "), t.imovelLabel]);
+      .filter((t) => !t.ehVia && t.pessoas.length > 0)
+      .map((t) => [t.pessoas.map((p) => p.nome).join("\\ "), t.imovelLabel || "—"]);
     xml = mapearTabelas(
       xml,
       (t) => t.includes("NOME COMPLETO") && t.includes("IMÓVEL"),
@@ -420,20 +514,54 @@ export function gerarPecasXml(tpl: Record<string, string>, d: DadosPecas): Recor
     out["6"] = substituirEmParagrafos(tpl["6"], [...paresDoc6, ...mapa]);
   }
 
-  // ---- 7. DECLARAÇÃO FAIXA DE DOMÍNIO (tabela = segmentos dos trechos de via)
-  {
-    let xml = tpl["7"];
-    const linhasVia = d.trechos
-      .filter((t) => t.pessoas.length === 0 && (d.viaDominio ? t.descritivo.includes(d.viaDominio) : true))
-      .flatMap((t) => t.linhas)
-      .map(linhaVertice7);
-    if (linhasVia.length > 0) {
-      xml = mapearTabelas(xml, EH_TBL_VERTICES, (tbl) => reconstruirTabela(tbl, EH_LINHA_VERTICE, linhasVia));
-    }
-    out["7"] = substituirEmParagrafos(xml, mapa);
-  }
+  // ---- 7. DECLARAÇÃO FAIXA DE DOMÍNIO (um bloco por via; null se não há via)
+  out["7"] = gerarDeclaracoesVia(tpl["7"], d, mapa, EX.via);
 
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// declaração de faixa de domínio: só é gerada quando o imóvel confronta com
+// estrada, corredor ou rio — um bloco (declaração completa) por via, cada um
+// com a tabela dos vértices daquele trecho. Sem via → retorna null (peça é
+// omitida pelo chamador).
+// ---------------------------------------------------------------------------
+export function gerarDeclaracoesVia(
+  xml: string,
+  d: DadosPecas,
+  mapa: [string, string][],
+  exVia: string,
+): string | null {
+  const vias = d.trechos.filter((t) => t.ehVia && t.linhas.length > 0);
+  if (vias.length === 0) return null;
+  const bodyM = xml.match(/<w:body>([\s\S]*?)(<w:sectPr[\s\S]*?<\/w:sectPr>)?<\/w:body>/);
+  if (!bodyM) throw new Error("Declaração de faixa: body não encontrado");
+  const paras = bodyM[1].match(/<w:p[ >][\s\S]*?<\/w:p>|<w:tbl>[\s\S]*?<\/w:tbl>/g) ?? [];
+  // blocos começam no cabeçalho "ILMO..."; modelos sem esse título são um bloco único
+  const inicios: number[] = [];
+  paras.forEach((p, i) => { if (textoDoTrecho(p).trim().startsWith("ILMO")) inicios.push(i); });
+  const blocos: string[][] = inicios.length
+    ? inicios.map((ini, k) => paras.slice(ini, k + 1 < inicios.length ? inicios[k + 1] : paras.length))
+    : [paras];
+  const prot = blocos[0];
+  const saida: string[] = [];
+  for (const v of vias) {
+    const rotulo = (v.imovelLabel || v.descritivo).trim();
+    let bloco = prot.join("");
+    bloco = mapearTabelas(bloco, EH_TBL_VERTICES, (tbl) =>
+      reconstruirTabela(tbl, EH_LINHA_VERTICE, v.linhas.map(linhaVertice7)));
+    bloco = substituirEmParagrafos(bloco, [
+      [`faixa de domínio do ${exVia}`, `faixa de domínio ${artigoVia(rotulo)} ${rotulo}`],
+      [`faixa de domínio da ${exVia}`, `faixa de domínio ${artigoVia(rotulo)} ${rotulo}`],
+      [`faixa de dominio do ${exVia}`, `faixa de domínio ${artigoVia(rotulo)} ${rotulo}`],
+      [`faixa de dominio da ${exVia}`, `faixa de domínio ${artigoVia(rotulo)} ${rotulo}`],
+      [exVia, rotulo],
+      ...mapa,
+    ]);
+    saida.push(bloco);
+  }
+  const prefixo = inicios.length ? paras.slice(0, inicios[0]).join("") : "";
+  return xml.replace(bodyM[0], `<w:body>${prefixo}${saida.join("")}${bodyM[2] ?? ""}</w:body>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -461,6 +589,7 @@ export function montarTrechosPecas(
         pessoas: parsed.pessoas,
         imovelLabel: parsed.imovelLabel,
         posse: parsed.posse,
+        ehVia: parsed.ehVia,
         linhas: [],
       };
       if (!trechos.includes(atual)) trechos.push(atual);
@@ -478,6 +607,8 @@ export function montarTrechosPecas(
 function corpoMemorialSigef(d: DadosPecas): string {
   const ls = d.sigef.linhas;
   const alt2 = (alt: string) => fmtBR(parseFloat(alt.replace(",", ".")), 2);
+  const trechoDe = new Map<string, TrechoPecas>();
+  for (const t of d.trechos) for (const l of t.linhas) trechoDe.set(l.codigo, t);
   let s = `            Inicia-se a descrição deste perímetro no vértice ${ls[0].codigo}, ` +
     `georreferenciado no Sistema Geodésico Brasileiro, DATUM - SIRGAS2000, MC-${d.mcAbs}°W, ` +
     `de coordenadas Longitude:${ls[0].lon}, Latitude:${ls[0].lat} de altitude ${alt2(ls[0].alt)}m; `;
@@ -487,7 +618,13 @@ function corpoMemorialSigef(d: DadosPecas): string {
     const conf = d.confrontacaoDe(l.codigo);
     if (conf && conf !== confAtual) {
       confAtual = conf;
-      s += `deste segue confrontando com a propriedade de ${conf}, com azimute de `;
+      const t = trechoDe.get(l.codigo);
+      if (t?.ehVia) {
+        const rotulo = (t.imovelLabel || t.descritivo).trim();
+        s += `deste segue confrontando com a faixa de domínio ${artigoVia(rotulo)} ${rotulo}, com azimute de `;
+      } else {
+        s += `deste segue confrontando com a propriedade de ${conf}, com azimute de `;
+      }
     } else {
       s += "deste segue, com azimute de ";
     }
@@ -537,14 +674,14 @@ function gerarCartas(xml: string, d: DadosPecas, mapa: [string, string][]): stri
 
   const cartas: string[] = [];
   for (const t of d.trechos) {
-    if (t.pessoas.length === 0) continue;
+    if (t.ehVia || t.pessoas.length === 0) continue;
     const duas = t.pessoas.length >= 2;
     const prot = (duas ? prot2 : prot1) ?? prot1 ?? prot2;
     if (!prot) continue;
     let bloco = prot.join("");
     const ex = duas ? CARTA_EX.p2 : CARTA_EX.p1;
     const pares: [string, string][] = [
-      [ex.imovel, t.imovelLabel],
+      [ex.imovel, t.imovelLabel || t.pessoas.map((p) => p.nome).join(" e ")],
       [ex.nome1, t.pessoas[0].nome],
       [ex.cpf1, t.pessoas[0].cpf ?? "—"],
     ];
@@ -568,4 +705,142 @@ function gerarCartas(xml: string, d: DadosPecas, mapa: [string, string][]): stri
   const prefixo = paras.slice(0, inicios[0]).join("");
   const novoBody = prefixo + cartas.join("") + sect;
   return xml.replace(bodyM[0], `<w:body>${novoBody}</w:body>`);
+}
+
+// ---------------------------------------------------------------------------
+// PEÇAS DE POSSE: 4 modelos próprios (caso de exemplo: ANTONIO / FAZENDA SÃO
+// DOMINGOS). O imóvel não tem matrícula ("Matrícula: POSSE" no cabeçalho), o
+// requerente assina como Posseiro(a) e há campo de RG no cabeçalho.
+// ---------------------------------------------------------------------------
+const EXP = {
+  nome: "ANTONIO DA SILVA COSTA",
+  cpf: "005.097.695-86",
+  rg: "12.567.664-61",
+  fazenda: "FAZENDA SÃO DOMINGOS",
+  areaTarefas: "0,1082 ha/0,24 TAREFAS",
+  perimetro: "158,650",
+  sncr: "950.033.008.028-6",
+  trt: "BR20251208584",
+  data: "17/12/2025",
+  dataExtenso: "17 de Dezembro de 2025",
+  via: "ESTRADA VICINAL",
+  endereco: "Estrada de São Domingos,n° 100, Zona Rural, Pedra Ferreira, CEP: 44149-999, Feira de Santana, Bahia",
+  carta: { nome: "ROQUE FERREIRA DE SÁ", cpf: "087.471.135-53" },
+};
+
+function rotPosse(r: Requerente): string { return r.genero === "F" ? "Posseira" : "Posseiro"; }
+
+export function mapaPosse(d: DadosPecas): [string, string][] {
+  const r1 = d.requerentes[0];
+  const o = r1.genero === "F" ? "a" : "o";
+  const muniUp = d.municipio.toUpperCase();
+  const ufExt = UF_EXTENSO[d.uf.toUpperCase()] ?? d.uf;
+  return [
+    // compostos com gênero — antes dos isolados
+    [`Posseiro: ${EXP.nome}`, `${rotPosse(r1)}: ${r1.nome}`],
+    [`Eu, Posseiro ${EXP.nome}, CPF nº:${EXP.cpf}, possuidor do imóvel`,
+      `Eu, ${rotPosse(r1)} ${r1.nome}, CPF nº:${r1.cpf}, possuidor${r1.genero === "F" ? "a" : ""} do imóvel`],
+    [`${EXP.nome}, brasileiro, maior, capaz, inscrito no CPF nº: ${EXP.cpf}`,
+      `${r1.nome}, brasileir${o}, maior, capaz, ${inscrito(r1)} no CPF nº: ${r1.cpf}`],
+    [`${EXP.nome}, brasileiro, maior, capaz, inscrito no CPF nº:${EXP.cpf}`,
+      `${r1.nome}, brasileir${o}, maior, capaz, ${inscrito(r1)} no CPF nº:${r1.cpf}`],
+    ["legítimo posseiro do imóvel", `legítim${o} posseir${o} do imóvel`],
+    [EXP.nome, r1.nome],
+    [EXP.cpf, r1.cpf],
+    [EXP.rg, d.rg ?? ""],
+    // imóvel / números
+    [EXP.fazenda, d.denominacao.toUpperCase()],
+    [EXP.areaTarefas, `${d.areaHa} ha/${calcTarefas(d.areaHa)} TAREFAS`],
+    [`${EXP.perimetro} m`, `${d.perimetro} m`],
+    [EXP.perimetro, d.perimetro],
+    [EXP.sncr, d.sncrFmt],
+    [EXP.trt, d.trt],
+    ["39° WGr", `${d.mcAbs}° WGr`],
+    // RT (mesmo profissional de exemplo dos modelos de matrícula)
+    [EX.rtNome, d.rt.nome.toUpperCase()],
+    ["TÉCNICO EM AGROPECUARIA", d.rt.formacao.toUpperCase()],
+    ["técnico em agropecuária", d.rt.formacao.toLowerCase()],
+    [EX.conselhoNumero, d.rt.conselhoNumero],
+    [EX.conselhoNumeroSemTraco, d.rt.conselhoNumero.replace(/-/g, "")],
+    [EX.conselhoSigla, d.rt.conselhoSigla],
+    [EX.rtCpf, d.rt.cpf],
+    [EX.identidade, d.rt.identidade],
+    // endereço / datas / município
+    [EXP.endereco, d.endereco],
+    [EXP.dataExtenso, dataPorExtenso(d.dataStr)],
+    [EXP.data, d.dataStr],
+    ["FEIRA DE SANTANA-BA", `${muniUp}-${d.uf}`],
+    ["FEIRA DE SANTANA - BA", `${muniUp} - ${d.uf}`],
+    ["FEIRA DE SANTANA – BAHIA", `${muniUp} – ${ufExt}`],
+    ["FEIRA DE SANTANA– BAHIA", `${muniUp}– ${ufExt}`],
+    ["Feira de Santana, Bahia", `${d.municipio}, ${ufExt.charAt(0)}${ufExt.slice(1).toLowerCase()}`],
+    ["FEIRA DE SANTANA", muniUp],
+  ];
+}
+
+// cartas de anuência de posse: um bloco (1 confrontante) por trecho-pessoa
+function gerarCartasPosse(xml: string, d: DadosPecas, mapa: [string, string][]): string {
+  const bodyM = xml.match(/<w:body>([\s\S]*?)(<w:sectPr[\s\S]*?<\/w:sectPr>)?<\/w:body>/);
+  if (!bodyM) throw new Error("Cartas: body não encontrado");
+  const paras = bodyM[1].match(/<w:p[ >][\s\S]*?<\/w:p>|<w:tbl>[\s\S]*?<\/w:tbl>/g) ?? [];
+  const inicios: number[] = [];
+  paras.forEach((p, i) => { if (textoDoTrecho(p).trim() === "CARTA DE ANUÊNCIA") inicios.push(i); });
+  if (inicios.length === 0) throw new Error("Cartas: título não encontrado");
+  const prot = paras.slice(inicios[0], inicios.length > 1 ? inicios[1] : paras.length);
+
+  const cartas: string[] = [];
+  for (const t of d.trechos) {
+    if (t.ehVia || t.pessoas.length === 0) continue;
+    let bloco = prot.join("");
+    bloco = mapearTabelas(bloco, EH_TBL_VERTICES, (tbl) =>
+      reconstruirTabela(tbl, EH_LINHA_VERTICE, t.linhas.map(linhaVertice7)));
+    bloco = substituirEmParagrafos(bloco, [
+      [EXP.carta.nome, t.pessoas.map((p) => p.nome).join(" e ")],
+      [EXP.carta.cpf, t.pessoas.map((p) => p.cpf ?? "—").join(" e ")],
+      ...mapa,
+    ]);
+    cartas.push(bloco);
+  }
+  if (cartas.length === 0) cartas.push(substituirEmParagrafos(prot.join(""), mapa));
+  const prefixo = paras.slice(0, inicios[0]).join("");
+  return xml.replace(bodyM[0], `<w:body>${prefixo}${cartas.join("")}${bodyM[2] ?? ""}</w:body>`);
+}
+
+// Gera as 4 peças de posse. Chaves de tpl/saída: "1" memorial, "2" tabular,
+// "3" cartas, "7" declaração de faixa de domínio (null quando não há via).
+export function gerarPecasPosseXml(tpl: Record<string, string>, d: DadosPecas): Record<string, string | null> {
+  const mapa = mapaPosse(d);
+  const out: Record<string, string | null> = {};
+
+  // ---- 1. MEMORIAL DESCRITIVO
+  {
+    let xml = tpl["1"];
+    const corpo = corpoMemorialSigef(d);
+    xml = xml.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, (par) => {
+      if (!textoDoTrecho(par).includes("Inicia-se a descrição")) return par;
+      let primeiro = true;
+      return par.replace(RE_WT_REESCRITA, (all, abre: string) => {
+        const tag = abre.replace(/ xml:space="preserve"/, "") + ' xml:space="preserve"';
+        if (primeiro) { primeiro = false; return `${tag}>${enc(corpo)}</w:t>`; }
+        return `${tag}></w:t>`;
+      });
+    });
+    out["1"] = substituirEmParagrafos(xml, mapa);
+  }
+
+  // ---- 2. MEMORIAL TABULAR
+  {
+    let xml = tpl["2"];
+    const linhas = d.sigef.linhas.map((l) => [...linhaVertice7(l), d.confrontacaoDe(l.codigo)]);
+    xml = mapearTabelas(xml, EH_TBL_VERTICES, (tbl) => reconstruirTabela(tbl, EH_LINHA_VERTICE, linhas));
+    out["2"] = substituirEmParagrafos(xml, mapa);
+  }
+
+  // ---- 3. CARTAS DE ANUÊNCIA
+  out["3"] = gerarCartasPosse(tpl["3"], d, mapa);
+
+  // ---- 7. DECLARAÇÃO FAIXA DE DOMÍNIO (só com estrada/corredor/rio)
+  out["7"] = gerarDeclaracoesVia(tpl["7"], d, mapa, EXP.via);
+
+  return out;
 }

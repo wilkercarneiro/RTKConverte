@@ -30,3 +30,7 @@ for (const p of ["1-memorial-descritivo", "2-memorial-tabular", "3-cartas-anuenc
   "4-declaracao-tecnico", "5-declaracao-proprietario", "6-requerimento", "7-declaracao-faixa-dominio"]) {
   await enviar(`pecas/${p}.docx`, `../reference/pecas/${p}.docx`);
 }
+for (const p of ["1-memorial-descritivo", "2-memorial-tabular", "3-cartas-anuencia",
+  "4-declaracao-faixa-dominio"]) {
+  await enviar(`pecas-posse/${p}.docx`, `../reference/pecas-posse/${p}.docx`);
+}

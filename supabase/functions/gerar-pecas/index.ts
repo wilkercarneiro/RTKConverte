@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import { extractText, getDocumentProxy } from "unpdf";
 import { parseSigefTexto } from "../_shared/sigef_pdf.ts";
-import { gerarPecasXml, montarTrechosPecas } from "../_shared/pecas.ts";
+import { gerarPecasPosseXml, gerarPecasXml, montarTrechosPecas } from "../_shared/pecas.ts";
 import type { DadosPecas, Requerente } from "../_shared/pecas.ts";
 
 const CORS = {
@@ -15,7 +15,9 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-const PECAS = [
+// [chave interna, arquivo do template, título] — a declaração de faixa de
+// domínio (chave "7") só entra quando o imóvel confronta com estrada/corredor/rio.
+const PECAS_MATRICULA = [
   ["1", "1-memorial-descritivo", "1 - Memorial Descritivo"],
   ["2", "2-memorial-tabular", "2 - Memorial Tabular"],
   ["3", "3-cartas-anuencia", "3 - Cartas de Anuência"],
@@ -23,6 +25,12 @@ const PECAS = [
   ["5", "5-declaracao-proprietario", "5 - Declaração do Proprietário"],
   ["6", "6-requerimento", "6 - Requerimento"],
   ["7", "7-declaracao-faixa-dominio", "7 - Declaração Faixa de Domínio"],
+] as const;
+const PECAS_POSSE = [
+  ["1", "1-memorial-descritivo", "1 - Memorial Descritivo"],
+  ["2", "2-memorial-tabular", "2 - Memorial Tabular"],
+  ["3", "3-cartas-anuencia", "3 - Cartas de Anuência"],
+  ["7", "4-declaracao-faixa-dominio", "4 - Declaração Faixa de Domínio"],
 ] as const;
 
 function b64ToBytes(b64: string): Uint8Array {
@@ -115,17 +123,19 @@ Deno.serve(async (req) => {
       }
     }
     const { trechos, confrontacaoDe } = montarTrechosPecas(sigef.linhas, inicios);
+    const posse = servico.tipo_imovel === "posse";
 
     // ---------------- dados ----------------
     const requerentes: Requerente[] = [{
       nome: servico.detentor_nome, cpf: servico.detentor_cpf ?? "", genero: servico.detentor_genero === "F" ? "F" : "M",
     }];
-    if (servico.requerente2_nome) {
+    if (servico.requerente2_nome && !posse) {
       requerentes.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "", genero: servico.requerente2_genero === "F" ? "F" : "M" });
     }
-    const viaAuto = trechos.find((t) => t.pessoas.length === 0)?.descritivo ?? null;
+    const viaAuto = trechos.find((t) => t.ehVia)?.descritivo ?? null;
     const dados: DadosPecas = {
       requerentes,
+      rg: servico.detentor_rg ?? null,
       endereco: servico.endereco_detentor ?? "",
       municipio: servico.municipio,
       uf: servico.uf,
@@ -153,16 +163,18 @@ Deno.serve(async (req) => {
     };
 
     // ---------------- templates → geração → upload ----------------
+    const PECAS = posse ? PECAS_POSSE : PECAS_MATRICULA;
+    const pasta = posse ? "pecas-posse" : "pecas";
     const zips: Record<string, JSZip> = {};
     const tplXml: Record<string, string> = {};
     for (const [num, arquivo] of PECAS) {
-      const dl = await supa.storage.from("templates").download(`pecas/${arquivo}.docx`);
-      if (dl.error || !dl.data) return json({ erro: `Template pecas/${arquivo}.docx não encontrado no Storage` }, 500);
+      const dl = await supa.storage.from("templates").download(`${pasta}/${arquivo}.docx`);
+      if (dl.error || !dl.data) return json({ erro: `Template ${pasta}/${arquivo}.docx não encontrado no Storage` }, 500);
       const zip = await JSZip.loadAsync(await dl.data.arrayBuffer());
       zips[num] = zip;
       tplXml[num] = await zip.file("word/document.xml")!.async("string");
     }
-    const xmls = gerarPecasXml(tplXml, dados);
+    const xmls = posse ? gerarPecasPosseXml(tplXml, dados) : gerarPecasXml(tplXml, dados);
 
     const nomeBase = (servico.denominacao ?? "documento").replace(/[\\/:*?"<>|]/g, "-").trim();
     const { data: vmax } = await supa.from("documentos_gerados").select("versao")
@@ -171,6 +183,7 @@ Deno.serve(async (req) => {
     const historico: { servico_id: string; versao: number; tipo: string; titulo: string; path: string }[] = [];
     const arquivos: { titulo: string; url: string }[] = [];
     for (const [num, arquivo, titulo] of PECAS) {
+      if (xmls[num] == null) continue; // ex.: declaração de faixa sem estrada/corredor/rio
       zips[num].file("word/document.xml", xmls[num]);
       const buf = await zips[num].generateAsync({ type: "uint8array", compression: "DEFLATE" });
       const path = `${servico_id}/v${versao}/pecas/${arquivo}.docx`;
@@ -194,8 +207,8 @@ Deno.serve(async (req) => {
         perimetro: sigef.cabecalho.perimetroM,
         trt: dados.trt,
         vertices: sigef.linhas.length,
-        cartas: trechos.filter((t) => t.pessoas.length > 0).length,
-        via: dados.viaDominio,
+        cartas: trechos.filter((t) => !t.ehVia && t.pessoas.length > 0).length,
+        via: trechos.filter((t) => t.ehVia).map((t) => t.descritivo).join(", ") || null,
       },
     });
   } catch (err) {

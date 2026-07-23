@@ -544,13 +544,22 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         <header>
           <span className="num-bloco">4</span>
           <h3>Peças técnicas</h3>
-          <span className="desc">envie o PDF de prévia do SIGEF e gere as 7 peças (memorial, tabular, cartas, declarações, requerimento)</span>
+          <span className="desc">envie o PDF de prévia do SIGEF e gere as peças (memorial, tabular, cartas, declarações, requerimento)</span>
         </header>
         <div className="grade" style={{ marginBottom: 12 }}>
+          <label>Situação do imóvel
+            <select value={servico.tipo_imovel ?? "matricula"} onChange={(e) => campo("tipo_imovel", e.target.value as "matricula" | "posse")}>
+              <option value="matricula">Matrícula (proprietário)</option>
+              <option value="posse">Posse (posseiro)</option>
+            </select>
+          </label>
           <label>Gênero do detentor
             <select value={servico.detentor_genero ?? "M"} onChange={(e) => campo("detentor_genero", e.target.value as "M" | "F")}>
               <option value="M">Masculino</option><option value="F">Feminino</option>
             </select>
+          </label>
+          <label>RG do detentor (opcional)
+            <input value={servico.detentor_rg ?? ""} onChange={(e) => campo("detentor_rg", e.target.value || null)} />
           </label>
           <label>Requerente 2 (opcional)
             <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} />

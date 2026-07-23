@@ -15,6 +15,10 @@ const PERMITIDOS: Record<string, string> = {
   "pecas/5-declaracao-proprietario.docx": DOCX,
   "pecas/6-requerimento.docx": DOCX,
   "pecas/7-declaracao-faixa-dominio.docx": DOCX,
+  "pecas-posse/1-memorial-descritivo.docx": DOCX,
+  "pecas-posse/2-memorial-tabular.docx": DOCX,
+  "pecas-posse/3-cartas-anuencia.docx": DOCX,
+  "pecas-posse/4-declaracao-faixa-dominio.docx": DOCX,
 };
 
 Deno.serve(async (req) => {

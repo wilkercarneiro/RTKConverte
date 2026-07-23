@@ -82,6 +82,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       const { data: novo, error } = await supabase.from("servicos").insert({
         tipo: "pecas", status: "rascunho",
         cliente_id: cli?.id ?? null,
+        tipo_imovel: cab.matricula ? "matricula" : "posse",
         denominacao: (cab.denominacao ?? "").replace(/\s*-\s*Parte \d+$/i, "") || null,
         detentor_nome: cli?.nome ?? (cab.proprietario || null),
         detentor_cpf: cli?.cpf_cnpj ?? (cab.cpf || null),
@@ -128,7 +129,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   // ---- passo 2: gerar as peças ----
   async function gerar(fileNovo?: File) {
     if (!servico) return;
-    setOcupado("Gerando as 7 peças técnicas…");
+    setOcupado("Gerando as peças técnicas…");
     setErro(null);
     setMsg(null);
     try {
@@ -211,6 +212,12 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         <header><span className="num-bloco">1</span><h3>Imóvel e requerentes</h3>
           <span className="desc">pré-preenchido pelo PDF — confira e complete</span></header>
         <div className="grade">
+          <label>Situação do imóvel *
+            <select value={servico.tipo_imovel ?? "matricula"} onChange={(e) => campo("tipo_imovel", e.target.value as "matricula" | "posse")}>
+              <option value="matricula">Matrícula (proprietário)</option>
+              <option value="posse">Posse (posseiro)</option>
+            </select>
+          </label>
           <label>Denominação * <input value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} /></label>
           <label>Município * <input value={servico.municipio ?? ""} onChange={(e) => campo("municipio", e.target.value)} /></label>
           <label>UF *
@@ -223,12 +230,13 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
           <label>Código SNCR <input value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
           <label>Detentor * <input value={servico.detentor_nome ?? ""} onChange={(e) => campo("detentor_nome", e.target.value)} /></label>
           <label>CPF do detentor <input value={servico.detentor_cpf ?? ""} onChange={(e) => campo("detentor_cpf", e.target.value)} /></label>
+          <label>RG do detentor (opcional) <input value={servico.detentor_rg ?? ""} onChange={(e) => campo("detentor_rg", e.target.value || null)} /></label>
           <label>Gênero do detentor
             <select value={servico.detentor_genero ?? "M"} onChange={(e) => campo("detentor_genero", e.target.value as "M" | "F")}>
               <option value="M">Masculino</option><option value="F">Feminino</option>
             </select>
           </label>
-          <label>Requerente 2 (opcional) <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} /></label>
+          <label>Requerente 2 (opcional{servico.tipo_imovel === "posse" ? " — ignorado na posse" : ""}) <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} /></label>
           <label>CPF do requerente 2 <input value={servico.requerente2_cpf ?? ""} onChange={(e) => campo("requerente2_cpf", e.target.value || null)} /></label>
           <label>Gênero do requerente 2
             <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
@@ -281,7 +289,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <button disabled={!!ocupado} onClick={async () => { try { setErro(null); await salvar(); setMsg("Rascunho salvo."); } catch (e) { setErro(String(e)); } }}>Salvar rascunho</button>
           <button className="principal" disabled={!!ocupado} onClick={() => gerar()}>
-            {ocupado ? "Gerando…" : "⚡ Gerar as 7 peças"}
+            {ocupado ? "Gerando…" : "⚡ Gerar peças técnicas"}
           </button>
           <button disabled={!!ocupado} onClick={gerarPlanta}>🗺 Gerar Planta A1 (PDF)</button>
           {plantaUrl && (
