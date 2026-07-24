@@ -162,7 +162,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     if (!servico) return;
     if (!pdfB64) { setErro("Envie o PDF do SIGEF para gerar a planta"); return; }
     if (!satelite) { setErro("Envie a imagem de satélite para gerar a planta"); return; }
-    setOcupado("Gerando a Planta A1…");
+    setOcupado(`Gerando a Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"}…`);
     setErro(null);
     try {
       await salvar();
@@ -171,7 +171,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         satelite_base64: satelite.b64, satelite_tipo: satelite.tipo,
       });
       setPlantaUrl(r.planta_pdf);
-      setMsg("Planta A1 gerada.");
+      setMsg(`Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} gerada.`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -311,10 +311,10 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
             <input type="file" accept="image/png,image/jpeg" hidden
               onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
           </label>
-          <button disabled={!!ocupado} onClick={gerarPlanta}>🗺 Gerar Planta A1 (PDF)</button>
+          <button disabled={!!ocupado} onClick={gerarPlanta}>🗺 Gerar Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"} (PDF)</button>
           {plantaUrl && (
             <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
-              <span className="ext">PDF</span> Planta A1
+              <span className="ext">PDF</span> Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"}
             </a>
           )}
           {!pdfB64 && (

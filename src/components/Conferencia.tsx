@@ -202,7 +202,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     setSigefB64(bufParaBase64(await file.arrayBuffer()));
     setSigefNome(file.name);
     setErroPecas(null);
-    setMsg("PDF do SIGEF carregado — agora gere a Planta A1 e as peças técnicas.");
+    setMsg("PDF do SIGEF carregado — agora gere a Planta e as peças técnicas.");
   }
 
   async function carregarSatelite(file: File) {
@@ -215,7 +215,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     setSatelite({ b64: bufParaBase64(await file.arrayBuffer()), tipo: ehPng ? "png" : "jpg", nome: file.name });
   }
 
-  // ------- etapa 3A: planta A1 -------
+  // ------- etapa 3A: planta (A1 matrícula / A3 posse) -------
   async function gerarPlanta() {
     if (!sigefB64) { setErro("Envie o PDF do SIGEF na etapa anterior"); return; }
     if (!satelite) { setErro("Envie a imagem de satélite para gerar a planta"); return; }
@@ -228,7 +228,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         satelite_base64: satelite.b64, satelite_tipo: satelite.tipo,
       });
       setPlantaUrl(r.planta_pdf);
-      setMsg("Planta A1 gerada.");
+      setMsg(`Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} gerada.`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -573,7 +573,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           </header>
           <p style={{ color: "var(--texto-2)", margin: 0 }}>
             1) Gere o Memorial (DOCX) e a Planilha (ODS) no botão "⚡ Gerar documentos" abaixo ·{" "}
-            2) certifique no SIGEF e envie aqui o PDF · 3) gere a Planta A1 e as peças técnicas.
+            2) certifique no SIGEF e envie aqui o PDF · 3) gere a Planta e as peças técnicas.
           </p>
         </section>
       ) : (
@@ -597,7 +597,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSigef(f); }}>
               <b>📄 Arraste ou clique para enviar o PDF de prévia do SIGEF</b>
-              <span>com ele o sistema gera a Planta A1 e as 7 peças técnicas</span>
+              <span>com ele o sistema gera a Planta e as 7 peças técnicas</span>
               <input type="file" accept=".pdf" hidden
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSigef(f); e.target.value = ""; }} />
             </label>
@@ -605,13 +605,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         </section>
       )}
 
-      {/* ---------------- Etapa 3A: planta A1 ---------------- */}
+      {/* ---------------- Etapa 3A: planta (A1 matrícula / A3 posse) ---------------- */}
       {docsProntos && sigefB64 && (
         <section className="bloco" id="bloco-planta">
           <header>
             <span className="num-bloco">5</span>
-            <h3>Etapa 3A — Planta A1</h3>
-            <span className="desc">escala automática proporcional ao tamanho da propriedade · carimbo e desenhista vêm das Configurações</span>
+            <h3>Etapa 3A — Planta {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</h3>
+            <span className="desc">{servico.tipo_imovel === "posse" ? "folha A3 sem quadro analítico (posse)" : "folha A1 com quadro analítico (matrícula)"} · escala automática proporcional ao tamanho da propriedade · carimbo e desenhista vêm das Configurações</span>
           </header>
           <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
             <label className="dropzone" style={{ padding: "14px 18px", flex: "1 1 280px" }}
@@ -624,11 +624,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
             </label>
             <button className="principal" disabled={gerandoPlanta} onClick={gerarPlanta}>
-              {gerandoPlanta ? "Gerando planta…" : "🗺 Gerar Planta A1 (PDF)"}
+              {gerandoPlanta ? "Gerando planta…" : `🗺 Gerar Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} (PDF)`}
             </button>
             {plantaUrl && (
               <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
-                <span className="ext">PDF</span> Planta A1
+                <span className="ext">PDF</span> Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"}
               </a>
             )}
           </div>

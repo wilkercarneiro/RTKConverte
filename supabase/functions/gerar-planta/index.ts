@@ -1,4 +1,5 @@
-// Edge Function gerar-planta: gera a PLANTA A1 (PDF) do imóvel.
+// Edge Function gerar-planta: gera a PLANTA (PDF) do imóvel.
+//   matrícula → folha A1 com quadro analítico · posse → folha A3 sem quadro
 //   serviço 'geo'  : usa os dados do próprio sistema (códigos já alocados)
 //   serviço 'pecas': usa o PDF do SIGEF (azimutes/distâncias SGL) + projeção
 // A logo da empresa vem de templates/logo-empresa.(png|jpg) no Storage.
@@ -170,13 +171,15 @@ Deno.serve(async (req) => {
     }
 
     const areaHaNum = parseFloat(areaFmt.replace(/\./g, "").replace(",", "."));
-    const proprietarios = [{ nome: servico.detentor_nome ?? "", cpf: servico.detentor_cpf ?? "" }];
-    if (servico.requerente2_nome) proprietarios.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "" });
+    const posse = servico.tipo_imovel === "posse";
+    const proprietarios: DadosPlanta["proprietarios"] = [{ nome: servico.detentor_nome ?? "", cpf: servico.detentor_cpf ?? "", rg: servico.detentor_rg ?? null }];
+    if (servico.requerente2_nome && !posse) proprietarios.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "" });
 
     const dados: DadosPlanta = {
       vertices, trechos: trechosPlanta,
       denominacao: servico.denominacao,
       proprietarios,
+      tipoImovel: posse ? "posse" : "matricula",
       matricula: servico.matricula ?? "",
       cns: servico.cns ?? "",
       sncr: servico.codigo_sncr ?? "",
@@ -204,14 +207,14 @@ Deno.serve(async (req) => {
     const path = `${servico_id}/v${versao}/planta.pdf`;
     const up = await supa.storage.from("gerados").upload(path, pdfBytes, { upsert: true, contentType: "application/pdf" });
     if (up.error) throw up.error;
-    await supa.from("documentos_gerados").insert([{ servico_id, versao, tipo: "planta_pdf", titulo: "Planta A1 (PDF)", path }]);
+    await supa.from("documentos_gerados").insert([{ servico_id, versao, tipo: "planta_pdf", titulo: `Planta ${posse ? "A3" : "A1"} (PDF)`, path }]);
     const nomeBase = servico.denominacao.replace(/[\\/:*?"<>|]/g, "-").trim();
     const s = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `Planta - ${nomeBase}.pdf` });
 
     return json({
       ok: true,
       planta_pdf: s.data?.signedUrl,
-      resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!logo },
+      resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!logo, folha: posse ? "A3" : "A1" },
     });
   } catch (err) {
     return json({ erro: err instanceof Error ? err.message : String(err) }, 400);

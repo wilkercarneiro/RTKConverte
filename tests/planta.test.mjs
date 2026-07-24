@@ -35,18 +35,19 @@ const servico = montarServico({
   })),
 }, proj4);
 
+const ring = servico.ring;
+const posDe = new Map(ring.map((v, i) => [v.ordem, i]));
+const trechosPlanta = servico.trechosOrdenados.map((t, k) => {
+  const prox = servico.trechosOrdenados[(k + 1) % servico.trechosOrdenados.length];
+  return {
+    descritivo: t.descritivo,
+    isEstrada: t.tipoLimite.startsWith("LA3") || !t.descritivo.includes("\\"),
+    inicioIdx: posDe.get(t.verticeInicioOrdem),
+    fimIdx: posDe.get(prox.verticeInicioOrdem),
+  };
+});
+
 test("planta A1: PDF gerado com dimensões e conteúdo", async () => {
-  const ring = servico.ring;
-  const posDe = new Map(ring.map((v, i) => [v.ordem, i]));
-  const trechosPlanta = servico.trechosOrdenados.map((t, k) => {
-    const prox = servico.trechosOrdenados[(k + 1) % servico.trechosOrdenados.length];
-    return {
-      descritivo: t.descritivo,
-      isEstrada: t.tipoLimite.startsWith("LA3") || !t.descritivo.includes("\\"),
-      inicioIdx: posDe.get(t.verticeInicioOrdem),
-      fimIdx: posDe.get(prox.verticeInicioOrdem),
-    };
-  });
   const dados = {
     vertices: ring.map((v, i) => ({
       codigo: v.codigo, e: v.eProj, n: v.nProj,
@@ -82,4 +83,39 @@ test("planta A1: PDF gerado com dimensões e conteúdo", async () => {
   assert.ok(Math.abs(width - 841 * 2.834645669) < 1, `largura ${width}`);
   assert.ok(Math.abs(height - 594 * 2.834645669) < 1, `altura ${height}`);
   console.log(`    planta-teste.pdf: ${(bytes.length / 1024).toFixed(0)} KB, A1 paisagem OK`);
+});
+
+test("planta de posse: folha A3 sem quadro analítico", async () => {
+  const dados = {
+    vertices: ring.map((v, i) => ({
+      codigo: v.codigo, e: v.eProj, n: v.nProj,
+      lonFmt: fmtGmsPlanilha(v.lonGms, "lon"), latFmt: fmtGmsPlanilha(v.latGms, "lat"),
+      alt: String(v.h).replace(".", ","),
+      azFmt: servico.segs[i].azimuteFmt, distFmt: servico.segs[i].distFmt,
+      vante: ring[(i + 1) % ring.length].codigo,
+    })),
+    trechos: trechosPlanta,
+    denominacao: "FAZENDA SÃO DOMINGOS",
+    proprietarios: [{ nome: "ANTONIO DE TESTE COSTA", cpf: "111.222.333-44", rg: "1256766461" }],
+    tipoImovel: "posse",
+    matricula: "", cns: "", sncr: "950.033.008.028-6",
+    municipioUf: "FEIRA DE SANTANA-BA",
+    areaFmt: fmtBR(servico.areaHa, 4), tarefasFmt: fmtBR(servico.areaHa * 10000 / 4356, 2),
+    perimetroFmt: fmtBR(servico.perimetroM, 2),
+    mcAbs: 39, fuso: 24, latMediaDeg: -12.2,
+    trt: "BR20251208584",
+    rt: { nome: "TECNICO DE TESTE", formacao: "Técnico em Agropecuária", conselhoSigla: "CFTA", conselhoNumero: "0578839458-9", codigoCredenciado: "DSBN" },
+    desenhista: "JANETE OLIVEIRA", dataStr: "22/07/2026",
+    logo: null,
+  };
+  const bytes = await gerarPlantaPdf(dados);
+  writeFileSync(new URL("./out/planta-posse-teste.pdf", import.meta.url), bytes);
+  assert.ok(bytes.length > 15000, `PDF pequeno demais: ${bytes.length}`);
+
+  const doc = await PDFDocument.load(bytes);
+  assert.equal(doc.getPageCount(), 1);
+  const { width, height } = doc.getPage(0).getSize();
+  assert.ok(Math.abs(width - 420 * 2.834645669) < 1, `largura ${width}`);
+  assert.ok(Math.abs(height - 297 * 2.834645669) < 1, `altura ${height}`);
+  console.log(`    planta-posse-teste.pdf: ${(bytes.length / 1024).toFixed(0)} KB, A3 paisagem OK`);
 });

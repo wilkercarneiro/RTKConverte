@@ -1,8 +1,9 @@
-// Geração da PLANTA (folha A1 paisagem, PDF) do imóvel georreferenciado,
-// no padrão da planta final da empresa: malha de coordenadas UTM, polígono,
-// estradas em linha dupla vermelha, divisões de confrontação em verde com
-// rótulos e linhas de assinatura, quadro analítico, carimbo com a logo,
-// bloco planimétrico, RT, selos de cartório e rodapé com escala/datum/folha.
+// Geração da PLANTA (PDF) do imóvel georreferenciado, no padrão da planta
+// final da empresa: malha de coordenadas UTM, polígono, estradas em linha
+// dupla vermelha, divisões de confrontação em verde com rótulos e linhas de
+// assinatura, carimbo com a logo, bloco planimétrico, RT e rodapé.
+//   matrícula → folha A1 paisagem, COM quadro analítico e selos de cartório
+//   posse     → folha A3 paisagem, SEM quadro analítico, assinatura do posseiro
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, degrees, rgb } from "pdf-lib";
 
 // ---------------------------------------------------------------------------
@@ -31,7 +32,8 @@ export interface DadosPlanta {
   vertices: VerticePlanta[];        // anel na ordem do perímetro
   trechos: TrechoPlanta[];
   denominacao: string;
-  proprietarios: { nome: string; cpf: string }[];
+  proprietarios: { nome: string; cpf: string; rg?: string | null }[];
+  tipoImovel?: "matricula" | "posse";  // posse → A3 sem quadro analítico
   matricula: string;
   cns: string;
   sncr: string;
@@ -119,7 +121,10 @@ function linhasDescritivo(descritivo: string): string[] {
 // principal
 // ---------------------------------------------------------------------------
 export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
+  const posse = d.tipoImovel === "posse";
   const pdf = await PDFDocument.create();
+  // a folha é sempre desenhada nas medidas A1; p/ posse o conteúdo é reduzido
+  // à metade no final (setSize+scaleContent), virando um A3 proporcional
   const page = pdf.addPage([W, H]);
   const f = await pdf.embedFont(StandardFonts.Helvetica);
   const fb = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -206,9 +211,9 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
 
   // ------------------- divisões de confrontação + rótulos -------------------
   const centroLinhas = [
-    `(MATR.${d.matricula}/CNS.${d.cns})`,
+    posse ? "(POSSE)" : `(MATR.${d.matricula}/CNS.${d.cns})`,
     d.denominacao,
-    ...d.proprietarios.flatMap((p) => [p.nome, `CPF:${p.cpf}`]),
+    ...d.proprietarios.flatMap((p) => [p.nome, `CPF:${p.cpf}`, ...(posse && p.rg ? [`RG:${p.rg}`] : [])]),
     `ÁREA:${d.areaFmt} HA/ ${d.tarefasFmt} TAREFAS`,
   ].map((l) => l.toUpperCase());
   // bloco do imóvel no centroide — fonte proporcional ao polígono desenhado,
@@ -343,11 +348,14 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
 
   // ============================ BARRA LATERAL ============================
   const sbTop = H - 20, sbBot = 20;
-  const alturas = { quadro: 0.30, situacao: 0.16, carimbo: 0.15, planimetrico: 0.27, rodape: 0.12 };
+  // posse não leva quadro analítico — as demais seções ganham o espaço dele
+  const alturas = posse
+    ? { quadro: 0, situacao: 0.34, carimbo: 0.17, planimetrico: 0.34, rodape: 0.15 }
+    : { quadro: 0.30, situacao: 0.16, carimbo: 0.15, planimetrico: 0.27, rodape: 0.12 };
   let yCursor = sbTop;
 
   // ---- QUADRO ANALÍTICO (tabela com grade, colunas centradas) ----
-  {
+  if (!posse) {
     const h = (sbTop - sbBot) * alturas.quadro;
     const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "QUADRO ANALÍTICO");
     const heads = ["VÉRTICE", "LADO", "LONGITUDE", "LATITUDE", "AZIMUTE", "DIST.(m)", "ALTIT."];
@@ -440,13 +448,14 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     campo("Denominação:", d.denominacao.toUpperCase(), colEsq, py);
     campo("TRT:", d.trt, colDir, py);
     py -= 34;
-    texto(c, "Proprietário(s):", colEsq, py, 9, { bold: true, cor: CINZA });
+    texto(c, posse ? "Posseiro(s):" : "Proprietário(s):", colEsq, py, 9, { bold: true, cor: CINZA });
     let ppy = py - 14;
     for (const p of d.proprietarios) { texto(c, p.nome.toUpperCase(), colEsq, ppy, 11); ppy -= 14; }
-    campo("Matrícula do Imóvel:", d.matricula, colDir, py);
-    campo("Código do Cartório (CNS):", d.cns, colDir, py - 34);
-    campo("Código INCRA:", d.sncr, colDir, py - 68);
-    campo("Município/UF:", d.municipioUf.toUpperCase(), colDir, py - 102);
+    // na posse não há matrícula nem cartório: o campo indica POSSE e o CNS sai
+    const camposDir: [string, string][] = posse
+      ? [["Matrícula do Imóvel:", "POSSE"], ["Código INCRA:", d.sncr], ["Município/UF:", d.municipioUf.toUpperCase()]]
+      : [["Matrícula do Imóvel:", d.matricula], ["Código do Cartório (CNS):", d.cns], ["Código INCRA:", d.sncr], ["Município/UF:", d.municipioUf.toUpperCase()]];
+    for (const [i, [rot, val]] of camposDir.entries()) campo(rot, val, colDir, py - i * 34);
     // RT
     const rtY = yCursor - h + 66;
     linha(c, sbX, rtY + 32, sbX + SB_W, rtY + 32, 0.8);
@@ -454,14 +463,21 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     texto(c, d.rt.nome.toUpperCase(), colEsq, rtY + 8, 12, { bold: true });
     texto(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, rtY - 4, 9);
     texto(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}   TRT: ${d.trt}`, colEsq, rtY - 16, 9);
-    // selos
+    // selos de cartório (matrícula) ou assinatura do posseiro (posse)
     const seloW = (SB_W - 24) / 2;
     for (const [i, p] of d.proprietarios.slice(0, 2).entries()) {
       const sx = sbX + 8 + i * (seloW + 8);
       caixa(c, sx, yCursor - h + 4, seloW, 48, 0.8);
-      texto(c, "SELO DE RECONHECIMENTO — CARTÓRIO", sx + seloW / 2, yCursor - h + 39, 7, { bold: true, center: true, cor: CINZA });
-      texto(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 26, 8.5, { center: true });
-      texto(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 13, 8.5, { center: true });
+      if (posse) {
+        texto(c, "POSSEIRO", sx + seloW / 2, yCursor - h + 41, 7, { bold: true, center: true, cor: CINZA });
+        linha(c, sx + 14, yCursor - h + 32, sx + seloW - 14, yCursor - h + 32, 0.9);
+        texto(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 21, 8.5, { center: true });
+        texto(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 10, 8.5, { center: true });
+      } else {
+        texto(c, "SELO DE RECONHECIMENTO — CARTÓRIO", sx + seloW / 2, yCursor - h + 39, 7, { bold: true, center: true, cor: CINZA });
+        texto(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 26, 8.5, { center: true });
+        texto(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 13, 8.5, { center: true });
+      }
     }
     yCursor -= h;
   }
@@ -479,7 +495,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
       ["COORDENADA", "UTM"],
       ["DATUM", `SIRGAS2000  M.C -${d.mcAbs}Wgr  Fuso: ${d.fuso}${letraFuso(d.latMediaDeg)}`],
       ["DATA", d.dataStr],
-      ["FOLHA", "01 001 A1"],
+      ["FOLHA", posse ? "01 001 A3" : "01 001 A1"],
     ];
     for (const [i, [rot, val]] of itens.entries()) {
       const col = i % 4, row = Math.floor(i / 4);
@@ -506,7 +522,15 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
       texto(c, nome, lx + 42, lyy, 9);
       lyy -= 17;
     }
-    texto(c, "MATR. = MATRÍCULA", lx, lyy, 9);
+    texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 9);
+  }
+
+  // posse: reduz o conteúdo e entrega a folha no A3 exato (420×297 mm) —
+  // meia-A1 seria 420,5 mm, então o eixo X escala por 420/841 (~0,4994)
+  if (posse) {
+    const w3 = 420 * MM, h3 = 297 * MM;
+    page.scaleContent(w3 / W, h3 / H);
+    page.setSize(w3, h3);
   }
 
   return await pdf.save();
