@@ -110,7 +110,11 @@ Deno.serve(async (req) => {
           }
         });
       }
-      starts.sort((a, b) => a.idx - b.idx);
+      const startsUnicos = new Map<number, { idx: number; descritivo: string; tipoLimite: string }>();
+      for (const s of starts) {
+        if (!startsUnicos.has(s.idx)) startsUnicos.set(s.idx, s);
+      }
+      starts = [...startsUnicos.values()].sort((a, b) => a.idx - b.idx);
       trechosPlanta = starts.map((s, k) => ({
         descritivo: s.descritivo,
         isEstrada: ehEstrada(s.descritivo, s.tipoLimite),

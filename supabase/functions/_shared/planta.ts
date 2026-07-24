@@ -276,19 +276,23 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
       if (idxs.length >= nv) break;
     }
     if (idxs.length === 0) for (let i = 0; i < nv; i++) idxs.push((t.inicioIdx + i) % nv);
+    if (idxs.length === 0 || nv === 0 || !vs[idxs[0] % nv]) continue;
     const segLens = idxs.map((i) => {
       const a = vs[i], b = vs[(i + 1) % nv];
+      if (!a || !b) return 0;
       return Math.hypot(X(b.e) - X(a.e), Y(b.n) - Y(a.n));
     });
     let alvo = segLens.reduce((s, l) => s + l, 0) / 2;
-    let mx = X(vs[idxs[0]].e), my = Y(vs[idxs[0]].n), angSeg = 0;
+    let mx = X(vs[idxs[0] % nv].e), my = Y(vs[idxs[0] % nv].n), angSeg = 0;
     for (const [k, i] of idxs.entries()) {
       if (alvo <= segLens[k] || k === idxs.length - 1) {
         const a = vs[i], b = vs[(i + 1) % nv];
-        const fr = segLens[k] > 0 ? alvo / segLens[k] : 0;
-        mx = X(a.e) + (X(b.e) - X(a.e)) * fr;
-        my = Y(a.n) + (Y(b.n) - Y(a.n)) * fr;
-        angSeg = Math.atan2(Y(b.n) - Y(a.n), X(b.e) - X(a.e)) * 180 / Math.PI;
+        if (a && b) {
+          const fr = segLens[k] > 0 ? alvo / segLens[k] : 0;
+          mx = X(a.e) + (X(b.e) - X(a.e)) * fr;
+          my = Y(a.n) + (Y(b.n) - Y(a.n)) * fr;
+          angSeg = Math.atan2(Y(b.n) - Y(a.n), X(b.e) - X(a.e)) * 180 / Math.PI;
+        }
         break;
       }
       alvo -= segLens[k];
@@ -304,6 +308,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     }
     // linha verde de divisão no INÍCIO do trecho
     const vi = vs[t.inicioIdx % nv];
+    if (!vi) continue;
     let gx = X(vi.e) - dcx, gy = Y(vi.n) - dcy;
     const gl = Math.hypot(gx, gy) || 1; gx /= gl; gy /= gl;
     linha(c, X(vi.e), Y(vi.n), X(vi.e) + gx * 80, Y(vi.n) + gy * 80, 1.6, VERDE);
