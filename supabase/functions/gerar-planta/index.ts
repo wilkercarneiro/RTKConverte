@@ -14,6 +14,7 @@ import { GEO_DEF, fmtBR, fmtGmsPlanilha, utmDef } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { DadosPlanta, TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
+import { reconciliarVerticesBancoComSigef } from "../_shared/reconciliacao.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -81,18 +82,37 @@ Deno.serve(async (req) => {
       const lon0 = gmsPdfParaDeg(sigef.linhas[0].lon);
       latMedia = gmsPdfParaDeg(sigef.linhas[0].lat);
       if (!servico.fuso_utm) fuso = Math.floor((lon0 + 180) / 6) + 1;
-      const ud = utmDef(fuso);
+
+      // Reconciliação dos vértices cadastrados no banco com o PDF do SIGEF
+      const verticesReconciliados = reconciliarVerticesBancoComSigef(
+        servico_id,
+        vertRows ?? [],
+        sigef.linhas,
+        fuso,
+        proj4
+      );
+
+      // Atualiza o banco de dados com a lista reconciliada e oficializada pelo SIGEF
+      if (verticesReconciliados.length > 0) {
+        await supa.from("vertices").delete().eq("servico_id", servico_id);
+        await supa.from("vertices").insert(verticesReconciliados);
+      }
+
       vertices = sigef.linhas.map((l, i) => {
-        const [e, n] = proj4(GEO_DEF, ud, [gmsPdfParaDeg(l.lon), gmsPdfParaDeg(l.lat)]);
+        const vr = verticesReconciliados[i];
         return {
-          codigo: l.codigo, e, n, lonFmt: l.lon, latFmt: l.lat, alt: l.alt,
+          codigo: l.codigo,
+          e: vr ? vr.e : 0,
+          n: vr ? vr.n : 0,
+          lonFmt: l.lon, latFmt: l.lat, alt: l.alt,
           azFmt: l.azimute, distFmt: l.dist, vante: l.vante,
         };
       });
+
       // trechos: por codigo_inicio (serviço pecas), pelo código do vértice de
       // início (serviço geo, códigos já alocados) ou mudança de confrontação
       const idxDe = new Map(sigef.linhas.map((l, i) => [l.codigo, i]));
-      const codPorOrdem = new Map((vertRows ?? []).filter((v) => v.codigo).map((v) => [v.ordem, v.codigo as string]));
+      const codPorOrdem = new Map((verticesReconciliados).filter((v) => v.codigo).map((v) => [v.ordem, v.codigo as string]));
       let starts: { idx: number; descritivo: string; tipoLimite: string }[] = (trechoRows ?? [])
         .map((t) => {
           const cod = t.codigo_inicio ?? codPorOrdem.get(t.vertice_inicio_ordem) ?? null;

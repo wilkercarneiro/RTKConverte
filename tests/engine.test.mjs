@@ -9,6 +9,7 @@ import {
   calcularAreaHa, calcularPerimetroM, fmtGmsPlanilha, fmtGmsMemorial,
   fmtBR, fmtAzimute, codigoVertice, degToGmsCanonical, gmsToDeg, parseGmsPlanilha,
 } from "../supabase/functions/_shared/geo.ts";
+import { reconciliarVerticesBancoComSigef } from "../supabase/functions/_shared/reconciliacao.ts";
 
 const proj4 = (from, to, coords) => proj4lib(from, to, coords);
 
@@ -171,4 +172,27 @@ test("GMS: round-trip e carry no arredondamento", () => {
   assert.equal(g.sMil, 0);
   const p = parseGmsPlanilha("11 24 30,375 S");
   assert.equal(gmsToDeg(p), -(11 + 24 / 60 + 30.375 / 3600));
+});
+
+test("reconciliação ODS × SIGEF: substituição de pontos e inclusão de confrontantes de terceiros", () => {
+  const vertBanco = [
+    { servico_id: "s1", ordem: 0, num_txt: 30, rotulo_txt: "vizi", codigo: "DSBN-M-3605", e: 490765, n: 8740271, h: 300, sigma_pos: 0.05, sigma_h: 0.08, tipo: "M", metodo: "PG6", inserido_manual: false, lat_gms: "-11°23'44,344\"", lon_gms: "-39°05'04,737\"" },
+    { servico_id: "s1", ordem: 1, num_txt: 31, rotulo_txt: null, codigo: "DSBN-P-13130", e: 490789, n: 8740251, h: 299, sigma_pos: 0.05, sigma_h: 0.08, tipo: "P", metodo: "PG6", inserido_manual: false, lat_gms: "-11°23'44,996\"", lon_gms: "-39°05'03,926\"" },
+  ];
+
+  const sigefLinhas = [
+    { codigo: "DSBN-M-3605", lon: "-39°05'04,737\"", lat: "-11°23'44,344\"", alt: "300,051", vante: "ABCD-M-0001", azimute: "129°10'", dist: "31,72", confrontacao: "FAZENDA TERRA NOVA" },
+    { codigo: "ABCD-M-0001", lon: "-39°05'03,926\"", lat: "-11°23'44,996\"", alt: "299,644", vante: "DSBN-P-13130", azimute: "131°05'", dist: "46,70", confrontacao: "CONFRONTANTE TERCEIRO" },
+    { codigo: "DSBN-P-13130", lon: "-39°05'02,765\"", lat: "-11°23'45,995\"", alt: "301,859", vante: "DSBN-M-3605", azimute: "129°47'", dist: "33,03", confrontacao: "CORREDOR" },
+  ];
+
+  const recs = reconciliarVerticesBancoComSigef("s1", vertBanco, sigefLinhas, 24, proj4);
+  assert.equal(recs.length, 3);
+  assert.equal(recs[0].codigo, "DSBN-M-3605");
+  assert.equal(recs[0].num_txt, 30); // preservou num_txt do banco
+  assert.equal(recs[1].codigo, "ABCD-M-0001"); // ponto de terceiro inserido
+  assert.equal(recs[1].num_txt, null);
+  assert.equal(recs[2].codigo, "DSBN-P-13130");
+  assert.equal(recs[2].num_txt, 31); // preservou num_txt do banco
+  console.log("    reconciliação ODS x SIGEF OK: 3 vértices reconciliados");
 });
