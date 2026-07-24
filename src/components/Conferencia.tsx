@@ -24,6 +24,24 @@ interface PecasGeradas {
   resumo: { areaHa: string; perimetro: string; trt: string; vertices: number; cartas: number; via: string | null };
 }
 
+interface RelatorioSobreposicao {
+  parcelas: { nome: string; areaSobrepostaM2: number; status: "corrigida" | "mesma_gleba" | "interna" | "sem_sobreposicao" }[];
+  avisos: string[];
+  areaAntesHa: number;
+  areaDepoisHa: number;
+  totalVertices?: number;
+  mantidos?: number;
+  removidos: string[];
+  novos: string[];
+}
+
+const STATUS_PARCELA: Record<RelatorioSobreposicao["parcelas"][number]["status"], { rotulo: string; cor: string }> = {
+  corrigida: { rotulo: "corrigida (afastada)", cor: "#3cb44b" },
+  sem_sobreposicao: { rotulo: "sem sobreposição", cor: "#888" },
+  mesma_gleba: { rotulo: "mesma gleba já certificada — exige retificação no SIGEF", cor: "#e6194b" },
+  interna: { rotulo: "parcela interna — exigiria anel interno", cor: "#f58231" },
+};
+
 function bufParaBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let bin = "";
@@ -55,6 +73,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [sigefB64, setSigefB64] = useState<string | null>(null);
   const [sigefNome, setSigefNome] = useState<string | null>(null);
   const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
+
+  // correção de sobreposição SIGEF (CSVs das parcelas certificadas sobrepostas)
+  const [mostrarSobre, setMostrarSobre] = useState(false);
+  const [sobreCsvs, setSobreCsvs] = useState<{ nome: string; conteudo: string }[]>([]);
+  const [afastamento, setAfastamento] = useState("0,50");
+  const [corrigindo, setCorrigindo] = useState(false);
+  const [relatorioSobre, setRelatorioSobre] = useState<RelatorioSobreposicao | null>(null);
 
   const [clientes, setClientes] = useState<Cliente[]>([]);
 
@@ -203,6 +228,56 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     setSigefNome(file.name);
     setErroPecas(null);
     setMsg("PDF do SIGEF carregado — agora gere a Planta e as peças técnicas.");
+  }
+
+  // ------- correção de sobreposição SIGEF -------
+  async function carregarCsvsSobreposicao(files: FileList | File[]) {
+    const lista = [...files].filter((f) => /\.csv$/i.test(f.name));
+    if (!lista.length) { setErro("Envie os arquivos CSV exportados pelo SIGEF"); return; }
+    setErro(null);
+    const lidos = await Promise.all(lista.map(async (f) => ({ nome: f.name, conteudo: await f.text() })));
+    setSobreCsvs((prev) => {
+      const mapa = new Map(prev.map((c) => [c.nome, c]));
+      for (const c of lidos) mapa.set(c.nome, c);
+      return [...mapa.values()];
+    });
+  }
+
+  async function corrigirSobreposicao() {
+    if (!sobreCsvs.length) { setErro("Envie ao menos um CSV de parcela sobreposta"); return; }
+    setCorrigindo(true);
+    setErro(null);
+    setMsg(null);
+    setRelatorioSobre(null);
+    try {
+      await salvar(); // estado atual da tela vai ao banco antes da correção
+      const r = await chamarFuncao<{ ok: boolean; corrigido: boolean; relatorio: RelatorioSobreposicao }>(
+        "corrigir-sobreposicao",
+        { servico_id: servico.id, afastamento: Number(afastamento.replace(",", ".")) || 0.5, csvs: sobreCsvs },
+      );
+      setRelatorioSobre(r.relatorio);
+      if (r.corrigido) {
+        // recarrega o serviço corrigido e regera os documentos direto do banco
+        const { data: sv } = await supabase.from("servicos").select().eq("id", servico.id).single();
+        if (sv) setServico(sv as Servico);
+        const { data: ts } = await supabase.from("trechos_confrontantes").select().eq("servico_id", servico.id).order("vertice_inicio_ordem");
+        if (ts) setTrechos(ts as Trecho[]);
+        const g = await chamarFuncao<Gerado>("gerar-documentos", { servico_id: servico.id });
+        setGerado(g);
+        const { data: vs } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
+        if (vs) setVertices(vs as Vertice[]);
+        setMsg("Sobreposição corrigida e planilha regerada — baixe a nova ODS e reenvie ao SIGEF.");
+      } else {
+        setMsg("Nenhuma sobreposição de interior detectada com os CSVs enviados — nada foi alterado.");
+      }
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+      // se a correção gravou mas a regeração falhou, garante estado coerente na tela
+      const { data: vs } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
+      if (vs?.length) setVertices(vs as Vertice[]);
+    } finally {
+      setCorrigindo(false);
+    }
   }
 
   async function carregarSatelite(file: File) {
@@ -617,6 +692,79 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSigef(f); e.target.value = ""; }} />
             </label>
           )}
+
+          {/* ------- SIGEF acusou sobreposição? ------- */}
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px dashed #c9c9c9" }}>
+            <button className="fantasma" onClick={() => setMostrarSobre(!mostrarSobre)}>
+              ⚠️ O SIGEF acusou sobreposição? {mostrarSobre ? "▲" : "▼"}
+            </button>
+            {mostrarSobre && (
+              <div style={{ marginTop: 12 }}>
+                <p style={{ color: "var(--texto-2)", marginTop: 0 }}>
+                  Quando há sobreposição, o SIGEF não gera o PDF e libera o CSV de cada parcela certificada
+                  que conflita. Envie <b>todos</b> esses CSVs aqui: o sistema recorta as invasões com o
+                  afastamento escolhido (vértices medidos fora do conflito não são alterados), substitui os
+                  vértices atingidos por vértices calculados (tipo V · método PA1) e regera a planilha ODS
+                  para reenvio ao SIGEF.
+                </p>
+                <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+                  <label className="dropzone" style={{ padding: "14px 18px", flex: "1 1 280px" }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files?.length) carregarCsvsSobreposicao(e.dataTransfer.files); }}>
+                    <b>📑 Enviar CSVs das parcelas sobrepostas</b>
+                    <span>exportacao (n).csv — pode selecionar vários de uma vez</span>
+                    <input type="file" accept=".csv" multiple hidden
+                      onChange={(e) => { if (e.target.files?.length) carregarCsvsSobreposicao(e.target.files); e.target.value = ""; }} />
+                  </label>
+                  <label>Afastamento (m)
+                    <input style={{ width: 80 }} value={afastamento} onChange={(e) => setAfastamento(e.target.value)} />
+                  </label>
+                  <button className="principal" disabled={corrigindo || sobreCsvs.length === 0} onClick={corrigirSobreposicao}>
+                    {corrigindo ? "Corrigindo e regerando…" : "🛠 Corrigir sobreposição e regerar planilha"}
+                  </button>
+                </div>
+                {sobreCsvs.length > 0 && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                    {sobreCsvs.map((c) => (
+                      <span key={c.nome} className="chip" style={{ display: "inline-flex", gap: 6, alignItems: "center", background: "#eef", borderRadius: 12, padding: "2px 10px" }}>
+                        📄 {c.nome}
+                        <button className="remover" title="Remover CSV"
+                          onClick={() => setSobreCsvs((prev) => prev.filter((x) => x.nome !== c.nome))}>✕</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {relatorioSobre && (
+                  <div style={{ marginTop: 14 }}>
+                    <table className="tabela-vertices" style={{ maxWidth: 720 }}>
+                      <thead><tr><th>parcela (CSV)</th><th>sobreposição</th><th>situação</th></tr></thead>
+                      <tbody>
+                        {relatorioSobre.parcelas.map((p) => (
+                          <tr key={p.nome}>
+                            <td>{p.nome}</td>
+                            <td className="mono">{p.areaSobrepostaM2.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m²</td>
+                            <td style={{ color: STATUS_PARCELA[p.status].cor, fontWeight: 600 }}>{STATUS_PARCELA[p.status].rotulo}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {relatorioSobre.removidos.length > 0 && (
+                      <p style={{ color: "var(--texto-2)", margin: "8px 0 0" }}>
+                        Área {relatorioSobre.areaAntesHa.toLocaleString("pt-BR", { minimumFractionDigits: 4 })} ha →{" "}
+                        {relatorioSobre.areaDepoisHa.toLocaleString("pt-BR", { minimumFractionDigits: 4 })} ha ·{" "}
+                        {relatorioSobre.mantidos} vértices mantidos · {relatorioSobre.novos.length} novos (
+                        {relatorioSobre.novos[0]}…{relatorioSobre.novos[relatorioSobre.novos.length - 1]}) ·{" "}
+                        {relatorioSobre.removidos.length} removidos: <span className="mono">{relatorioSobre.removidos.join(", ")}</span>
+                      </p>
+                    )}
+                    {relatorioSobre.avisos.map((a, i) => (
+                      <div key={i} className="erro" style={{ marginTop: 8, background: "#fff4e5", color: "#8a5300" }}>⚠️ {a}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </section>
       )}
 
