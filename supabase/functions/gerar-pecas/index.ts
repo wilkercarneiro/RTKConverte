@@ -127,7 +127,13 @@ Deno.serve(async (req) => {
 
     // ---------------- dados ----------------
     const requerentes: Requerente[] = [{
-      nome: servico.detentor_nome, cpf: servico.detentor_cpf ?? "", genero: servico.detentor_genero === "F" ? "F" : "M",
+      nome: servico.detentor_nome,
+      cpf: servico.detentor_cpf ?? "",
+      genero: servico.detentor_genero === "F" ? "F" : "M",
+      isEspolio: !!servico.is_espolio,
+      inventarianteNome: servico.inventariante_nome ?? null,
+      inventarianteCpf: servico.inventariante_cpf ?? null,
+      inventarianteRg: servico.inventariante_rg ?? null,
     }];
     if (servico.requerente2_nome && !posse) {
       requerentes.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "", genero: servico.requerente2_genero === "F" ? "F" : "M" });

@@ -66,7 +66,7 @@ export function parseSigefTexto(texto: string): DadosSigef {
   // A confrontação termina no próximo código de vértice, no rodapé de página
   // ("Este Memorial...") ou no fim da tabela ("Data da Geração").
   const linhas: LinhaSigef[] = [];
-  const COD = "[A-Z0-9]{2,4}-[MPV]-\\d+";
+  const COD = "[A-Z0-9_]{1,10}-[MPV]-\\d+|[A-Z0-9_]{1,10}-\\d+|[A-Z0-9_]{2,15}";
   const GMS = `-?\\d+°\\d+'[\\d,]+"`;
   const rowRe = new RegExp(
     `(${COD})\\s+(${GMS})\\s+(${GMS})\\s+([\\d.,]+)\\s+(${COD})\\s+(\\d+°\\d+')\\s+([\\d.,]+)\\s+` +

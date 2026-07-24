@@ -61,6 +61,17 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoGeo, on
           </label>
           <label>Telefone <input value={cliente.telefone ?? ""} onChange={(e) => campo("telefone", e.target.value || null)} /></label>
           <label>E-mail <input value={cliente.email ?? ""} onChange={(e) => campo("email", e.target.value || null)} /></label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, gridColumn: "span 2", cursor: "pointer", marginTop: 4 }}>
+            <input type="checkbox" checked={!!cliente.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
+            <b>É Espólio? (possuidor/proprietário falecido com inventariante)</b>
+          </label>
+          {cliente.is_espolio && (
+            <>
+              <label>Nome do Inventariante <input value={cliente.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome completo do inventariante" /></label>
+              <label>CPF do Inventariante <input value={cliente.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
+              <label>RG do Inventariante (opcional) <input value={cliente.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
+            </>
+          )}
           <label style={{ gridColumn: "span 2" }}>Endereço <input value={cliente.endereco ?? ""} onChange={(e) => campo("endereco", e.target.value || null)} /></label>
           <label style={{ gridColumn: "span 2" }}>Observações <input value={cliente.observacoes ?? ""} onChange={(e) => campo("observacoes", e.target.value || null)} /></label>
         </div>

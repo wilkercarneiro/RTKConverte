@@ -345,6 +345,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                 ...(cli ? {
                   detentor_nome: cli.nome, detentor_cpf: cli.cpf_cnpj,
                   detentor_genero: cli.genero, endereco_detentor: cli.endereco,
+                  is_espolio: cli.is_espolio ?? false,
+                  inventariante_nome: cli.inventariante_nome ?? null,
+                  inventariante_cpf: cli.inventariante_cpf ?? null,
+                  inventariante_rg: cli.inventariante_rg ?? null,
                 } : {}),
               }));
             }}>
@@ -376,6 +380,17 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <datalist id="detentores">{detentores.map((d) => <option key={d.nome} value={d.nome} />)}</datalist>
           </label>
           <label>CPF/CNPJ <input value={servico.detentor_cpf ?? ""} onChange={(e) => campo("detentor_cpf", e.target.value)} /></label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, gridColumn: "span 2", cursor: "pointer", marginTop: 4 }}>
+            <input type="checkbox" checked={!!servico.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
+            <b>É Espólio? (possuidor/proprietário falecido com inventariante)</b>
+          </label>
+          {servico.is_espolio && (
+            <>
+              <label>Nome do Inventariante <input value={servico.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome do inventariante" /></label>
+              <label>CPF do Inventariante <input value={servico.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
+              <label>RG do Inventariante (opcional) <input value={servico.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
+            </>
+          )}
           <label>Denominação * <input id="campo-denominacao" className={obg(servico.denominacao)} value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} /></label>
           <label>Situação {sel(servico.situacao, SITUACOES, (v) => campo("situacao", v))}</label>
           <label>Natureza da área {sel(servico.natureza_area, NATUREZAS_AREA, (v) => campo("natureza_area", v))}</label>

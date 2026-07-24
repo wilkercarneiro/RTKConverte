@@ -8,6 +8,10 @@ export interface Cliente {
   telefone: string | null;
   email: string | null;
   observacoes: string | null;
+  is_espolio?: boolean | null;
+  inventariante_nome?: string | null;
+  inventariante_cpf?: string | null;
+  inventariante_rg?: string | null;
 }
 
 export interface DocumentoGerado {
@@ -56,6 +60,10 @@ export interface Servico {
   endereco_detentor: string | null;
   area_matricula_ha: string | null;
   via_dominio: string | null;
+  is_espolio?: boolean | null;
+  inventariante_nome?: string | null;
+  inventariante_cpf?: string | null;
+  inventariante_rg?: string | null;
 }
 
 export interface Vertice {

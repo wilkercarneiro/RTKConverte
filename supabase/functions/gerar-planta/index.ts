@@ -172,7 +172,15 @@ Deno.serve(async (req) => {
 
     const areaHaNum = parseFloat(areaFmt.replace(/\./g, "").replace(",", "."));
     const posse = servico.tipo_imovel === "posse";
-    const proprietarios: DadosPlanta["proprietarios"] = [{ nome: servico.detentor_nome ?? "", cpf: servico.detentor_cpf ?? "", rg: servico.detentor_rg ?? null }];
+    const proprietarios: DadosPlanta["proprietarios"] = [{
+      nome: servico.detentor_nome ?? "",
+      cpf: servico.detentor_cpf ?? "",
+      rg: servico.detentor_rg ?? null,
+      isEspolio: !!servico.is_espolio,
+      inventarianteNome: servico.inventariante_nome ?? null,
+      inventarianteCpf: servico.inventariante_cpf ?? null,
+      inventarianteRg: servico.inventariante_rg ?? null,
+    }];
     if (servico.requerente2_nome && !posse) proprietarios.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "" });
 
     const dados: DadosPlanta = {

@@ -136,7 +136,15 @@ function mapearTabelas(xml: string, filtro: (texto: string) => boolean, f: (tbl:
 // domínio
 // ---------------------------------------------------------------------------
 
-export interface Requerente { nome: string; cpf: string; genero: "M" | "F" }
+export interface Requerente {
+  nome: string;
+  cpf: string;
+  genero: "M" | "F";
+  isEspolio?: boolean;
+  inventarianteNome?: string | null;
+  inventarianteCpf?: string | null;
+  inventarianteRg?: string | null;
+}
 
 export interface DadosRt {
   nome: string;
@@ -421,7 +429,7 @@ function calcTarefas(areaHaStr: string): string {
 // ---------------------------------------------------------------------------
 // helpers de tabela de vértices
 // ---------------------------------------------------------------------------
-const EH_LINHA_VERTICE = (t: string) => /^[A-Z0-9]{2,4}-[MPV]-\d+\s*-?\d+°/.test(t.trim());
+const EH_LINHA_VERTICE = (t: string) => /^[A-Z0-9_]{1,10}-[MPV]-\d+\s*-?\d+°/.test(t.trim());
 const EH_TBL_VERTICES = (t: string) => t.includes("Longitude") && t.includes("Azimute");
 
 function linhaVertice7(l: LinhaSigef): string[] {

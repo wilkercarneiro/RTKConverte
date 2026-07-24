@@ -28,11 +28,21 @@ export interface TrechoPlanta {
   fimIdx: number;       // índice do vértice inicial do PRÓXIMO trecho
 }
 
+export interface ProprietarioPlanta {
+  nome: string;
+  cpf: string;
+  rg?: string | null;
+  isEspolio?: boolean;
+  inventarianteNome?: string | null;
+  inventarianteCpf?: string | null;
+  inventarianteRg?: string | null;
+}
+
 export interface DadosPlanta {
   vertices: VerticePlanta[];        // anel na ordem do perímetro
   trechos: TrechoPlanta[];
   denominacao: string;
-  proprietarios: { nome: string; cpf: string; rg?: string | null }[];
+  proprietarios: ProprietarioPlanta[];
   tipoImovel?: "matricula" | "posse";  // posse → A3 sem quadro analítico
   matricula: string;
   cns: string;
@@ -227,7 +237,16 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const centroLinhas = [
     posse ? "(POSSE)" : `(MATR.${d.matricula}/CNS.${d.cns})`,
     d.denominacao,
-    ...d.proprietarios.flatMap((p) => [p.nome, `CPF:${p.cpf}`, ...(posse && p.rg ? [`RG:${p.rg}`] : [])]),
+    ...d.proprietarios.flatMap((p) => {
+      const res = [p.nome, `CPF:${p.cpf}`];
+      if (posse && p.rg) res.push(`RG:${p.rg}`);
+      if (p.isEspolio && p.inventarianteNome) {
+        res.push(`REP. P/ INVENTARIANTE: ${p.inventarianteNome}`);
+        if (p.inventarianteCpf) res.push(`CPF:${p.inventarianteCpf}`);
+        if (p.inventarianteRg) res.push(`RG:${p.inventarianteRg}`);
+      }
+      return res;
+    }),
     `ÁREA:${d.areaFmt} HA/ ${d.tarefasFmt} TAREFAS`,
   ].map((l) => l.toUpperCase());
   // bloco do imóvel no centroide — fonte proporcional ao polígono desenhado,
@@ -479,7 +498,12 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     for (const p of d.proprietarios) {
       textoFit(c, p.nome.toUpperCase(), colEsq, ppy, 22, colW, { bold: true });
       textoFit(c, `CPF: ${p.cpf}`, colEsq, ppy - 22, 18, colW);
-      ppy -= 56;
+      ppy -= 50;
+      if (p.isEspolio && p.inventarianteNome) {
+        textoFit(c, `REP. P/ INV.: ${p.inventarianteNome.toUpperCase()}`, colEsq, ppy, 17, colW, { bold: true });
+        textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, colEsq, ppy - 20, 16, colW);
+        ppy -= 48;
+      }
     }
     // faixa inferior em duas colunas: RESPONSÁVEL TÉCNICO à esquerda e o(s)
     // quadro(s) de assinatura encaixado(s) na metade direita, lado a lado
@@ -498,21 +522,35 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     const assinantes = d.proprietarios.slice(0, 2);
     const seloX = sbX + SB_W / 2 + 12;
     const seloW = SB_W / 2 - 24;
-    const seloH = assinantes.length > 1 ? 88 : 108;
-    const gap = (bandH - assinantes.length * seloH) / (assinantes.length + 1);
+    const seloH = assinantes.some((p) => p.isEspolio && p.inventarianteNome) ? 120 : (assinantes.length > 1 ? 88 : 108);
+    const gap = Math.max(8, (bandH - assinantes.length * seloH) / (assinantes.length + 1));
     for (const [i, p] of assinantes.entries()) {
       const syBot = bandTop - (i + 1) * (gap + seloH);
       caixa(c, seloX, syBot, seloW, seloH, 0.8);
       const cx = seloX + seloW / 2;
       if (posse) {
-        texto(c, "POSSEIRO", cx, syBot + seloH - 20, 14, { bold: true, center: true, cor: CINZA });
-        linha(c, seloX + 20, syBot + seloH - 50, seloX + seloW - 20, syBot + seloH - 50, 1);
-        textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 72, 18, seloW - 16, { center: true });
-        textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 94, 16, seloW - 16, { center: true });
+        texto(c, "POSSEIRO", cx, syBot + seloH - 18, 14, { bold: true, center: true, cor: CINZA });
+        linha(c, seloX + 20, syBot + seloH - 42, seloX + seloW - 20, syBot + seloH - 42, 1);
+        if (p.isEspolio && p.inventarianteNome) {
+          textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 58, 15, seloW - 16, { center: true, bold: true });
+          textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 72, 14, seloW - 16, { center: true });
+          textoFit(c, `REP. P/ INVENTARIANTE: ${p.inventarianteNome.toUpperCase()}`, cx, syBot + seloH - 88, 14, seloW - 16, { center: true, bold: true });
+          textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, cx, syBot + seloH - 104, 14, seloW - 16, { center: true });
+        } else {
+          textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 65, 18, seloW - 16, { center: true });
+          textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 88, 16, seloW - 16, { center: true });
+        }
       } else {
-        textoFit(c, "SELO DE RECONHECIMENTO — CARTÓRIO", cx, syBot + seloH - 22, 14, seloW - 16, { bold: true, center: true, cor: CINZA });
-        textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 50, 18, seloW - 16, { center: true });
-        textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 74, 16, seloW - 16, { center: true });
+        textoFit(c, "SELO DE RECONHECIMENTO — CARTÓRIO", cx, syBot + seloH - 20, 14, seloW - 16, { bold: true, center: true, cor: CINZA });
+        if (p.isEspolio && p.inventarianteNome) {
+          textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 42, 15, seloW - 16, { center: true, bold: true });
+          textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 56, 14, seloW - 16, { center: true });
+          textoFit(c, `REP. P/ INVENTARIANTE: ${p.inventarianteNome.toUpperCase()}`, cx, syBot + seloH - 76, 14, seloW - 16, { center: true, bold: true });
+          textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, cx, syBot + seloH - 92, 14, seloW - 16, { center: true });
+        } else {
+          textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 50, 18, seloW - 16, { center: true });
+          textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 74, 16, seloW - 16, { center: true });
+        }
       }
     }
     yCursor -= h;

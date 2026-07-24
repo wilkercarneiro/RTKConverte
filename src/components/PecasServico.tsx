@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
 import { TIPOS_LIMITE, UFS } from "../lib/domains";
-import type { RT, Servico } from "../lib/types";
+import type { Cliente, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
 
 interface TrechoPdf { id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string }
@@ -75,10 +75,10 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       const cab = a.cabecalho;
       const [muni, uf] = (cab.municipioUf ?? "-").split("-");
       // se veio da página do cliente, vincula e usa os dados dele como detentor
-      let cli: { id: string; nome: string; cpf_cnpj: string | null; genero: string; endereco: string | null } | null = null;
+      let cli: Cliente | null = null;
       if (clienteId) {
         const { data: c } = await supabase.from("clientes").select().eq("id", clienteId).single();
-        cli = c;
+        cli = c as Cliente;
       }
       const { data: novo, error } = await supabase.from("servicos").insert({
         tipo: "pecas", status: "rascunho",
@@ -89,6 +89,10 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         detentor_cpf: cli?.cpf_cnpj ?? (cab.cpf || null),
         detentor_genero: cli?.genero ?? "M",
         endereco_detentor: cli?.endereco ?? null,
+        is_espolio: cli?.is_espolio ?? false,
+        inventariante_nome: cli?.inventariante_nome ?? null,
+        inventariante_cpf: cli?.inventariante_cpf ?? null,
+        inventariante_rg: cli?.inventariante_rg ?? null,
         matricula: cab.matricula || null,
         cns: cab.cns || null,
         codigo_sncr: cab.sncr || null,
@@ -245,7 +249,17 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
           <label>Código SNCR <input value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
           <label>Detentor * <input value={servico.detentor_nome ?? ""} onChange={(e) => campo("detentor_nome", e.target.value)} /></label>
           <label>CPF do detentor <input value={servico.detentor_cpf ?? ""} onChange={(e) => campo("detentor_cpf", e.target.value)} /></label>
-          <label>RG do detentor (opcional) <input value={servico.detentor_rg ?? ""} onChange={(e) => campo("detentor_rg", e.target.value || null)} /></label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, gridColumn: "span 2", cursor: "pointer", marginTop: 4 }}>
+            <input type="checkbox" checked={!!servico.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
+            <b>É Espólio? (possuidor/proprietário falecido com inventariante)</b>
+          </label>
+          {servico.is_espolio && (
+            <>
+              <label>Nome do Inventariante <input value={servico.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome do inventariante" /></label>
+              <label>CPF do Inventariante <input value={servico.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
+              <label>RG do Inventariante (opcional) <input value={servico.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
+            </>
+          )}
           <label>Gênero do detentor
             <select value={servico.detentor_genero ?? "M"} onChange={(e) => campo("detentor_genero", e.target.value as "M" | "F")}>
               <option value="M">Masculino</option><option value="F">Feminino</option>

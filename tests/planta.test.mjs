@@ -119,3 +119,41 @@ test("planta de posse: folha A3 sem quadro analítico", async () => {
   assert.ok(Math.abs(height - 297 * 2.834645669) < 1, `altura ${height}`);
   console.log(`    planta-posse-teste.pdf: ${(bytes.length / 1024).toFixed(0)} KB, A3 paisagem OK`);
 });
+
+test("planta de espólio com inventariante: PDF gerado com dados do inventariante", async () => {
+  const dados = {
+    vertices: ring.map((v, i) => ({
+      codigo: v.codigo, e: v.eProj, n: v.nProj,
+      lonFmt: fmtGmsPlanilha(v.lonGms, "lon"), latFmt: fmtGmsPlanilha(v.latGms, "lat"),
+      alt: String(v.h).replace(".", ","),
+      azFmt: servico.segs[i].azimuteFmt, distFmt: servico.segs[i].distFmt,
+      vante: ring[(i + 1) % ring.length].codigo,
+    })),
+    trechos: trechosPlanta,
+    denominacao: "FAZENDA ESPÓLIO TESTE",
+    proprietarios: [{
+      nome: "ESPÓLIO DE JOÃO DA SILVA",
+      cpf: "111.222.333-44",
+      isEspolio: true,
+      inventarianteNome: "CARLOS DA SILVA",
+      inventarianteCpf: "999.888.777-66",
+      inventarianteRg: "12.345.678-9",
+    }],
+    matricula: "1.234", cns: "00.803-7", sncr: "312.010.028.860-1",
+    municipioUf: "ARACI-BA",
+    areaFmt: fmtBR(servico.areaHa, 4), tarefasFmt: fmtBR(servico.areaHa * 10000 / 4356, 2),
+    perimetroFmt: fmtBR(servico.perimetroM, 2),
+    mcAbs: 39, fuso: 24, latMediaDeg: -11.4,
+    trt: "BR20260408910",
+    rt: { nome: "TECNICO DE TESTE", formacao: "Técnico em Agropecuária", conselhoSigla: "CFTA", conselhoNumero: "0578839458-9", codigoCredenciado: "DSBN" },
+    desenhista: "JANETE OLIVEIRA", dataStr: "22/07/2026",
+    logo: null,
+  };
+  const bytes = await gerarPlantaPdf(dados);
+  writeFileSync(new URL("./out/planta-espolio-teste.pdf", import.meta.url), bytes);
+  assert.ok(bytes.length > 20000, `PDF pequeno demais: ${bytes.length}`);
+
+  const doc = await PDFDocument.load(bytes);
+  assert.equal(doc.getPageCount(), 1);
+  console.log(`    planta-espolio-teste.pdf: ${(bytes.length / 1024).toFixed(0)} KB, Espólio com inventariante OK`);
+});
