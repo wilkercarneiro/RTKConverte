@@ -68,9 +68,13 @@ export function parseSigefTexto(texto: string): DadosSigef {
   const linhas: LinhaSigef[] = [];
   const COD = "[A-Z0-9_]{1,10}-[MPV]-\\d+|[A-Z0-9_]{1,10}-\\d+|[A-Z0-9_]{2,15}";
   const GMS = `-?\\d+°\\d+'[\\d,]+"`;
+  // lookahead: o fim da confrontação é detectado pelo início da PRÓXIMA linha
+  // de vértice — um código seguido de uma coordenada GMS (longitude negativa).
+  // Usar apenas `COD\s+-` casaria com palavras do texto da confrontação ("FAZENDA -").
+  const PROX = `(?:${COD})\\s+${GMS}`;
   const rowRe = new RegExp(
     `(${COD})\\s+(${GMS})\\s+(${GMS})\\s+([\\d.,]+)\\s+(${COD})\\s+(\\d+°\\d+')\\s+([\\d.,]+)\\s+` +
-    `(.*?)(?=(?:${COD})\\s+-|Este Memorial|Data da Geração|$)`,
+    `(.*?)(?=${PROX}|Este Memorial|Data da Geração|$)`,
     "g",
   );
   let m: RegExpExecArray | null;

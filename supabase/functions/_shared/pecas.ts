@@ -429,7 +429,7 @@ function calcTarefas(areaHaStr: string): string {
 // ---------------------------------------------------------------------------
 // helpers de tabela de vértices
 // ---------------------------------------------------------------------------
-const EH_LINHA_VERTICE = (t: string) => /^[A-Z0-9_]{1,10}-[MPV]-\d+\s*-?\d+°/.test(t.trim());
+const EH_LINHA_VERTICE = (t: string) => /^[A-Z0-9_]{2,15}(?:-[A-Z0-9_]+)*\s*-?\d+°/.test(t.trim());
 const EH_TBL_VERTICES = (t: string) => t.includes("Longitude") && t.includes("Azimute");
 
 function linhaVertice7(l: LinhaSigef): string[] {
