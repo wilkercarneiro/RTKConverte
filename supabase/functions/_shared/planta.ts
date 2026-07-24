@@ -101,10 +101,20 @@ function caixa(c: Ctx, x: number, y: number, w: number, h: number, esp = 1) {
 
 function caixaTitulo(c: Ctx, x: number, y: number, w: number, h: number, titulo: string): number {
   caixa(c, x, y, w, h);
-  const th = 20;
-  caixa(c, x + w / 2 - 120, y + h - th, 240, th, 1);
-  texto(c, titulo, x + w / 2, y + h - th + 5.5, 12, { bold: true, center: true });
+  const th = 46;
+  // título grande auto-ajustado à largura, sem caixinha em volta — só uma
+  // linha separadora de largura total abaixo dele
+  const tam = Math.min(30, (w - 28) / c.fb.widthOfTextAtSize(titulo, 1));
+  texto(c, titulo, x + w / 2, y + h - th + 14, tam, { bold: true, center: true });
+  linha(c, x, y + h - th, x + w, y + h - th, 1);
   return y + h - th; // topo útil
+}
+
+// texto que encolhe até caber em maxW — garante que nada estoura o campo
+function textoFit(c: Ctx, t: string, x: number, y: number, size: number, maxW: number, opts: { bold?: boolean; cor?: ReturnType<typeof rgb>; center?: boolean } = {}) {
+  const font = opts.bold ? c.fb : c.f;
+  const tam = Math.min(size, maxW / font.widthOfTextAtSize(t, 1));
+  texto(c, t, x, y, tam, opts);
 }
 
 // quebra o descritivo em linhas de rótulo (sempre em MAIÚSCULAS)
@@ -135,7 +145,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   caixa(c, 20, 20, W - 40, H - 40, 0.8);
 
   // ------------------- área de desenho e barra lateral -------------------
-  const SB_W = 470;
+  const SB_W = 720;
   const sbX = W - 20 - SB_W;
   const dArea = { x: 60, y: 60, w: sbX - 100, h: H - 120 };
 
@@ -143,8 +153,8 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const vs = d.vertices;
   const minE = Math.min(...vs.map((v) => v.e)), maxE = Math.max(...vs.map((v) => v.e));
   const minN = Math.min(...vs.map((v) => v.n)), maxN = Math.max(...vs.map((v) => v.n));
-  const spanE = (maxE - minE) * 1.45 || 100; // folga p/ os rótulos grandes dos confrontantes
-  const spanN = (maxN - minN) * 1.40 || 100;
+  const spanE = (maxE - minE) * 1.55 || 100; // folga p/ os rótulos grandes dos confrontantes
+  const spanN = (maxN - minN) * 1.48 || 100;
   const mPorPtMin = Math.max(spanE / dArea.w, spanN / dArea.h);
   const escala = escalaProporcional(mPorPtMin);
   const mPorPt = escala * 0.000352778;
@@ -159,15 +169,19 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const passo = stepCands.find((s) => s >= alvoM) ?? 5000;
   const e0 = Math.ceil((cxE - dArea.w / 2 * mPorPt) / passo) * passo;
   const n0 = Math.ceil((cxN - dArea.h / 2 * mPorPt) / passo) * passo;
+  const GRID_TAM = 30; // 3× o tamanho antigo — legível mesmo de longe
   for (let e = e0; X(e) < dArea.x + dArea.w; e += passo) {
     linha(c, X(e), dArea.y, X(e), dArea.y + dArea.h, 0.4, CINZA, [2, 4]);
-    texto(c, `E=${fmtMilhar(e)}`, X(e) + 3.5, dArea.y + dArea.h - 58, 10, { cor: CINZA, rot: -90 });
-    texto(c, `E=${fmtMilhar(e)}`, X(e) + 3.5, dArea.y + 8, 10, { cor: CINZA, rot: -90 });
+    const et = `E=${fmtMilhar(e)}`;
+    const eLen = f.widthOfTextAtSize(et, GRID_TAM);
+    texto(c, et, X(e) + 9, dArea.y + dArea.h - 14, GRID_TAM, { cor: CINZA, rot: -90 });
+    texto(c, et, X(e) + 9, dArea.y + 12 + eLen, GRID_TAM, { cor: CINZA, rot: -90 });
   }
   for (let n = n0; Y(n) < dArea.y + dArea.h; n += passo) {
     linha(c, dArea.x, Y(n), dArea.x + dArea.w, Y(n), 0.4, CINZA, [2, 4]);
-    texto(c, `N=${fmtMilhar(n)}`, dArea.x + 2, Y(n) + 2.5, 10, { cor: CINZA });
-    texto(c, `N=${fmtMilhar(n)}`, dArea.x + dArea.w - 84, Y(n) + 2.5, 10, { cor: CINZA });
+    const nt = `N=${fmtMilhar(n)}`;
+    texto(c, nt, dArea.x + 6, Y(n) + 6, GRID_TAM, { cor: CINZA });
+    texto(c, nt, dArea.x + dArea.w - f.widthOfTextAtSize(nt, GRID_TAM) - 6, Y(n) + 6, GRID_TAM, { cor: CINZA });
   }
 
   // ------------------- trechos de estrada (linha dupla vermelha) -------------------
@@ -206,7 +220,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     let nx = X(v.e) - dcx, ny = Y(v.n) - dcy;
     const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
     void prev; void next;
-    texto(c, v.codigo, X(v.e) + nx * 10, Y(v.n) + ny * 10 - 2.5, 9, { cor: PRETO });
+    texto(c, v.codigo, X(v.e) + nx * 10, Y(v.n) + ny * 10 - 2.5, 12, { cor: PRETO });
   }
 
   // ------------------- divisões de confrontação + rótulos -------------------
@@ -221,9 +235,12 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   {
     const wPoly = (maxE - minE) / mPorPt, hPoly = (maxN - minN) / mPorPt;
     const larguraMax = Math.max(...centroLinhas.map((l) => fb.widthOfTextAtSize(l, 1)));
-    const tamW = (wPoly * 0.72) / larguraMax;
+    const tamW = (wPoly * 0.70) / larguraMax;
     const tamH = (hPoly * 0.55) / (centroLinhas.length * 1.3);
-    const tam = Math.max(8, Math.min(30, Math.min(tamW, tamH)));
+    // teto pela área de desenho: o bloco nunca estoura as margens laterais,
+    // e encolhe o quanto for preciso p/ ficar dentro do polígono
+    const tamArea = (dArea.w * 0.92) / larguraMax;
+    const tam = Math.max(6, Math.min(38, tamW, tamH, tamArea));
     const esp = tam * 1.3;
     let ty = dcy + (centroLinhas.length * esp) / 2;
     for (const [li, lt] of centroLinhas.entries()) {
@@ -263,14 +280,14 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     if (t.isEstrada) {
       // nome da via rotacionado ao longo do segmento do ponto médio
       const nome = linhasDescritivo(t.descritivo)[0] ?? "";
-      texto(c, nome, mx + nx * 32, my + ny * 32, 20, { bold: true, cor: PRETO, rot: angSeg > 90 || angSeg < -90 ? angSeg + 180 : angSeg });
+      texto(c, nome, mx + nx * 36, my + ny * 36, 26, { bold: true, cor: PRETO, rot: angSeg > 90 || angSeg < -90 ? angSeg + 180 : angSeg });
       continue;
     }
     // linha verde de divisão no INÍCIO do trecho
     const vi = vs[t.inicioIdx % nv];
     let gx = X(vi.e) - dcx, gy = Y(vi.n) - dcy;
     const gl = Math.hypot(gx, gy) || 1; gx /= gl; gy /= gl;
-    linha(c, X(vi.e), Y(vi.n), X(vi.e) + gx * 65, Y(vi.n) + gy * 65, 1.4, VERDE);
+    linha(c, X(vi.e), Y(vi.n), X(vi.e) + gx * 80, Y(vi.n) + gy * 80, 1.6, VERDE);
     // rótulo do confrontante: cabeçalho (matrícula + imóvel) e, por pessoa,
     // linha de assinatura larga com nome e CPF centralizados embaixo
     const lts = linhasDescritivo(t.descritivo);
@@ -281,19 +298,19 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
       if (k + 1 < lts.length && /^CPF/i.test(lts[k + 1])) pessoas.push({ nome: lts[k], cpf: lts[k + 1] });
       else header.push(lts[k]);
     }
-    const ASS_W = 300;                       // largura da linha de assinatura
-    const H_HEADER = 22, H_PESSOA = 64;
+    const ASS_W = 340;                       // largura da linha de assinatura
+    const H_HEADER = 28, H_PESSOA = 78;
     const altura = header.length * H_HEADER + 8 + Math.max(pessoas.length, 1) * H_PESSOA;
     // afastamento calculado pela metade do bloco projetada na normal + margem:
     // o rótulo fica AO LADO da linha azul, sem nunca encostar nela
     const blockW = Math.max(ASS_W,
-      ...header.map((hh) => fb.widthOfTextAtSize(hh, 18)),
-      ...pessoas.map((pp) => Math.max(fb.widthOfTextAtSize(pp.nome, 17), f.widthOfTextAtSize(pp.cpf, 15))));
-    const off = Math.abs(nx) * blockW / 2 + Math.abs(ny) * altura / 2 + 26;
+      ...header.map((hh) => fb.widthOfTextAtSize(hh, 22)),
+      ...pessoas.map((pp) => Math.max(fb.widthOfTextAtSize(pp.nome, 21), f.widthOfTextAtSize(pp.cpf, 18))));
+    const off = Math.abs(nx) * blockW / 2 + Math.abs(ny) * altura / 2 + 30;
     const lx = mx + nx * off;
     let ty = my + ny * off + altura / 2;     // bloco centralizado no ponto médio do trecho
     for (const [hi, ht] of header.entries()) {
-      texto(c, ht, lx, ty, 18, { center: true, bold: hi === header.length - 1 });
+      texto(c, ht, lx, ty, 22, { center: true, bold: hi === header.length - 1 });
       ty -= H_HEADER;
     }
     ty -= 8;
@@ -302,8 +319,8 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     } else {
       for (const p of pessoas) {
         linha(c, lx - ASS_W / 2, ty, lx + ASS_W / 2, ty, 1.1);
-        texto(c, p.nome, lx, ty - 19, 17, { center: true, bold: true });
-        texto(c, p.cpf, lx, ty - 36, 15, { center: true });
+        texto(c, p.nome, lx, ty - 23, 21, { center: true, bold: true });
+        texto(c, p.cpf, lx, ty - 44, 18, { center: true });
         ty -= H_PESSOA;
       }
     }
@@ -313,8 +330,10 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   // estrela de 8 pontas: pontas cardeais com metades preto/branco (efeito 3D),
   // pontas diagonais menores em cinza, dois anéis com marcações a cada 45°
   {
-    const bx = dArea.x + dArea.w - 92, by = dArea.y + dArea.h - 126;
-    const R = 54;
+    // afastada do canto p/ não cobrir os rótulos N=/E= da malha (que ocupam
+    // as bordas), e maior p/ acompanhar a nova escala dos textos
+    const bx = dArea.x + dArea.w - 250, by = dArea.y + dArea.h - 170;
+    const R = 70;
     // coordenadas SVG (y p/ baixo), 0° = norte, sentido horário
     const pol = (angDeg: number, r: number): [number, number] => {
       const a = angDeg * Math.PI / 180;
@@ -332,26 +351,26 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     }
     // pontas diagonais (menores, cinza)
     for (const a of [45, 135, 225, 315]) {
-      const path = `M ${p(pol(a, 30))} L ${p(pol(a + 45, 9))} L 0 0 L ${p(pol(a - 45, 9))} Z`;
+      const path = `M ${p(pol(a, 38))} L ${p(pol(a + 45, 12))} L 0 0 L ${p(pol(a - 45, 12))} Z`;
       page.drawSvgPath(path, { x: bx, y: by, color: CINZA, borderColor: PRETO, borderWidth: 0.4 });
     }
     // pontas cardeais (metade escura + metade clara)
     for (const a of [0, 90, 180, 270]) {
-      const tip = pol(a, R - 9), sd = pol(a + 45, 12), se = pol(a - 45, 12);
+      const tip = pol(a, R - 9), sd = pol(a + 45, 15), se = pol(a - 45, 15);
       page.drawSvgPath(`M ${p(tip)} L ${p(sd)} L 0 0 Z`, { x: bx, y: by, color: PRETO });
       page.drawSvgPath(`M ${p(tip)} L ${p(se)} L 0 0 Z`, { x: bx, y: by, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 0.6 });
     }
     // miolo e letra N
-    page.drawCircle({ x: bx, y: by, size: 3.5, borderWidth: 1.1, borderColor: PRETO, color: rgb(1, 1, 1) });
-    texto(c, "N", bx, by + R + 8, 28, { bold: true, center: true });
+    page.drawCircle({ x: bx, y: by, size: 4.5, borderWidth: 1.2, borderColor: PRETO, color: rgb(1, 1, 1) });
+    texto(c, "N", bx, by + R + 10, 34, { bold: true, center: true });
   }
 
   // ============================ BARRA LATERAL ============================
   const sbTop = H - 20, sbBot = 20;
   // posse não leva quadro analítico — as demais seções ganham o espaço dele
   const alturas = posse
-    ? { quadro: 0, situacao: 0.34, carimbo: 0.17, planimetrico: 0.34, rodape: 0.15 }
-    : { quadro: 0.30, situacao: 0.16, carimbo: 0.15, planimetrico: 0.27, rodape: 0.12 };
+    ? { quadro: 0, situacao: 0.30, carimbo: 0.12, planimetrico: 0.42, rodape: 0.16 }
+    : { quadro: 0.26, situacao: 0.14, carimbo: 0.10, planimetrico: 0.36, rodape: 0.14 };
   let yCursor = sbTop;
 
   // ---- QUADRO ANALÍTICO (tabela com grade, colunas centradas) ----
@@ -359,13 +378,13 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     const h = (sbTop - sbBot) * alturas.quadro;
     const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "QUADRO ANALÍTICO");
     const heads = ["VÉRTICE", "LADO", "LONGITUDE", "LATITUDE", "AZIMUTE", "DIST.(m)", "ALTIT."];
-    const cols = [56, 112, 64, 64, 52, 46, 42];
+    const cols = [90, 190, 105, 105, 85, 75, 60];
     const tw = cols.reduce((a, b) => a + b, 0);
     const tx0 = sbX + (SB_W - tw) / 2;
-    const headH = 14;
-    const rowH = 11;
-    const tableTop = topoUtil - 5;
-    const maxLinhas = Math.max(1, Math.floor((tableTop - headH - (yCursor - h) - 12) / rowH));
+    const headH = 28;
+    const rowH = 20;
+    const tableTop = topoUtil - 6;
+    const maxLinhas = Math.max(1, Math.floor((tableTop - headH - (yCursor - h) - 34) / rowH));
     const linhasQ = vs.slice(0, maxLinhas);
     const tableBot = tableTop - headH - linhasQ.length * rowH;
     // moldura, linha do cabeçalho e divisões verticais
@@ -381,18 +400,18 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     // cabeçalho centrado por coluna
     let hx = tx0;
     for (const [i, hh] of heads.entries()) {
-      texto(c, hh, hx + cols[i] / 2, tableTop - headH + 4, 9, { bold: true, center: true });
+      texto(c, hh, hx + cols[i] / 2, tableTop - headH + 9, 14, { bold: true, center: true });
       hx += cols[i];
     }
-    // valores centrados por coluna
+    // valores centrados por coluna (encolhem se não couberem na coluna)
     for (const [r, v] of linhasQ.entries()) {
       const vals = [v.codigo, `${v.codigo}-${v.vante}`, v.lonFmt, v.latFmt, v.azFmt, v.distFmt, v.alt];
-      const ty = tableTop - headH - (r + 1) * rowH + 3;
+      const ty = tableTop - headH - (r + 1) * rowH + 5;
       let cx2 = tx0;
-      for (const [i, val] of vals.entries()) { texto(c, val, cx2 + cols[i] / 2, ty, 8, { center: true }); cx2 += cols[i]; }
+      for (const [i, val] of vals.entries()) { textoFit(c, val, cx2 + cols[i] / 2, ty, 13, cols[i] - 6, { center: true }); cx2 += cols[i]; }
     }
     if (vs.length > linhasQ.length) {
-      texto(c, `… +${vs.length - linhasQ.length} vértices (ver memorial tabular)`, tx0, tableBot - 10, 8, { cor: CINZA });
+      texto(c, `… +${vs.length - linhasQ.length} vértices (ver memorial tabular)`, tx0, tableBot - 20, 14, { cor: CINZA });
     }
     yCursor -= h;
   }
@@ -411,7 +430,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
         width: img.width * sc, height: img.height * sc,
       });
     } else {
-      texto(c, "(envie a imagem de satélite ao gerar a planta)", sbX + SB_W / 2, yCursor - h / 2, 9, { cor: CINZA, center: true });
+      texto(c, "(envie a imagem de satélite ao gerar a planta)", sbX + SB_W / 2, yCursor - h / 2, 20, { cor: CINZA, center: true });
     }
     yCursor -= h;
   }
@@ -430,7 +449,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
         width: img.width * sc, height: img.height * sc,
       });
     } else {
-      texto(c, "(envie a logo em Configurações)", sbX + SB_W / 2, yCursor - h / 2, 9, { cor: CINZA, center: true });
+      texto(c, "(envie a logo em Configurações)", sbX + SB_W / 2, yCursor - h / 2, 20, { cor: CINZA, center: true });
     }
     yCursor -= h;
   }
@@ -439,44 +458,50 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   {
     const h = (sbTop - sbBot) * alturas.planimetrico;
     const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "PLANIMÉTRICO DO IMÓVEL GEORREFERENCIADO");
-    const colEsq = sbX + 10, colDir = sbX + SB_W / 2 + 10;
-    let py = topoUtil - 18;
+    const colEsq = sbX + 14, colDir = sbX + SB_W / 2 + 12;
+    const colW = SB_W / 2 - 26;
+    let py = topoUtil - 32;
+    // rótulo pequeno em cinza + valor grande logo abaixo, encolhendo se preciso
     const campo = (rot: string, val: string, x: number, y: number) => {
-      texto(c, rot, x, y, 9, { bold: true, cor: CINZA });
-      texto(c, val, x, y - 13, 12);
+      texto(c, rot, x, y, 15, { bold: true, cor: CINZA });
+      textoFit(c, val, x, y - 28, 26, colW);
     };
     campo("Denominação:", d.denominacao.toUpperCase(), colEsq, py);
-    campo("TRT:", d.trt, colDir, py);
-    py -= 34;
-    texto(c, posse ? "Posseiro(s):" : "Proprietário(s):", colEsq, py, 9, { bold: true, cor: CINZA });
-    let ppy = py - 14;
-    for (const p of d.proprietarios) { texto(c, p.nome.toUpperCase(), colEsq, ppy, 11); ppy -= 14; }
-    // na posse não há matrícula nem cartório: o campo indica POSSE e o CNS sai
+    // coluna direita: TRT + campos do imóvel (na posse não há matrícula nem
+    // cartório: o campo indica POSSE e o CNS sai)
     const camposDir: [string, string][] = posse
-      ? [["Matrícula do Imóvel:", "POSSE"], ["Código INCRA:", d.sncr], ["Município/UF:", d.municipioUf.toUpperCase()]]
-      : [["Matrícula do Imóvel:", d.matricula], ["Código do Cartório (CNS):", d.cns], ["Código INCRA:", d.sncr], ["Município/UF:", d.municipioUf.toUpperCase()]];
-    for (const [i, [rot, val]] of camposDir.entries()) campo(rot, val, colDir, py - i * 34);
+      ? [["TRT:", d.trt], ["Matrícula do Imóvel:", "POSSE"], ["Código INCRA:", d.sncr], ["Município/UF:", d.municipioUf.toUpperCase()]]
+      : [["TRT:", d.trt], ["Matrícula do Imóvel:", d.matricula], ["Código do Cartório (CNS):", d.cns], ["Código INCRA:", d.sncr], ["Município/UF:", d.municipioUf.toUpperCase()]];
+    for (const [i, [rot, val]] of camposDir.entries()) campo(rot, val, colDir, py - i * 62);
+    py -= 62;
+    texto(c, posse ? "Posseiro(s):" : "Proprietário(s):", colEsq, py, 15, { bold: true, cor: CINZA });
+    let ppy = py - 28;
+    for (const p of d.proprietarios) {
+      textoFit(c, p.nome.toUpperCase(), colEsq, ppy, 22, colW, { bold: true });
+      textoFit(c, `CPF: ${p.cpf}`, colEsq, ppy - 22, 18, colW);
+      ppy -= 56;
+    }
     // RT
-    const rtY = yCursor - h + 66;
-    linha(c, sbX, rtY + 32, sbX + SB_W, rtY + 32, 0.8);
-    texto(c, "RESPONSÁVEL TÉCNICO", colEsq, rtY + 21, 9, { bold: true, cor: CINZA });
-    texto(c, d.rt.nome.toUpperCase(), colEsq, rtY + 8, 12, { bold: true });
-    texto(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, rtY - 4, 9);
-    texto(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}   TRT: ${d.trt}`, colEsq, rtY - 16, 9);
+    const rtY = yCursor - h + 140;
+    linha(c, sbX, rtY + 76, sbX + SB_W, rtY + 76, 0.8);
+    texto(c, "RESPONSÁVEL TÉCNICO", colEsq, rtY + 56, 15, { bold: true, cor: CINZA });
+    textoFit(c, d.rt.nome.toUpperCase(), colEsq, rtY + 28, 26, SB_W - 28, { bold: true });
+    textoFit(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, rtY + 6, 16, SB_W - 28);
+    textoFit(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}   TRT: ${d.trt}`, colEsq, rtY - 16, 16, SB_W - 28);
     // selos de cartório (matrícula) ou assinatura do posseiro (posse)
-    const seloW = (SB_W - 24) / 2;
+    const seloW = (SB_W - 36) / 2;
     for (const [i, p] of d.proprietarios.slice(0, 2).entries()) {
-      const sx = sbX + 8 + i * (seloW + 8);
-      caixa(c, sx, yCursor - h + 4, seloW, 48, 0.8);
+      const sx = sbX + 12 + i * (seloW + 12);
+      caixa(c, sx, yCursor - h + 8, seloW, 104, 0.8);
       if (posse) {
-        texto(c, "POSSEIRO", sx + seloW / 2, yCursor - h + 41, 7, { bold: true, center: true, cor: CINZA });
-        linha(c, sx + 14, yCursor - h + 32, sx + seloW - 14, yCursor - h + 32, 0.9);
-        texto(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 21, 8.5, { center: true });
-        texto(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 10, 8.5, { center: true });
+        texto(c, "POSSEIRO", sx + seloW / 2, yCursor - h + 92, 14, { bold: true, center: true, cor: CINZA });
+        linha(c, sx + 20, yCursor - h + 64, sx + seloW - 20, yCursor - h + 64, 1);
+        textoFit(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 42, 18, seloW - 16, { center: true });
+        textoFit(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 20, 16, seloW - 16, { center: true });
       } else {
-        texto(c, "SELO DE RECONHECIMENTO — CARTÓRIO", sx + seloW / 2, yCursor - h + 39, 7, { bold: true, center: true, cor: CINZA });
-        texto(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 26, 8.5, { center: true });
-        texto(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 13, 8.5, { center: true });
+        textoFit(c, "SELO DE RECONHECIMENTO — CARTÓRIO", sx + seloW / 2, yCursor - h + 84, 14, seloW - 16, { bold: true, center: true, cor: CINZA });
+        textoFit(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 52, 18, seloW - 16, { center: true });
+        textoFit(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 24, 16, seloW - 16, { center: true });
       }
     }
     yCursor -= h;
@@ -487,42 +512,45 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     const h = (sbTop - sbBot) * alturas.rodape;
     caixa(c, sbX, yCursor - h, SB_W, h);
     const cw = SB_W / 4;
-    const itens: [string, string][] = [
-      ["ESCALA", `1:${fmtMilhar(escala)}`],
-      ["ÁREA", `${d.areaFmt} HA/ ${d.tarefasFmt} TAREFAS`],
-      ["PERÍMETRO", `${d.perimetroFmt} m`],
-      ["DESENHISTA", d.desenhista || "—"],
-      ["COORDENADA", "UTM"],
-      ["DATUM", `SIRGAS2000  M.C -${d.mcAbs}Wgr  Fuso: ${d.fuso}${letraFuso(d.latMediaDeg)}`],
-      ["DATA", d.dataStr],
-      ["FOLHA", posse ? "01 001 A3" : "01 001 A1"],
+    // valores longos quebram em 2 linhas dentro da célula em vez de encolher
+    const itens: [string, string[]][] = [
+      ["ESCALA", [`1:${fmtMilhar(escala)}`]],
+      ["ÁREA", [`${d.areaFmt} HA`, `${d.tarefasFmt} TAREFAS`]],
+      ["PERÍMETRO", [`${d.perimetroFmt} m`]],
+      ["DESENHISTA", [d.desenhista || "—"]],
+      ["COORDENADA", ["UTM"]],
+      ["DATUM", ["SIRGAS2000", `M.C -${d.mcAbs}Wgr Fuso: ${d.fuso}${letraFuso(d.latMediaDeg)}`]],
+      ["DATA", [d.dataStr]],
+      ["FOLHA", [posse ? "01 001 A3" : "01 001 A1"]],
     ];
-    for (const [i, [rot, val]] of itens.entries()) {
+    for (const [i, [rot, vals]] of itens.entries()) {
       const col = i % 4, row = Math.floor(i / 4);
-      const ix = sbX + col * cw + 6;
-      const iy = yCursor - 20 - row * (h / 2 - 4);
-      texto(c, rot, ix, iy, 8, { bold: true, cor: CINZA });
-      texto(c, val, ix, iy - 14, val.length > 22 ? 8 : 11);
+      const ix = sbX + col * cw + 8;
+      const iy = yCursor - 26 - row * (h / 2);
+      texto(c, rot, ix, iy, 15, { bold: true, cor: CINZA });
+      for (const [k, val] of vals.entries()) textoFit(c, val, ix, iy - 26 - k * 22, 20, cw - 16);
       if (col > 0) linha(c, sbX + col * cw, yCursor - h, sbX + col * cw, yCursor, 0.5);
     }
     linha(c, sbX, yCursor - h / 2, sbX + SB_W, yCursor - h / 2, 0.5);
   }
 
-  // legenda no canto inferior esquerdo da área de desenho
+  // legenda no canto inferior esquerdo da área de desenho (3× o tamanho)
   {
-    const lx = dArea.x + 6, lyTop = dArea.y + 110;
-    caixa(c, lx - 4, dArea.y + 2, 292, 114, 0.8);
-    texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 8, 10, { bold: true });
+    const lx = dArea.x + 10, boxW = 640, boxH = 258;
+    // fundo branco opaco: a legenda cobre a malha e os rótulos que passam atrás
+    page.drawRectangle({ x: lx - 6, y: dArea.y + 2, width: boxW, height: boxH, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 0.8 });
+    const lyTop = dArea.y + 2 + boxH;
+    texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 34, 24, { bold: true });
     const itens: [ReturnType<typeof rgb>, string][] = [
       [VERMELHO, "ESTRADA"], [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
     ];
-    let lyy = lyTop - 26;
+    let lyy = lyTop - 76;
     for (const [cor, nome] of itens) {
-      linha(c, lx, lyy + 3, lx + 34, lyy + 3, 2.5, cor);
-      texto(c, nome, lx + 42, lyy, 9);
-      lyy -= 17;
+      linha(c, lx, lyy + 7, lx + 76, lyy + 7, 5, cor);
+      texto(c, nome, lx + 90, lyy, 20);
+      lyy -= 42;
     }
-    texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 9);
+    texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 20);
   }
 
   // posse: reduz o conteúdo e entrega a folha no A3 exato (420×297 mm) —
