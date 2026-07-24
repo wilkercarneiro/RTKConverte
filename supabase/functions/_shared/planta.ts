@@ -481,27 +481,38 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
       textoFit(c, `CPF: ${p.cpf}`, colEsq, ppy - 22, 18, colW);
       ppy -= 56;
     }
-    // RT
-    const rtY = yCursor - h + 140;
-    linha(c, sbX, rtY + 76, sbX + SB_W, rtY + 76, 0.8);
-    texto(c, "RESPONSÁVEL TÉCNICO", colEsq, rtY + 56, 15, { bold: true, cor: CINZA });
-    textoFit(c, d.rt.nome.toUpperCase(), colEsq, rtY + 28, 26, SB_W - 28, { bold: true });
-    textoFit(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, rtY + 6, 16, SB_W - 28);
-    textoFit(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}   TRT: ${d.trt}`, colEsq, rtY - 16, 16, SB_W - 28);
-    // selos de cartório (matrícula) ou assinatura do posseiro (posse)
-    const seloW = (SB_W - 36) / 2;
-    for (const [i, p] of d.proprietarios.slice(0, 2).entries()) {
-      const sx = sbX + 12 + i * (seloW + 12);
-      caixa(c, sx, yCursor - h + 8, seloW, 104, 0.8);
+    // faixa inferior em duas colunas: RESPONSÁVEL TÉCNICO à esquerda e o(s)
+    // quadro(s) de assinatura encaixado(s) na metade direita, lado a lado
+    const bandH = 192;
+    const bandTop = yCursor - h + bandH;
+    linha(c, sbX, bandTop, sbX + SB_W, bandTop, 0.8);
+    linha(c, sbX + SB_W / 2, yCursor - h, sbX + SB_W / 2, bandTop, 0.8);
+    const rtW = SB_W / 2 - 28;
+    texto(c, "RESPONSÁVEL TÉCNICO", colEsq, bandTop - 28, 15, { bold: true, cor: CINZA });
+    textoFit(c, d.rt.nome.toUpperCase(), colEsq, bandTop - 58, 26, rtW, { bold: true });
+    textoFit(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, bandTop - 84, 16, rtW);
+    textoFit(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}`, colEsq, bandTop - 108, 16, rtW);
+    textoFit(c, `TRT: ${d.trt}`, colEsq, bandTop - 132, 16, rtW);
+    // quadros de assinatura: cartório (matrícula) ou posseiro (posse),
+    // empilhados e centralizados verticalmente na metade direita da faixa
+    const assinantes = d.proprietarios.slice(0, 2);
+    const seloX = sbX + SB_W / 2 + 12;
+    const seloW = SB_W / 2 - 24;
+    const seloH = assinantes.length > 1 ? 88 : 108;
+    const gap = (bandH - assinantes.length * seloH) / (assinantes.length + 1);
+    for (const [i, p] of assinantes.entries()) {
+      const syBot = bandTop - (i + 1) * (gap + seloH);
+      caixa(c, seloX, syBot, seloW, seloH, 0.8);
+      const cx = seloX + seloW / 2;
       if (posse) {
-        texto(c, "POSSEIRO", sx + seloW / 2, yCursor - h + 92, 14, { bold: true, center: true, cor: CINZA });
-        linha(c, sx + 20, yCursor - h + 64, sx + seloW - 20, yCursor - h + 64, 1);
-        textoFit(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 42, 18, seloW - 16, { center: true });
-        textoFit(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 20, 16, seloW - 16, { center: true });
+        texto(c, "POSSEIRO", cx, syBot + seloH - 20, 14, { bold: true, center: true, cor: CINZA });
+        linha(c, seloX + 20, syBot + seloH - 50, seloX + seloW - 20, syBot + seloH - 50, 1);
+        textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 72, 18, seloW - 16, { center: true });
+        textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 94, 16, seloW - 16, { center: true });
       } else {
-        textoFit(c, "SELO DE RECONHECIMENTO — CARTÓRIO", sx + seloW / 2, yCursor - h + 84, 14, seloW - 16, { bold: true, center: true, cor: CINZA });
-        textoFit(c, p.nome.toUpperCase(), sx + seloW / 2, yCursor - h + 52, 18, seloW - 16, { center: true });
-        textoFit(c, `CPF: ${p.cpf}`, sx + seloW / 2, yCursor - h + 24, 16, seloW - 16, { center: true });
+        textoFit(c, "SELO DE RECONHECIMENTO — CARTÓRIO", cx, syBot + seloH - 22, 14, seloW - 16, { bold: true, center: true, cor: CINZA });
+        textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 50, 18, seloW - 16, { center: true });
+        textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 74, 16, seloW - 16, { center: true });
       }
     }
     yCursor -= h;
