@@ -127,6 +127,22 @@ function textoFit(c: Ctx, t: string, x: number, y: number, size: number, maxW: n
   texto(c, t, x, y, tam, opts);
 }
 
+// quebra linhas longas em várias, respeitando a largura máxima do bloco
+function quebrarLinhas(linhas: string[], maxW: number, tam: number, font: PDFFont): string[] {
+  const out: string[] = [];
+  for (const l of linhas) {
+    if (font.widthOfTextAtSize(l, tam) <= maxW) { out.push(l); continue; }
+    let atual = "";
+    for (const p of l.split(" ")) {
+      const teste = atual ? `${atual} ${p}` : p;
+      if (atual && font.widthOfTextAtSize(teste, tam) > maxW) { out.push(atual); atual = p; }
+      else atual = teste;
+    }
+    if (atual) out.push(atual);
+  }
+  return out;
+}
+
 // quebra o descritivo em linhas de rótulo (sempre em MAIÚSCULAS)
 function linhasDescritivo(descritivo: string): string[] {
   const partes = descritivo.split("\\").map((p) => p.trim()).filter(Boolean);
@@ -142,6 +158,10 @@ function linhasDescritivo(descritivo: string): string[] {
 // ---------------------------------------------------------------------------
 export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const posse = d.tipoImovel === "posse";
+  // A folha de posse é desenhada em A1 e reduzida à metade no fim (A3). Os
+  // corpos pequenos do desenho são ampliados por K aqui para continuarem
+  // legíveis depois dessa redução.
+  const K = posse ? 1.7 : 1;
   const pdf = await PDFDocument.create();
   // a folha é sempre desenhada nas medidas A1; p/ posse o conteúdo é reduzido
   // à metade no final (setSize+scaleContent), virando um A3 proporcional
@@ -163,8 +183,10 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const vs = d.vertices;
   const minE = Math.min(...vs.map((v) => v.e)), maxE = Math.max(...vs.map((v) => v.e));
   const minN = Math.min(...vs.map((v) => v.n)), maxN = Math.max(...vs.map((v) => v.n));
-  const spanE = (maxE - minE) * 1.55 || 100; // folga p/ os rótulos grandes dos confrontantes
-  const spanN = (maxN - minN) * 1.48 || 100;
+  // folga p/ os rótulos dos confrontantes — reduzida junto com o corpo deles,
+  // o polígono passa a ocupar a área de desenho como na planta de referência
+  const spanE = (maxE - minE) * 1.42 || 100;
+  const spanN = (maxN - minN) * 1.26 || 100;
   const mPorPtMin = Math.max(spanE / dArea.w, spanN / dArea.h);
   const escala = escalaProporcional(mPorPtMin);
   const mPorPt = escala * 0.000352778;
@@ -179,7 +201,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   const passo = stepCands.find((s) => s >= alvoM) ?? 5000;
   const e0 = Math.ceil((cxE - dArea.w / 2 * mPorPt) / passo) * passo;
   const n0 = Math.ceil((cxN - dArea.h / 2 * mPorPt) / passo) * passo;
-  const GRID_TAM = 30; // 3× o tamanho antigo — legível mesmo de longe
+  const GRID_TAM = 11 * K; // discreto, como na planta de referência
   for (let e = e0; X(e) < dArea.x + dArea.w; e += passo) {
     linha(c, X(e), dArea.y, X(e), dArea.y + dArea.h, 0.4, CINZA, [2, 4]);
     const et = `E=${fmtMilhar(e)}`;
@@ -222,15 +244,32 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     const a = vs[i], b = vs[(i + 1) % nv];
     linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 1.8, AZUL);
   }
-  // vértices + códigos
+  // vértices + códigos. Em divisas com muitos pontos quase alinhados (a face
+  // norte do MONOINO tem 13) os códigos em corpo grande viravam um borrão
+  // ilegível: aqui o texto é pequeno e o rótulo que colidiria com outro já
+  // desenhado é suprimido — nenhum dado se perde, o quadro analítico lista
+  // TODOS os vértices.
+  const VERT_TAM = 7.5 * K;
+  const ocupado: { x1: number; y1: number; x2: number; y2: number }[] = [];
+  let rotulosOcultos = 0;
   for (let i = 0; i < nv; i++) {
     const v = vs[i];
-    page.drawCircle({ x: X(v.e), y: Y(v.n), size: 1.6, color: PRETO });
-    const prev = vs[(i - 1 + nv) % nv], next = vs[(i + 1) % nv];
+    page.drawCircle({ x: X(v.e), y: Y(v.n), size: 1.4, color: PRETO });
+    // normal apontando p/ fora do polígono
     let nx = X(v.e) - dcx, ny = Y(v.n) - dcy;
     const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
-    void prev; void next;
-    texto(c, v.codigo, X(v.e) + nx * 10, Y(v.n) + ny * 10 - 2.5, 12, { cor: PRETO });
+    // tique do marco, como na planta de referência
+    linha(c, X(v.e) + nx * 2, Y(v.n) + ny * 2, X(v.e) + nx * 6, Y(v.n) + ny * 6, 0.9);
+    const w = f.widthOfTextAtSize(v.codigo, VERT_TAM);
+    const lx = nx < 0 ? X(v.e) + nx * 8 - w : X(v.e) + nx * 8;
+    const ly = Y(v.n) + ny * 8 - VERT_TAM / 2;
+    const cx = { x1: lx - 1.5, y1: ly - 1.5, x2: lx + w + 1.5, y2: ly + VERT_TAM + 1.5 };
+    if (ocupado.some((o) => !(cx.x2 < o.x1 || cx.x1 > o.x2 || cx.y2 < o.y1 || cx.y1 > o.y2))) {
+      rotulosOcultos++;
+      continue;
+    }
+    ocupado.push(cx);
+    texto(c, v.codigo, lx, ly, VERT_TAM, { cor: PRETO });
   }
 
   // ------------------- divisões de confrontação + rótulos -------------------
@@ -259,15 +298,40 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     // teto pela área de desenho: o bloco nunca estoura as margens laterais,
     // e encolhe o quanto for preciso p/ ficar dentro do polígono
     const tamArea = (dArea.w * 0.92) / larguraMax;
-    const tam = Math.max(6, Math.min(38, tamW, tamH, tamArea));
-    const esp = tam * 1.3;
+    // teto de 18pt: o bloco identificava o imóvel em corpo maior que os títulos
+    // do carimbo e desequilibrava a folha
+    const tam = Math.max(7 * K, Math.min(18 * K, tamW, tamH, tamArea));
+    const esp = tam * 1.35;
+    // alinhado à esquerda (padrão da planta de referência), com o bloco inteiro
+    // centralizado no centroide
+    const bw = Math.max(...centroLinhas.map((l) => fb.widthOfTextAtSize(l, tam)));
+    const bx0 = Math.max(dArea.x + 6, Math.min(dcx - bw / 2, dArea.x + dArea.w - bw - 6));
     let ty = dcy + (centroLinhas.length * esp) / 2;
     for (const [li, lt] of centroLinhas.entries()) {
-      texto(c, lt, dcx, ty, tam, { bold: li === 1, center: true });
+      texto(c, lt, bx0, ty, tam, { bold: li === 1 });
       ty -= esp;
     }
   }
-  for (const t of d.trechos) {
+  // Trechos contíguos do MESMO confrontante viram um único rótulo: no caso real
+  // a FAZENDA KAGADOS chegava em 5 trechos seguidos e o bloco de texto saía
+  // repetido 5× em volta do polígono.
+  const trechosOrd = [...d.trechos].sort((a, b) => a.inicioIdx - b.inicioIdx);
+  const grupos: TrechoPlanta[] = [];
+  for (const t of trechosOrd) {
+    const ant = grupos[grupos.length - 1];
+    if (ant && ant.descritivo === t.descritivo && ant.fimIdx % nv === t.inicioIdx % nv) ant.fimIdx = t.fimIdx;
+    else grupos.push({ ...t });
+  }
+  // fechamento do anel: o último grupo pode continuar no primeiro
+  if (grupos.length > 1) {
+    const ult = grupos[grupos.length - 1], pri = grupos[0];
+    if (ult.descritivo === pri.descritivo && ult.fimIdx % nv === pri.inicioIdx % nv) {
+      pri.inicioIdx = ult.inicioIdx;
+      grupos.pop();
+    }
+  }
+  const LBL_TAM = 13 * K, LBL_ESP = 16 * K, LBL_MAXW = 310 * K;
+  for (const t of grupos) {
     // ponto médio GEOMÉTRICO do trecho: metade do comprimento da linha do
     // confrontante — o rótulo fica centralizado no "raio" da confrontação
     const idxs: number[] = [];
@@ -303,7 +367,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     if (t.isEstrada) {
       // nome da via rotacionado ao longo do segmento do ponto médio
       const nome = linhasDescritivo(t.descritivo)[0] ?? "";
-      texto(c, nome, mx + nx * 36, my + ny * 36, 26, { bold: true, cor: PRETO, rot: angSeg > 90 || angSeg < -90 ? angSeg + 180 : angSeg });
+      texto(c, nome, mx + nx * 22, my + ny * 22, 13 * K, { bold: true, cor: PRETO, rot: angSeg > 90 || angSeg < -90 ? angSeg + 180 : angSeg });
       continue;
     }
     // linha verde de divisão no INÍCIO do trecho
@@ -311,43 +375,27 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     if (!vi) continue;
     let gx = X(vi.e) - dcx, gy = Y(vi.n) - dcy;
     const gl = Math.hypot(gx, gy) || 1; gx /= gl; gy /= gl;
-    linha(c, X(vi.e), Y(vi.n), X(vi.e) + gx * 80, Y(vi.n) + gy * 80, 1.6, VERDE);
-    // rótulo do confrontante: cabeçalho (matrícula + imóvel) e, por pessoa,
-    // linha de assinatura larga com nome e CPF centralizados embaixo
-    const lts = linhasDescritivo(t.descritivo);
-    const header: string[] = [];
-    const pessoas: { nome: string; cpf: string }[] = [];
-    for (let k = 0; k < lts.length; k++) {
-      if (/^CPF/i.test(lts[k])) continue;
-      if (k + 1 < lts.length && /^CPF/i.test(lts[k + 1])) pessoas.push({ nome: lts[k], cpf: lts[k + 1] });
-      else header.push(lts[k]);
-    }
-    const ASS_W = 340;                       // largura da linha de assinatura
-    const H_HEADER = 28, H_PESSOA = 78;
-    const altura = header.length * H_HEADER + 8 + Math.max(pessoas.length, 1) * H_PESSOA;
-    // afastamento calculado pela metade do bloco projetada na normal + margem:
-    // o rótulo fica AO LADO da linha azul, sem nunca encostar nela
-    const blockW = Math.max(ASS_W,
-      ...header.map((hh) => fb.widthOfTextAtSize(hh, 22)),
-      ...pessoas.map((pp) => Math.max(fb.widthOfTextAtSize(pp.nome, 21), f.widthOfTextAtSize(pp.cpf, 18))));
-    const off = Math.abs(nx) * blockW / 2 + Math.abs(ny) * altura / 2 + 30;
-    const lx = mx + nx * off;
-    let ty = my + ny * off + altura / 2;     // bloco centralizado no ponto médio do trecho
-    for (const [hi, ht] of header.entries()) {
-      texto(c, ht, lx, ty, 22, { center: true, bold: hi === header.length - 1 });
-      ty -= H_HEADER;
-    }
-    ty -= 8;
-    if (pessoas.length === 0) {
-      linha(c, lx - ASS_W / 2, ty, lx + ASS_W / 2, ty, 1.1);
-    } else {
-      for (const p of pessoas) {
-        linha(c, lx - ASS_W / 2, ty, lx + ASS_W / 2, ty, 1.1);
-        texto(c, p.nome, lx, ty - 23, 21, { center: true, bold: true });
-        texto(c, p.cpf, lx, ty - 44, 18, { center: true });
-        ty -= H_PESSOA;
-      }
-    }
+    linha(c, X(vi.e), Y(vi.n), X(vi.e) + gx * 50, Y(vi.n) + gy * 50, 1.4, VERDE);
+    // Rótulo do confrontante: bloco de texto corrido alinhado à esquerda, como
+    // na planta de referência. A versão anterior desenhava uma linha de
+    // assinatura de 340pt com nome e CPF em corpo 21 — duplicava as cartas de
+    // anuência e dominava o desenho.
+    const lbl = quebrarLinhas(linhasDescritivo(t.descritivo), LBL_MAXW, LBL_TAM, f);
+    const blockW = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, LBL_TAM)));
+    const altura = lbl.length * LBL_ESP;
+    // Ancoragem pela BORDA do bloco (não pelo centro): à direita do perímetro o
+    // texto começa depois do traço, à esquerda termina antes dele. Centrar o
+    // bloco no ponto deslocado fazia rótulos largos voltarem por cima do
+    // polígono.
+    const MG = 30;
+    let lx = Math.abs(nx) < 0.3 ? mx - blockW / 2 : nx > 0 ? mx + MG : mx - MG - blockW;
+    let ty = Math.abs(ny) < 0.3 ? my + altura / 2 : ny > 0 ? my + MG + altura : my - MG;
+    // e o bloco inteiro fica dentro da área de desenho — antes os rótulos
+    // laterais vazavam para fora da folha
+    lx = Math.max(dArea.x + 4, Math.min(lx, dArea.x + dArea.w - blockW - 4));
+    ty = Math.max(dArea.y + altura, Math.min(ty, dArea.y + dArea.h - LBL_TAM));
+    for (const [li, lt] of lbl.entries()) texto(c, lt, lx, ty - li * LBL_ESP, LBL_TAM);
+    ocupado.push({ x1: lx, y1: ty - altura, x2: lx + blockW, y2: ty + LBL_TAM });
   }
 
   // ------------------- bússola (rosa dos ventos moderna) -------------------
@@ -356,8 +404,22 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   {
     // afastada do canto p/ não cobrir os rótulos N=/E= da malha (que ocupam
     // as bordas), e maior p/ acompanhar a nova escala dos textos
-    const bx = dArea.x + dArea.w - 250, by = dArea.y + dArea.h - 170;
-    const R = 70;
+    const R = 58 * K;
+    // canto livre: preferência pelo superior esquerdo (padrão da planta de
+    // referência), caindo p/ outro canto se lá já houver polígono ou rótulo —
+    // o inferior esquerdo é reservado à legenda
+    const margem = R + 22;
+    const cantos: [number, number][] = [
+      [dArea.x + margem, dArea.y + dArea.h - margem],
+      [dArea.x + dArea.w - margem, dArea.y + dArea.h - margem],
+      [dArea.x + dArea.w - margem, dArea.y + margem],
+    ];
+    const livre = ([qx, qy]: [number, number]) => {
+      const cx0 = { x1: qx - R - 8, y1: qy - R - 8, x2: qx + R + 8, y2: qy + R + 18 };
+      if (ocupado.some((o) => !(cx0.x2 < o.x1 || cx0.x1 > o.x2 || cx0.y2 < o.y1 || cx0.y1 > o.y2))) return false;
+      return !vs.some((v) => X(v.e) > cx0.x1 && X(v.e) < cx0.x2 && Y(v.n) > cx0.y1 && Y(v.n) < cx0.y2);
+    };
+    const [bx, by] = cantos.find(livre) ?? cantos[0];
     // coordenadas SVG (y p/ baixo), 0° = norte, sentido horário
     const pol = (angDeg: number, r: number): [number, number] => {
       const a = angDeg * Math.PI / 180;
@@ -386,7 +448,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     }
     // miolo e letra N
     page.drawCircle({ x: bx, y: by, size: 4.5, borderWidth: 1.2, borderColor: PRETO, color: rgb(1, 1, 1) });
-    texto(c, "N", bx, by + R + 10, 34, { bold: true, center: true });
+    texto(c, "N", bx, by + R + 10, 22 * K, { bold: true, center: true });
   }
 
   // ============================ BARRA LATERAL ============================
@@ -394,7 +456,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   // posse não leva quadro analítico — as demais seções ganham o espaço dele
   const alturas = posse
     ? { quadro: 0, situacao: 0.30, carimbo: 0.12, planimetrico: 0.42, rodape: 0.16 }
-    : { quadro: 0.26, situacao: 0.14, carimbo: 0.10, planimetrico: 0.36, rodape: 0.14 };
+    : { quadro: 0.38, situacao: 0.12, carimbo: 0.08, planimetrico: 0.31, rodape: 0.11 };
   let yCursor = sbTop;
 
   // ---- QUADRO ANALÍTICO (tabela com grade, colunas centradas) ----
@@ -405,10 +467,15 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     const cols = [90, 190, 105, 105, 85, 75, 60];
     const tw = cols.reduce((a, b) => a + b, 0);
     const tx0 = sbX + (SB_W - tw) / 2;
-    const headH = 28;
-    const rowH = 20;
+    const headH = 22;
     const tableTop = topoUtil - 6;
-    const maxLinhas = Math.max(1, Math.floor((tableTop - headH - (yCursor - h) - 34) / rowH));
+    // Altura de linha adaptativa: a planta tem de trazer TODOS os vértices.
+    // Antes a tabela era cortada em 15 linhas e remetia ao memorial tabular
+    // ("… +40 vértices"), o que deixava a peça incompleta.
+    const disp = tableTop - headH - (yCursor - h) - 12;
+    const rowH = Math.max(6.5, Math.min(20, disp / Math.max(1, vs.length)));
+    const tamCel = Math.max(5, Math.min(11, rowH - 2.5));
+    const maxLinhas = Math.max(1, Math.floor(disp / rowH));
     const linhasQ = vs.slice(0, maxLinhas);
     const tableBot = tableTop - headH - linhasQ.length * rowH;
     // moldura, linha do cabeçalho e divisões verticais
@@ -424,18 +491,18 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     // cabeçalho centrado por coluna
     let hx = tx0;
     for (const [i, hh] of heads.entries()) {
-      texto(c, hh, hx + cols[i] / 2, tableTop - headH + 9, 14, { bold: true, center: true });
+      texto(c, hh, hx + cols[i] / 2, tableTop - headH + 7, 10, { bold: true, center: true });
       hx += cols[i];
     }
     // valores centrados por coluna (encolhem se não couberem na coluna)
     for (const [r, v] of linhasQ.entries()) {
       const vals = [v.codigo, `${v.codigo}-${v.vante}`, v.lonFmt, v.latFmt, v.azFmt, v.distFmt, v.alt];
-      const ty = tableTop - headH - (r + 1) * rowH + 5;
+      const ty = tableTop - headH - (r + 1) * rowH + (rowH - tamCel) / 2 + 1;
       let cx2 = tx0;
-      for (const [i, val] of vals.entries()) { textoFit(c, val, cx2 + cols[i] / 2, ty, 13, cols[i] - 6, { center: true }); cx2 += cols[i]; }
+      for (const [i, val] of vals.entries()) { textoFit(c, val, cx2 + cols[i] / 2, ty, tamCel, cols[i] - 6, { center: true }); cx2 += cols[i]; }
     }
     if (vs.length > linhasQ.length) {
-      texto(c, `… +${vs.length - linhasQ.length} vértices (ver memorial tabular)`, tx0, tableBot - 20, 14, { cor: CINZA });
+      texto(c, `… +${vs.length - linhasQ.length} vértices (ver memorial tabular)`, tx0, tableBot - 12, 10, { cor: CINZA });
     }
     yCursor -= h;
   }
@@ -487,8 +554,8 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     let py = topoUtil - 32;
     // rótulo pequeno em cinza + valor grande logo abaixo, encolhendo se preciso
     const campo = (rot: string, val: string, x: number, y: number) => {
-      texto(c, rot, x, y, 15, { bold: true, cor: CINZA });
-      textoFit(c, val, x, y - 28, 26, colW);
+      texto(c, rot, x, y, 13, { bold: true, cor: CINZA });
+      textoFit(c, val, x, y - 22, 21, colW);
     };
     campo("Denominação:", d.denominacao.toUpperCase(), colEsq, py);
     // coluna direita: TRT + campos do imóvel (na posse não há matrícula nem
@@ -496,14 +563,14 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     const camposDir: [string, string][] = posse
       ? [["TRT:", d.trt], ["Matrícula do Imóvel:", "POSSE"], ["Código INCRA:", d.sncr], ["Município/UF:", d.municipioUf.toUpperCase()]]
       : [["TRT:", d.trt], ["Matrícula do Imóvel:", d.matricula], ["Código do Cartório (CNS):", d.cns], ["Código INCRA:", d.sncr], ["Município/UF:", d.municipioUf.toUpperCase()]];
-    for (const [i, [rot, val]] of camposDir.entries()) campo(rot, val, colDir, py - i * 62);
-    py -= 62;
-    texto(c, posse ? "Posseiro(s):" : "Proprietário(s):", colEsq, py, 15, { bold: true, cor: CINZA });
-    let ppy = py - 28;
+    for (const [i, [rot, val]] of camposDir.entries()) campo(rot, val, colDir, py - i * 50);
+    py -= 50;
+    texto(c, posse ? "Posseiro(s):" : "Proprietário(s):", colEsq, py, 13, { bold: true, cor: CINZA });
+    let ppy = py - 24;
     for (const p of d.proprietarios) {
-      textoFit(c, p.nome.toUpperCase(), colEsq, ppy, 22, colW, { bold: true });
-      textoFit(c, `CPF: ${p.cpf}`, colEsq, ppy - 22, 18, colW);
-      ppy -= 50;
+      textoFit(c, p.nome.toUpperCase(), colEsq, ppy, 19, colW, { bold: true });
+      textoFit(c, `CPF: ${p.cpf}`, colEsq, ppy - 20, 16, colW);
+      ppy -= 46;
       if (p.isEspolio && p.inventarianteNome) {
         textoFit(c, `REP. P/ INV.: ${p.inventarianteNome.toUpperCase()}`, colEsq, ppy, 17, colW, { bold: true });
         textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, colEsq, ppy - 20, 16, colW);
@@ -588,23 +655,24 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     linha(c, sbX, yCursor - h / 2, sbX + SB_W, yCursor - h / 2, 0.5);
   }
 
-  // legenda no canto inferior esquerdo da área de desenho (3× o tamanho)
+  // legenda no canto inferior esquerdo da área de desenho — caixa compacta
+  // (a anterior tinha 640×258pt e comia um quarto do desenho)
   {
-    const lx = dArea.x + 10, boxW = 640, boxH = 258;
+    const lx = dArea.x + 12, boxW = 300 * K, boxH = 124 * K;
     // fundo branco opaco: a legenda cobre a malha e os rótulos que passam atrás
     page.drawRectangle({ x: lx - 6, y: dArea.y + 2, width: boxW, height: boxH, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 0.8 });
     const lyTop = dArea.y + 2 + boxH;
-    texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 34, 24, { bold: true });
+    texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 17 * K, 11 * K, { bold: true });
     const itens: [ReturnType<typeof rgb>, string][] = [
       [VERMELHO, "ESTRADA"], [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
     ];
-    let lyy = lyTop - 76;
+    let lyy = lyTop - 38 * K;
     for (const [cor, nome] of itens) {
-      linha(c, lx, lyy + 7, lx + 76, lyy + 7, 5, cor);
-      texto(c, nome, lx + 90, lyy, 20);
-      lyy -= 42;
+      linha(c, lx, lyy + 3, lx + 38 * K, lyy + 3, 2.6, cor);
+      texto(c, nome, lx + 46 * K, lyy, 9.5 * K);
+      lyy -= 20 * K;
     }
-    texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 20);
+    texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 9.5 * K);
   }
 
   // posse: reduz o conteúdo e entrega a folha no A3 exato (420×297 mm) —
