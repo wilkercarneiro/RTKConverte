@@ -127,6 +127,68 @@ function textoFit(c: Ctx, t: string, x: number, y: number, size: number, maxW: n
   texto(c, t, x, y, tam, opts);
 }
 
+// ---------------------------------------------------------------------------
+// geometria do polígono — usada p/ encaixar o bloco de identificação DENTRO
+// da área do imóvel, sem tocar nas divisas
+// ---------------------------------------------------------------------------
+interface Pt { x: number; y: number }
+
+function pontoDentro(p: Pt, poly: Pt[]): boolean {
+  let dentro = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) dentro = !dentro;
+  }
+  return dentro;
+}
+
+function cruzam(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {
+  const d = (a: Pt, b: Pt, c: Pt) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const d1 = d(p3, p4, p1), d2 = d(p3, p4, p2), d3 = d(p1, p2, p3), d4 = d(p1, p2, p4);
+  return (d1 > 0) !== (d2 > 0) && (d3 > 0) !== (d4 > 0);
+}
+
+function distSeg(p: Pt, a: Pt, b: Pt): number {
+  const vx = b.x - a.x, vy = b.y - a.y;
+  const l2 = vx * vx + vy * vy;
+  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / l2));
+  return Math.hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy));
+}
+
+// retângulo INTEIRAMENTE contido no polígono (cantos dentro e nenhuma divisa
+// cruzando os lados) — testar só o retângulo envolvente do polígono não basta
+// em imóveis irregulares, que é onde o texto vazava por cima da divisa
+function retanguloDentro(x: number, y: number, w: number, h: number, poly: Pt[]): boolean {
+  const cantos: Pt[] = [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }];
+  if (!cantos.every((q) => pontoDentro(q, poly))) return false;
+  for (let i = 0; i < cantos.length; i++) {
+    const a = cantos[i], b = cantos[(i + 1) % cantos.length];
+    for (let j = 0, k = poly.length - 1; j < poly.length; k = j++) {
+      if (cruzam(a, b, poly[j], poly[k])) return false;
+    }
+  }
+  return true;
+}
+
+// ponto interior mais afastado das divisas (polo de inacessibilidade aproximado
+// por varredura) — melhor âncora para o bloco que o centroide, que em imóveis
+// côncavos pode cair fora ou colado numa borda
+function poloInterior(poly: Pt[], passos = 48): Pt {
+  const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  let melhor: Pt = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 }, melhorD = -1;
+  for (let i = 0; i <= passos; i++) {
+    for (let j = 0; j <= passos; j++) {
+      const p = { x: x0 + ((x1 - x0) * i) / passos, y: y0 + ((y1 - y0) * j) / passos };
+      if (!pontoDentro(p, poly)) continue;
+      let dmin = Infinity;
+      for (let k = 0, l = poly.length - 1; k < poly.length; l = k++) dmin = Math.min(dmin, distSeg(p, poly[k], poly[l]));
+      if (dmin > melhorD) { melhorD = dmin; melhor = p; }
+    }
+  }
+  return melhor;
+}
+
 // quebra linhas longas em várias, respeitando a largura máxima do bloco
 function quebrarLinhas(linhas: string[], maxW: number, tam: number, font: PDFFont): string[] {
   const out: string[] = [];
@@ -234,15 +296,15 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     let nx = -dy / len, ny = dx / len;
     const mx = (X(a.e) + X(b.e)) / 2, my = (Y(a.n) + Y(b.n)) / 2;
     if ((mx + nx * 10 - dcx) ** 2 + (my + ny * 10 - dcy) ** 2 < (mx - nx * 10 - dcx) ** 2 + (my - ny * 10 - dcy) ** 2) { nx = -nx; ny = -ny; }
-    for (const off of [4, 7]) {
-      linha(c, X(a.e) + nx * off, Y(a.n) + ny * off, X(b.e) + nx * off, Y(b.n) + ny * off, 1.6, VERMELHO);
+    for (const off of [5, 11]) {
+      linha(c, X(a.e) + nx * off, Y(a.n) + ny * off, X(b.e) + nx * off, Y(b.n) + ny * off, 2.8 * K, VERMELHO);
     }
   }
 
   // ------------------- polígono -------------------
   for (let i = 0; i < nv; i++) {
     const a = vs[i], b = vs[(i + 1) % nv];
-    linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 1.8, AZUL);
+    linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 3.4 * K, AZUL);
   }
   // vértices + códigos. Em divisas com muitos pontos quase alinhados (a face
   // norte do MONOINO tem 13) os códigos em corpo grande viravam um borrão
@@ -291,25 +353,33 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   // bloco do imóvel no centroide — fonte proporcional ao polígono desenhado,
   // p/ o nome interno acompanhar o tamanho da propriedade sem vazar das bordas
   {
-    const wPoly = (maxE - minE) / mPorPt, hPoly = (maxN - minN) / mPorPt;
-    const larguraMax = Math.max(...centroLinhas.map((l) => fb.widthOfTextAtSize(l, 1)));
-    const tamW = (wPoly * 0.70) / larguraMax;
-    const tamH = (hPoly * 0.55) / (centroLinhas.length * 1.3);
-    // teto pela área de desenho: o bloco nunca estoura as margens laterais,
-    // e encolhe o quanto for preciso p/ ficar dentro do polígono
-    const tamArea = (dArea.w * 0.92) / larguraMax;
-    // teto de 18pt: o bloco identificava o imóvel em corpo maior que os títulos
-    // do carimbo e desequilibrava a folha
-    const tam = Math.max(7 * K, Math.min(18 * K, tamW, tamH, tamArea));
-    const esp = tam * 1.35;
-    // alinhado à esquerda (padrão da planta de referência), com o bloco inteiro
-    // centralizado no centroide
-    const bw = Math.max(...centroLinhas.map((l) => fb.widthOfTextAtSize(l, tam)));
-    const bx0 = Math.max(dArea.x + 6, Math.min(dcx - bw / 2, dArea.x + dArea.w - bw - 6));
-    let ty = dcy + (centroLinhas.length * esp) / 2;
+    // O bloco é ancorado no ponto interior mais afastado das divisas e encolhe
+    // até caber INTEIRO dentro do polígono, com margem para não encostar nas
+    // bordas. O cálculo anterior usava só o retângulo envolvente e, em imóveis
+    // irregulares, o texto atravessava a divisa.
+    const poly: Pt[] = vs.map((v) => ({ x: X(v.e), y: Y(v.n) }));
+    const polo = poloInterior(poly);
+    const larguraUnit = Math.max(...centroLinhas.map((l) => fb.widthOfTextAtSize(l, 1)));
+    let tam = 0, esp = 0, bx0 = polo.x, byTopo = polo.y;
+    // teto de 18pt: acima disso o bloco fica maior que os títulos do carimbo
+    for (let t = 18 * K; t >= 4 * K; t -= 0.5) {
+      const bw = larguraUnit * t;
+      const e = t * 1.35;
+      const bh = centroLinhas.length * e;
+      const mg = Math.max(10, t * 0.9); // margem até a divisa
+      if (retanguloDentro(polo.x - bw / 2 - mg, polo.y - bh / 2 - mg, bw + 2 * mg, bh + 2 * mg, poly)) {
+        tam = t; esp = e; bx0 = polo.x - bw / 2; byTopo = polo.y + bh / 2;
+        break;
+      }
+    }
+    if (tam === 0) { // imóvel estreito demais: menor corpo possível, ainda no polo
+      tam = 4 * K; esp = tam * 1.35;
+      bx0 = polo.x - (larguraUnit * tam) / 2;
+      byTopo = polo.y + (centroLinhas.length * esp) / 2;
+    }
+    // alinhado à esquerda, padrão da planta de referência
     for (const [li, lt] of centroLinhas.entries()) {
-      texto(c, lt, bx0, ty, tam, { bold: li === 1 });
-      ty -= esp;
+      texto(c, lt, bx0, byTopo - tam - li * esp, tam, { bold: li === 1 });
     }
   }
   // Trechos contíguos do MESMO confrontante viram um único rótulo: no caso real
@@ -375,7 +445,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     if (!vi) continue;
     let gx = X(vi.e) - dcx, gy = Y(vi.n) - dcy;
     const gl = Math.hypot(gx, gy) || 1; gx /= gl; gy /= gl;
-    linha(c, X(vi.e), Y(vi.n), X(vi.e) + gx * 50, Y(vi.n) + gy * 50, 1.4, VERDE);
+    linha(c, X(vi.e), Y(vi.n), X(vi.e) + gx * 50, Y(vi.n) + gy * 50, 2.8 * K, VERDE);
     // Rótulo do confrontante: bloco de texto corrido alinhado à esquerda, como
     // na planta de referência. A versão anterior desenhava uma linha de
     // assinatura de 340pt com nome e CPF em corpo 21 — duplicava as cartas de
@@ -668,7 +738,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     ];
     let lyy = lyTop - 38 * K;
     for (const [cor, nome] of itens) {
-      linha(c, lx, lyy + 3, lx + 38 * K, lyy + 3, 2.6, cor);
+      linha(c, lx, lyy + 3, lx + 38 * K, lyy + 3, 3.4, cor);
       texto(c, nome, lx + 46 * K, lyy, 9.5 * K);
       lyy -= 20 * K;
     }
