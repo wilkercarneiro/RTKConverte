@@ -95,6 +95,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         inventariante_rg: cli?.inventariante_rg ?? null,
         matricula: cab.matricula || null,
         cns: cab.cns || null,
+        trt: (cab.documentoRt ?? "").split(" ")[0] || null,
         codigo_sncr: cab.sncr || null,
         municipio: muni || null,
         uf: (uf ?? "").trim() || null,
@@ -281,6 +282,11 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
               <option value="">—</option>
               {rts.map((r) => <option key={r.id} value={r.id}>{r.nome}</option>)}
             </select>
+          </label>
+          <label>TRT (Termo de Responsabilidade Técnica)
+            <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}
+              onChange={(e) => campo("trt", e.target.value.trim() || null)} />
+            <small className="sub">vai nas peças e na planta; sobrepõe o TRT do PDF do SIGEF</small>
           </label>
           <label>Formação do RT <input value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} /></label>
           <label>Conselho (sigla) <input value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} /></label>

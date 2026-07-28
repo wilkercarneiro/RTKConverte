@@ -133,7 +133,7 @@ Deno.serve(async (req) => {
       dataStr: dataHojeBR(),
       rtNome: rt?.nome ?? "",
       rtCrea: rt?.crea ?? "",
-      rtTrt: rt?.trt ?? "",
+      rtTrt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
       ring: calc.memorialRing,
       segs: calc.segs,
       confrontantesDescritivos: calc.trechosOrdenados.map((t) => t.descritivo).filter((d) => d.trim() !== ""),

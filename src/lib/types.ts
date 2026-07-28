@@ -34,6 +34,7 @@ export interface Servico {
   fuso_utm: number | null;
   credenciado_id: string | null;
   rt_id: string | null;
+  trt: string | null;
   natureza_servico: string | null;
   tipo_pessoa: string | null;
   detentor_nome: string | null;

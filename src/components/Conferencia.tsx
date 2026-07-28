@@ -444,6 +444,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               {rts.map((r) => <option key={r.id} value={r.id}>{r.nome} — CREA {r.crea}</option>)}
             </select>
           </label>
+          <label>TRT (Termo de Responsabilidade Técnica)
+            <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}
+              onChange={(e) => campo("trt", e.target.value.trim() || null)} />
+            <small className="sub">vai no memorial, nas peças e na planta; sobrepõe o TRT do PDF do SIGEF</small>
+          </label>
           <label>Natureza do serviço {sel(servico.natureza_servico, NATUREZAS_SERVICO, (v) => campo("natureza_servico", v))}</label>
           <label>Tipo pessoa {sel(servico.tipo_pessoa, TIPOS_PESSOA, (v) => campo("tipo_pessoa", v))}</label>
           <label>Detentor *

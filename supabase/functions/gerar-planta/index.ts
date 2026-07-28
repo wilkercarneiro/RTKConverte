@@ -66,7 +66,10 @@ Deno.serve(async (req) => {
 
     let vertices: VerticePlanta[] = [];
     let trechosPlanta: TrechoPlanta[] = [];
-    let areaFmt = "", perimetroFmt = "", trt = rt?.trt ?? "";
+    // TRT digitado no serviço tem prioridade; sem ele cai no PDF do SIGEF
+    // (fluxo 'pecas', mais abaixo) e por último no cadastro do RT.
+    const trtManual = (servico.trt ?? "").trim();
+    let areaFmt = "", perimetroFmt = "", trt = trtManual || (rt?.trt ?? "");
     let fuso = servico.fuso_utm ?? 24;
     let latMedia = -12;
 
@@ -143,7 +146,7 @@ Deno.serve(async (req) => {
       }));
       areaFmt = sigef.cabecalho.areaHa;
       perimetroFmt = sigef.cabecalho.perimetroM;
-      trt = sigef.cabecalho.documentoRt.split(" ")[0] || trt;
+      if (!trtManual) trt = sigef.cabecalho.documentoRt.split(" ")[0] || trt;
     } else {
       // -------- fluxo 'geo': dados do próprio sistema --------
       if (!vertRows?.length) return json({ erro: "Serviço sem vértices" }, 422);
