@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import proj4lib from "proj4";
-import { reconciliarVerticesBancoComSigef } from "../supabase/functions/_shared/reconciliacao.ts";
+import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef } from "../supabase/functions/_shared/reconciliacao.ts";
 
 const proj4 = (f, t, c) => proj4lib(f, t, c);
 
@@ -59,6 +59,44 @@ test("vértice com confrontação continua M mesmo com código de P", () => {
   const v = out.find((x) => x.codigo === "DSBN-P-13807");
   assert.equal(v.tipo, "M", "o confrontante sumiria do desenho se virasse P");
   assert.match(v.descritivo, /ADELSON/);
+});
+
+// --- de onde a planta tira os trechos quando gerada com o PDF do SIGEF ---
+
+test("serviço geo: a estrada marcada no vértice M chega à planta", () => {
+  const reconciliados = reconciliarVerticesBancoComSigef("s1", vertBanco, sigefLinhas, 24, proj4);
+  // trechos_confrontantes está VAZIA no fluxo geo — era aqui que a marcação sumia
+  const trechos = montarTrechosDoSigef([], reconciliados, sigefLinhas);
+  const estrada = trechos.find((t) => t.idx === 0);
+  assert.equal(estrada.ehVia, true, "a estrada tem de sair com linha dupla vermelha");
+  assert.equal(estrada.descritivo, "estrada");
+  // o vizinho do M com código de P também vira trecho, sem virar via
+  const vizinho = trechos.find((t) => t.idx === 2);
+  assert.equal(vizinho.ehVia, false);
+  assert.match(vizinho.descritivo, /ADELSON/);
+  // o P comum não abre trecho
+  assert.equal(trechos.some((t) => t.idx === 1), false);
+});
+
+test("fluxo pecas: trechos_confrontantes por codigo_inicio tem precedência", () => {
+  const reconciliados = reconciliarVerticesBancoComSigef("s1", vertBanco, sigefLinhas, 24, proj4);
+  const trechos = montarTrechosDoSigef(
+    [{ codigo_inicio: "DSBN-P-13806", vertice_inicio_ordem: 0, descritivo: "CORREDOR", eh_via: true }],
+    reconciliados, sigefLinhas,
+  );
+  assert.deepEqual(trechos, [{ idx: 1, descritivo: "CORREDOR", ehVia: true }]);
+});
+
+test("sem trecho e sem confrontação nos vértices, cai no texto do SIGEF sem marcar via", () => {
+  const linhas = [
+    { codigo: "X-P-1", confrontacao: "FAZENDA A" },
+    { codigo: "X-P-2", confrontacao: "FAZENDA A" },
+    { codigo: "X-P-3", confrontacao: "ESTRADA VICINAL" },
+  ];
+  const trechos = montarTrechosDoSigef([], [], linhas);
+  assert.deepEqual(trechos.map((t) => [t.idx, t.descritivo, t.ehVia]), [
+    [0, "FAZENDA A", false], [2, "ESTRADA VICINAL", false],
+  ]);
 });
 
 test("ponto de terceiro vindo só do SIGEF não inventa confrontação", () => {

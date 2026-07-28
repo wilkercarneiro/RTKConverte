@@ -14,7 +14,7 @@ import { GEO_DEF, fmtBR, fmtGmsPlanilha, utmDef } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { DadosPlanta, TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
-import { reconciliarVerticesBancoComSigef } from "../_shared/reconciliacao.ts";
+import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef } from "../_shared/reconciliacao.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -109,33 +109,8 @@ Deno.serve(async (req) => {
         };
       });
 
-      // trechos: por codigo_inicio (serviço pecas), pelo código do vértice de
-      // início (serviço geo, códigos já alocados) ou mudança de confrontação
-      const idxDe = new Map(sigef.linhas.map((l, i) => [l.codigo, i]));
-      const codPorOrdem = new Map((verticesReconciliados).filter((v) => v.codigo).map((v) => [v.ordem, v.codigo as string]));
-      type Start = { idx: number; descritivo: string; ehVia: boolean };
-      let starts: Start[] = (trechoRows ?? [])
-        .map((t) => {
-          const cod = t.codigo_inicio ?? codPorOrdem.get(t.vertice_inicio_ordem) ?? null;
-          return cod && idxDe.has(cod)
-            ? { idx: idxDe.get(cod)!, descritivo: t.descritivo || t.apelido_txt || "", ehVia: !!t.eh_via }
-            : null;
-        })
-        .filter((s): s is Start => s !== null);
-      if (starts.length === 0) {
-        let ultima = "";
-        sigef.linhas.forEach((l, i) => {
-          if (l.confrontacao !== ultima) {
-            ultima = l.confrontacao;
-            starts.push({ idx: i, descritivo: l.confrontacao.replace(/\.{3}$/, ""), ehVia: false });
-          }
-        });
-      }
-      const startsUnicos = new Map<number, Start>();
-      for (const s of starts) {
-        if (!startsUnicos.has(s.idx)) startsUnicos.set(s.idx, s);
-      }
-      starts = [...startsUnicos.values()].sort((a, b) => a.idx - b.idx);
+      // onde cada confrontação começa (ver montarTrechosDoSigef p/ a precedência)
+      const starts = montarTrechosDoSigef(trechoRows ?? [], verticesReconciliados, sigef.linhas);
       trechosPlanta = starts.map((s, k) => ({
         descritivo: s.descritivo,
         isEstrada: s.ehVia,

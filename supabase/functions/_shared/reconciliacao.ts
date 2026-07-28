@@ -59,6 +59,78 @@ export interface VerticeReconciliado {
   apelido_txt: string | null;
 }
 
+export interface TrechoSigef {
+  idx: number;        // posição na sequência de linhas do SIGEF
+  descritivo: string;
+  ehVia: boolean;     // faixa de domínio: linha dupla vermelha na planta
+}
+
+export interface TrechoBanco {
+  codigo_inicio?: string | null;
+  vertice_inicio_ordem: number;
+  descritivo?: string | null;
+  apelido_txt?: string | null;
+  eh_via?: boolean | null;
+}
+
+/**
+ * Onde cada confrontação começa na sequência do SIGEF, em ordem de precedência:
+ *
+ *   1. `trechos_confrontantes` por codigo_inicio — fluxo 'pecas', que ancora pelo
+ *      código do SIGEF e não tem vértices próprios no banco;
+ *   2. a confrontação que vive nos vértices M — fluxo 'geo' gerando a planta com o
+ *      PDF. Aquela tabela está VAZIA para serviços geo desde que a confrontação
+ *      passou para o vértice; sem este passo o desenho caía direto no item 3;
+ *   3. mudança de confrontação no texto do SIGEF — último recurso, e o texto do
+ *      PDF não diz o que é faixa de domínio, então nada sai marcado como estrada.
+ *
+ * Pular o item 2 era o motivo de a estrada aparecer certa na tela e sem a linha
+ * vermelha no PDF. Ver ARQUITETURA-TRECHOS.md.
+ */
+export function montarTrechosDoSigef(
+  trechoRows: TrechoBanco[],
+  verticesReconciliados: VerticeReconciliado[],
+  sigefLinhas: { codigo: string; confrontacao: string }[],
+): TrechoSigef[] {
+  const idxDe = new Map(sigefLinhas.map((l, i) => [l.codigo, i]));
+  const codPorOrdem = new Map(
+    verticesReconciliados.filter((v) => v.codigo).map((v) => [v.ordem, v.codigo]),
+  );
+
+  let starts: TrechoSigef[] = trechoRows
+    .map((t) => {
+      const cod = t.codigo_inicio ?? codPorOrdem.get(t.vertice_inicio_ordem) ?? null;
+      return cod && idxDe.has(cod)
+        ? { idx: idxDe.get(cod)!, descritivo: t.descritivo || t.apelido_txt || "", ehVia: !!t.eh_via }
+        : null;
+    })
+    .filter((s): s is TrechoSigef => s !== null);
+
+  if (starts.length === 0) {
+    starts = verticesReconciliados
+      .filter((v) => v.tipo === "M" && v.codigo && idxDe.has(v.codigo))
+      .map((v) => ({
+        idx: idxDe.get(v.codigo)!,
+        descritivo: v.descritivo || v.apelido_txt || "",
+        ehVia: !!v.eh_via,
+      }));
+  }
+
+  if (starts.length === 0) {
+    let ultima = "";
+    sigefLinhas.forEach((l, i) => {
+      if (l.confrontacao !== ultima) {
+        ultima = l.confrontacao;
+        starts.push({ idx: i, descritivo: l.confrontacao.replace(/\.{3}$/, ""), ehVia: false });
+      }
+    });
+  }
+
+  const unicos = new Map<number, TrechoSigef>();
+  for (const s of starts) if (!unicos.has(s.idx)) unicos.set(s.idx, s);
+  return [...unicos.values()].sort((a, b) => a.idx - b.idx);
+}
+
 function gmsPdfParaDeg(s: string): number {
   const m = s.match(/(-?)(\d+)°(\d+)'([\d,]+)"/);
   if (!m) return 0;

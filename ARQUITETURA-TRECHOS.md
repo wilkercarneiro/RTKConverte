@@ -71,6 +71,37 @@ continua existindo para ele, ganhando apenas a coluna `eh_via`.
 Dois fluxos, duas fontes de verdade — mas cada uma correta no seu domínio. Tentar unificar
 forçaria o `pecas` a materializar vértices que ele não tem.
 
+## A planta gerada com o PDF do SIGEF
+
+O `gerar-planta` tem dois caminhos, e o segundo custou três rodadas de defeito porque
+ninguém tinha reparado que ele **não passa pelos vértices**:
+
+- sem PDF (fluxo `geo` puro): monta o serviço pelo `montarServico`, que deriva os trechos
+  dos vértices M. Sempre esteve certo.
+- com PDF (`servico.tipo === 'pecas'` **ou** qualquer serviço em que se envia o PDF):
+  reconcilia os vértices com a prévia do SIGEF e montava os trechos lendo
+  `trechos_confrontantes` — tabela que ficou vazia para serviços `geo` quando a
+  confrontação passou para o vértice. Sem linhas ali, caía no texto do PDF, que não
+  distingue faixa de domínio, e nada saía marcado como estrada.
+
+Sintoma característico: **a tela mostra a estrada e o PDF não.** São fontes diferentes.
+
+Dois agravantes no mesmo caminho, ambos corrigidos:
+
+1. `reconciliarVerticesBancoComSigef` devolvia linhas sem as colunas de confrontação, e o
+   `gerar-planta` apaga e reinsere a tabela de vértices com esse resultado — ou seja, gerar
+   a planta **apagava a marcação** antes de desenhar.
+2. O `tipo` era reescrito a partir da letra do código do SIGEF. Um vértice com confrontação
+   cujo código dissesse `-P-` virava P e o trecho sumia do desenho — não só a cor.
+
+A escolha da origem dos trechos virou `montarTrechosDoSigef`, com precedência explícita
+(trechos por `codigo_inicio` → confrontação nos vértices M → texto do SIGEF) e testes em
+`tests/reconciliacao_confrontacao.test.mjs`. Estava solta dentro da edge function, onde
+nenhum teste alcançava.
+
+**Regra que fica:** ao mudar onde a confrontação mora, varra TODOS os caminhos que a leem.
+Foram três: o desenho, a reconciliação e a montagem dos trechos a partir do PDF.
+
 ## Fim das heurísticas de texto
 
 `eh_via` explícito (checkbox "faixa de domínio pública") substitui as duas inferências
