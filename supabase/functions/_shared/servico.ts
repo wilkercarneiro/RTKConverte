@@ -191,14 +191,26 @@ export function validarConfrontacoes(
   return { erros, avisos };
 }
 
+/**
+ * Apelidos do TXT que indicam faixa de domínio pública.
+ *
+ * Isto é uma SUGESTÃO da importação, que aparece no checkbox da tela e na linha
+ * dupla do preview antes de virar PDF. É diferente da heurística que foi removida:
+ * aquela decidia no momento de DESENHAR, sem o usuário ver nem poder discordar.
+ * LAGOA fica de fora de propósito — é nome comum de fazenda na região.
+ */
+const RE_VIA_APELIDO =
+  /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|RIO|RIACHO|C[ÓO]RREGO|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
+
 // Sugestões pós-parse: tipos (M nos inícios de trecho, P nos demais) e trechos
 // derivados dos rótulos do TXT (apelido = parte após "/").
-export function sugerirTrechos(pontos: { num: number; rotulo: string | null }[]): { verticeInicioOrdem: number; apelido: string }[] {
-  const out: { verticeInicioOrdem: number; apelido: string }[] = [];
+export function sugerirTrechos(pontos: { num: number; rotulo: string | null }[]): { verticeInicioOrdem: number; apelido: string; ehVia: boolean }[] {
+  const out: { verticeInicioOrdem: number; apelido: string; ehVia: boolean }[] = [];
   pontos.forEach((p, i) => {
     if (p.rotulo) {
       const partes = p.rotulo.split("/");
-      out.push({ verticeInicioOrdem: i, apelido: (partes[1] ?? partes[0]).trim() });
+      const apelido = (partes[1] ?? partes[0]).trim();
+      out.push({ verticeInicioOrdem: i, apelido, ehVia: RE_VIA_APELIDO.test(apelido) });
     }
   });
   return out;

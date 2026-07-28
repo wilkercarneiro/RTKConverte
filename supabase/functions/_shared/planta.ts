@@ -222,6 +222,8 @@ export interface DiagPlanta {
   rotulos: Ret[];
   /** quantos desses rótulos ficaram por cima de alguma linha (deve ser 0) */
   sobrepostos: number;
+  /** quantos não couberam centrados no trecho e tiveram de deslizar pela divisa */
+  deslocados: number;
 }
 
 function retCruzaRet(a: Ret, b: Ret): boolean {
@@ -355,6 +357,8 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   const obstaculos: Seg[] = [];
   // caixas dos rótulos de trecho (confrontante e via) para o diagnóstico
   const rotulosTrecho: Ret[] = [];
+  // quantos não couberam centrados e tiveram de deslizar pela divisa
+  let deslocados = 0;
   const nv = vs.length;
   const trechoDoIdx = (i: number): TrechoPlanta => {
     for (const t of d.trechos) {
@@ -519,8 +523,12 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       const nome = linhasDescritivo(t.descritivo)[0] ?? "";
       const rot = angSeg > 90 || angSeg < -90 ? angSeg + 180 : angSeg;
       const vw = c.fb.widthOfTextAtSize(nome, LBL_TAM);
+      // o texto é desenhado a partir da origem; recuar meia largura NA DIREÇÃO DA
+      // ROTAÇÃO centraliza o nome sobre o meio do trecho
+      const ra = rot * Math.PI / 180;
       const cands = [22, 30, 40, 52, 66, 82].map((o) => o * K).map((off) => {
-        const x = mx + nx * off, y = my + ny * off;
+        const x = mx + nx * off - Math.cos(ra) * vw / 2;
+        const y = my + ny * off - Math.sin(ra) * vw / 2;
         return { x, y, ret: retTextoRot(x, y, vw, LBL_TAM, rot) };
       });
       const esc = primeiraLivre(cands, obstaculos, ocupado) ?? cands[cands.length - 1];
@@ -539,10 +547,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // na planta de referência. A versão anterior desenhava uma linha de
     // assinatura de 340pt com nome e CPF em corpo 21 — duplicava as cartas de
     // anuência e dominava o desenho.
-    // Ancoragem pela BORDA do bloco (não pelo centro): à direita do perímetro o
-    // texto começa depois do traço, à esquerda termina antes dele. Centrar o
-    // bloco no ponto deslocado fazia rótulos largos voltarem por cima do
-    // polígono.
+    // O bloco fica CENTRADO no meio da confrontação: o nome do vizinho aparece no
+    // vão da divisa dele, não encostado numa ponta. Antes a âncora era pela borda
+    // porque centrar fazia rótulos largos voltarem por cima do polígono — hoje
+    // isso é impossível, porque a busca abaixo testa colisão contra as linhas.
     //
     // Duas saídas contra sobreposição, nesta ordem: AFASTAR o bloco do perímetro
     // e, se nem assim couber, QUEBRAR em mais linhas (bloco mais estreito é mais
@@ -554,20 +562,32 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       const altura = lbl.length * LBL_ESP;
       // afastamentos acompanham K: na folha de posse o texto é 1,7× maior e
       // precisa recuar na mesma proporção para limpar as linhas
-      return [30, 42, 56, 72, 90, 112].map((mg) => mg * K).map((MG) => {
-        let lx = Math.abs(nx) < 0.3 ? mx - blockW / 2 : nx > 0 ? mx + MG : mx - MG - blockW;
-        let ty = Math.abs(ny) < 0.3 ? my + altura / 2 : ny > 0 ? my + MG + altura : my - MG;
+      // Preferência: centrado no meio do trecho (desl = 0), afastando cada vez mais.
+      // Só se nada couber assim o bloco desliza ao longo da divisa — melhor sair um
+      // pouco do centro do que voltar por cima das linhas.
+      const dir = { x: Math.cos(angSeg * Math.PI / 180), y: Math.sin(angSeg * Math.PI / 180) };
+      const passos: { MG: number; desl: number }[] = [];
+      for (const desl of [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05]) {
+        for (const mg of [30, 42, 56, 72, 90, 112, 140]) passos.push({ MG: mg * K, desl });
+      }
+      return passos.map(({ MG, desl }) => {
+        // ponto do meio do trecho, empurrado para fora; o bloco é centrado nele
+        const px0 = mx + nx * MG + dir.x * desl * blockW;
+        const py0 = my + ny * MG + dir.y * desl * blockW;
+        let lx = px0 - blockW / 2;
+        let ty = py0 + altura / 2;
         // e o bloco inteiro fica dentro da área de desenho — antes os rótulos
         // laterais vazavam para fora da folha
         lx = Math.max(dArea.x + 4, Math.min(lx, dArea.x + dArea.w - blockW - 4));
         ty = Math.max(dArea.y + altura, Math.min(ty, dArea.y + dArea.h - LBL_TAM));
-        return { lbl, lx, ty, ret: { x1: lx - 2, y1: ty - altura, x2: lx + blockW + 2, y2: ty + LBL_TAM } };
+        return { lbl, lx, ty, desl, ret: { x1: lx - 2, y1: ty - altura, x2: lx + blockW + 2, y2: ty + LBL_TAM } };
       });
     });
     const esc = primeiraLivre(cands, obstaculos, ocupado) ?? cands[cands.length - 1];
     for (const [li, lt] of esc.lbl.entries()) texto(c, lt, esc.lx, esc.ty - li * LBL_ESP, LBL_TAM);
     ocupado.push(esc.ret);
     rotulosTrecho.push(esc.ret);
+    if (esc.desl !== 0) deslocados++;
   }
 
   // ------------------- bússola (rosa dos ventos moderna) -------------------
@@ -851,6 +871,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     diag.obstaculos = obstaculos;
     diag.rotulos = rotulosTrecho;
     diag.sobrepostos = rotulosTrecho.filter((r) => obstaculos.some((s) => segCruzaRet(s, r))).length;
+    diag.deslocados = deslocados;
   }
 
   // posse: reduz o conteúdo e entrega a folha no A3 exato (420×297 mm) —

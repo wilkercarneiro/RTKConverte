@@ -57,6 +57,7 @@ Deno.serve(async (req) => {
     // a confrontação nasce já no vértice M: um M inicia um trecho, que vai até o
     // próximo M. Ver ARQUITETURA-TRECHOS.md.
     const apelidoPorOrdem = new Map(trechosSug.map((t) => [t.verticeInicioOrdem, t.apelido]));
+    const viaPorOrdem = new Map(trechosSug.map((t) => [t.verticeInicioOrdem, t.ehVia]));
     const linhasVert = pontos.map((p, i) => ({
       servico_id: servico.id,
       ordem: i,
@@ -68,7 +69,7 @@ Deno.serve(async (req) => {
       apelido_txt: apelidoPorOrdem.get(i) ?? null,
       descritivo: iniciosTrecho.has(i) ? "" : null,
       tipo_limite: iniciosTrecho.has(i) ? "LA1" : null,
-      eh_via: false,
+      eh_via: viaPorOrdem.get(i) ?? false,
       metodo: "PG6",
       inserido_manual: false,
       lat_gms: fmtGmsPlanilha(calc[i].latGms, "lat"),

@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { trechoDoVertice, segmentosDeVia } from "../src/lib/trechos.ts";
+import { sugerirTrechos } from "../supabase/functions/_shared/servico.ts";
 
 // anel real do serviço 74238a85 — 21 vértices, M nas ordens 2, 9, 14, 17, 18, 20
 const CODIGOS = [
@@ -47,6 +48,26 @@ test("via no último trecho do anel pinta até o fim e volta ao começo", () => 
   const via = segmentosDeVia(vertices, comViaNoFim);
   // M-3709 (ordem 20) até o fim, mais a volta pelos vértices 0 e 1 até o M-3704
   assert.deepEqual(via, [0, 1, 20]);
+});
+
+test("importação sugere faixa de domínio pelo rótulo do TXT", () => {
+  const pontos = [
+    { num: 1, rotulo: "marlene/estrada" },   // apelido = "estrada"
+    { num: 2, rotulo: "estrasa/viz" },       // apelido = "viz" (erro de digitação, não é via)
+    { num: 3, rotulo: "viz./Adelândio" },
+    { num: 4, rotulo: "corredor" },
+    { num: 5, rotulo: "fundo/BA 408" },
+    { num: 6, rotulo: null },
+  ];
+  const sug = sugerirTrechos(pontos);
+  assert.deepEqual(sug.map((s) => [s.apelido, s.ehVia]), [
+    ["estrada", true], ["viz", false], ["Adelândio", false], ["corredor", true], ["BA 408", true],
+  ]);
+});
+
+test("LAGOA não é sugerida como via: é nome comum de fazenda na região", () => {
+  const sug = sugerirTrechos([{ num: 1, rotulo: "fundo/lagoa seca" }]);
+  assert.equal(sug[0].ehVia, false);
 });
 
 test("sem trecho algum, nada vira estrada", () => {
