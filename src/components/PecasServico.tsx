@@ -97,7 +97,9 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         inventariante_rg: cli?.inventariante_rg ?? null,
         matricula: cab.matricula || null,
         cns: cab.cns || null,
-        trt: (cab.documentoRt ?? "").split(" ")[0] || null,
+        // TRT não vem do PDF: quem manda é o que se preenche no sistema
+        // (campo do serviço ou TRT padrão do RT). Ver gerar-pecas/gerar-planta.
+        trt: null,
         codigo_sncr: cab.sncr || null,
         municipio: muni || null,
         uf: (uf ?? "").trim() || null,

@@ -154,8 +154,10 @@ Deno.serve(async (req) => {
       perimetro: sigef.cabecalho.perimetroM,
       areaMatriculaHa: servico.area_matricula_ha ?? null,
       mcAbs: Math.abs(6 * (servico.fuso_utm ?? 24) - 183),
-      // TRT digitado no serviço tem prioridade; o PDF do SIGEF é só o fallback
-      trt: servico.trt?.trim() || sigef.cabecalho.documentoRt.split(" ")[0] || sigef.cabecalho.documentoRt,
+      // TRT preenchido no sistema manda: campo do serviço, depois o TRT padrão do
+      // RT cadastrado; o PDF do SIGEF só entra se nada estiver preenchido.
+      trt: servico.trt?.trim() || (rt?.trt ?? "").trim()
+        || sigef.cabecalho.documentoRt.split(" ")[0] || sigef.cabecalho.documentoRt,
       dataStr: dataHojeBR(),
       rt: {
         nome: rt!.nome ?? "",
