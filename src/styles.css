@@ -86,6 +86,7 @@ label > input, label > select { font-weight: 400; color: var(--texto); }
 .erro { color: var(--perigo); background: var(--perigo-claro); border-radius: 9px; padding: 8px 12px; margin-top: 8px; white-space: pre-wrap; font-size: 13px; }
 .ok { color: var(--primaria-escura); background: var(--primaria-clara); border-radius: 9px; padding: 8px 12px; margin-top: 8px; font-size: 13px; }
 .alerta { color: var(--alerta); background: var(--alerta-claro); border-radius: 8px; padding: 3px 10px; font-style: normal; font-size: 12px; font-weight: 600; }
+.sub { color: var(--texto-2); font-size: 12.5px; font-weight: 400; }
 .centro { display: grid; place-items: center; min-height: 100vh; text-align: center; }
 
 /* ===== Login ===== */

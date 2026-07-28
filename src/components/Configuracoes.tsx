@@ -1,7 +1,9 @@
-// Configurações do sistema: logo da empresa (usada no carimbo da planta) e
-// dados de desenho. A logo vai para templates/logo-empresa.png no Storage.
+// Configurações do sistema: logo da empresa (usada no carimbo da planta),
+// dados de desenho e os cadastros de responsáveis técnicos e credenciados.
+// A logo vai para templates/logo-empresa.png no Storage.
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { Cadastros } from "./Cadastros";
 
 export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -55,11 +57,18 @@ export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
   }
 
   return (
-    <div className="upload-tela">
-      <div className="upload-card">
-        <button className="fantasma" style={{ justifySelf: "start" }} onClick={onVoltar}>← Dashboard</button>
-        <h2>⚙ Configurações</h2>
-        <p className="sub">Identidade da empresa usada nos documentos gerados.</p>
+    <div className="conferencia">
+      <header className="topo">
+        <button className="fantasma" onClick={onVoltar}>← Dashboard</button>
+        <span className="arquivo">⚙ Configurações</span>
+      </header>
+
+      <section className="bloco">
+        <header>
+          <span className="num-bloco">🏢</span>
+          <h3>Empresa</h3>
+          <span className="desc">identidade usada nos documentos gerados</span>
+        </header>
 
         <div>
           <b>Carimbo da empresa (logo)</b>
@@ -78,13 +87,17 @@ export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
           </label>
         </div>
 
-        <label>Desenhista (rodapé da planta)
-          <input value={desenhista} onChange={(e) => setDesenhista(e.target.value)} placeholder="ex.: JANETE OLIVEIRA" />
-        </label>
-        <button className="principal" style={{ justifySelf: "start" }} onClick={salvarDesenhista}>Salvar</button>
+        <div className="grade" style={{ marginTop: 14 }}>
+          <label>Desenhista (rodapé da planta)
+            <input value={desenhista} onChange={(e) => setDesenhista(e.target.value)} placeholder="ex.: JANETE OLIVEIRA" />
+          </label>
+        </div>
+        <button className="principal" style={{ marginTop: 12 }} onClick={salvarDesenhista}>Salvar</button>
         {erro && <div className="erro">{erro}</div>}
         {msg && !erro && <div className="ok">{msg}</div>}
-      </div>
+      </section>
+
+      <Cadastros />
     </div>
   );
 }

@@ -135,7 +135,9 @@ Deno.serve(async (req) => {
       mcAbs: calc.mcAbs,
       dataStr: dataHojeBR(),
       rtNome: rt?.nome ?? "",
-      rtCrea: rt?.crea ?? "",
+      // técnicos são registrados no CFT/CFTA, não no CREA — o número do conselho
+      // preenche o campo do memorial quando não há CREA cadastrado
+      rtCrea: (rt?.crea ?? "").trim() || (rt?.conselho_numero ?? ""),
       rtTrt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
       ring: calc.memorialRing,
       segs: calc.segs,

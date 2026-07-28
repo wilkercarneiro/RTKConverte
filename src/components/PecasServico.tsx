@@ -3,8 +3,8 @@
 // operador completa cliente/RT e os descritivos dos confrontantes → gera as 7 peças.
 import { useEffect, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
-import { TIPOS_LIMITE, UFS } from "../lib/domains";
-import type { Cliente, RT, Servico } from "../lib/types";
+import { rotuloRT, TIPOS_LIMITE, UFS } from "../lib/domains";
+import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
 
 interface TrechoPdf { id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string; eh_via: boolean }
@@ -29,6 +29,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   const [servico, setServico] = useState<Servico | null>(null);
   const [trechos, setTrechos] = useState<TrechoPdf[]>([]);
   const [rts, setRts] = useState<RT[]>([]);
+  const [credenciados, setCredenciados] = useState<Credenciado[]>([]);
   const [rtExtras, setRtExtras] = useState({ formacao: "", conselho_sigla: "CFTA", conselho_numero: "", identidade: "", cpf: "" });
   const [pdfB64, setPdfB64] = useState<string | null>(null);
   const [pdfNome, setPdfNome] = useState<string | null>(null);
@@ -40,7 +41,8 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
 
   useEffect(() => {
-    supabase.from("responsaveis_tecnicos").select().then(({ data }) => setRts((data as RT[]) ?? []));
+    supabase.from("responsaveis_tecnicos").select().order("nome").then(({ data }) => setRts((data as RT[]) ?? []));
+    supabase.from("credenciados").select().order("nome").then(({ data }) => setCredenciados((data as Credenciado[]) ?? []));
     if (servicoId) {
       supabase.from("servicos").select().eq("id", servicoId).single().then(({ data }) => setServico(data as Servico));
       supabase.from("trechos_confrontantes").select().eq("servico_id", servicoId).order("vertice_inicio_ordem")
@@ -282,8 +284,16 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
           <label>Responsável Técnico *
             <select value={servico.rt_id ?? ""} onChange={(e) => campo("rt_id", e.target.value || null)}>
               <option value="">—</option>
-              {rts.map((r) => <option key={r.id} value={r.id}>{r.nome}</option>)}
+              {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
             </select>
+            <small className="sub">cadastre novos em ⚙ Configurações</small>
+          </label>
+          <label>Credenciado
+            <select value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
+              <option value="">—</option>
+              {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
+            </select>
+            <small className="sub">o código vai no carimbo da planta</small>
           </label>
           <label>TRT (Termo de Responsabilidade Técnica)
             <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}

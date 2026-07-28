@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
 import {
   LADOS, METODOS_POSICIONAMENTO, NATUREZAS_AREA, NATUREZAS_SERVICO,
-  SITUACOES, TIPOS_LIMITE, TIPOS_PESSOA, UFS,
+  rotuloRT, SITUACOES, TIPOS_LIMITE, TIPOS_PESSOA, UFS,
 } from "../lib/domains";
 import { calcularPreviewLocal } from "../lib/preview";
 import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
@@ -462,8 +462,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <label>Responsável Técnico
             <select value={servico.rt_id ?? ""} onChange={(e) => campo("rt_id", e.target.value || null)}>
               <option value="">—</option>
-              {rts.map((r) => <option key={r.id} value={r.id}>{r.nome} — CREA {r.crea}</option>)}
+              {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
             </select>
+            <small className="sub">cadastre novos em ⚙ Configurações</small>
           </label>
           <label>TRT (Termo de Responsabilidade Técnica)
             <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}

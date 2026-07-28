@@ -1,4 +1,6 @@
 // Domínios oficiais SIGEF (seção 6.3 — extraídos da planilha oficial)
+import type { RT } from "./types";
+
 export const TIPOS_VERTICE = ["M", "P", "V"] as const;
 
 export const TIPOS_LIMITE = [
@@ -31,3 +33,14 @@ export const UFS = [
 ];
 
 export const LADOS = ["Externo", "Interno"];
+
+// Conselho profissional do responsável técnico. CFTA/CFT para técnicos,
+// CREA para engenheiros — a sigla vai impressa nas peças e no carimbo da planta.
+export const CONSELHOS = ["CFTA", "CFT", "CREA"];
+
+/** Rótulo do RT nos selects: "NOME — CFTA 0578839458-9". */
+export function rotuloRT(r: RT): string {
+  const numero = (r.conselho_numero ?? "").trim() || (r.crea ?? "").trim();
+  if (!numero) return r.nome;
+  return `${r.nome} — ${(r.conselho_sigla ?? "CREA").trim()} ${numero}`;
+}
