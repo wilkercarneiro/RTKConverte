@@ -492,14 +492,14 @@ export function gerarPecasXml(tpl: Record<string, string>, d: DadosPecas): Recor
     out["2"] = substituirEmParagrafos(xml, mapa);
   }
 
-  // ---- 3. CARTAS DE ANUÊNCIA (uma carta por trecho com pessoas)
+  // ---- 3. CARTAS DE ANUÊNCIA (uma carta por confrontante, não por trecho)
   out["3"] = gerarCartas(tpl["3"], d, mapa);
 
   // ---- 4/5. DECLARAÇÕES (tabela NOME COMPLETO | IMÓVEL — só confrontantes-pessoa)
   for (const n of ["4", "5"]) {
     let xml = tpl[n];
-    const linhas = d.trechos
-      .filter((t) => !t.ehVia && t.pessoas.length > 0)
+    // mesma regra das cartas: uma linha por vizinho, sem repetir o imóvel
+    const linhas = confrontantesDe(d)
       .map((t) => [t.pessoas.map((p) => p.nome).join("\\ "), t.imovelLabel || "—"]);
     xml = mapearTabelas(
       xml,
@@ -664,6 +664,54 @@ const CARTA_EX = {
   },
 };
 
+// Um vizinho = uma carta. A divisa com o mesmo imóvel pode voltar a aparecer em
+// outro ponto do anel (trechos separados no PDF); nesse caso as cartas eram
+// duplicadas. Aqui os trechos do mesmo confrontante viram um só, com TODOS os
+// vértices do perímetro dele. Identidade = o imóvel vizinho (rótulo), porque o
+// mesmo proprietário pode confrontar por duas glebas distintas (ex.: FAZENDA
+// LAMEIRO em posse e em matrícula = duas cartas); sem rótulo, cai no CPF/nome.
+const chaveTexto = (s: string) =>
+  s.normalize("NFD").replace(/[^0-9A-Za-z ]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+
+export function agruparTrechosPorConfrontante(trechos: TrechoPecas[]): TrechoPecas[] {
+  const chave = (t: TrechoPecas): string => {
+    if (t.imovelLabel.trim()) return `imovel:${chaveTexto(t.imovelLabel)}`;
+    const cpfs = t.pessoas.map((p) => (p.cpf ?? "").replace(/\D/g, "")).filter(Boolean).sort();
+    if (cpfs.length) return `cpf:${cpfs.join("+")}`;
+    const nomes = t.pessoas.map((p) => chaveTexto(p.nome)).filter(Boolean).sort();
+    if (nomes.length) return `nome:${nomes.join("+")}`;
+    return `desc:${chaveTexto(t.descritivo)}`;
+  };
+  const grupos = new Map<string, TrechoPecas>();
+  for (const t of trechos) {
+    const k = chave(t);
+    const g = grupos.get(k);
+    if (!g) {
+      grupos.set(k, { ...t, pessoas: [...t.pessoas], linhas: [...t.linhas] });
+      continue;
+    }
+    const codigos = new Set(g.linhas.map((l) => l.codigo));
+    for (const l of t.linhas) {
+      if (codigos.has(l.codigo)) continue;
+      codigos.add(l.codigo);
+      g.linhas.push(l);
+    }
+    // um trecho pode trazer o descritivo truncado: completa a lista de pessoas
+    const ids = new Set(g.pessoas.map((p) => (p.cpf ?? "").replace(/\D/g, "") || chaveTexto(p.nome)));
+    for (const p of t.pessoas) {
+      const id = (p.cpf ?? "").replace(/\D/g, "") || chaveTexto(p.nome);
+      if (ids.has(id)) continue;
+      ids.add(id);
+      g.pessoas.push(p);
+    }
+  }
+  return [...grupos.values()];
+}
+
+// confrontantes-pessoa já agrupados por imóvel (uma entrada por vizinho)
+const confrontantesDe = (d: DadosPecas): TrechoPecas[] =>
+  agruparTrechosPorConfrontante(d.trechos.filter((t) => !t.ehVia && t.pessoas.length > 0));
+
 function gerarCartas(xml: string, d: DadosPecas, mapa: [string, string][]): string {
   // delimita o corpo e divide em blocos por título "CARTA DE ANUÊNCIA"
   const bodyM = xml.match(/<w:body>([\s\S]*?)(<w:sectPr[\s\S]*?<\/w:sectPr>)?<\/w:body>/);
@@ -681,8 +729,7 @@ function gerarCartas(xml: string, d: DadosPecas, mapa: [string, string][]): stri
   const prot1 = blocos.find((b) => !b.join("").includes("DIVALDO"));
 
   const cartas: string[] = [];
-  for (const t of d.trechos) {
-    if (t.ehVia || t.pessoas.length === 0) continue;
+  for (const t of confrontantesDe(d)) {
     const duas = t.pessoas.length >= 2;
     const prot = (duas ? prot2 : prot1) ?? prot1 ?? prot2;
     if (!prot) continue;
@@ -797,8 +844,7 @@ function gerarCartasPosse(xml: string, d: DadosPecas, mapa: [string, string][]):
   const prot = paras.slice(inicios[0], inicios.length > 1 ? inicios[1] : paras.length);
 
   const cartas: string[] = [];
-  for (const t of d.trechos) {
-    if (t.ehVia || t.pessoas.length === 0) continue;
+  for (const t of confrontantesDe(d)) {
     let bloco = prot.join("");
     bloco = mapearTabelas(bloco, EH_TBL_VERTICES, (tbl) =>
       reconstruirTabela(tbl, EH_LINHA_VERTICE, t.linhas.map(linhaVertice7)));

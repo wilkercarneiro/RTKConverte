@@ -7,7 +7,7 @@ import JSZip from "jszip";
 import { extractText, getDocumentProxy } from "unpdf";
 import { parseSigefTexto } from "../supabase/functions/_shared/sigef_pdf.ts";
 import {
-  gerarPecasXml, montarTrechosPecas, parseDescritivo, areaPorExtenso,
+  agruparTrechosPorConfrontante, gerarPecasXml, montarTrechosPecas, parseDescritivo, areaPorExtenso,
 } from "../supabase/functions/_shared/pecas.ts";
 
 const OUT = new URL("./out/pecas/", import.meta.url);
@@ -200,4 +200,38 @@ test("peças com um único requerente", async () => {
   assert.ok(t3.includes("proprietária do imóvel rural denominado FAZENDA TESTE"), "carta no singular");
   const t1 = dec(xmls["1"].replace(/<[^>]+>/g, ""));
   assert.ok(t1.includes("– RG: 11.222.333-4"), "RG opcional no cabeçalho");
+});
+
+// ---------- mesmo vizinho em dois pontos do anel: UMA carta só ----------
+test("vizinho repetido no anel gera uma única carta com todos os vértices", async () => {
+  // o mesmo imóvel (TERRA NOVA) volta a confrontar mais adiante no perímetro
+  const repetido = new Map(Object.entries({
+    ...DESCS,
+    "DSBN-M-3608": { descritivo: DESCS["DSBN-M-3605"].descritivo, tipoLimite: "LA1" },
+  }));
+  const { trechos: ts, confrontacaoDe: cd } = montarTrechosPecas(sigef.linhas, repetido);
+  const partes = ts.filter((t) => t.imovelLabel.startsWith("FAZENDA TERRA NOVA"));
+  assert.equal(partes.length, 2, "o PDF traz dois trechos do mesmo vizinho");
+
+  const comPessoas = ts.filter((t) => !t.ehVia && t.pessoas.length > 0);
+  const grupos = agruparTrechosPorConfrontante(comPessoas);
+  const g = grupos.filter((x) => x.imovelLabel.startsWith("FAZENDA TERRA NOVA"));
+  assert.equal(g.length, 1, "um vizinho = um grupo");
+  assert.equal(g[0].linhas.length, partes[0].linhas.length + partes[1].linhas.length,
+    "a carta única leva os vértices dos dois trechos");
+
+  const tpl = {};
+  for (let i = 1; i <= 7; i++) {
+    const zip = await JSZip.loadAsync(readFileSync(new URL(`../reference/pecas/${NOMES[i - 1]}.docx`, import.meta.url)));
+    tpl[String(i)] = await zip.file("word/document.xml").async("string");
+  }
+  const xmls = gerarPecasXml(tpl, { ...dados, trechos: ts, confrontacaoDe: cd });
+  const t3 = dec(xmls["3"].replace(/<[^>]+>/g, ""));
+  const nCartas = (t3.match(/CARTA DE ANUÊNCIA/g) ?? []).length;
+  assert.equal(nCartas, grupos.length, `cartas: ${nCartas} para ${grupos.length} vizinhos`);
+  for (const p of [...partes[0].linhas, ...partes[1].linhas]) {
+    assert.ok(t3.includes(p.codigo), `vértice ${p.codigo} fora da carta do vizinho`);
+  }
+  const t4 = dec(xmls["4"].replace(/<[^>]+>/g, ""));
+  assert.equal((t4.match(/FAZENDA TERRA NOVA/g) ?? []).length, 1, "declaração não repete o vizinho");
 });
