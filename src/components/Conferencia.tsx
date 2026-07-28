@@ -202,6 +202,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     setVertices((vs) => {
       const desloc = vs.map((v) => (v.ordem > apos ? { ...v, ordem: v.ordem + 1 } : v));
       return [...desloc, {
+        // id já nasce aqui: o vértice tem identidade estável desde a inserção
+        id: crypto.randomUUID(),
         servico_id: servico.id, ordem: apos + 1, num_txt: null, rotulo_txt: null,
         e: null, n: null, h: Number(novoV.h.replace(",", ".")) || 0,
         sigma_pos: 0, sigma_h: Number(novoV.sigmaH.replace(",", ".")) || 0,
@@ -225,11 +227,19 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     const { id, status, ...campos } = servico;
     const { error: e1 } = await supabase.from("servicos").update(campos).eq("id", id);
     if (e1) throw e1;
-    const { error: e2 } = await supabase.from("vertices").delete().eq("servico_id", id);
+    // Grava por upsert com id estável, em vez de apagar e reinserir a tabela toda.
+    // O delete+insert fazia uma aba aberta antes de uma mudança de schema regravar
+    // TODOS os vértices sem as colunas que ela não havia carregado — foi assim que
+    // a confrontação se perdeu depois da migração. Ver ARQUITETURA-TRECHOS.md.
+    const linhas = vertices.map((v) => ({ ...v, id: v.id ?? crypto.randomUUID() }));
+    if (linhas.length === 0) throw new Error("Serviço sem vértices");
+    const idsMantidos = linhas.map((l) => `"${l.id}"`).join(",");
+    const { error: e2 } = await supabase.from("vertices")
+      .delete().eq("servico_id", id).not("id", "in", `(${idsMantidos})`);
     if (e2) throw e2;
-    const { error: e3 } = await supabase.from("vertices").insert(vertices.map(({ id: _vid, ...v }) => v));
+    // a confrontação vai junto, nas colunas do próprio vértice
+    const { error: e3 } = await supabase.from("vertices").upsert(linhas, { onConflict: "id" });
     if (e3) throw e3;
-    // a confrontação já foi gravada junto com os vértices acima
     if (servico.rt_id) {
       await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
     }
