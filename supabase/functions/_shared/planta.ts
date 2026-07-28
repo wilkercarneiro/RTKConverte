@@ -205,6 +205,77 @@ function quebrarLinhas(linhas: string[], maxW: number, tam: number, font: PDFFon
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Colisão de rótulos. Os códigos de vértice já se evitavam entre si (retângulo
+// contra retângulo), mas nada impedia um bloco de confrontante ou o nome de uma
+// via de cair EM CIMA das linhas do terreno. Aqui entra o teste que faltava:
+// retângulo contra segmento.
+// ---------------------------------------------------------------------------
+export interface Ret { x1: number; y1: number; x2: number; y2: number }
+export type Seg = Ret;
+
+/** Diagnóstico opcional do desenho, para os testes conferirem sobreposição. */
+export interface DiagPlanta {
+  /** linhas que nenhum rótulo pode cobrir: polígono e linhas duplas das vias */
+  obstaculos: Seg[];
+  /** caixas dos rótulos de confrontante e de via efetivamente desenhados */
+  rotulos: Ret[];
+  /** quantos desses rótulos ficaram por cima de alguma linha (deve ser 0) */
+  sobrepostos: number;
+}
+
+function retCruzaRet(a: Ret, b: Ret): boolean {
+  return !(a.x2 < b.x1 || a.x1 > b.x2 || a.y2 < b.y1 || a.y1 > b.y2);
+}
+
+function segCruzaSeg(
+  ax: number, ay: number, bx: number, by: number,
+  cx: number, cy: number, dx: number, dy: number,
+): boolean {
+  const d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+  const d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+  const d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+function segCruzaRet(s: Seg, r: Ret): boolean {
+  const dentro = (x: number, y: number) => x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2;
+  if (dentro(s.x1, s.y1) || dentro(s.x2, s.y2)) return true;
+  const cantos: [number, number][] = [[r.x1, r.y1], [r.x2, r.y1], [r.x2, r.y2], [r.x1, r.y2]];
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = cantos[i], [bx, by] = cantos[(i + 1) % 4];
+    if (segCruzaSeg(s.x1, s.y1, s.x2, s.y2, ax, ay, bx, by)) return true;
+  }
+  return false;
+}
+
+// caixa envolvente de um texto rotacionado (pdf-lib gira em torno da origem do texto)
+function retTextoRot(x: number, y: number, w: number, h: number, angDeg: number): Ret {
+  const a = angDeg * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
+  const xs: number[] = [], ys: number[] = [];
+  for (const [dx, dy] of [[0, 0], [w, 0], [w, h], [0, h]] as [number, number][]) {
+    xs.push(x + dx * cos - dy * sin);
+    ys.push(y + dx * sin + dy * cos);
+  }
+  return { x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys) };
+}
+
+/**
+ * Primeira posição da lista que não cruza nenhuma linha do desenho nem nenhum
+ * rótulo já colocado. Os candidatos vêm ordenados do afastamento menor para o
+ * maior, então o rótulo só se afasta o quanto for necessário. Sem nenhuma
+ * posição livre, devolve null e o chamador decide.
+ */
+function primeiraLivre<T extends { ret: Ret }>(candidatos: T[], obstaculos: Seg[], ocupado: Ret[]): T | null {
+  for (const cand of candidatos) {
+    if (obstaculos.some((s) => segCruzaRet(s, cand.ret))) continue;
+    if (ocupado.some((o) => retCruzaRet(cand.ret, o))) continue;
+    return cand;
+  }
+  return null;
+}
+
 // quebra o descritivo em linhas de rótulo (sempre em MAIÚSCULAS)
 function linhasDescritivo(descritivo: string): string[] {
   const partes = descritivo.split("\\").map((p) => p.trim()).filter(Boolean);
@@ -218,7 +289,7 @@ function linhasDescritivo(descritivo: string): string[] {
 // ---------------------------------------------------------------------------
 // principal
 // ---------------------------------------------------------------------------
-export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
+export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise<Uint8Array> {
   const posse = d.tipoImovel === "posse";
   // A folha de posse é desenhada em A1 e reduzida à metade no fim (A3). Os
   // corpos pequenos do desenho são ampliados por K aqui para continuarem
@@ -279,6 +350,11 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   }
 
   // ------------------- trechos de estrada (linha dupla vermelha) -------------------
+  // Linhas do desenho que nenhum rótulo pode cobrir: as duplas vermelhas das vias
+  // e o próprio polígono. Preenchidas conforme são desenhadas, logo abaixo.
+  const obstaculos: Seg[] = [];
+  // caixas dos rótulos de trecho (confrontante e via) para o diagnóstico
+  const rotulosTrecho: Ret[] = [];
   const nv = vs.length;
   const trechoDoIdx = (i: number): TrechoPlanta => {
     for (const t of d.trechos) {
@@ -297,7 +373,9 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     const mx = (X(a.e) + X(b.e)) / 2, my = (Y(a.n) + Y(b.n)) / 2;
     if ((mx + nx * 10 - dcx) ** 2 + (my + ny * 10 - dcy) ** 2 < (mx - nx * 10 - dcx) ** 2 + (my - ny * 10 - dcy) ** 2) { nx = -nx; ny = -ny; }
     for (const off of [5, 11]) {
-      linha(c, X(a.e) + nx * off, Y(a.n) + ny * off, X(b.e) + nx * off, Y(b.n) + ny * off, 2.8 * K, VERMELHO);
+      const seg = { x1: X(a.e) + nx * off, y1: Y(a.n) + ny * off, x2: X(b.e) + nx * off, y2: Y(b.n) + ny * off };
+      linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8 * K, VERMELHO);
+      obstaculos.push(seg);
     }
   }
 
@@ -305,6 +383,7 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
   for (let i = 0; i < nv; i++) {
     const a = vs[i], b = vs[(i + 1) % nv];
     linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 3.4 * K, AZUL);
+    obstaculos.push({ x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) });
   }
   // vértices + códigos. Em divisas com muitos pontos quase alinhados (a face
   // norte do MONOINO tem 13) os códigos em corpo grande viravam um borrão
@@ -435,9 +514,19 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
 
     if (t.isEstrada) {
-      // nome da via rotacionado ao longo do segmento do ponto médio
+      // Nome da via rotacionado ao longo do segmento, empurrado para fora até não
+      // cobrir a linha dupla vermelha nem o polígono.
       const nome = linhasDescritivo(t.descritivo)[0] ?? "";
-      texto(c, nome, mx + nx * 22, my + ny * 22, 13 * K, { bold: true, cor: PRETO, rot: angSeg > 90 || angSeg < -90 ? angSeg + 180 : angSeg });
+      const rot = angSeg > 90 || angSeg < -90 ? angSeg + 180 : angSeg;
+      const vw = c.fb.widthOfTextAtSize(nome, LBL_TAM);
+      const cands = [22, 30, 40, 52, 66, 82].map((o) => o * K).map((off) => {
+        const x = mx + nx * off, y = my + ny * off;
+        return { x, y, ret: retTextoRot(x, y, vw, LBL_TAM, rot) };
+      });
+      const esc = primeiraLivre(cands, obstaculos, ocupado) ?? cands[cands.length - 1];
+      texto(c, nome, esc.x, esc.y, LBL_TAM, { bold: true, cor: PRETO, rot });
+      ocupado.push(esc.ret);
+      rotulosTrecho.push(esc.ret);
       continue;
     }
     // linha verde de divisão no INÍCIO do trecho
@@ -450,22 +539,35 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
     // na planta de referência. A versão anterior desenhava uma linha de
     // assinatura de 340pt com nome e CPF em corpo 21 — duplicava as cartas de
     // anuência e dominava o desenho.
-    const lbl = quebrarLinhas(linhasDescritivo(t.descritivo), LBL_MAXW, LBL_TAM, f);
-    const blockW = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, LBL_TAM)));
-    const altura = lbl.length * LBL_ESP;
     // Ancoragem pela BORDA do bloco (não pelo centro): à direita do perímetro o
     // texto começa depois do traço, à esquerda termina antes dele. Centrar o
     // bloco no ponto deslocado fazia rótulos largos voltarem por cima do
     // polígono.
-    const MG = 30;
-    let lx = Math.abs(nx) < 0.3 ? mx - blockW / 2 : nx > 0 ? mx + MG : mx - MG - blockW;
-    let ty = Math.abs(ny) < 0.3 ? my + altura / 2 : ny > 0 ? my + MG + altura : my - MG;
-    // e o bloco inteiro fica dentro da área de desenho — antes os rótulos
-    // laterais vazavam para fora da folha
-    lx = Math.max(dArea.x + 4, Math.min(lx, dArea.x + dArea.w - blockW - 4));
-    ty = Math.max(dArea.y + altura, Math.min(ty, dArea.y + dArea.h - LBL_TAM));
-    for (const [li, lt] of lbl.entries()) texto(c, lt, lx, ty - li * LBL_ESP, LBL_TAM);
-    ocupado.push({ x1: lx, y1: ty - altura, x2: lx + blockW, y2: ty + LBL_TAM });
+    //
+    // Duas saídas contra sobreposição, nesta ordem: AFASTAR o bloco do perímetro
+    // e, se nem assim couber, QUEBRAR em mais linhas (bloco mais estreito é mais
+    // fácil de encaixar). O primeiro candidato livre vence, então o rótulo só se
+    // afasta e só quebra o quanto for necessário.
+    const cands = [LBL_MAXW, LBL_MAXW * 0.62, LBL_MAXW * 0.42].flatMap((maxW) => {
+      const lbl = quebrarLinhas(linhasDescritivo(t.descritivo), maxW, LBL_TAM, f);
+      const blockW = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, LBL_TAM)));
+      const altura = lbl.length * LBL_ESP;
+      // afastamentos acompanham K: na folha de posse o texto é 1,7× maior e
+      // precisa recuar na mesma proporção para limpar as linhas
+      return [30, 42, 56, 72, 90, 112].map((mg) => mg * K).map((MG) => {
+        let lx = Math.abs(nx) < 0.3 ? mx - blockW / 2 : nx > 0 ? mx + MG : mx - MG - blockW;
+        let ty = Math.abs(ny) < 0.3 ? my + altura / 2 : ny > 0 ? my + MG + altura : my - MG;
+        // e o bloco inteiro fica dentro da área de desenho — antes os rótulos
+        // laterais vazavam para fora da folha
+        lx = Math.max(dArea.x + 4, Math.min(lx, dArea.x + dArea.w - blockW - 4));
+        ty = Math.max(dArea.y + altura, Math.min(ty, dArea.y + dArea.h - LBL_TAM));
+        return { lbl, lx, ty, ret: { x1: lx - 2, y1: ty - altura, x2: lx + blockW + 2, y2: ty + LBL_TAM } };
+      });
+    });
+    const esc = primeiraLivre(cands, obstaculos, ocupado) ?? cands[cands.length - 1];
+    for (const [li, lt] of esc.lbl.entries()) texto(c, lt, esc.lx, esc.ty - li * LBL_ESP, LBL_TAM);
+    ocupado.push(esc.ret);
+    rotulosTrecho.push(esc.ret);
   }
 
   // ------------------- bússola (rosa dos ventos moderna) -------------------
@@ -743,6 +845,12 @@ export async function gerarPlantaPdf(d: DadosPlanta): Promise<Uint8Array> {
       lyy -= 20 * K;
     }
     texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 9.5 * K);
+  }
+
+  if (diag) {
+    diag.obstaculos = obstaculos;
+    diag.rotulos = rotulosTrecho;
+    diag.sobrepostos = rotulosTrecho.filter((r) => obstaculos.some((s) => segCruzaRet(s, r))).length;
   }
 
   // posse: reduz o conteúdo e entrega a folha no A3 exato (420×297 mm) —

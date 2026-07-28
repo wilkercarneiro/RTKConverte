@@ -569,9 +569,14 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                 <span className="item" key={`leg-${t.vertice_inicio_ordem}`}>
                   <span className="ponto-cor" style={{ background: corDoTrecho(t) }} />
                   {t.apelido_txt || `pt ${nomePonto(vertices.find((v) => v.ordem === t.vertice_inicio_ordem) ?? vertices[0])}`}
+                  {t.eh_via && <span className="marca-via" title="Faixa de domínio pública: sai na planta como linha dupla vermelha"> ═ via</span>}
                 </span>
               ))}
             </div>
+            <p className="desc" style={{ marginTop: 6 }}>
+              A linha dupla vermelha é o que sairá na planta como estrada. Se ela aparecer
+              onde não há estrada, desmarque "faixa de domínio pública" naquele trecho.
+            </p>
           </div>
         </div>
       </section>

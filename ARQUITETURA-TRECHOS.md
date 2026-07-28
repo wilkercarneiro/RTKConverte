@@ -101,11 +101,20 @@ suportado desde sempre. Bloquear seria uma regressão disfarçada de rigor.
 
 ## Tela
 
-Tabela única do perímetro em ordem de anel, identificada por código (`DSBN-M-3704`, não
-`ordem 2`), com o confrontante em faixa colorida que se estende visualmente de M a M.
-Botão "iniciar confrontação aqui" converte P→M; remover a confrontação reverte M→P.
-Preview SVG do polígono com as faixas e a linha dupla das vias, para o erro aparecer na
-tela e não no papel.
+Cada confrontação é editada no seu vértice M, identificado por código (`DSBN-M-3704`, não
+`ordem 2`), com checkbox "faixa de domínio pública". Adicionar uma transição converte P→M;
+remover reverte M→P e limpa os dados — marcar o M e criar o trecho são o mesmo ato, então
+os dois nunca divergem.
+
+O preview SVG desenha a **linha dupla vermelha por fora do polígono** exatamente onde a
+planta desenharia, com a mesma construção de `planta.ts` (normal apontando para o lado
+oposto ao centroide). Se a linha vermelha aparecer onde não há estrada, o erro está na tela
+antes de virar PDF — que é o ponto.
+
+A regra "a que trecho pertence cada segmento" vive em `src/lib/trechos.ts`, isolada e
+testada em `tests/trechos.test.mjs` contra o anel real da LAGOA SECA: a estrada tem de
+começar no M-3704 e terminar no M-3705, e os segmentos P-13806→P-13807→M-3704 têm de ficar
+de fora. São os dois defeitos relatados, agora travados por teste.
 
 ## Migração
 

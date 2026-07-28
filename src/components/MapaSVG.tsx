@@ -2,6 +2,7 @@
 // Gerado client-side a partir das coordenadas E/N — sem lib de mapa.
 import { useMemo } from "react";
 import type { Trecho, Vertice } from "../lib/types";
+import { trechoDoVertice } from "../lib/trechos";
 
 export const CORES = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#01796f", "#9a6324", "#800000", "#808000", "#000075"];
 
@@ -29,19 +30,36 @@ export function MapaSVG({ vertices, trechos, verticeInicial }: Props) {
     const px = (x: number) => PAD + (x - minX) * esc;
     const py = (y: number) => H - PAD - (y - minY) * esc; // N cresce p/ cima
     const tOrd = [...trechos].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem);
+    const trechoDe = (ordem: number): Trecho | null => trechoDoVertice(tOrd, ordem);
     const corDoVertice = (ordem: number): string => {
-      if (tOrd.length === 0) return "#888";
-      // trecho vigente: o último início <= ordem (no anel a partir do 1º trecho)
-      let idx = -1;
-      for (let i = 0; i < tOrd.length; i++) if (tOrd[i].vertice_inicio_ordem <= ordem) idx = i;
-      if (idx < 0) idx = tOrd.length - 1; // antes do 1º início → último trecho do anel
-      return CORES[idx % CORES.length];
+      const t = trechoDe(ordem);
+      return t ? CORES[tOrd.indexOf(t) % CORES.length] : "#888";
     };
-    return { pts, px, py, W, H, corDoVertice };
+    // centroide em coordenadas de tela, para jogar a linha da via para FORA
+    const cx = pts.reduce((s, p) => s + px(p.x), 0) / pts.length;
+    const cy = pts.reduce((s, p) => s + py(p.y), 0) / pts.length;
+    return { pts, px, py, W, H, corDoVertice, trechoDe, cx, cy };
   }, [vertices, trechos]);
 
-  const { pts, px, py, W, H, corDoVertice } = dados;
+  const { pts, px, py, W, H, corDoVertice, trechoDe, cx, cy } = dados;
   if (pts.length < 3) return null;
+
+  // Mesma construção da planta (planta.ts): duas paralelas vermelhas deslocadas na
+  // normal que aponta para fora do polígono. O que aparecer aqui é o que sai no PDF.
+  const viaDoSegmento = (i: number) => {
+    const t = trechoDe(pts[i].v.ordem);
+    if (!t?.eh_via) return null;
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const ax = px(a.x), ay = py(a.y), bx = px(b.x), by = py(b.y);
+    const dx = bx - ax, dy = by - ay;
+    const len = Math.hypot(dx, dy) || 1;
+    let nx = -dy / len, ny = dx / len;
+    const mx = (ax + bx) / 2, my = (ay + by) / 2;
+    if ((mx + nx * 5 - cx) ** 2 + (my + ny * 5 - cy) ** 2 < (mx - nx * 5 - cx) ** 2 + (my - ny * 5 - cy) ** 2) {
+      nx = -nx; ny = -ny;
+    }
+    return { ax, ay, bx, by, nx, ny };
+  };
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="mapa-svg" role="img" aria-label="Mapa do perímetro">
@@ -50,6 +68,21 @@ export function MapaSVG({ vertices, trechos, verticeInicial }: Props) {
         return (
           <line key={`s${i}`} x1={px(p.x)} y1={py(p.y)} x2={px(q.x)} y2={py(q.y)}
             stroke={corDoVertice(p.v.ordem)} strokeWidth={2} />
+        );
+      })}
+      {/* faixas de domínio: linha dupla vermelha por fora, como sai na planta */}
+      {pts.map((_, i) => {
+        const via = viaDoSegmento(i);
+        if (!via) return null;
+        return (
+          <g key={`via${i}`}>
+            {[3, 6].map((off) => (
+              <line key={off}
+                x1={via.ax + via.nx * off} y1={via.ay + via.ny * off}
+                x2={via.bx + via.nx * off} y2={via.by + via.ny * off}
+                stroke="#d40000" strokeWidth={1.4} />
+            ))}
+          </g>
         );
       })}
       {pts.map((p) => (

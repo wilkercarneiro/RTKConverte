@@ -74,9 +74,15 @@ test("planta A1: PDF gerado com dimensões e conteúdo", async () => {
     desenhista: "JANETE OLIVEIRA", dataStr: "22/07/2026",
     logo: null,
   };
-  const bytes = await gerarPlantaPdf(dados);
+  const diag = { obstaculos: [], rotulos: [], sobrepostos: 0 };
+  const bytes = await gerarPlantaPdf(dados, diag);
   writeFileSync(new URL("./out/planta-teste.pdf", import.meta.url), bytes);
   assert.ok(bytes.length > 20000, `PDF pequeno demais: ${bytes.length}`);
+
+  // nenhum rótulo de confrontante ou de via pode cair sobre as linhas do desenho
+  assert.ok(diag.rotulos.length >= 6, `poucos rótulos posicionados: ${diag.rotulos.length}`);
+  assert.equal(diag.sobrepostos, 0, `${diag.sobrepostos} rótulo(s) sobre as linhas do terreno`);
+  console.log(`    rótulos de trecho: ${diag.rotulos.length}, nenhum sobre as linhas`);
 
   // leitura real
   const doc = await PDFDocument.load(bytes);
@@ -110,9 +116,12 @@ test("planta de posse: folha A3 sem quadro analítico", async () => {
     desenhista: "JANETE OLIVEIRA", dataStr: "22/07/2026",
     logo: null,
   };
-  const bytes = await gerarPlantaPdf(dados);
+  const diag = { obstaculos: [], rotulos: [], sobrepostos: 0 };
+  const bytes = await gerarPlantaPdf(dados, diag);
   writeFileSync(new URL("./out/planta-posse-teste.pdf", import.meta.url), bytes);
   assert.ok(bytes.length > 15000, `PDF pequeno demais: ${bytes.length}`);
+  // a folha A3 é desenhada em A1 e reduzida: o encaixe tem de valer nela também
+  assert.equal(diag.sobrepostos, 0, `${diag.sobrepostos} rótulo(s) sobre as linhas do terreno`);
 
   const doc = await PDFDocument.load(bytes);
   assert.equal(doc.getPageCount(), 1);
@@ -151,9 +160,11 @@ test("planta de espólio com inventariante: PDF gerado com dados do inventariant
     desenhista: "JANETE OLIVEIRA", dataStr: "22/07/2026",
     logo: null,
   };
-  const bytes = await gerarPlantaPdf(dados);
+  const diag = { obstaculos: [], rotulos: [], sobrepostos: 0 };
+  const bytes = await gerarPlantaPdf(dados, diag);
   writeFileSync(new URL("./out/planta-espolio-teste.pdf", import.meta.url), bytes);
   assert.ok(bytes.length > 20000, `PDF pequeno demais: ${bytes.length}`);
+  assert.equal(diag.sobrepostos, 0, `${diag.sobrepostos} rótulo(s) sobre as linhas do terreno`);
 
   const doc = await PDFDocument.load(bytes);
   assert.equal(doc.getPageCount(), 1);
