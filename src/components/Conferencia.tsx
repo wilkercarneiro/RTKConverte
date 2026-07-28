@@ -116,16 +116,17 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       });
     }
   }, [servico.rt_id, rts.length]);
-  const verticeInicial = servico.vertice_inicial ?? 0;
   const trechosOrdenados = useMemo(
     () => [...trechos].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem),
     [trechos],
   );
 
   const preview = useMemo(
-    () => calcularPreviewLocal(servico.fuso_utm ?? 24, vertices, trechos, verticeInicial, credenciado),
-    [servico.fuso_utm, vertices, trechos, verticeInicial, credenciado],
+    () => calcularPreviewLocal(servico.fuso_utm ?? 24, vertices, trechos, credenciado),
+    [servico.fuso_utm, vertices, trechos, credenciado],
   );
+  // não é escolha do usuário: o SIGEF exige começar pelo vértice mais ao norte
+  const verticeInicial = preview.verticeInicialOrdem ?? -1;
 
   const pendencias = useMemo(() => {
     const p: { msg: string; alvo: string }[] = [];
@@ -194,14 +195,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       }].sort((a, b) => a.ordem - b.ordem);
     });
     setTrechos((ts) => ts.map((t) => (t.vertice_inicio_ordem > apos ? { ...t, vertice_inicio_ordem: t.vertice_inicio_ordem + 1 } : t)));
-    if (verticeInicial > apos) campo("vertice_inicial", verticeInicial + 1);
     setNovoV({ aposOrdem: "", codigo: "", lat: "", lon: "", h: "", sigmaH: "0,02" });
     setMsg("Vértice V inserido.");
   }
   function removerV(ordem: number) {
     setVertices((vs) => vs.filter((v) => v.ordem !== ordem).map((v) => (v.ordem > ordem ? { ...v, ordem: v.ordem - 1 } : v)));
     setTrechos((ts) => ts.map((t) => (t.vertice_inicio_ordem > ordem ? { ...t, vertice_inicio_ordem: t.vertice_inicio_ordem - 1 } : t)));
-    if (verticeInicial > ordem) campo("vertice_inicial", verticeInicial - 1);
   }
 
   // ------- persistência -------
@@ -571,12 +570,16 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <span className="desc">códigos definitivos são alocados dos contadores do credenciado na geração</span>
         </header>
         <div className="acoes-vertices">
-          <label>Vértice inicial do memorial:{" "}
-            <select value={verticeInicial} onChange={(e) => campo("vertice_inicial", Number(e.target.value))}>
-              {vertices.filter((v) => v.tipo === "M").map((v) => (
-                <option key={v.ordem} value={v.ordem}>{nomePonto(v)}</option>
-              ))}
-            </select>
+          <label>Vértice inicial:{" "}
+            <strong>
+              {(() => {
+                const v = vertices.find((x) => x.ordem === verticeInicial);
+                return v ? nomePonto(v) : "—";
+              })()}
+            </strong>{" "}
+            <span style={{ color: "var(--texto-2)" }}>
+              (automático: ponto mais ao norte, exigido pelo SIGEF)
+            </span>
           </label>
           <fieldset className="inserir-v">
             <legend>Inserir vértice pré-existente (tipo V · método PA1)</legend>

@@ -4,7 +4,7 @@
 import proj4mod from "proj4";
 import {
   calcularAreaHa, calcularPerimetroM, calcularSegmentos, calcularVertices,
-  fmtBR, fmtGmsMemorial, parseGmsPlanilha, rotacionarRing, codigoVertice,
+  fmtBR, fmtGmsMemorial, ordemMaisAoNorte, parseGmsPlanilha, rotacionarRing, codigoVertice,
 } from "../../supabase/functions/_shared/geo.ts";
 import type { Proj4 } from "../../supabase/functions/_shared/geo.ts";
 import type { Credenciado, Trecho, Vertice } from "./types";
@@ -18,6 +18,8 @@ export interface PreviewCalc {
   qtdP: number;
   qtdV: number;
   primeiroParagrafo: string;
+  /** ordem do vértice mais ao norte — início obrigatório pelo SIGEF (null se o cálculo falhou) */
+  verticeInicialOrdem: number | null;
   erro: string | null;
 }
 
@@ -25,7 +27,6 @@ export function calcularPreviewLocal(
   fuso: number,
   vertices: Vertice[],
   trechos: Trecho[],
-  verticeInicial: number,
   credenciado: Credenciado | null,
 ): PreviewCalc {
   try {
@@ -41,8 +42,8 @@ export function calcularPreviewLocal(
       fuso, proj4,
     );
     const comOrdem = calc.map((c, i) => ({ ...c, ordem: vs[i].ordem, tipo: vs[i].tipo, codigo: vs[i].codigo }));
-    const temInicial = comOrdem.some((v) => v.ordem === verticeInicial);
-    const ring = rotacionarRing(comOrdem, temInicial ? verticeInicial : comOrdem[0].ordem);
+    // início sempre no vértice mais ao norte (exigência SIGEF), igual ao servidor
+    const ring = rotacionarRing(comOrdem, ordemMaisAoNorte(comOrdem));
     const segs = calcularSegmentos(ring);
     const areaHa = calcularAreaHa(ring);
     const perimetroM = calcularPerimetroM(segs);
@@ -72,9 +73,10 @@ export function calcularPreviewLocal(
       perimetroM: fmtBR(perimetroM, 2),
       qtdM: qtd.M, qtdP: qtd.P, qtdV: qtd.V,
       primeiroParagrafo,
+      verticeInicialOrdem: v0.ordem,
       erro: null,
     };
   } catch (e) {
-    return { areaHa: "—", perimetroM: "—", qtdM: 0, qtdP: 0, qtdV: 0, primeiroParagrafo: "", erro: e instanceof Error ? e.message : String(e) };
+    return { areaHa: "—", perimetroM: "—", qtdM: 0, qtdP: 0, qtdV: 0, primeiroParagrafo: "", verticeInicialOrdem: null, erro: e instanceof Error ? e.message : String(e) };
   }
 }

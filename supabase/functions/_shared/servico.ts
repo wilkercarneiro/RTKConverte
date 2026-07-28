@@ -3,7 +3,7 @@
 // prontas para o memorial (DOCX) e a planilha (ODS).
 import {
   alocarCodigos, calcularAreaHa, calcularPerimetroM, calcularSegmentos,
-  calcularVertices, fmtGmsPlanilha, parseGmsPlanilha, rotacionarRing,
+  calcularVertices, fmtGmsPlanilha, ordemMaisAoNorte, parseGmsPlanilha, rotacionarRing,
 } from "./geo.ts";
 import type { EntradaVertice, Proj4, Segmento, VerticeCalc } from "./geo.ts";
 import type { VerticeMemorial } from "./memorial.ts";
@@ -35,7 +35,8 @@ export interface TrechoServico {
 
 export interface ServicoInput {
   fusoUtm: number;
-  verticeInicialOrdem: number;
+  /** @deprecated ignorado: o SIGEF exige que a sequência comece no vértice mais ao norte. */
+  verticeInicialOrdem?: number;
   prefixo: string;
   contadores: { M: number; P: number; V: number };
   vertices: VerticeServico[];    // em ordem de perímetro
@@ -63,11 +64,6 @@ export interface ServicoCalculado {
 }
 
 export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado {
-  // Confrontantes são opcionais: sem nenhum trecho, todo o perímetro pertence a
-  // um trecho sintético vazio (LA1, sem descritivo).
-  if (inp.trechos.length === 0) {
-    inp = { ...inp, trechos: [{ verticeInicioOrdem: inp.verticeInicialOrdem, descritivo: "", tipoLimite: "LA1" }] };
-  }
   const entradas: EntradaVertice[] = inp.vertices.map((v) => ({
     numTxt: v.numTxt,
     e: v.e ?? undefined,
@@ -78,9 +74,20 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
   }));
   const calc = calcularVertices(entradas, inp.fusoUtm, proj4);
 
+  // O SIGEF exige que a listagem do perímetro comece pelo vértice mais ao norte;
+  // isso vale para a planilha ODS e, por coerência, para memorial e planta, que
+  // saem todos deste mesmo anel.
+  const ordemInicial = ordemMaisAoNorte(calc);
+
+  // Confrontantes são opcionais: sem nenhum trecho, todo o perímetro pertence a
+  // um trecho sintético vazio (LA1, sem descritivo).
+  if (inp.trechos.length === 0) {
+    inp = { ...inp, trechos: [{ verticeInicioOrdem: ordemInicial, descritivo: "", tipoLimite: "LA1" }] };
+  }
+
   // ring rotacionado a partir do vértice inicial
   const juntos = calc.map((c, i) => ({ ...c, tipo: inp.vertices[i].tipo, metodo: inp.vertices[i].metodo, codigoManual: inp.vertices[i].codigoManual ?? null }));
-  const ring0 = rotacionarRing(juntos, inp.verticeInicialOrdem);
+  const ring0 = rotacionarRing(juntos, ordemInicial);
 
   // códigos alocados na ordem do memorial
   const codigos = alocarCodigos(ring0, inp.prefixo, inp.contadores);

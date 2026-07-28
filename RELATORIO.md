@@ -26,8 +26,9 @@ serviço com selects dos domínios oficiais SIGEF e autocomplete de
 detentor/RT/cartório de serviços anteriores; (2) confrontantes com trechos
 sugeridos pelos rótulos, adicionar/remover transição em qualquer ponto, e
 **mapa SVG** client-side com trechos coloridos e vértices numerados; (3) tabela
-de vértices com troca de tipo, inserção de vértice V pré-existente e escolha do
-vértice inicial. **Preview em rodapé fixo** (fuso, área, perímetro, M/P/V,
+de vértices com troca de tipo e inserção de vértice V pré-existente; o vértice
+inicial não é escolhido — é sempre o ponto mais ao norte, como o SIGEF exige
+(empate na latitude → o mais a oeste). **Preview em rodapé fixo** (fuso, área, perímetro, M/P/V,
 primeiro parágrafo) recalculado a cada edição reutilizando o mesmo motor puro
 (exibição apenas — os valores oficiais são sempre server-side). Build de
 produção OK (`tsc -b && vite build`).
@@ -88,8 +89,9 @@ trechos, incl. transição manual no pt 41 → inserção do V entre 68/69 → g
     somente service role) + script `upload-templates.mjs`. Só aceita os 2 nomes
     fixos de template.
 12. **Trechos sem rótulo/edição**: adicionar transição marca o vértice como M;
-    remover trecho devolve a P. O vértice inicial do memorial deve iniciar um
-    trecho (validação do motor).
+    remover trecho devolve a P. O vértice inicial é o mais ao norte e não precisa
+    iniciar trecho: se nenhum trecho começa nele, o início do anel pertence ao
+    último trecho (continuação, dando a volta no perímetro).
 13. **Regeração com vértices novos**: se qualquer vértice não-manual estiver sem
     código, TODOS os não-manuais são realocados a partir dos contadores atuais
     (números anteriores são "queimados" — comportamento simples e seguro).

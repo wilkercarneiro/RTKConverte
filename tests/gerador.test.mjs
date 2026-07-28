@@ -48,7 +48,7 @@ const ordemDe = (numTxt) => vertices.findIndex((v) => v.numTxt === numTxt);
 
 const servico = montarServico({
   fusoUtm: 24,
-  verticeInicialOrdem: ordemDe(30),
+  // verticeInicialOrdem não é informado: o início é sempre o vértice mais ao norte
   prefixo: "DSBN",
   contadores: { M: 3605, P: 13130, V: 758 },
   vertices,
@@ -66,6 +66,17 @@ test("montagem: 70 vértices, códigos e contadores", () => {
   assert.equal(v.codigo, "DSBN-V-0758");
   assert.equal(v.metodo, "PA1");
   assert.deepEqual(servico.contadoresFinais, { M: 3611, P: 13193, V: 758 }); // 6 M, 63 P, V manual não consome
+});
+
+test("montagem: sequência inicia no vértice mais ao norte (exigência SIGEF)", () => {
+  const maxLat = Math.max(...servico.ring.map((v) => v.latDeg));
+  assert.equal(servico.ring[0].latDeg, maxLat, "o 1º vértice do anel não é o mais ao norte");
+  // nenhum outro vértice empata em latitude neste caso — o início é único
+  assert.equal(servico.ring.filter((v) => v.latDeg === maxLat).length, 1);
+  // memorial e planilha saem do mesmo anel: ambos começam no mesmo vértice
+  assert.equal(servico.memorialRing[0].codigo, servico.ring[0].codigo);
+  assert.equal(servico.linhasOds[0].codigo, servico.ring[0].codigo);
+  assert.equal(servico.linhasOds[0].latFmt, "11 23 44,344 S");
 });
 
 test("montagem: área/perímetro compatíveis com o arquivo histórico", () => {

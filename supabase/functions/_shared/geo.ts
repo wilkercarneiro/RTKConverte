@@ -374,6 +374,19 @@ export function rotacionarRing<T extends { ordem: number }>(vs: T[], ordemInicia
   return [...vs.slice(idx), ...vs.slice(0, idx)];
 }
 
+// Vértice inicial exigido pelo SIGEF: o mais ao norte (maior latitude). Empate na
+// latitude → o mais a oeste (menor longitude); persistindo o empate, a menor ordem.
+// As latitudes já vêm canonicamente arredondadas (0,001"), então a comparação é exata.
+export function ordemMaisAoNorte<T extends { ordem: number; latDeg: number; lonDeg: number }>(vs: T[]): number {
+  if (vs.length === 0) throw new Error("Perímetro sem vértices");
+  let melhor = vs[0];
+  for (const v of vs) {
+    if (v.latDeg > melhor.latDeg) melhor = v;
+    else if (v.latDeg === melhor.latDeg && v.lonDeg < melhor.lonDeg) melhor = v;
+  }
+  return melhor.ordem;
+}
+
 // ---------------------------------------------------------------------------
 // Códigos de vértice
 // ---------------------------------------------------------------------------
