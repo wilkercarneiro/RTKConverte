@@ -24,6 +24,15 @@ export interface VerticeBanco {
   inserido_manual: boolean;
   lat_gms: string | null;
   lon_gms: string | null;
+  // Confrontação, que vive no próprio vértice M. Precisa atravessar a
+  // reconciliação: o SIGEF devolve geometria, não confrontantes.
+  // Ver ARQUITETURA-TRECHOS.md.
+  descritivo?: string | null;
+  tipo_limite?: string | null;
+  eh_via?: boolean | null;
+  cns?: string | null;
+  matricula?: string | null;
+  apelido_txt?: string | null;
 }
 
 export interface VerticeReconciliado {
@@ -42,6 +51,12 @@ export interface VerticeReconciliado {
   inserido_manual: boolean;
   lat_gms: string;
   lon_gms: string;
+  descritivo: string | null;
+  tipo_limite: string | null;
+  eh_via: boolean;
+  cns: string | null;
+  matricula: string | null;
+  apelido_txt: string | null;
 }
 
 function gmsPdfParaDeg(s: string): number {
@@ -105,7 +120,11 @@ export function reconciliarVerticesBancoComSigef(
     }
 
     if (correspondente) {
-      // Ponto existente na nossa planilha: atualiza com as coordenadas oficiais do SIGEF
+      // Ponto existente na nossa planilha: atualiza com as coordenadas oficiais do
+      // SIGEF, PRESERVANDO a confrontação — o PDF traz geometria, não confrontantes,
+      // e descartá-la aqui apagava o trabalho do usuário a cada geração de planta.
+      const temConfrontacao = !!(correspondente.descritivo !== null && correspondente.descritivo !== undefined)
+        || !!correspondente.apelido_txt;
       return {
         servico_id: servicoId,
         ordem: idx,
@@ -117,11 +136,19 @@ export function reconciliarVerticesBancoComSigef(
         h,
         sigma_pos: Number(correspondente.sigma_pos) || 0.05,
         sigma_h: Number(correspondente.sigma_h) || 0.08,
-        tipo: tipoDoCodigo(l.codigo),
+        // um vértice que carrega confrontação é M por definição, mesmo que o código
+        // do SIGEF diga outra coisa — senão o trecho desaparecia do desenho
+        tipo: temConfrontacao ? "M" : tipoDoCodigo(l.codigo),
         metodo: correspondente.metodo || "PG6",
         inserido_manual: correspondente.inserido_manual,
         lat_gms: l.lat,
         lon_gms: l.lon,
+        descritivo: correspondente.descritivo ?? null,
+        tipo_limite: correspondente.tipo_limite ?? null,
+        eh_via: !!correspondente.eh_via,
+        cns: correspondente.cns ?? null,
+        matricula: correspondente.matricula ?? null,
+        apelido_txt: correspondente.apelido_txt ?? null,
       };
     } else {
       // Ponto novo / sobreposto de outro profissional vindo do SIGEF
@@ -141,6 +168,13 @@ export function reconciliarVerticesBancoComSigef(
         inserido_manual: false,
         lat_gms: l.lat,
         lon_gms: l.lon,
+        // ponto de terceiro: não é confrontação nossa
+        descritivo: null,
+        tipo_limite: null,
+        eh_via: false,
+        cns: null,
+        matricula: null,
+        apelido_txt: null,
       };
     }
   });
