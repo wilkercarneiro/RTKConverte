@@ -41,6 +41,10 @@ for (const p of pontos) {
   vertices.push({
     ordem: 0, numTxt: p.num, e: p.e, n: p.n, h: p.h, sigmaPos: p.sigmaPos, sigmaH: p.sigmaH,
     tipo: MS.has(p.num) ? "M" : "P", metodo: "PG6", inserido: false,
+    // a confrontação vive no próprio vértice M (ver ARQUITETURA-TRECHOS.md)
+    descritivo: MS.has(p.num) ? DESCRITIVOS[p.num] : null,
+    tipoLimite: MS.has(p.num) ? TIPO_LIMITE[p.num] : null,
+    ehVia: MS.has(p.num) && /^LA[34567]/.test(TIPO_LIMITE[p.num] ?? ""),
   });
 }
 vertices.forEach((v, i) => { v.ordem = i; });
@@ -52,9 +56,6 @@ const servico = montarServico({
   prefixo: "DSBN",
   contadores: { M: 3605, P: 13130, V: 758 },
   vertices,
-  trechos: [30, 36, 41, 58, 64, 9].map((n) => ({
-    verticeInicioOrdem: ordemDe(n), descritivo: DESCRITIVOS[n], tipoLimite: TIPO_LIMITE[n],
-  })),
 }, proj4);
 
 test("montagem: 70 vértices, códigos e contadores", () => {

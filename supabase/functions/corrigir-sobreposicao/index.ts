@@ -44,8 +44,7 @@ Deno.serve(async (req) => {
     const { data: vertRows, error: eV } = await supa.from("vertices").select().eq("servico_id", servico_id).order("ordem");
     if (eV) throw eV;
     if (!vertRows || vertRows.length < 3) return json({ erro: "Serviço com menos de 3 vértices" }, 422);
-    const { data: trechoRows, error: eT } = await supa.from("trechos_confrontantes").select().eq("servico_id", servico_id).order("vertice_inicio_ordem");
-    if (eT) throw eT;
+    // a confrontação vem nos próprios vértices (ver ARQUITETURA-TRECHOS.md)
     const { data: cred, error: eC } = await supa.from("credenciados").select().eq("id", servico.credenciado_id).single();
     if (eC || !cred) return json({ erro: "Credenciado não encontrado" }, 422);
 
@@ -134,6 +133,8 @@ Deno.serve(async (req) => {
         tipo: "V", codigo, metodo: "PA1", inserido_manual: true,
         lat_gms: fmtGmsPlanilha(degToGmsCanonical(lat), "lat"),
         lon_gms: fmtGmsPlanilha(degToGmsCanonical(lon), "lon"),
+        descritivo: null, tipo_limite: null, eh_via: false,
+        cns: null, matricula: null, apelido_txt: null,
       };
     });
     const removidos = vertRows
@@ -141,7 +142,10 @@ Deno.serve(async (req) => {
       .filter(({ i }) => !keptNewOrdem.has(i))
       .map(({ v }) => v.codigo ?? `(ordem ${v.ordem})`);
 
-    // remapeia trechos: início removido avança até o próximo vértice mantido
+    // A confrontação viaja junto com o vértice mantido (o spread acima já a leva).
+    // Só precisa de tratamento o M que foi REMOVIDO: sua confrontação avança para o
+    // próximo vértice mantido, que passa a ser o M daquele trecho.
+    // Ver ARQUITETURA-TRECHOS.md.
     const idxPorOrdemAntiga = new Map<number, number>(vertRows.map((v, i) => [v.ordem as number, i]));
     const avancaAteMantido = (idxAntigo: number): number | null => {
       for (let s = 0; s < vertRows.length; s++) {
@@ -152,20 +156,24 @@ Deno.serve(async (req) => {
       return null;
     };
     const avisos = [...r.avisos];
-    const vistos = new Set<number>();
-    const novosTrechos: Record<string, unknown>[] = [];
-    for (const t of trechoRows ?? []) {
-      const idx = idxPorOrdemAntiga.get(t.vertice_inicio_ordem);
-      const novo = idx === undefined ? null : avancaAteMantido(idx);
-      if (novo === null) continue;
-      if (vistos.has(novo)) {
-        avisos.push(`trecho de confrontante "${t.apelido_txt || t.descritivo || t.vertice_inicio_ordem}" foi mesclado ao trecho vizinho (vértice inicial removido)`);
-        continue;
+    vertRows.forEach((v, i) => {
+      if (v.tipo !== "M" || keptNewOrdem.has(i)) return;
+      const destino = avancaAteMantido(i);
+      if (destino === null) return;
+      const alvo = novasLinhas[destino];
+      const rotulo = v.apelido_txt || v.descritivo || v.codigo || `(ordem ${v.ordem})`;
+      if (alvo.descritivo) {
+        avisos.push(`confrontante "${rotulo}" foi mesclado ao trecho vizinho (vértice ${v.codigo ?? ""} removido pela correção)`);
+        return;
       }
-      vistos.add(novo);
-      const { id: _id, ...resto } = t;
-      novosTrechos.push({ ...resto, vertice_inicio_ordem: novo });
-    }
+      alvo.tipo = "M";
+      alvo.descritivo = v.descritivo;
+      alvo.tipo_limite = v.tipo_limite;
+      alvo.eh_via = v.eh_via;
+      alvo.cns = v.cns;
+      alvo.matricula = v.matricula;
+      alvo.apelido_txt = v.apelido_txt;
+    });
 
     // remapeia o vértice inicial do memorial (precisa ser tipo M)
     const viAntigo = (servico.vertice_inicial as number | null) ?? 0;
@@ -184,12 +192,8 @@ Deno.serve(async (req) => {
     if (e2) throw e2;
     const { error: e3 } = await supa.from("vertices").insert(novasLinhas);
     if (e3) throw e3;
-    const { error: e4 } = await supa.from("trechos_confrontantes").delete().eq("servico_id", servico_id);
-    if (e4) throw e4;
-    if (novosTrechos.length) {
-      const { error: e5 } = await supa.from("trechos_confrontantes").insert(novosTrechos);
-      if (e5) throw e5;
-    }
+    // trechos_confrontantes não é mais usada pelo fluxo 'geo' — a confrontação já
+    // foi persistida junto com os vértices acima.
 
     return json({
       ok: true,

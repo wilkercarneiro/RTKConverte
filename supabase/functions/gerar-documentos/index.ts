@@ -4,7 +4,7 @@
 import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import JSZip from "jszip";
-import { montarServico } from "../_shared/servico.ts";
+import { montarServico, validarConfrontacoes } from "../_shared/servico.ts";
 import type { ServicoInput, VerticeServico } from "../_shared/servico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { buildDocumentXml, buildDocxSkeleton } from "../_shared/docx.ts";
@@ -39,8 +39,13 @@ Deno.serve(async (req) => {
     if (eS || !servico) return json({ erro: "Serviço não encontrado" }, 404);
     const { data: vertRows, error: eV } = await supa.from("vertices").select().eq("servico_id", servico_id).order("ordem");
     if (eV) throw eV;
-    const { data: trechoRows, error: eT } = await supa.from("trechos_confrontantes").select().eq("servico_id", servico_id).order("vertice_inicio_ordem");
-    if (eT) throw eT;
+    // a confrontação vive no próprio vértice M (ver ARQUITETURA-TRECHOS.md)
+
+    // A confrontação vive no vértice M e o trecho vai de M a M — desalinhamento é
+    // impossível por construção, mas dados legados e escrita direta no banco ainda
+    // podem chegar inconsistentes. Ver ARQUITETURA-TRECHOS.md.
+    const conf = validarConfrontacoes(vertRows ?? []);
+    if (conf.erros.length) return json({ erro: conf.erros.join(" ") }, 422);
 
     // validações
     const obrig: [string, unknown][] = [
@@ -90,6 +95,13 @@ Deno.serve(async (req) => {
       // regeração: códigos já alocados são reutilizados (não re-incrementa)
       codigoManual: precisaAlocar ? (v.inserido_manual ? v.codigo : null) : v.codigo,
       inserido: v.inserido_manual,
+      // confrontação: só os M carregam; descritivo é opcional (sem ele usa o apelido,
+      // sem ambos o memorial segue sem a cláusula "confrontando com a propriedade de")
+      descritivo: v.descritivo || v.apelido_txt || "",
+      tipoLimite: v.tipo_limite,
+      ehVia: v.eh_via,
+      cns: v.cns,
+      matricula: v.matricula,
     }));
 
     const input: ServicoInput = {
@@ -98,15 +110,6 @@ Deno.serve(async (req) => {
       prefixo: cred.prefixo_vertice,
       contadores,
       vertices,
-      // descritivo é opcional: sem ele, usa o apelido; sem ambos, o memorial
-      // segue sem a cláusula "confrontando com a propriedade de"
-      trechos: (trechoRows ?? []).map((t) => ({
-        verticeInicioOrdem: t.vertice_inicio_ordem,
-        descritivo: t.descritivo || t.apelido_txt || "",
-        tipoLimite: t.tipo_limite,
-        cns: t.cns,
-        matricula: t.matricula,
-      })),
     };
     const calc = montarServico(input, proj4);
 
@@ -213,6 +216,7 @@ Deno.serve(async (req) => {
     const s2 = await supa.storage.from("gerados").createSignedUrl(pOds, 3600, { download: `Planilha SIGEF - ${nomeBase}.ods` });
     return json({
       ok: true,
+      avisos: conf.avisos,
       memorial_docx: s1.data?.signedUrl,
       planilha_ods: s2.data?.signedUrl,
       resumo: {

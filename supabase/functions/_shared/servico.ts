@@ -23,12 +23,20 @@ export interface VerticeServico {
   metodo: string;                // PG6 default, PA1 p/ V inserido
   codigoManual?: string | null;  // V inserido com código digitado
   inserido: boolean;
+  // Confrontação: preenchida SÓ quando tipo === "M". O trecho vai deste M até o
+  // próximo M do anel. Ver ARQUITETURA-TRECHOS.md.
+  descritivo?: string | null;
+  tipoLimite?: string | null;
+  ehVia?: boolean | null;        // faixa de domínio pública (estrada, rio, corredor)
+  cns?: string | null;
+  matricula?: string | null;
 }
 
 export interface TrechoServico {
   verticeInicioOrdem: number;
   descritivo: string;
   tipoLimite: string;
+  ehVia: boolean;
   cns?: string | null;
   matricula?: string | null;
 }
@@ -39,8 +47,7 @@ export interface ServicoInput {
   verticeInicialOrdem?: number;
   prefixo: string;
   contadores: { M: number; P: number; V: number };
-  vertices: VerticeServico[];    // em ordem de perímetro
-  trechos: TrechoServico[];
+  vertices: VerticeServico[];    // em ordem de perímetro; os M carregam a confrontação
 }
 
 export interface VerticeMontado extends VerticeCalc {
@@ -79,14 +86,8 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
   // saem todos deste mesmo anel.
   const ordemInicial = ordemMaisAoNorte(calc);
 
-  // Confrontantes são opcionais: sem nenhum trecho, todo o perímetro pertence a
-  // um trecho sintético vazio (LA1, sem descritivo).
-  if (inp.trechos.length === 0) {
-    inp = { ...inp, trechos: [{ verticeInicioOrdem: ordemInicial, descritivo: "", tipoLimite: "LA1" }] };
-  }
-
   // ring rotacionado a partir do vértice inicial
-  const juntos = calc.map((c, i) => ({ ...c, tipo: inp.vertices[i].tipo, metodo: inp.vertices[i].metodo, codigoManual: inp.vertices[i].codigoManual ?? null }));
+  const juntos = calc.map((c, i) => ({ ...c, tipo: inp.vertices[i].tipo, metodo: inp.vertices[i].metodo, codigoManual: inp.vertices[i].codigoManual ?? null, conf: inp.vertices[i] }));
   const ring0 = rotacionarRing(juntos, ordemInicial);
 
   // códigos alocados na ordem do memorial
@@ -94,13 +95,24 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
   const consumo = { M: 0, P: 0, V: 0 };
   for (const v of ring0) if (!v.codigoManual) consumo[v.tipo]++;
 
-  // trechos ordenados pela posição no ring; todo vértice pertence ao trecho
-  // iniciado mais recentemente (o vértice que inicia já pertence ao novo trecho)
-  const posNoRing = new Map<number, number>(ring0.map((v, i) => [v.ordem, i]));
-  for (const t of inp.trechos) {
-    if (!posNoRing.has(t.verticeInicioOrdem)) throw new Error(`Trecho aponta para vértice inexistente (ordem=${t.verticeInicioOrdem})`);
+  // Um vértice M inicia uma confrontação, que vai até o próximo M. Os trechos são
+  // DERIVADOS do anel, nunca armazenados — não há âncora posicional para desalinhar,
+  // que era a causa da estrada desenhada em trecho errado. Ver ARQUITETURA-TRECHOS.md.
+  let trechosOrdenados: TrechoServico[] = ring0
+    .filter((v) => v.tipo === "M")
+    .map((v) => ({
+      verticeInicioOrdem: v.ordem,
+      descritivo: v.conf.descritivo ?? "",
+      tipoLimite: v.conf.tipoLimite ?? "LA1",
+      ehVia: v.conf.ehVia ?? false,
+      cns: v.conf.cns ?? null,
+      matricula: v.conf.matricula ?? null,
+    }));
+  // Confrontantes são opcionais: sem nenhum M, todo o perímetro pertence a um
+  // trecho sintético vazio (LA1, sem descritivo).
+  if (trechosOrdenados.length === 0) {
+    trechosOrdenados = [{ verticeInicioOrdem: ordemInicial, descritivo: "", tipoLimite: "LA1", ehVia: false }];
   }
-  const trechosOrdenados = [...inp.trechos].sort((a, b) => posNoRing.get(a.verticeInicioOrdem)! - posNoRing.get(b.verticeInicioOrdem)!);
 
   const inicioPorOrdem = new Map<number, TrechoServico>(trechosOrdenados.map((t) => [t.verticeInicioOrdem, t]));
   // se nenhum trecho inicia exatamente no vértice inicial, o começo do anel
@@ -141,6 +153,42 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
     },
     memorialRing, linhasOds,
   };
+}
+
+/**
+ * Confere a invariante "confrontação só no vértice M" sobre as linhas cruas do
+ * banco. Cita sempre o CÓDIGO: o usuário raciocina em "DSBN-M-3704", nunca em
+ * "ordem 2". Ver ARQUITETURA-TRECHOS.md.
+ *
+ * Só é ERRO o que indica corrupção estrutural — dado de confrontação preso a um
+ * vértice que não é M. Pela tela isso é impossível; sobra como defesa contra
+ * dados legados e escrita direta no banco. Descritivo vazio NÃO é erro: o
+ * memorial cai no apelido, e sem os dois segue sem cláusula de confrontação,
+ * comportamento suportado desde sempre — por isso vira aviso.
+ */
+export function validarConfrontacoes(
+  vertices: { tipo: string; codigo?: string | null; descritivo?: string | null; apelido_txt?: string | null }[],
+): { erros: string[]; avisos: string[] } {
+  const erros: string[] = [];
+  const avisos: string[] = [];
+  const nome = (v: { codigo?: string | null }) => v.codigo || "(vértice sem código)";
+  for (const v of vertices) {
+    const desc = (v.descritivo ?? "").trim();
+    const apelido = (v.apelido_txt ?? "").trim();
+    if (v.tipo !== "M") {
+      if (desc) erros.push(`${nome(v)} não é vértice M mas carrega confrontante "${desc.split("\\")[0]}".`);
+      continue;
+    }
+    if (!desc && !apelido) {
+      avisos.push(`${nome(v)} inicia uma confrontação sem confrontante nem apelido — o memorial seguirá sem a cláusula de confrontação nesse trecho.`);
+    } else if (desc && !/CPF/i.test(desc)) {
+      avisos.push(`Confrontante de ${nome(v)} ("${desc.split("\\")[0].trim()}") está sem CPF. Se for estrada, rio ou corredor, marque "faixa de domínio pública".`);
+    }
+  }
+  if (!vertices.some((v) => v.tipo === "M")) {
+    avisos.push("O perímetro não tem nenhum vértice M — nenhuma confrontação será descrita.");
+  }
+  return { erros, avisos };
 }
 
 // Sugestões pós-parse: tipos (M nos inícios de trecho, P nos demais) e trechos

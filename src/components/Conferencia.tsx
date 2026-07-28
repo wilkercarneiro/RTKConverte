@@ -53,8 +53,9 @@ function bufParaBase64(buf: ArrayBuffer): string {
 
 export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; onVoltar: () => void }) {
   const [servico, setServico] = useState<Servico>(inicial.servico);
+  // Fonte única da verdade: a confrontação vive no próprio vértice M. Não existe
+  // estado paralelo de trechos para sair de sincronia. Ver ARQUITETURA-TRECHOS.md.
   const [vertices, setVertices] = useState<Vertice[]>(inicial.vertices);
-  const [trechos, setTrechos] = useState<Trecho[]>(inicial.trechos);
   const [credenciados, setCredenciados] = useState<Credenciado[]>([]);
   const [rts, setRts] = useState<RT[]>([]);
   const [detentores, setDetentores] = useState<{ nome: string; cpf: string }[]>([]);
@@ -116,14 +117,27 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       });
     }
   }, [servico.rt_id, rts.length]);
-  const trechosOrdenados = useMemo(
-    () => [...trechos].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem),
-    [trechos],
+  // um M inicia uma confrontação, que vai até o próximo M — os trechos são derivados
+  const trechosOrdenados = useMemo<Trecho[]>(
+    () => vertices
+      .filter((v) => v.tipo === "M")
+      .sort((a, b) => a.ordem - b.ordem)
+      .map((v) => ({
+        servico_id: v.servico_id,
+        vertice_inicio_ordem: v.ordem,
+        apelido_txt: v.apelido_txt,
+        descritivo: v.descritivo ?? "",
+        tipo_limite: v.tipo_limite ?? "LA1",
+        eh_via: v.eh_via,
+        cns: v.cns,
+        matricula: v.matricula,
+      })),
+    [vertices],
   );
 
   const preview = useMemo(
-    () => calcularPreviewLocal(servico.fuso_utm ?? 24, vertices, trechos, credenciado),
-    [servico.fuso_utm, vertices, trechos, credenciado],
+    () => calcularPreviewLocal(servico.fuso_utm ?? 24, vertices, trechosOrdenados, credenciado),
+    [servico.fuso_utm, vertices, trechosOrdenados, credenciado],
   );
   // não é escolha do usuário: o SIGEF exige começar pelo vértice mais ao norte
   const verticeInicial = preview.verticeInicialOrdem ?? -1;
@@ -157,20 +171,21 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   }
 
   // ------- Bloco 2: trechos -------
+  // Editar a confrontação é editar o vértice M: marcar/desmarcar o M é o mesmo ato
+  // que criar/remover o trecho, então os dois nunca divergem.
   function setTrecho(t: Trecho, patch: Partial<Trecho>) {
-    setTrechos((ts) => ts.map((x) => (x === t ? { ...x, ...patch } : x)));
+    const { vertice_inicio_ordem: _ord, servico_id: _sid, ...conf } = patch;
+    setVertices((vs) => vs.map((v) => (v.ordem === t.vertice_inicio_ordem ? { ...v, ...conf } : v)));
   }
   function addTrecho(ordem: number) {
-    if (trechos.some((t) => t.vertice_inicio_ordem === ordem)) return;
-    setTrechos((ts) => [...ts, {
-      servico_id: servico.id, vertice_inicio_ordem: ordem, apelido_txt: "",
-      descritivo: "", tipo_limite: "LA1", cns: null, matricula: null,
-    }]);
-    setVertices((vs) => vs.map((v) => (v.ordem === ordem && v.tipo === "P" ? { ...v, tipo: "M" } : v)));
+    setVertices((vs) => vs.map((v) => (v.ordem === ordem && v.tipo !== "M"
+      ? { ...v, tipo: "M", descritivo: "", tipo_limite: "LA1", eh_via: false, apelido_txt: v.apelido_txt ?? "" }
+      : v)));
   }
   function removeTrecho(t: Trecho) {
-    setTrechos((ts) => ts.filter((x) => x !== t));
-    setVertices((vs) => vs.map((v) => (v.ordem === t.vertice_inicio_ordem && v.tipo === "M" ? { ...v, tipo: "P" } : v)));
+    setVertices((vs) => vs.map((v) => (v.ordem === t.vertice_inicio_ordem && v.tipo === "M"
+      ? { ...v, tipo: "P", descritivo: null, tipo_limite: null, eh_via: false, cns: null, matricula: null, apelido_txt: null }
+      : v)));
   }
 
   // ------- Bloco 3: vértices -------
@@ -192,15 +207,17 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         sigma_pos: 0, sigma_h: Number(novoV.sigmaH.replace(",", ".")) || 0,
         tipo: "V" as const, codigo: novoV.codigo, metodo: "PA1", inserido_manual: true,
         lat_gms: novoV.lat, lon_gms: novoV.lon,
+        // V é ponto intermediário: nunca carrega confrontação
+        descritivo: null, tipo_limite: null, eh_via: false,
+        cns: null, matricula: null, apelido_txt: null,
       }].sort((a, b) => a.ordem - b.ordem);
     });
-    setTrechos((ts) => ts.map((t) => (t.vertice_inicio_ordem > apos ? { ...t, vertice_inicio_ordem: t.vertice_inicio_ordem + 1 } : t)));
+    // a confrontação viaja com o próprio vértice: não há âncora para reindexar
     setNovoV({ aposOrdem: "", codigo: "", lat: "", lon: "", h: "", sigmaH: "0,02" });
     setMsg("Vértice V inserido.");
   }
   function removerV(ordem: number) {
     setVertices((vs) => vs.filter((v) => v.ordem !== ordem).map((v) => (v.ordem > ordem ? { ...v, ordem: v.ordem - 1 } : v)));
-    setTrechos((ts) => ts.map((t) => (t.vertice_inicio_ordem > ordem ? { ...t, vertice_inicio_ordem: t.vertice_inicio_ordem - 1 } : t)));
   }
 
   // ------- persistência -------
@@ -212,10 +229,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     if (e2) throw e2;
     const { error: e3 } = await supabase.from("vertices").insert(vertices.map(({ id: _vid, ...v }) => v));
     if (e3) throw e3;
-    const { error: e4 } = await supabase.from("trechos_confrontantes").delete().eq("servico_id", id);
-    if (e4) throw e4;
-    const { error: e5 } = await supabase.from("trechos_confrontantes").insert(trechos.map(({ id: _tid, ...t }) => t));
-    if (e5) throw e5;
+    // a confrontação já foi gravada junto com os vértices acima
     if (servico.rt_id) {
       await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
     }
@@ -259,8 +273,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         // recarrega o serviço corrigido e regera os documentos direto do banco
         const { data: sv } = await supabase.from("servicos").select().eq("id", servico.id).single();
         if (sv) setServico(sv as Servico);
-        const { data: ts } = await supabase.from("trechos_confrontantes").select().eq("servico_id", servico.id).order("vertice_inicio_ordem");
-        if (ts) setTrechos(ts as Trecho[]);
         const g = await chamarFuncao<Gerado>("gerar-documentos", { servico_id: servico.id });
         setGerado(g);
         const { data: vs } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
@@ -507,12 +519,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                 <div className="trecho" key={`t-${t.vertice_inicio_ordem}`}
                   style={{ ["--cor-trecho" as string]: corDoTrecho(t) }}>
                   <div className="linha">
-                    <label>Ponto inicial
-                      <select value={t.vertice_inicio_ordem}
-                        onChange={(e) => setTrecho(t, { vertice_inicio_ordem: Number(e.target.value) })}>
-                        {vertices.map((x) => <option key={x.ordem} value={x.ordem}>{nomePonto(x)}</option>)}
-                      </select>
-                    </label>
+                    <strong title="Vértice M onde esta confrontação começa; ela vai até o próximo M">
+                      {v ? nomePonto(v) : "?"} →
+                    </strong>
                     <label>Apelido
                       <input value={t.apelido_txt ?? ""} placeholder="ex.: Varguim Serra"
                         style={{ width: 150 }}
@@ -522,6 +531,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                       <select value={t.tipo_limite} onChange={(e) => setTrecho(t, { tipo_limite: e.target.value })}>
                         {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
                       </select>
+                    </label>
+                    <label title="Estrada, rodovia, corredor, rio — desenhada na planta como linha dupla vermelha">
+                      <input type="checkbox" checked={t.eh_via}
+                        onChange={(e) => setTrecho(t, { eh_via: e.target.checked })} />
+                      {" "}faixa de domínio pública
                     </label>
                     <label>CNS <input style={{ width: 110 }} value={t.cns ?? ""} onChange={(e) => setTrecho(t, { cns: e.target.value || null })} /></label>
                     <label>Matrícula <input style={{ width: 100 }} value={t.matricula ?? ""} onChange={(e) => setTrecho(t, { matricula: e.target.value || null })} /></label>
@@ -539,7 +553,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               <span>Nova transição de confrontante no ponto</span>
               <select id="novo-trecho-ordem" defaultValue="">
                 <option value="" disabled>—</option>
-                {vertices.filter((v) => !trechos.some((t) => t.vertice_inicio_ordem === v.ordem))
+                {vertices.filter((v) => v.tipo !== "M")
                   .map((v) => <option key={v.ordem} value={v.ordem}>{nomePonto(v)}</option>)}
               </select>
               <button onClick={() => {
@@ -549,7 +563,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             </div>
           </div>
           <div className="mapa">
-            <MapaSVG vertices={vertices} trechos={trechos} verticeInicial={verticeInicial} />
+            <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} />
             <div className="legenda">
               {trechosOrdenados.map((t) => (
                 <span className="item" key={`leg-${t.vertice_inicio_ordem}`}>

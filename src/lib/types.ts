@@ -84,8 +84,22 @@ export interface Vertice {
   inserido_manual: boolean;
   lat_gms: string;
   lon_gms: string;
+  // Confrontação: preenchida SÓ quando tipo === "M". O trecho vai deste M até o
+  // próximo M do perímetro. Ver ARQUITETURA-TRECHOS.md.
+  descritivo: string | null;
+  tipo_limite: string | null;
+  eh_via: boolean;
+  cns: string | null;
+  matricula: string | null;
+  apelido_txt: string | null;
 }
 
+/**
+ * Trechos do fluxo `pecas` (peças a partir do PDF do SIGEF), ancorados por
+ * `codigo_inicio` — o código do vértice no SIGEF, estável por construção.
+ * O fluxo `geo` NÃO usa esta tabela: lá a confrontação vive no vértice M.
+ * Ver ARQUITETURA-TRECHOS.md.
+ */
 export interface Trecho {
   id?: string;
   servico_id: string;
@@ -94,6 +108,7 @@ export interface Trecho {
   apelido_txt: string | null;
   descritivo: string;
   tipo_limite: string;
+  eh_via: boolean;
   cns: string | null;
   matricula: string | null;
 }

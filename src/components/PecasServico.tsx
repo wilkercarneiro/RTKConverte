@@ -7,7 +7,7 @@ import { TIPOS_LIMITE, UFS } from "../lib/domains";
 import type { Cliente, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
 
-interface TrechoPdf { id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string }
+interface TrechoPdf { id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string; eh_via: boolean }
 interface Analise {
   cabecalho: Record<string, string | null>;
   trechos: { codigo: string; confrontacao: string; segmentos: number }[];
@@ -45,7 +45,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       supabase.from("servicos").select().eq("id", servicoId).single().then(({ data }) => setServico(data as Servico));
       supabase.from("trechos_confrontantes").select().eq("servico_id", servicoId).order("vertice_inicio_ordem")
         .then(({ data }) => setTrechos(((data ?? []) as (TrechoPdf & { codigo_inicio: string | null })[])
-          .map((t) => ({ id: (t as { id?: string }).id, codigo_inicio: t.codigo_inicio ?? "", descritivo: t.descritivo ?? "", tipo_limite: t.tipo_limite }))));
+          .map((t) => ({ id: (t as { id?: string }).id, codigo_inicio: t.codigo_inicio ?? "", descritivo: t.descritivo ?? "", tipo_limite: t.tipo_limite, eh_via: !!t.eh_via }))));
     }
   }, [servicoId]);
 
@@ -102,13 +102,15 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         nome_arquivo_txt: file.name,
       }).select().single();
       if (error) throw error;
+      // Não inferir faixa de domínio pelo texto: era isso que marcava como estrada
+      // todo confrontante sem CPF. O usuário marca no checkbox. Ver ARQUITETURA-TRECHOS.md.
       const linhas = a.trechos.map((t, i) => ({
         servico_id: novo.id, vertice_inicio_ordem: i, codigo_inicio: t.codigo,
-        apelido_txt: null, descritivo: t.confrontacao, tipo_limite: /\\/.test(t.confrontacao) ? "LA1" : "LA3",
+        apelido_txt: null, descritivo: t.confrontacao, tipo_limite: "LA1", eh_via: false,
       }));
       await supabase.from("trechos_confrontantes").insert(linhas);
       setServico(novo as Servico);
-      setTrechos(linhas.map((l) => ({ codigo_inicio: l.codigo_inicio, descritivo: l.descritivo, tipo_limite: l.tipo_limite })));
+      setTrechos(linhas.map((l) => ({ codigo_inicio: l.codigo_inicio, descritivo: l.descritivo, tipo_limite: l.tipo_limite, eh_via: l.eh_via })));
       setMsg(`PDF lido: ${a.vertices} vértices, ${a.trechos.length} confrontantes detectados. Complete os dados e revise os descritivos.`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
@@ -126,7 +128,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     if (e2) throw e2;
     const { error: e3 } = await supabase.from("trechos_confrontantes").insert(trechos.map((t, i) => ({
       servico_id: id, vertice_inicio_ordem: i, codigo_inicio: t.codigo_inicio,
-      descritivo: t.descritivo, tipo_limite: t.tipo_limite,
+      descritivo: t.descritivo, tipo_limite: t.tipo_limite, eh_via: t.eh_via,
     })));
     if (e3) throw e3;
     if (servico.rt_id) await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
@@ -308,6 +310,11 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                 <select value={t.tipo_limite} onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, tipo_limite: e.target.value } : x)))}>
                   {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
                 </select>
+              </label>
+              <label title="Estrada, rodovia, corredor, rio — desenhada na planta como linha dupla vermelha">
+                <input type="checkbox" checked={t.eh_via}
+                  onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, eh_via: e.target.checked } : x)))} />
+                {" "}faixa de domínio pública
               </label>
               <span style={{ flex: 1 }} />
               <button className="remover" onClick={() => setTrechos((ts) => ts.filter((_, j) => j !== i))}>✕</button>

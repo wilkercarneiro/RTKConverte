@@ -54,6 +54,9 @@ Deno.serve(async (req) => {
       .upload(`${servico.id}/${nomeArquivo}`, new Blob([conteudo], { type: "text/plain" }), { upsert: true });
     if (up.error) throw up.error;
 
+    // a confrontação nasce já no vértice M: um M inicia um trecho, que vai até o
+    // próximo M. Ver ARQUITETURA-TRECHOS.md.
+    const apelidoPorOrdem = new Map(trechosSug.map((t) => [t.verticeInicioOrdem, t.apelido]));
     const linhasVert = pontos.map((p, i) => ({
       servico_id: servico.id,
       ordem: i,
@@ -62,6 +65,10 @@ Deno.serve(async (req) => {
       e: p.e, n: p.n, h: p.h,
       sigma_pos: p.sigmaPos, sigma_h: p.sigmaH,
       tipo: iniciosTrecho.has(i) ? "M" : "P",
+      apelido_txt: apelidoPorOrdem.get(i) ?? null,
+      descritivo: iniciosTrecho.has(i) ? "" : null,
+      tipo_limite: iniciosTrecho.has(i) ? "LA1" : null,
+      eh_via: false,
       metodo: "PG6",
       inserido_manual: false,
       lat_gms: fmtGmsPlanilha(calc[i].latGms, "lat"),
@@ -70,17 +77,9 @@ Deno.serve(async (req) => {
     const { data: vertices, error: eVert } = await supa.from("vertices").insert(linhasVert).select().order("ordem");
     if (eVert) throw eVert;
 
-    const linhasTre = trechosSug.map((t) => ({
-      servico_id: servico.id,
-      vertice_inicio_ordem: t.verticeInicioOrdem,
-      apelido_txt: t.apelido,
-      descritivo: "",
-      tipo_limite: "LA1",
-    }));
-    const { data: trechos, error: eTre } = linhasTre.length
-      ? await supa.from("trechos_confrontantes").insert(linhasTre).select().order("vertice_inicio_ordem")
-      : { data: [], error: null };
-    if (eTre) throw eTre;
+    const trechos = (vertices ?? [])
+      .filter((v) => v.tipo === "M")
+      .map((v) => ({ vertice_inicio_ordem: v.ordem, apelido_txt: v.apelido_txt, descritivo: "" }));
 
     const segs = calcularSegmentos(calc);
     const preview = {

@@ -22,17 +22,19 @@ const DESCS = {
   9: "CORREDOR",
 };
 const MS = new Set([30, 36, 41, 58, 64, 9]);
+const VIAS = new Set([64, 9]); // BA 408 e CORREDOR: faixa de domínio pública
+// a confrontação vive no próprio vértice M (ver ARQUITETURA-TRECHOS.md)
 const vertices = pontos.map((p, i) => ({
   ordem: i, numTxt: p.num, e: p.e, n: p.n, h: p.h, sigmaPos: p.sigmaPos, sigmaH: p.sigmaH,
   tipo: MS.has(p.num) ? "M" : "P", metodo: "PG6", inserido: false,
+  descritivo: MS.has(p.num) ? DESCS[p.num] : null,
+  tipoLimite: MS.has(p.num) ? (VIAS.has(p.num) ? "LA3" : "LA1") : null,
+  ehVia: VIAS.has(p.num),
 }));
 const ordemDe = (n) => vertices.findIndex((v) => v.numTxt === n);
 const servico = montarServico({
   fusoUtm: 24, verticeInicialOrdem: ordemDe(30), prefixo: "DSBN",
   contadores: { M: 3605, P: 13130, V: 758 }, vertices,
-  trechos: [30, 36, 41, 58, 64, 9].map((n) => ({
-    verticeInicioOrdem: ordemDe(n), descritivo: DESCS[n], tipoLimite: [64, 9].includes(n) ? "LA3" : "LA1",
-  })),
 }, proj4);
 
 const ring = servico.ring;
@@ -41,7 +43,7 @@ const trechosPlanta = servico.trechosOrdenados.map((t, k) => {
   const prox = servico.trechosOrdenados[(k + 1) % servico.trechosOrdenados.length];
   return {
     descritivo: t.descritivo,
-    isEstrada: t.tipoLimite.startsWith("LA3") || !t.descritivo.includes("\\"),
+    isEstrada: t.ehVia,
     inicioIdx: posDe.get(t.verticeInicioOrdem),
     fimIdx: posDe.get(prox.verticeInicioOrdem),
   };

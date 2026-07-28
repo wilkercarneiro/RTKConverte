@@ -73,9 +73,6 @@ Deno.serve(async (req) => {
     let fuso = servico.fuso_utm ?? 24;
     let latMedia = -12;
 
-    const ehEstrada = (descritivo: string, tipoLimite: string) =>
-      !descritivo.includes("\\") || /^LA[34567]/.test(tipoLimite);
-
     if (servico.tipo === "pecas" || pdf_base64) {
       // -------- fluxo via PDF do SIGEF (valores SGL) --------
       if (!pdf_base64) return json({ erro: "Envie o PDF do SIGEF para gerar a planta deste serviço" }, 422);
@@ -116,31 +113,32 @@ Deno.serve(async (req) => {
       // início (serviço geo, códigos já alocados) ou mudança de confrontação
       const idxDe = new Map(sigef.linhas.map((l, i) => [l.codigo, i]));
       const codPorOrdem = new Map((verticesReconciliados).filter((v) => v.codigo).map((v) => [v.ordem, v.codigo as string]));
-      let starts: { idx: number; descritivo: string; tipoLimite: string }[] = (trechoRows ?? [])
+      type Start = { idx: number; descritivo: string; ehVia: boolean };
+      let starts: Start[] = (trechoRows ?? [])
         .map((t) => {
           const cod = t.codigo_inicio ?? codPorOrdem.get(t.vertice_inicio_ordem) ?? null;
           return cod && idxDe.has(cod)
-            ? { idx: idxDe.get(cod)!, descritivo: t.descritivo || t.apelido_txt || "", tipoLimite: t.tipo_limite }
+            ? { idx: idxDe.get(cod)!, descritivo: t.descritivo || t.apelido_txt || "", ehVia: !!t.eh_via }
             : null;
         })
-        .filter((s): s is { idx: number; descritivo: string; tipoLimite: string } => s !== null);
+        .filter((s): s is Start => s !== null);
       if (starts.length === 0) {
         let ultima = "";
         sigef.linhas.forEach((l, i) => {
           if (l.confrontacao !== ultima) {
             ultima = l.confrontacao;
-            starts.push({ idx: i, descritivo: l.confrontacao.replace(/\.{3}$/, ""), tipoLimite: "LA1" });
+            starts.push({ idx: i, descritivo: l.confrontacao.replace(/\.{3}$/, ""), ehVia: false });
           }
         });
       }
-      const startsUnicos = new Map<number, { idx: number; descritivo: string; tipoLimite: string }>();
+      const startsUnicos = new Map<number, Start>();
       for (const s of starts) {
         if (!startsUnicos.has(s.idx)) startsUnicos.set(s.idx, s);
       }
       starts = [...startsUnicos.values()].sort((a, b) => a.idx - b.idx);
       trechosPlanta = starts.map((s, k) => ({
         descritivo: s.descritivo,
-        isEstrada: ehEstrada(s.descritivo, s.tipoLimite),
+        isEstrada: s.ehVia,
         inicioIdx: s.idx,
         fimIdx: starts[(k + 1) % starts.length].idx,
       }));
@@ -163,11 +161,8 @@ Deno.serve(async (req) => {
           latGmsStr: v.inserido_manual ? v.lat_gms : null, lonGmsStr: v.inserido_manual ? v.lon_gms : null,
           h: Number(v.h), sigmaPos: Number(v.sigma_pos), sigmaH: Number(v.sigma_h),
           tipo: v.tipo, metodo: v.metodo, codigoManual: v.codigo, inserido: v.inserido_manual,
-        })),
-        trechos: (trechoRows ?? []).map((t) => ({
-          verticeInicioOrdem: t.vertice_inicio_ordem,
-          descritivo: t.descritivo || t.apelido_txt || "",
-          tipoLimite: t.tipo_limite, cns: t.cns, matricula: t.matricula,
+          descritivo: v.descritivo || v.apelido_txt || "", tipoLimite: v.tipo_limite,
+          ehVia: v.eh_via, cns: v.cns, matricula: v.matricula,
         })),
       };
       const calc = montarServico(input, proj4);
@@ -182,7 +177,7 @@ Deno.serve(async (req) => {
       }));
       trechosPlanta = calc.trechosOrdenados.map((t, k) => ({
         descritivo: t.descritivo,
-        isEstrada: ehEstrada(t.descritivo, t.tipoLimite),
+        isEstrada: t.ehVia,
         inicioIdx: posDe.get(t.verticeInicioOrdem) ?? 0,
         fimIdx: posDe.get(calc.trechosOrdenados[(k + 1) % calc.trechosOrdenados.length].verticeInicioOrdem) ?? 0,
       }));
