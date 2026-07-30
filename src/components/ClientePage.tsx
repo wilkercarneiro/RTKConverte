@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { HistoricoDocs } from "./HistoricoDocs";
+import { useAutosave, useAvisos } from "../lib/ux";
+import { Avisos, Secao, StatusSalvamento } from "./ui";
 import type { Cliente, Servico } from "../lib/types";
 
 interface Props {
@@ -16,7 +18,7 @@ interface Props {
 export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoGeo, onNovoPecas }: Props) {
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [servicos, setServicos] = useState<Servico[]>([]);
-  const [msg, setMsg] = useState<string | null>(null);
+  const { avisos, avisar, fechar } = useAvisos();
 
   useEffect(() => {
     supabase.from("clientes").select().eq("id", clienteId).single().then(({ data }) => setCliente(data as Cliente));
@@ -24,26 +26,41 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoGeo, on
       .then(({ data }) => setServicos((data as Servico[]) ?? []));
   }, [clienteId]);
 
-  if (!cliente) return <div className="centro">Carregando cliente…</div>;
+  async function gravar(c: Cliente | null) {
+    if (!c) return;
+    const { id, created_at, ...campos } = c;
+    const { error } = await supabase.from("clientes").update(campos).eq("id", id);
+    if (error) throw error;
+  }
+
+  // O cadastro do cliente é a origem dos dados de todos os serviços dele:
+  // perder uma correção aqui se propaga. Salva sozinho.
+  const auto = useAutosave(cliente, gravar, { ativo: cliente !== null, atraso: 1200 });
+
+  if (!cliente) return <div className="centro"><span className="spinner" />&nbsp; Carregando cliente…</div>;
 
   function campo<K extends keyof Cliente>(k: K, v: Cliente[K]) {
     setCliente((c) => (c ? { ...c, [k]: v } : c));
   }
 
   async function salvar() {
-    if (!cliente) return;
-    const { id, created_at, ...campos } = cliente;
-    const { error } = await supabase.from("clientes").update(campos).eq("id", id);
-    setMsg(error ? error.message : "Cliente salvo.");
+    try {
+      await gravar(cliente);
+      avisar("ok", "Cliente salvo.");
+    } catch (e) {
+      avisar("erro", e instanceof Error ? e.message : String(e));
+    }
   }
 
   const dataFmt = (iso?: string) => (iso ? new Date(iso).toLocaleDateString("pt-BR") : "—");
 
   return (
     <div className="conferencia" style={{ paddingBottom: 40 }}>
+      <Avisos avisos={avisos} onFechar={fechar} />
       <header className="topo">
         <button className="fantasma" onClick={onVoltar}>← Dashboard</button>
         <span className="arquivo">👤 {cliente.nome}</span>
+        <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
         <span className="esticar" />
         <button onClick={() => onNovoGeo(clienteId)}>+ Serviço 1 (TXT)</button>
         <button onClick={() => onNovoPecas(clienteId)}>+ Serviço 2 (PDF SIGEF)</button>
@@ -61,23 +78,29 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoGeo, on
           </label>
           <label>Telefone <input value={cliente.telefone ?? ""} onChange={(e) => campo("telefone", e.target.value || null)} /></label>
           <label>E-mail <input value={cliente.email ?? ""} onChange={(e) => campo("email", e.target.value || null)} /></label>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, gridColumn: "span 2", cursor: "pointer", marginTop: 4 }}>
+          <label style={{ gridColumn: "span 2" }}>Endereço <input value={cliente.endereco ?? ""} onChange={(e) => campo("endereco", e.target.value || null)} /></label>
+          <label style={{ gridColumn: "span 2" }}>Observações <input value={cliente.observacoes ?? ""} onChange={(e) => campo("observacoes", e.target.value || null)} /></label>
+        </div>
+
+        <Secao titulo="Espólio e inventariante"
+          selo={<span className={`secao-selo ${cliente.is_espolio ? "completa" : ""}`}>{cliente.is_espolio ? "é espólio" : "não"}</span>}
+          abrirEm={!!cliente.is_espolio}
+          dica="preenche automaticamente todo serviço criado para este cliente">
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 10 }}>
             <input type="checkbox" checked={!!cliente.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
             <b>É Espólio? (possuidor/proprietário falecido com inventariante)</b>
           </label>
           {cliente.is_espolio && (
-            <>
+            <div className="grade">
               <label>Nome do Inventariante <input value={cliente.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome completo do inventariante" /></label>
               <label>CPF do Inventariante <input value={cliente.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
               <label>RG do Inventariante (opcional) <input value={cliente.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
-            </>
+            </div>
           )}
-          <label style={{ gridColumn: "span 2" }}>Endereço <input value={cliente.endereco ?? ""} onChange={(e) => campo("endereco", e.target.value || null)} /></label>
-          <label style={{ gridColumn: "span 2" }}>Observações <input value={cliente.observacoes ?? ""} onChange={(e) => campo("observacoes", e.target.value || null)} /></label>
-        </div>
+        </Secao>
+
         <div style={{ marginTop: 10 }}>
           <button className="principal" onClick={salvar}>Salvar cliente</button>
-          {msg && <span className="ok" style={{ marginLeft: 10 }}>{msg}</span>}
         </div>
       </section>
 

@@ -83,6 +83,18 @@ textarea { resize: vertical; }
 label { font-size: 12.5px; font-weight: 500; color: var(--texto-2); }
 label > input, label > select { font-weight: 400; color: var(--texto); }
 
+/* Foco visível em tudo que recebe teclado: a navegação por Tab era invisível
+   nos botões e nas linhas clicáveis das tabelas. */
+:where(button, a, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  html { scroll-behavior: auto; }
+}
+
 .erro { color: var(--perigo); background: var(--perigo-claro); border-radius: 9px; padding: 8px 12px; margin-top: 8px; white-space: pre-wrap; font-size: 13px; }
 .ok { color: var(--primaria-escura); background: var(--primaria-clara); border-radius: 9px; padding: 8px 12px; margin-top: 8px; font-size: 13px; }
 .alerta { color: var(--alerta); background: var(--alerta-claro); border-radius: 8px; padding: 3px 10px; font-style: normal; font-size: 12px; font-weight: 600; }
@@ -330,3 +342,96 @@ label > input, label > select { font-weight: 400; color: var(--texto); }
   color: #ffd9a8; border-radius: 999px; padding: 3px 12px; font-size: 12px;
 }
 .link-pendencia:hover { border-color: #ffd9a8; color: #fff; background: rgb(255 217 168 / 12%); }
+
+/* ===== Divulgação progressiva: seções recolhíveis ===== */
+.secao { border: 1px solid var(--borda); border-radius: 12px; margin-top: 12px; background: #fcfdfc; }
+.secao[open] { background: var(--card); box-shadow: inset 0 1px 0 #fff; }
+.secao > summary {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 11px 14px; cursor: pointer; list-style: none;
+  border-radius: 12px; font-size: 13.5px; font-weight: 600;
+  transition: background 0.15s ease;
+}
+.secao > summary::-webkit-details-marker { display: none; }
+.secao > summary:hover { background: var(--primaria-clara); }
+.secao-seta { color: var(--texto-2); transition: transform 0.18s ease; display: inline-block; font-size: 11px; }
+.secao[open] > summary .secao-seta { transform: rotate(90deg); }
+.secao-titulo { color: var(--texto); }
+.secao-selo {
+  font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+  background: #eef1ef; color: var(--texto-2);
+}
+.secao-selo.completa { background: var(--primaria-clara); color: var(--primaria-escura); }
+.secao-selo.vazia { background: var(--alerta-claro); color: var(--alerta); }
+.secao-dica { color: var(--texto-2); font-size: 12px; font-weight: 400; }
+.secao-corpo { padding: 4px 14px 16px; }
+
+/* ===== Próxima ação ===== */
+.proxima-acao {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px 18px; margin: 12px 0 4px;
+  border-radius: 14px; border: 1px solid var(--borda);
+  background: var(--card); box-shadow: var(--sombra);
+  border-left: 5px solid var(--texto-2);
+}
+.proxima-acao.pendente { border-left-color: var(--alerta); background: linear-gradient(90deg, #fffbf2 0%, var(--card) 40%); }
+.proxima-acao.pronto { border-left-color: var(--acento); background: linear-gradient(90deg, #f2fcf7 0%, var(--card) 40%); }
+.proxima-acao .pa-texto { display: grid; gap: 3px; flex: 1; min-width: 240px; }
+.proxima-acao .pa-texto b { font-size: 14.5px; }
+.proxima-acao .pa-detalhe { color: var(--texto-2); font-size: 12.5px; }
+
+/* ===== Trilha de etapas navegável ===== */
+.step-botao { border: none; background: transparent; cursor: pointer; font: inherit; }
+.step-botao:hover:not(:disabled) { background: var(--primaria-clara); color: var(--primaria-escura); border-color: transparent; }
+.step.ativa.step-botao:hover { background: var(--primaria-clara); }
+
+/* ===== Avisos flutuantes ===== */
+.avisos {
+  position: fixed; top: 14px; right: 14px; z-index: 60;
+  display: grid; gap: 8px; max-width: min(420px, calc(100vw - 28px));
+}
+.aviso {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 11px 12px 11px 14px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--borda);
+  box-shadow: var(--sombra-alta); font-size: 13px;
+  animation: entrar-aviso 0.22s ease;
+}
+.aviso.ok { border-left: 4px solid var(--acento); }
+.aviso.erro { border-left: 4px solid var(--perigo); }
+.aviso.alerta { border-left: 4px solid var(--alerta); }
+.aviso-texto { flex: 1; white-space: pre-wrap; }
+.aviso-fechar { border: none; background: transparent; color: var(--texto-2); padding: 0 2px; font-size: 12px; }
+@keyframes entrar-aviso { from { opacity: 0; transform: translateX(12px); } }
+
+/* ===== Indicador de autossalvamento ===== */
+.status-salvo { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--texto-2); }
+.status-salvo .ponto-salvo { width: 7px; height: 7px; border-radius: 50%; background: #c3ccc7; }
+.status-salvo.salvando .ponto-salvo { background: var(--alerta); animation: pulsar 1s ease-in-out infinite; }
+.status-salvo.salvo .ponto-salvo { background: var(--acento); }
+.status-salvo.erro { color: var(--perigo); font-weight: 600; }
+.status-salvo.erro .ponto-salvo { background: var(--perigo); }
+@keyframes pulsar { 50% { opacity: 0.3; } }
+
+/* ===== Confirmação inline ===== */
+.confirmar-inline { display: inline-flex; gap: 4px; align-items: center; }
+.confirmar-sim {
+  background: var(--perigo); color: #fff; border-color: var(--perigo);
+  font-size: 12px; padding: 4px 10px; font-weight: 600;
+}
+.confirmar-sim:hover:not(:disabled) { background: #b42318; color: #fff; border-color: #b42318; }
+
+/* ===== Barra de progresso do serviço (dashboard) ===== */
+.progresso-servico { display: inline-flex; gap: 3px; align-items: center; }
+.progresso-servico i {
+  width: 16px; height: 5px; border-radius: 3px; background: #dfe5e1; display: inline-block;
+}
+.progresso-servico i.feito { background: var(--acento); }
+.retomar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 12px 18px; margin-bottom: 16px;
+  border-radius: 14px; border: 1px dashed var(--primaria);
+  background: var(--primaria-clara);
+}
+.retomar .rt-texto { flex: 1; min-width: 220px; display: grid; gap: 2px; }
+.retomar .rt-rotulo { font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--primaria-escura); }

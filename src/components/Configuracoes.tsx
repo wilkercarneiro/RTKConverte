@@ -4,13 +4,15 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { Cadastros } from "./Cadastros";
+import { useAvisos } from "../lib/ux";
+import { Avisos } from "./ui";
 
 export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [desenhista, setDesenhista] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const { avisos, avisar, fechar } = useAvisos();
 
   async function carregarLogo() {
     const { data } = await supabase.storage.from("templates").createSignedUrl("logo-empresa.png", 600);
@@ -28,7 +30,6 @@ export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
   async function enviarLogo(file: File) {
     setOcupado(true);
     setErro(null);
-    setMsg(null);
     try {
       const ehPng = /png$/i.test(file.type) || /\.png$/i.test(file.name);
       const nome = ehPng ? "logo-empresa.png" : "logo-empresa.jpg";
@@ -40,7 +41,7 @@ export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
       await supabase.storage.from("templates").remove([ehPng ? "logo-empresa.jpg" : "logo-empresa.png"]);
       const { error } = await supabase.storage.from("templates").upload(nome, file, { upsert: true, contentType: file.type });
       if (error) throw error;
-      setMsg("Logo atualizada — será usada automaticamente no carimbo das próximas plantas.");
+      avisar("ok", "Logo atualizada — será usada automaticamente no carimbo das próximas plantas.");
       await carregarLogo();
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
@@ -53,11 +54,12 @@ export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
     setErro(null);
     const { error } = await supabase.from("config_empresa").upsert({ key: "desenhista", value: desenhista });
     if (error) setErro(error.message);
-    else setMsg("Configurações salvas.");
+    else avisar("ok", "Configurações salvas.");
   }
 
   return (
     <div className="conferencia">
+      <Avisos avisos={avisos} onFechar={fechar} />
       <header className="topo">
         <button className="fantasma" onClick={onVoltar}>← Dashboard</button>
         <span className="arquivo">⚙ Configurações</span>
@@ -94,7 +96,6 @@ export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
         </div>
         <button className="principal" style={{ marginTop: 12 }} onClick={salvarDesenhista}>Salvar</button>
         {erro && <div className="erro">{erro}</div>}
-        {msg && !erro && <div className="ok">{msg}</div>}
       </section>
 
       <Cadastros />

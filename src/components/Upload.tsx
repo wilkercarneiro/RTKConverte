@@ -2,6 +2,7 @@
 import { useRef, useState } from "react";
 import { chamarFuncao } from "../lib/supabase";
 import { UFS } from "../lib/domains";
+import { guardar, lembrar } from "../lib/ux";
 import type { PreviewParse, Servico, Trecho, Vertice } from "../lib/types";
 
 export interface ResultadoParse {
@@ -15,7 +16,9 @@ export function Upload({ onParsed, onVoltar }: { onParsed: (r: ResultadoParse) =
   const [arrastando, setArrastando] = useState(false);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const [uf, setUf] = useState("");
+  // um escritório trabalha quase sempre na mesma UF: a última escolhida já vem
+  // marcada, o que na prática resolve o fuso antes de o operador pensar nele
+  const [uf, setUf] = useState(() => lembrar("uf") ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function processar(file: File) {
@@ -50,13 +53,21 @@ export function Upload({ onParsed, onVoltar }: { onParsed: (r: ResultadoParse) =
           converte as coordenadas e sugere os trechos de confrontantes pelos rótulos.</p>
         <label>
           UF do imóvel <span style={{ fontWeight: 400 }}>(opcional — ajuda a resolver o fuso UTM)</span><br />
-          <select value={uf} onChange={(e) => setUf(e.target.value)} style={{ marginTop: 4, width: 120 }}>
+          <select value={uf} onChange={(e) => { setUf(e.target.value); guardar("uf", e.target.value); }}
+            style={{ marginTop: 4, width: 120 }}>
             <option value="">—</option>
             {UFS.map((u) => <option key={u}>{u}</option>)}
           </select>
+          {uf && lembrar("uf") === uf && <small className="sub" style={{ display: "block", marginTop: 3 }}>última UF usada</small>}
         </label>
+        {/* role/tabIndex/onKeyDown: a zona de arraste era um div com onClick,
+            inalcançável por teclado. */}
         <div
           className={`dropzone ${arrastando ? "ativo" : ""}`}
+          role="button"
+          tabIndex={carregando ? -1 : 0}
+          aria-label="Enviar arquivo TXT do levantamento"
+          aria-busy={carregando}
           onDragOver={(e) => { e.preventDefault(); setArrastando(true); }}
           onDragLeave={() => setArrastando(false)}
           onDrop={(e) => {
@@ -66,6 +77,9 @@ export function Upload({ onParsed, onVoltar }: { onParsed: (r: ResultadoParse) =
             if (f) processar(f);
           }}
           onClick={() => inputRef.current?.click()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inputRef.current?.click(); }
+          }}
         >
           {carregando ? (
             <>

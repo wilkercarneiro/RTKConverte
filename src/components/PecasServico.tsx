@@ -1,11 +1,16 @@
 // Serviço 2 — Peças técnicas direto do PDF do SIGEF (sem TXT).
 // Fluxo: envia o PDF → o backend analisa e pré-preenche o cadastro → o
 // operador completa cliente/RT e os descritivos dos confrontantes → gera as 7 peças.
+//
+// Experiência: o PDF já preencheu a maior parte, então só o que costuma faltar
+// fica à vista; o restante vive em seções recolhíveis com selo de preenchimento.
 import { useEffect, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
 import { rotuloRT, TIPOS_LIMITE, UFS } from "../lib/domains";
+import { contarPreenchidos, useAutosave, useAvisos } from "../lib/ux";
 import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
+import { Avisos, Passos, ProximaAcao, Secao, StatusSalvamento, irPara, type Acao, type Passo } from "./ui";
 
 interface TrechoPdf { id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string; eh_via: boolean }
 interface Analise {
@@ -35,10 +40,10 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   const [pdfNome, setPdfNome] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
   const [pecas, setPecas] = useState<PecasGeradas | null>(null);
   const [plantaUrl, setPlantaUrl] = useState<string | null>(null);
   const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
+  const { avisos, avisar, fechar } = useAvisos();
 
   useEffect(() => {
     supabase.from("responsaveis_tecnicos").select().order("nome").then(({ data }) => setRts((data as RT[]) ?? []));
@@ -60,6 +65,12 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       });
     }
   }, [servico?.rt_id, rts.length]);
+
+  // Preditivo: o TRT quase sempre é o do RT escolhido — nunca sobrescreve o
+  // que já estiver digitado.
+  useEffect(() => {
+    if (rtSel?.trt && servico && !servico.trt) campo("trt", rtSel.trt);
+  }, [rtSel?.id]);
 
   function campo<K extends keyof Servico>(k: K, v: Servico[K]) {
     setServico((s) => (s ? { ...s, [k]: v } : s));
@@ -115,7 +126,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       await supabase.from("trechos_confrontantes").insert(linhas);
       setServico(novo as Servico);
       setTrechos(linhas.map((l) => ({ codigo_inicio: l.codigo_inicio, descritivo: l.descritivo, tipo_limite: l.tipo_limite, eh_via: l.eh_via })));
-      setMsg(`PDF lido: ${a.vertices} vértices, ${a.trechos.length} confrontantes detectados. Complete os dados e revise os descritivos.`);
+      avisar("ok", `PDF lido: ${a.vertices} vértices e ${a.trechos.length} confrontantes detectados. Complete os dados e revise os descritivos.`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -138,12 +149,19 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     if (servico.rt_id) await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
   }
 
+  // Autossalvamento, suspenso enquanto uma rotina do servidor está no ar —
+  // gerar/analisar gravam o serviço e uma escrita concorrente sobrescreveria.
+  const auto = useAutosave(
+    { servico, trechos, rtExtras },
+    async () => { await salvar(); },
+    { ativo: !ocupado && servico !== null, atraso: 1500 },
+  );
+
   // ---- passo 2: gerar as peças ----
   async function gerar(fileNovo?: File) {
     if (!servico) return;
     setOcupado("Gerando as peças técnicas…");
     setErro(null);
-    setMsg(null);
     try {
       let b64 = pdfB64;
       if (fileNovo) { b64 = bufParaBase64(await fileNovo.arrayBuffer()); setPdfB64(b64); setPdfNome(fileNovo.name); }
@@ -151,7 +169,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       await salvar();
       const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64: b64 });
       setPecas(r);
-      setMsg("Peças geradas com sucesso.");
+      avisar("ok", "7 peças técnicas geradas.");
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -182,7 +200,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         satelite_base64: satelite.b64, satelite_tipo: satelite.tipo,
       });
       setPlantaUrl(r.planta_pdf);
-      setMsg(`Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} gerada.`);
+      avisar("ok", `Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} gerada.`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -190,23 +208,23 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     }
   }
 
-  // ---------------- telas ----------------
+  // ---------------- tela de entrada: envio do PDF ----------------
   if (!servico) {
     return (
       <div className="upload-tela">
-        <div className="stepper">
-          <span className="step ativa"><span className="num">1</span> PDF do SIGEF</span>
-          <span className="step-seta">→</span>
-          <span className="step"><span className="num">2</span> Conferência</span>
-          <span className="step-seta">→</span>
-          <span className="step"><span className="num">3</span> Peças técnicas</span>
-        </div>
+        <Avisos avisos={avisos} onFechar={fechar} />
+        <Passos passos={[
+          { rotulo: "PDF do SIGEF", estado: "ativa" },
+          { rotulo: "Conferência", estado: "futura" },
+          { rotulo: "Peças técnicas", estado: "futura" },
+        ]} />
         <div className="upload-card">
           <button className="fantasma" style={{ justifySelf: "start" }} onClick={onVoltar}>← Dashboard</button>
           <h2>Serviço 2 — Peças técnicas</h2>
           <p className="sub">Já tem o memorial do SIGEF em mãos? Envie o PDF de prévia/certificação:
             o sistema lê o imóvel, o proprietário e os confrontantes automaticamente.</p>
           <label className="dropzone" onDragOver={(e) => e.preventDefault()}
+            aria-busy={!!ocupado}
             onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && !ocupado) analisar(f); }}>
             {ocupado ? (<><span className="spinner" /> <b>{ocupado}</b></>) : (
               <><b>📄 Arraste o PDF do SIGEF aqui</b><span>ou clique para escolher o arquivo</span></>
@@ -220,101 +238,187 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     );
   }
 
+  // ---------------- conferência e geração ----------------
+  const pendencias: { msg: string; alvo: string }[] = [];
+  if (!servico.denominacao) pendencias.push({ msg: "informe a Denominação", alvo: "pc-denominacao" });
+  if (!servico.municipio) pendencias.push({ msg: "informe o Município", alvo: "pc-municipio" });
+  if (!servico.uf) pendencias.push({ msg: "informe a UF", alvo: "pc-uf" });
+  if (!servico.detentor_nome) pendencias.push({ msg: "informe o Detentor", alvo: "pc-detentor" });
+  if (!servico.rt_id) pendencias.push({ msg: "selecione o Responsável Técnico", alvo: "pc-rt" });
+
+  const semDescritivo = trechos.filter((t) => !t.descritivo.trim()).length;
+
+  const passos: Passo[] = [
+    { rotulo: "PDF do SIGEF", estado: "feita" },
+    { rotulo: "Conferência", estado: pendencias.length === 0 ? "feita" : "ativa", alvo: "pc-dados" },
+    { rotulo: "Peças técnicas", estado: pecas ? "feita" : pendencias.length === 0 ? "ativa" : "futura", alvo: "pc-gerar" },
+  ];
+
+  const proxima: Acao = pendencias.length > 0
+    ? {
+      tom: "pendente",
+      titulo: `Faltam ${pendencias.length} ${pendencias.length === 1 ? "campo obrigatório" : "campos obrigatórios"}`,
+      detalhe: pendencias.map((p) => p.msg).join(" · "),
+      rotuloBotao: "Ir para o primeiro",
+      onClick: () => irPara(pendencias[0].alvo, true),
+    }
+    : !pecas
+      ? {
+        tom: "neutro",
+        titulo: "Pronto para gerar as 7 peças técnicas",
+        detalhe: semDescritivo > 0
+          ? `${semDescritivo} de ${trechos.length} confrontantes ainda sem descritivo formal`
+          : `${trechos.length} confrontantes descritos`,
+        rotuloBotao: "⚡ Gerar peças técnicas",
+        onClick: () => gerar(),
+      }
+      : !plantaUrl
+        ? {
+          tom: "neutro",
+          titulo: `Gere a Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"}`,
+          detalhe: satelite ? `imagem ${satelite.nome} carregada` : "requer a imagem de satélite",
+          rotuloBotao: "Ir para a planta",
+          onClick: () => irPara("pc-gerar"),
+        }
+        : { tom: "pronto", titulo: "Serviço completo", detalhe: "peças e planta geradas — disponíveis no histórico abaixo" };
+
+  const seloRegistro = contarPreenchidos([servico.matricula, servico.cns, servico.codigo_sncr, servico.area_matricula_ha]);
+  const seloRt = contarPreenchidos([rtExtras.formacao, rtExtras.conselho_sigla, rtExtras.conselho_numero, rtExtras.identidade, rtExtras.cpf]);
+
   return (
     <div className="conferencia" style={{ paddingBottom: 40 }}>
-      <div className="stepper">
-        <span className="step feita"><span className="num">✓</span> PDF do SIGEF</span>
-        <span className="step-seta">→</span>
-        <span className="step ativa"><span className="num">2</span> Conferência</span>
-        <span className="step-seta">→</span>
-        <span className={`step ${pecas ? "ativa" : ""}`}><span className="num">3</span> Peças técnicas</span>
-      </div>
+      <Avisos avisos={avisos} onFechar={fechar} />
+      <Passos passos={passos} />
       <header className="topo">
         <button className="fantasma" onClick={onVoltar}>← Dashboard</button>
         <span className="arquivo">📑 Serviço 2 · {servico.denominacao ?? "peças técnicas"}{pdfNome ? ` · ${pdfNome}` : ""}</span>
+        <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
       </header>
 
-      <section className="bloco">
+      <ProximaAcao acao={proxima} />
+
+      <section className="bloco" id="pc-dados">
         <header><span className="num-bloco">1</span><h3>Imóvel e requerentes</h3>
-          <span className="desc">pré-preenchido pelo PDF — confira e complete</span></header>
+          <span className="desc">pré-preenchido pelo PDF — confira o essencial; o resto abre quando precisar</span></header>
+
         <div className="grade">
           <label>Situação do imóvel *
             <select value={servico.tipo_imovel ?? "matricula"} onChange={(e) => campo("tipo_imovel", e.target.value as "matricula" | "posse")}>
               <option value="matricula">Matrícula (proprietário)</option>
               <option value="posse">Posse (posseiro)</option>
             </select>
+            <small className="sub">define planta A1 ou A3 e o conjunto de peças</small>
           </label>
-          <label>Denominação * <input value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} /></label>
-          <label>Município * <input value={servico.municipio ?? ""} onChange={(e) => campo("municipio", e.target.value)} /></label>
+          <label>Denominação * <input id="pc-denominacao" value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} /></label>
+          <label>Município * <input id="pc-municipio" value={servico.municipio ?? ""} onChange={(e) => campo("municipio", e.target.value)} /></label>
           <label>UF *
-            <select value={servico.uf ?? ""} onChange={(e) => campo("uf", e.target.value)}>
+            <select id="pc-uf" value={servico.uf ?? ""} onChange={(e) => campo("uf", e.target.value)}>
               <option value="">—</option>{UFS.map((u) => <option key={u}>{u}</option>)}
             </select>
           </label>
-          <label>Matrícula <input value={servico.matricula ?? ""} onChange={(e) => campo("matricula", e.target.value)} /></label>
-          <label>CNS (cartório) <input value={servico.cns ?? ""} onChange={(e) => campo("cns", e.target.value)} /></label>
-          <label>Código SNCR <input value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
-          <label>Detentor * <input value={servico.detentor_nome ?? ""} onChange={(e) => campo("detentor_nome", e.target.value)} /></label>
+          <label>Detentor * <input id="pc-detentor" value={servico.detentor_nome ?? ""} onChange={(e) => campo("detentor_nome", e.target.value)} /></label>
           <label>CPF do detentor <input value={servico.detentor_cpf ?? ""} onChange={(e) => campo("detentor_cpf", e.target.value)} /></label>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, gridColumn: "span 2", cursor: "pointer", marginTop: 4 }}>
-            <input type="checkbox" checked={!!servico.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
-            <b>É Espólio? (possuidor/proprietário falecido com inventariante)</b>
-          </label>
-          {servico.is_espolio && (
-            <>
-              <label>Nome do Inventariante <input value={servico.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome do inventariante" /></label>
-              <label>CPF do Inventariante <input value={servico.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
-              <label>RG do Inventariante (opcional) <input value={servico.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
-            </>
-          )}
-          <label>Gênero do detentor
-            <select value={servico.detentor_genero ?? "M"} onChange={(e) => campo("detentor_genero", e.target.value as "M" | "F")}>
-              <option value="M">Masculino</option><option value="F">Feminino</option>
-            </select>
-          </label>
-          <label>Requerente 2 (opcional{servico.tipo_imovel === "posse" ? " — ignorado na posse" : ""}) <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} /></label>
-          <label>CPF do requerente 2 <input value={servico.requerente2_cpf ?? ""} onChange={(e) => campo("requerente2_cpf", e.target.value || null)} /></label>
-          <label>Gênero do requerente 2
-            <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
-              <option value="M">Masculino</option><option value="F">Feminino</option>
-            </select>
-          </label>
-          <label style={{ gridColumn: "span 2" }}>Endereço dos requerentes
-            <input placeholder="Rua ..., Nº ..., Bairro, Cidade, Estado, CEP:..." value={servico.endereco_detentor ?? ""} onChange={(e) => campo("endereco_detentor", e.target.value || null)} /></label>
-          <label>Área constante na matrícula (ha) <input placeholder="ex.: 86" value={servico.area_matricula_ha ?? ""} onChange={(e) => campo("area_matricula_ha", e.target.value || null)} /></label>
-          <label>Via da faixa de domínio <input placeholder="ex.: BA 408" value={servico.via_dominio ?? ""} onChange={(e) => campo("via_dominio", e.target.value || null)} /></label>
           <label>Responsável Técnico *
-            <select value={servico.rt_id ?? ""} onChange={(e) => campo("rt_id", e.target.value || null)}>
+            <select id="pc-rt" value={servico.rt_id ?? ""} onChange={(e) => campo("rt_id", e.target.value || null)}>
               <option value="">—</option>
               {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
             </select>
             <small className="sub">cadastre novos em ⚙ Configurações</small>
           </label>
-          <label>Credenciado
-            <select value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
-              <option value="">—</option>
-              {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
-            </select>
-            <small className="sub">o código vai no carimbo da planta</small>
-          </label>
-          <label>TRT (Termo de Responsabilidade Técnica)
-            <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}
-              onChange={(e) => campo("trt", e.target.value.trim() || null)} />
-            <small className="sub">vai nas peças e na planta; sobrepõe o TRT do PDF do SIGEF</small>
-          </label>
-          <label>Formação do RT <input value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} /></label>
-          <label>Conselho (sigla) <input value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} /></label>
-          <label>Conselho (número) <input value={rtExtras.conselho_numero} onChange={(e) => setRtExtras({ ...rtExtras, conselho_numero: e.target.value })} /></label>
-          <label>Identidade do RT <input value={rtExtras.identidade} onChange={(e) => setRtExtras({ ...rtExtras, identidade: e.target.value })} /></label>
-          <label>CPF do RT <input value={rtExtras.cpf} onChange={(e) => setRtExtras({ ...rtExtras, cpf: e.target.value })} /></label>
+          <label style={{ gridColumn: "span 2" }}>Endereço dos requerentes
+            <input placeholder="Rua ..., Nº ..., Bairro, Cidade, Estado, CEP:..." value={servico.endereco_detentor ?? ""} onChange={(e) => campo("endereco_detentor", e.target.value || null)} /></label>
         </div>
+
+        <Secao titulo="Registro, cartório e área"
+          selo={<span className={`secao-selo ${seloRegistro === 4 ? "completa" : seloRegistro === 0 ? "vazia" : ""}`}>{seloRegistro} de 4</span>}
+          dica="o PDF costuma trazer matrícula, CNS e SNCR prontos">
+          <div className="grade">
+            <label>Matrícula <input value={servico.matricula ?? ""} onChange={(e) => campo("matricula", e.target.value)} /></label>
+            <label>CNS (cartório) <input value={servico.cns ?? ""} onChange={(e) => campo("cns", e.target.value)} /></label>
+            <label>Código SNCR <input value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
+            <label>Área constante na matrícula (ha) <input placeholder="ex.: 86" value={servico.area_matricula_ha ?? ""} onChange={(e) => campo("area_matricula_ha", e.target.value || null)} /></label>
+            <label>Via da faixa de domínio
+              <input placeholder="ex.: BA 408" value={servico.via_dominio ?? ""} onChange={(e) => campo("via_dominio", e.target.value || null)} />
+              <small className="sub">{trechos.some((t) => t.eh_via) ? "há trecho marcado como faixa de domínio — informe a via" : "só é usada se algum trecho for faixa de domínio"}</small>
+            </label>
+          </div>
+        </Secao>
+
+        <Secao titulo="Gênero e segundo requerente"
+          selo={<span className={`secao-selo ${servico.requerente2_nome ? "completa" : ""}`}>{servico.requerente2_nome || "só o detentor"}</span>}
+          abrirEm={!!servico.requerente2_nome}
+          dica="usado na flexão dos textos e nas assinaturas">
+          <div className="grade">
+            <label>Gênero do detentor
+              <select value={servico.detentor_genero ?? "M"} onChange={(e) => campo("detentor_genero", e.target.value as "M" | "F")}>
+                <option value="M">Masculino</option><option value="F">Feminino</option>
+              </select>
+            </label>
+            <label>Requerente 2 (opcional{servico.tipo_imovel === "posse" ? " — ignorado na posse" : ""})
+              <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} /></label>
+            <label>CPF do requerente 2 <input value={servico.requerente2_cpf ?? ""} onChange={(e) => campo("requerente2_cpf", e.target.value || null)} /></label>
+            <label>Gênero do requerente 2
+              <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
+                <option value="M">Masculino</option><option value="F">Feminino</option>
+              </select>
+            </label>
+          </div>
+        </Secao>
+
+        <Secao titulo="Espólio e inventariante"
+          selo={<span className={`secao-selo ${servico.is_espolio ? "completa" : ""}`}>{servico.is_espolio ? "é espólio" : "não"}</span>}
+          abrirEm={!!servico.is_espolio}
+          dica="proprietário falecido, representado por inventariante">
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 10 }}>
+            <input type="checkbox" checked={!!servico.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
+            <b>É Espólio? (possuidor/proprietário falecido com inventariante)</b>
+          </label>
+          {servico.is_espolio && (
+            <div className="grade">
+              <label>Nome do Inventariante <input value={servico.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome do inventariante" /></label>
+              <label>CPF do Inventariante <input value={servico.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
+              <label>RG do Inventariante (opcional) <input value={servico.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
+            </div>
+          )}
+        </Secao>
+
+        <Secao titulo="Credenciado, TRT e dados do RT nas peças"
+          selo={<span className={`secao-selo ${seloRt === 5 ? "completa" : seloRt === 0 ? "vazia" : ""}`}>{seloRt} de 5</span>}
+          abrirEm={seloRt < 4}
+          dica={rtSel ? `salvo no cadastro de ${rtSel.nome}` : "selecione um RT acima"}>
+          <div className="grade">
+            <label>Credenciado
+              <select value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
+                <option value="">—</option>
+                {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
+              </select>
+              <small className="sub">o código vai no carimbo da planta</small>
+            </label>
+            <label>TRT (Termo de Responsabilidade Técnica)
+              <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}
+                onChange={(e) => campo("trt", e.target.value.trim() || null)} />
+              <small className="sub">
+                {rtSel?.trt && servico.trt === rtSel.trt
+                  ? `preenchido com o TRT padrão de ${rtSel.nome}`
+                  : "vai nas peças e na planta; sobrepõe o TRT do PDF do SIGEF"}
+              </small>
+            </label>
+            <label>Formação do RT <input value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} /></label>
+            <label>Conselho (sigla) <input value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} /></label>
+            <label>Conselho (número) <input value={rtExtras.conselho_numero} onChange={(e) => setRtExtras({ ...rtExtras, conselho_numero: e.target.value })} /></label>
+            <label>Identidade do RT <input value={rtExtras.identidade} onChange={(e) => setRtExtras({ ...rtExtras, identidade: e.target.value })} /></label>
+            <label>CPF do RT <input value={rtExtras.cpf} onChange={(e) => setRtExtras({ ...rtExtras, cpf: e.target.value })} /></label>
+          </div>
+        </Secao>
       </section>
 
       <section className="bloco">
         <header><span className="num-bloco">2</span><h3>Confrontantes</h3>
-          <span className="desc">o PDF traz o texto truncado — complete o descritivo formal de cada trecho</span></header>
+          <span className="desc">
+            {trechos.length} trecho(s){semDescritivo > 0 ? ` · ${semDescritivo} sem descritivo formal` : " · todos descritos"} — o PDF traz o texto truncado
+          </span></header>
         {trechos.map((t, i) => (
-          <div className="trecho" key={i} style={{ ["--cor-trecho" as string]: "#888" }}>
+          <div className="trecho" key={i} style={{ ["--cor-trecho" as string]: t.descritivo.trim() ? "#12b76a" : "#b54708" }}>
             <div className="linha">
               <label>Início no vértice <input className="mono" style={{ width: 140 }} value={t.codigo_inicio}
                 onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, codigo_inicio: e.target.value } : x)))} /></label>
@@ -329,33 +433,24 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                 {" "}faixa de domínio pública
               </label>
               <span style={{ flex: 1 }} />
-              <button className="remover" onClick={() => setTrechos((ts) => ts.filter((_, j) => j !== i))}>✕</button>
+              <button className="remover" title="Remover trecho" onClick={() => setTrechos((ts) => ts.filter((_, j) => j !== i))}>✕</button>
             </div>
-            <textarea value={t.descritivo}
+            <textarea value={t.descritivo} className={t.descritivo.trim() ? "" : "pendente"}
               placeholder={"Descritivo formal, ex.: (MATR.432/CNS.00.770-8) FAZENDA LAMEIRO\\ RUDSON PINTO FERREIRA\\ CPF:791.234.145-53"}
               onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, descritivo: e.target.value } : x)))} />
           </div>
         ))}
       </section>
 
-      <section className="bloco">
-        <header><span className="num-bloco">3</span><h3>Gerar peças técnicas</h3></header>
+      <section className="bloco" id="pc-gerar">
+        <header><span className="num-bloco">3</span><h3>Gerar peças e planta</h3></header>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <button disabled={!!ocupado} onClick={async () => { try { setErro(null); await salvar(); setMsg("Rascunho salvo."); } catch (e) { setErro(String(e)); } }}>Salvar rascunho</button>
+          <button disabled={!!ocupado} onClick={async () => {
+            try { setErro(null); await salvar(); avisar("ok", "Rascunho salvo."); } catch (e) { setErro(String(e)); }
+          }}>Salvar rascunho</button>
           <button className="principal" disabled={!!ocupado} onClick={() => gerar()}>
-            {ocupado ? "Gerando…" : "⚡ Gerar peças técnicas"}
+            {ocupado ? ocupado : "⚡ Gerar peças técnicas"}
           </button>
-          <label style={{ cursor: "pointer", color: "var(--primaria)" }}>
-            🛰 {satelite ? satelite.nome : "imagem de satélite (obrigatória p/ planta)"}
-            <input type="file" accept="image/png,image/jpeg" hidden
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
-          </label>
-          <button disabled={!!ocupado} onClick={gerarPlanta}>🗺 Gerar Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"} (PDF)</button>
-          {plantaUrl && (
-            <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
-              <span className="ext">PDF</span> Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"}
-            </a>
-          )}
           {!pdfB64 && (
             <label style={{ cursor: "pointer", color: "var(--primaria)" }}>
               📄 reenviar PDF do SIGEF
@@ -363,8 +458,31 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
             </label>
           )}
         </div>
+
+        {/* A planta depende da imagem de satélite: separada das peças para não
+            parecer que o botão ao lado faz a mesma coisa. */}
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginTop: 14, paddingTop: 14, borderTop: "1px dashed var(--borda)" }}>
+          <label className="dropzone" style={{ padding: "12px 16px", flex: "1 1 260px" }}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
+            {satelite
+              ? <b>🛰 {satelite.nome}</b>
+              : <><b>🛰 Imagem de satélite (PNG/JPG)</b><span>obrigatória para a planta</span></>}
+            <input type="file" accept="image/png,image/jpeg" hidden
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
+          </label>
+          <button disabled={!!ocupado || !satelite} onClick={gerarPlanta}
+            title={!satelite ? "Envie a imagem de satélite primeiro" : undefined}>
+            🗺 Gerar Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"} (PDF)
+          </button>
+          {plantaUrl && (
+            <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
+              <span className="ext">PDF</span> Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"}
+            </a>
+          )}
+        </div>
+
         {erro && <div className="erro">{erro}</div>}
-        {msg && !erro && <div className="ok">{msg}</div>}
         {pecas && (
           <div style={{ marginTop: 12 }}>
             <p style={{ color: "var(--texto-2)" }}>

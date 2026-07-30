@@ -5,6 +5,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { CONSELHOS } from "../lib/domains";
+import { useAvisos } from "../lib/ux";
+import { Avisos, BotaoPerigo } from "./ui";
 import type { Credenciado, RT } from "../lib/types";
 
 type NovoRT = Omit<RT, "id">;
@@ -39,7 +41,7 @@ function CadastroRTs() {
   const [form, setForm] = useState<NovoRT | null>(null); // null = formulário fechado
   const [editId, setEditId] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const { avisos, avisar, fechar } = useAvisos();
 
   async function recarregar() {
     const { data } = await supabase.from("responsaveis_tecnicos").select().order("nome");
@@ -56,7 +58,6 @@ function CadastroRTs() {
     setEditId(null);
     setForm({ ...RT_VAZIO });
     setErro(null);
-    setMsg(null);
   }
 
   function abrirEdicao(r: RT) {
@@ -64,7 +65,6 @@ function CadastroRTs() {
     setEditId(id);
     setForm({ ...campos, conselho_sigla: r.conselho_sigla ?? "CFTA" });
     setErro(null);
-    setMsg(null);
   }
 
   async function salvar() {
@@ -77,24 +77,24 @@ function CadastroRTs() {
       ? await supabase.from("responsaveis_tecnicos").update(dados).eq("id", editId)
       : await supabase.from("responsaveis_tecnicos").insert(dados);
     if (error) { setErro(error.message); return; }
-    setMsg(editId ? "Responsável técnico atualizado." : "Responsável técnico cadastrado — já disponível nos serviços.");
+    avisar("ok", editId ? "Responsável técnico atualizado." : "Responsável técnico cadastrado — já disponível nos serviços.");
     setForm(null);
     setEditId(null);
     await recarregar();
   }
 
   async function remover(r: RT) {
-    if (!confirm(`Excluir o responsável técnico "${r.nome}"?`)) return;
     const { error } = await supabase.from("responsaveis_tecnicos").delete().eq("id", r.id);
     if (error) { setErro(mensagemErro(error, "este responsável")); return; }
     setErro(null);
-    setMsg("Responsável técnico excluído.");
+    avisar("ok", `Responsável técnico "${r.nome}" excluído.`);
     if (editId === r.id) { setForm(null); setEditId(null); }
     await recarregar();
   }
 
   return (
     <section className="bloco">
+      <Avisos avisos={avisos} onFechar={fechar} />
       <header>
         <span className="num-bloco">👷</span>
         <h3>Responsáveis Técnicos</h3>
@@ -117,7 +117,8 @@ function CadastroRTs() {
                   <td className="mono">{r.cpf || "—"}</td>
                   <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                     <button className="fantasma" onClick={() => abrirEdicao(r)}>editar</button>
-                    <button className="remover" onClick={() => remover(r)}>excluir</button>
+                    <BotaoPerigo titulo={`Excluir o responsável técnico "${r.nome}"`}
+                      confirmacao="excluir mesmo" onConfirmar={() => remover(r)}>excluir</BotaoPerigo>
                   </td>
                 </tr>
               ))}
@@ -166,7 +167,6 @@ function CadastroRTs() {
       )}
 
       {erro && <div className="erro">{erro}</div>}
-      {msg && !erro && <div className="ok">{msg}</div>}
     </section>
   );
 }
@@ -176,7 +176,7 @@ function CadastroCredenciados() {
   const [form, setForm] = useState<NovoCredenciado | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const { avisos, avisar, fechar } = useAvisos();
 
   async function recarregar() {
     const { data } = await supabase.from("credenciados").select().order("nome");
@@ -193,7 +193,6 @@ function CadastroCredenciados() {
     setEditId(null);
     setForm({ ...CREDENCIADO_VAZIO });
     setErro(null);
-    setMsg(null);
   }
 
   function abrirEdicao(c: Credenciado) {
@@ -201,7 +200,6 @@ function CadastroCredenciados() {
     setEditId(id);
     setForm(campos);
     setErro(null);
-    setMsg(null);
   }
 
   // Os contadores continuam a numeração do Anexo A do credenciado: o gerador
@@ -222,24 +220,24 @@ function CadastroCredenciados() {
       ? await supabase.from("credenciados").update(dados).eq("id", editId)
       : await supabase.from("credenciados").insert(dados);
     if (error) { setErro(error.message); return; }
-    setMsg(editId ? "Credenciado atualizado." : "Credenciado cadastrado — já disponível nos serviços.");
+    avisar("ok", editId ? "Credenciado atualizado." : "Credenciado cadastrado — já disponível nos serviços.");
     setForm(null);
     setEditId(null);
     await recarregar();
   }
 
   async function remover(c: Credenciado) {
-    if (!confirm(`Excluir o credenciado "${c.nome}" (${c.prefixo_vertice})?`)) return;
     const { error } = await supabase.from("credenciados").delete().eq("id", c.id);
     if (error) { setErro(mensagemErro(error, "este credenciado")); return; }
     setErro(null);
-    setMsg("Credenciado excluído.");
+    avisar("ok", `Credenciado "${c.nome}" excluído.`);
     if (editId === c.id) { setForm(null); setEditId(null); }
     await recarregar();
   }
 
   return (
     <section className="bloco">
+      <Avisos avisos={avisos} onFechar={fechar} />
       <header>
         <span className="num-bloco">🏷️</span>
         <h3>Credenciados</h3>
@@ -263,7 +261,8 @@ function CadastroCredenciados() {
                   <td className="mono">{c.contador_v}</td>
                   <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                     <button className="fantasma" onClick={() => abrirEdicao(c)}>editar</button>
-                    <button className="remover" onClick={() => remover(c)}>excluir</button>
+                    <BotaoPerigo titulo={`Excluir o credenciado "${c.nome}" (${c.prefixo_vertice})`}
+                      confirmacao="excluir mesmo" onConfirmar={() => remover(c)}>excluir</BotaoPerigo>
                   </td>
                 </tr>
               ))}
@@ -309,7 +308,6 @@ function CadastroCredenciados() {
       )}
 
       {erro && <div className="erro">{erro}</div>}
-      {msg && !erro && <div className="ok">{msg}</div>}
     </section>
   );
 }

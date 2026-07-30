@@ -137,6 +137,14 @@ Cada confrontação é editada no seu vértice M, identificado por código (`DSB
 remover reverte M→P e limpa os dados — marcar o M e criar o trecho são o mesmo ato, então
 os dois nunca divergem.
 
+O campo "Inicia no ponto" **move** a confrontação: escolher outro vértice leva descritivo,
+apelido, tipo de limite, faixa de domínio, CNS e matrícula junto, converte o destino em M e
+devolve a origem ao tipo que ela tinha antes — V se foi inserida à mão, P caso contrário.
+Existe porque o M vem do rótulo do TXT e erra com frequência; sem mover, corrigir o ponto
+significava remover o trecho e redigitar tudo. A regra é `moverConfrontacao` em
+`src/lib/trechos.ts`, testada em `tests/trechos.test.mjs`; destino que já é M é recusado na
+tela, para não sobrescrever a confrontação do vizinho.
+
 O preview SVG desenha a **linha dupla vermelha por fora do polígono** exatamente onde a
 planta desenharia, com a mesma construção de `planta.ts` (normal apontando para o lado
 oposto ao centroide). Se a linha vermelha aparecer onde não há estrada, o erro está na tela

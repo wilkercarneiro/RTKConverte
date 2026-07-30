@@ -18,6 +18,51 @@ export function trechoDoVertice<T extends { vertice_inicio_ordem: number }>(
   return trechosOrdenados[idx];
 }
 
+/** Colunas de confrontação de um vértice M — zeradas quando ele deixa de ser M. */
+export interface Confrontacao {
+  descritivo: string | null;
+  tipo_limite: string | null;
+  eh_via: boolean;
+  cns: string | null;
+  matricula: string | null;
+  apelido_txt: string | null;
+}
+
+export const SEM_CONFRONTACAO: Confrontacao = {
+  descritivo: null, tipo_limite: null, eh_via: false,
+  cns: null, matricula: null, apelido_txt: null,
+};
+
+/**
+ * Move a confrontação de um vértice M para outro vértice do perímetro, levando
+ * junto descritivo, apelido, tipo de limite, faixa de domínio, CNS e matrícula.
+ *
+ * O ponto de início costuma vir errado do TXT — remover e recriar o trecho
+ * custaria redigitar tudo, então mover é uma operação de primeira classe.
+ *
+ * Regras: o destino vira M; a origem volta ao tipo que tinha antes (V se foi
+ * inserido à mão, P caso contrário) e fica sem confrontação. Movimento inválido
+ * (origem que não é M, destino inexistente ou que já é M) devolve a lista
+ * intacta — quem chama decide o que dizer ao operador.
+ */
+export function moverConfrontacao<
+  T extends Confrontacao & { ordem: number; tipo: "M" | "P" | "V"; inserido_manual: boolean },
+>(vertices: T[], deOrdem: number, paraOrdem: number): T[] {
+  if (deOrdem === paraOrdem) return vertices;
+  const origem = vertices.find((v) => v.ordem === deOrdem);
+  const destino = vertices.find((v) => v.ordem === paraOrdem);
+  if (!origem || origem.tipo !== "M" || !destino || destino.tipo === "M") return vertices;
+  const conf: Confrontacao = {
+    descritivo: origem.descritivo, tipo_limite: origem.tipo_limite, eh_via: origem.eh_via,
+    cns: origem.cns, matricula: origem.matricula, apelido_txt: origem.apelido_txt,
+  };
+  return vertices.map((v) => {
+    if (v.ordem === deOrdem) return { ...v, tipo: v.inserido_manual ? "V" as const : "P" as const, ...SEM_CONFRONTACAO };
+    if (v.ordem === paraOrdem) return { ...v, ...conf, tipo: "M" as const };
+    return v;
+  });
+}
+
 /**
  * Índices dos segmentos (do vértice i ao i+1, no anel) que saem como faixa de
  * domínio pública — linha dupla vermelha na planta. Um segmento é via quando o

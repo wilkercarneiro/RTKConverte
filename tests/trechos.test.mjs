@@ -2,7 +2,7 @@
 // e pela planta. Ancorado no caso FAZENDA LAGOA SECA, que gerou o defeito original.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { trechoDoVertice, segmentosDeVia } from "../src/lib/trechos.ts";
+import { trechoDoVertice, segmentosDeVia, moverConfrontacao } from "../src/lib/trechos.ts";
 import { sugerirTrechos } from "../supabase/functions/_shared/servico.ts";
 
 // anel real do serviço 74238a85 — 21 vértices, M nas ordens 2, 9, 14, 17, 18, 20
@@ -73,4 +73,55 @@ test("LAGOA não é sugerida como via: é nome comum de fazenda na região", () 
 test("sem trecho algum, nada vira estrada", () => {
   assert.deepEqual(segmentosDeVia(vertices, []), []);
   assert.equal(trechoDoVertice([], 5), null);
+});
+
+// ---- mover a confrontação de ponto (o M veio errado do TXT) ----
+
+// mesmo anel, agora com as colunas de confrontação que moram no vértice
+const anel = () => CODIGOS.map((codigo, ordem) => ({
+  ordem, codigo,
+  tipo: codigo.startsWith("M-") ? "M" : codigo.startsWith("V-") ? "V" : "P",
+  inserido_manual: codigo.startsWith("V-"),
+  descritivo: ordem === 2 ? "ESTRADA VICINAL" : null,
+  tipo_limite: ordem === 2 ? "LA3" : null,
+  eh_via: ordem === 2,
+  cns: ordem === 2 ? "00.770-8" : null,
+  matricula: ordem === 2 ? "432" : null,
+  apelido_txt: ordem === 2 ? "Estrada" : null,
+}));
+
+test("mover leva a confrontação inteira para o novo ponto", () => {
+  // a estrada foi lançada no M-3704 (ordem 2) e começa mesmo no P-13808 (ordem 5)
+  const vs = moverConfrontacao(anel(), 2, 5);
+  const origem = vs[2], destino = vs[5];
+  assert.equal(destino.tipo, "M");
+  assert.deepEqual(
+    [destino.descritivo, destino.apelido_txt, destino.tipo_limite, destino.eh_via, destino.cns, destino.matricula],
+    ["ESTRADA VICINAL", "Estrada", "LA3", true, "00.770-8", "432"],
+  );
+  // origem devolvida a P e sem resto de confrontação
+  assert.equal(origem.tipo, "P");
+  assert.deepEqual(
+    [origem.descritivo, origem.apelido_txt, origem.tipo_limite, origem.eh_via, origem.cns, origem.matricula],
+    [null, null, null, false, null, null],
+  );
+  // o desenho acompanha: a estrada agora vai do novo M até o M-3705
+  const trechosMovidos = vs.filter((v) => v.tipo === "M").map((v) => ({ vertice_inicio_ordem: v.ordem, eh_via: v.eh_via }));
+  assert.deepEqual(segmentosDeVia(vs, trechosMovidos), [5, 6, 7, 8]);
+});
+
+test("vértice inserido à mão volta a V, não a P, quando a confrontação sai dele", () => {
+  const comConfNoV = moverConfrontacao(anel(), 2, 3); // V-0781
+  assert.equal(comConfNoV[3].tipo, "M");
+  const devolvido = moverConfrontacao(comConfNoV, 3, 2);
+  assert.equal(devolvido[3].tipo, "V", "V-0781 foi inserido à mão e continua V");
+  assert.equal(devolvido[2].descritivo, "ESTRADA VICINAL");
+});
+
+test("movimento inválido devolve a lista intacta", () => {
+  const vs = anel();
+  assert.equal(moverConfrontacao(vs, 2, 2), vs, "mesmo ponto");
+  assert.equal(moverConfrontacao(vs, 2, 9), vs, "destino já é M — sobrescreveria o vizinho");
+  assert.equal(moverConfrontacao(vs, 5, 6), vs, "origem não é M");
+  assert.equal(moverConfrontacao(vs, 2, 99), vs, "destino inexistente");
 });
