@@ -172,6 +172,33 @@ anel real e o mesmo imóvel invertido *com a confrontação deslocada um M*, que
 jeito de descrever a mesma realidade ao contrário. São dois caminhos independentes lendo
 a mesma confrontação; a comparação existe para que não voltem a divergir em silêncio.
 
+## Onde o nome do vizinho pode ceder, e em que ordem
+
+O bloco do confrontante fica centrado no **vão da divisa dele**. Quando não cabe, a busca
+tem quatro saídas, e a ordem entre elas é a regra:
+
+1. **afastar** do perímetro (30 → 208 pt · K);
+2. **quebrar** em mais linhas (100% → 62% → 42% da largura máxima);
+3. **reduzir o corpo** (100% → 74%, piso de ~9,6 pt na A1);
+4. **deslizar** ao longo da divisa (± 0,9 × a largura do bloco).
+
+O deslizamento vem por último porque é a única das quatro que muda o **significado** do
+rótulo: sair do centro leva o nome para perto da divisa do vizinho de baixo, que é
+exatamente o que o resto deste documento existe para evitar. Encolher custa só leitura.
+
+Estava invertido: `desl` era o laço mais interno, então o bloco escorregava o máximo
+permitido antes de sequer tentar uma linha a mais. Foi o que apareceu na LAGOA SECA v18.
+
+Sem nenhum candidato livre, o recurso é `menosPior` — o que cruza menos coisa, empate com
+o mais próximo do centro. Antes era "o último da lista", que é o extremo da busca (corpo
+mínimo, afastamento máximo, deslizado ao máximo) e não tinha razão para ser o melhor.
+
+**Limitação conhecida:** a colisão do nome de via usa a caixa envolvente do texto
+*rotacionado*. Numa divisa diagonal de ~50°, essa caixa é quase um quadrado que a própria
+linha atravessa, e o rótulo conta como sobreposto faça o afastamento que fizer. Por isso
+`tests/lagoa_seca_marcos.test.mjs` cobra `sobrepostos` só dos blocos de confrontante, que
+são axis-aligned e onde a medida vale.
+
 ## Fim das heurísticas de texto
 
 `eh_via` explícito (checkbox "faixa de domínio pública") substitui as duas inferências

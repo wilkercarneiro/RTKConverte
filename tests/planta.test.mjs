@@ -82,8 +82,11 @@ test("planta A1: PDF gerado com dimensões e conteúdo", async () => {
   // nenhum rótulo de confrontante ou de via pode cair sobre as linhas do desenho
   assert.ok(diag.rotulos.length >= 6, `poucos rótulos posicionados: ${diag.rotulos.length}`);
   assert.equal(diag.sobrepostos, 0, `${diag.sobrepostos} rótulo(s) sobre as linhas do terreno`);
-  // o nome do confrontante fica no vão da divisa dele; sair do centro é exceção
-  assert.ok(diag.deslocados <= 1, `${diag.deslocados} rótulos fora do centro do trecho`);
+  // O nome do confrontante fica no VÃO DA DIVISA DELE. Deslizar para o lado é a
+  // última saída da busca, depois de esgotar afastamento, quebra de linha e
+  // redução de corpo — sair do centro é a única dessas que muda o significado do
+  // rótulo. Era 1 enquanto o deslizamento vinha antes da quebra de linha.
+  assert.equal(diag.deslocados, 0, `${diag.deslocados} rótulos fora do centro do trecho`);
   // TODO M ganha traço verde, inclusive os que abrem faixa de domínio (BA 408 e
   // CORREDOR). O desenho antigo saía de dentro do laço de rótulos, que pula as
   // vias no `continue`, e esses dois marcos não apareciam na planta.

@@ -280,6 +280,25 @@ function primeiraLivre<T extends { ret: Ret }>(candidatos: T[], obstaculos: Seg[
   return null;
 }
 
+/**
+ * Quando NENHUM candidato está livre, o menos ruim — o que cruza menos coisa.
+ *
+ * O recurso anterior era pegar o último da lista, que é o extremo da busca: o
+ * corpo mais reduzido, no afastamento máximo, deslizado o quanto a busca permite.
+ * Não havia razão para ele ser melhor que os outros, e no anel estreito da LAGOA
+ * SECA era pior — o rótulo saía pequeno, longe da divisa e ainda por cima da
+ * linha. Empate fica com o primeiro, que é o mais próximo do centro do trecho.
+ */
+function menosPior<T extends { ret: Ret }>(candidatos: T[], obstaculos: Seg[], ocupado: Ret[]): T {
+  let melhor = candidatos[0], melhorN = Infinity;
+  for (const cand of candidatos) {
+    const n = obstaculos.filter((s) => segCruzaRet(s, cand.ret)).length
+      + ocupado.filter((o) => retCruzaRet(cand.ret, o)).length;
+    if (n < melhorN) { melhor = cand; melhorN = n; if (n === 0) break; }
+  }
+  return melhor;
+}
+
 // quebra o descritivo em linhas de rótulo (sempre em MAIÚSCULAS)
 function linhasDescritivo(descritivo: string): string[] {
   const partes = descritivo.split("\\").map((p) => p.trim()).filter(Boolean);
@@ -542,17 +561,23 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       // cobrir a linha dupla vermelha nem o polígono.
       const nome = linhasDescritivo(t.descritivo)[0] ?? "";
       const rot = angSeg > 90 || angSeg < -90 ? angSeg + 180 : angSeg;
-      const vw = c.fb.widthOfTextAtSize(nome, LBL_TAM);
       // o texto é desenhado a partir da origem; recuar meia largura NA DIREÇÃO DA
       // ROTAÇÃO centraliza o nome sobre o meio do trecho
       const ra = rot * Math.PI / 180;
-      const cands = [22, 30, 40, 52, 66, 82].map((o) => o * K).map((off) => {
-        const x = mx + nx * off - Math.cos(ra) * vw / 2;
-        const y = my + ny * off - Math.sin(ra) * vw / 2;
-        return { x, y, ret: retTextoRot(x, y, vw, LBL_TAM, rot) };
+      // Afastar da linha primeiro, em corpo cheio; encolher só se todos os
+      // afastamentos estiverem ocupados. O nome fica sempre centrado no trecho —
+      // ele acompanha a própria via, então nunca desliza para o trecho vizinho.
+      const cands = [1, 0.9, 0.82, 0.74].flatMap((escala) => {
+        const tam = LBL_TAM * escala;
+        const vw = c.fb.widthOfTextAtSize(nome, tam);
+        return [22, 30, 40, 52, 66, 82].map((o) => o * K).map((off) => {
+          const x = mx + nx * off - Math.cos(ra) * vw / 2;
+          const y = my + ny * off - Math.sin(ra) * vw / 2;
+          return { x, y, tam, ret: retTextoRot(x, y, vw, tam, rot) };
+        });
       });
-      const esc = primeiraLivre(cands, obstaculos, ocupado) ?? cands[cands.length - 1];
-      texto(c, nome, esc.x, esc.y, LBL_TAM, { bold: true, cor: PRETO, rot });
+      const esc = primeiraLivre(cands, obstaculos, ocupado) ?? menosPior(cands, obstaculos, ocupado);
+      texto(c, nome, esc.x, esc.y, esc.tam, { bold: true, cor: PRETO, rot });
       ocupado.push(esc.ret);
       rotulosTrecho.push(esc.ret);
       continue;
@@ -567,39 +592,52 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // porque centrar fazia rótulos largos voltarem por cima do polígono — hoje
     // isso é impossível, porque a busca abaixo testa colisão contra as linhas.
     //
-    // Duas saídas contra sobreposição, nesta ordem: AFASTAR o bloco do perímetro
-    // e, se nem assim couber, QUEBRAR em mais linhas (bloco mais estreito é mais
-    // fácil de encaixar). O primeiro candidato livre vence, então o rótulo só se
-    // afasta e só quebra o quanto for necessário.
-    const cands = [LBL_MAXW, LBL_MAXW * 0.62, LBL_MAXW * 0.42].flatMap((maxW) => {
-      const lbl = quebrarLinhas(linhasDescritivo(t.descritivo), maxW, LBL_TAM, f);
-      const blockW = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, LBL_TAM)));
-      const altura = lbl.length * LBL_ESP;
-      // afastamentos acompanham K: na folha de posse o texto é 1,7× maior e
-      // precisa recuar na mesma proporção para limpar as linhas
-      // Preferência: centrado no meio do trecho (desl = 0), afastando cada vez mais.
-      // Só se nada couber assim o bloco desliza ao longo da divisa — melhor sair um
-      // pouco do centro do que voltar por cima das linhas.
-      const dir = { x: Math.cos(angSeg * Math.PI / 180), y: Math.sin(angSeg * Math.PI / 180) };
-      const passos: { MG: number; desl: number }[] = [];
-      for (const desl of [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05]) {
-        for (const mg of [30, 42, 56, 72, 90, 112, 140]) passos.push({ MG: mg * K, desl });
+    // Três saídas contra sobreposição, e a ORDEM entre elas é o que importa:
+    // AFASTAR o bloco do perímetro → QUEBRAR em mais linhas → REDUZIR o corpo.
+    // Só depois de esgotar as três é que o bloco desliza ao longo da divisa.
+    //
+    // Era esta ordem que estava trocada: `desl` ficava no laço de dentro, então o
+    // rótulo escorregava até 1,05× da própria largura para o lado — saindo do vão
+    // do vizinho e indo parar na divisa do outro — antes de sequer tentar quebrar
+    // numa linha a mais. Sair do centro é a saída mais cara das quatro, porque é a
+    // única que muda o SIGNIFICADO do rótulo; encolher o texto custa só leitura, e
+    // o piso de 0,74 mantém o corpo acima de 9,6pt na folha A1.
+    const DESLS = [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9];
+    const ESCALAS = [1, 0.9, 0.82, 0.74];
+    const LARGURAS = [1, 0.62, 0.42];
+    const MARGENS = [30, 42, 56, 72, 90, 112, 140, 172, 208];
+    const dir = { x: Math.cos(angSeg * Math.PI / 180), y: Math.sin(angSeg * Math.PI / 180) };
+    const cands: { lbl: string[]; lx: number; ty: number; tam: number; esp: number; desl: number; ret: Ret }[] = [];
+    for (const desl of DESLS) {
+      for (const escala of ESCALAS) {
+        const tam = LBL_TAM * escala, esp = LBL_ESP * escala;
+        for (const larg of LARGURAS) {
+          const lbl = quebrarLinhas(linhasDescritivo(t.descritivo), LBL_MAXW * larg, tam, f);
+          const blockW = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, tam)));
+          const altura = lbl.length * esp;
+          // afastamentos acompanham K: na folha de posse o texto é 1,7× maior e
+          // precisa recuar na mesma proporção para limpar as linhas
+          for (const mg of MARGENS) {
+            const MG = mg * K;
+            // ponto do meio do trecho, empurrado para fora; o bloco é centrado nele
+            const px0 = mx + nx * MG + dir.x * desl * blockW;
+            const py0 = my + ny * MG + dir.y * desl * blockW;
+            let lx = px0 - blockW / 2;
+            let ty = py0 + altura / 2;
+            // e o bloco inteiro fica dentro da área de desenho — antes os rótulos
+            // laterais vazavam para fora da folha
+            lx = Math.max(dArea.x + 4, Math.min(lx, dArea.x + dArea.w - blockW - 4));
+            ty = Math.max(dArea.y + altura, Math.min(ty, dArea.y + dArea.h - tam));
+            cands.push({
+              lbl, lx, ty, tam, esp, desl,
+              ret: { x1: lx - 2, y1: ty - altura, x2: lx + blockW + 2, y2: ty + tam },
+            });
+          }
+        }
       }
-      return passos.map(({ MG, desl }) => {
-        // ponto do meio do trecho, empurrado para fora; o bloco é centrado nele
-        const px0 = mx + nx * MG + dir.x * desl * blockW;
-        const py0 = my + ny * MG + dir.y * desl * blockW;
-        let lx = px0 - blockW / 2;
-        let ty = py0 + altura / 2;
-        // e o bloco inteiro fica dentro da área de desenho — antes os rótulos
-        // laterais vazavam para fora da folha
-        lx = Math.max(dArea.x + 4, Math.min(lx, dArea.x + dArea.w - blockW - 4));
-        ty = Math.max(dArea.y + altura, Math.min(ty, dArea.y + dArea.h - LBL_TAM));
-        return { lbl, lx, ty, desl, ret: { x1: lx - 2, y1: ty - altura, x2: lx + blockW + 2, y2: ty + LBL_TAM } };
-      });
-    });
-    const esc = primeiraLivre(cands, obstaculos, ocupado) ?? cands[cands.length - 1];
-    for (const [li, lt] of esc.lbl.entries()) texto(c, lt, esc.lx, esc.ty - li * LBL_ESP, LBL_TAM);
+    }
+    const esc = primeiraLivre(cands, obstaculos, ocupado) ?? menosPior(cands, obstaculos, ocupado);
+    for (const [li, lt] of esc.lbl.entries()) texto(c, lt, esc.lx, esc.ty - li * esc.esp, esc.tam);
     ocupado.push(esc.ret);
     rotulosTrecho.push(esc.ret);
     if (esc.desl !== 0) deslocados++;

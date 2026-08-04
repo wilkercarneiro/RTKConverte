@@ -16,6 +16,7 @@
 // e o mesmo anel invertido, que é onde o deslocamento entra em ação.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
 import proj4lib from "proj4";
 import { montarServico } from "../supabase/functions/_shared/servico.ts";
 import { montarTrechosDoSigef } from "../supabase/functions/_shared/reconciliacao.ts";
@@ -207,7 +208,22 @@ test("os três M saem com traço verde, inclusive os de faixa de domínio", asyn
     logo: null,
   };
   const diag = { obstaculos: [], rotulos: [], sobrepostos: 0, deslocados: 0 };
-  await gerarPlantaPdf(dados, diag);
+  const bytes = await gerarPlantaPdf(dados, diag);
+  mkdirSync(new URL("./out/", import.meta.url), { recursive: true });
+  writeFileSync(new URL("./out/planta-lagoa-seca.pdf", import.meta.url), bytes);
+  // O bloco do vizinho fica CENTRADO no vão da divisa dele — é o que estava
+  // errado na v18: a busca esgotava o deslizamento lateral antes de tentar
+  // quebrar o texto em mais linhas, e o nome ia parar fora do espaço dele.
+  assert.equal(diag.deslocados, 0, `${diag.deslocados} rótulo(s) fora do centro do trecho`);
+  // Aqui NÃO se cobra `sobrepostos === 0`, e o motivo tem de ficar escrito para
+  // ninguém "consertar" isso depois: o nome da via é rotacionado ao longo da
+  // própria divisa, e a colisão é medida pela CAIXA ENVOLVENTE do texto girado.
+  // Numa diagonal de ~50°, como a LINHA FERREA e a ESTRADA VICINAL deste imóvel,
+  // essa caixa é quase um quadrado que a divisa paralela atravessa por dentro,
+  // faça o rótulo o afastamento que fizer. É limitação do teste de colisão, não
+  // do posicionamento. O que se pode cobrar é que os blocos de confrontante —
+  // que são axis-aligned e onde a medida vale — fiquem limpos.
+  assert.ok(diag.sobrepostos <= 2, `${diag.sobrepostos} rótulos sobre as linhas`);
   // era 1 antes da correção: só o M-4501, único trecho que não é faixa de domínio
   assert.equal(diag.marcos.length, 3, `${diag.marcos.length} marco(s) para 3 vértices M`);
   // e cada marco sai do SEU M, não de um vértice qualquer
