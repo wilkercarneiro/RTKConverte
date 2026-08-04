@@ -224,6 +224,8 @@ export interface DiagPlanta {
   sobrepostos: number;
   /** quantos não couberam centrados no trecho e tiveram de deslizar pela divisa */
   deslocados: number;
+  /** traços verdes de divisão — tem de sair um por vértice M, via ou não */
+  marcos?: Seg[];
 }
 
 function retCruzaRet(a: Ret, b: Ret): boolean {
@@ -465,6 +467,24 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       texto(c, lt, bx0, byTopo - tam - li * esp, tam, { bold: li === 1 });
     }
   }
+  // ------------------- marco de divisão: um por vértice M -------------------
+  // Todo M é a troca de um confrontante para o outro, então todo M ganha o seu
+  // traço verde. Isto é um laço próprio, sobre `d.trechos` cru, de propósito: o
+  // desenho antigo saía de dentro do laço de rótulos, que (a) pula os trechos de
+  // faixa de domínio no `continue` e (b) funde trechos vizinhos de mesmo
+  // confrontante. Na LAGOA SECA, dos três M só o M-4501 (único não-via) recebia
+  // marco — os outros dois sumiam e a planta não dizia onde cada divisa começa e
+  // termina. Ver ARQUITETURA-TRECHOS.md.
+  const marcos: Seg[] = [];
+  for (const t of d.trechos) {
+    const vm = vs[t.inicioIdx % nv];
+    if (!vm) continue;
+    let gx = X(vm.e) - dcx, gy = Y(vm.n) - dcy;
+    const gl = Math.hypot(gx, gy) || 1; gx /= gl; gy /= gl;
+    const x1 = X(vm.e), y1 = Y(vm.n), x2 = x1 + gx * 50, y2 = y1 + gy * 50;
+    linha(c, x1, y1, x2, y2, 2.8 * K, VERDE);
+    marcos.push({ x1, y1, x2, y2 });
+  }
   // Trechos contíguos do MESMO confrontante viram um único rótulo: no caso real
   // a FAZENDA KAGADOS chegava em 5 trechos seguidos e o bloco de texto saía
   // repetido 5× em volta do polígono.
@@ -537,12 +557,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       rotulosTrecho.push(esc.ret);
       continue;
     }
-    // linha verde de divisão no INÍCIO do trecho
-    const vi = vs[t.inicioIdx % nv];
-    if (!vi) continue;
-    let gx = X(vi.e) - dcx, gy = Y(vi.n) - dcy;
-    const gl = Math.hypot(gx, gy) || 1; gx /= gl; gy /= gl;
-    linha(c, X(vi.e), Y(vi.n), X(vi.e) + gx * 50, Y(vi.n) + gy * 50, 2.8 * K, VERDE);
+    // o traço verde de divisão já foi desenhado acima, um por M
     // Rótulo do confrontante: bloco de texto corrido alinhado à esquerda, como
     // na planta de referência. A versão anterior desenhava uma linha de
     // assinatura de 340pt com nome e CPF em corpo 21 — duplicava as cartas de
@@ -872,6 +887,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     diag.rotulos = rotulosTrecho;
     diag.sobrepostos = rotulosTrecho.filter((r) => obstaculos.some((s) => segCruzaRet(s, r))).length;
     diag.deslocados = deslocados;
+    diag.marcos = marcos;
   }
 
   // posse: reduz o conteúdo e entrega a folha no A3 exato (420×297 mm) —

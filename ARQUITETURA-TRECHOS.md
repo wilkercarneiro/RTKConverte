@@ -134,6 +134,44 @@ senão a inversão não está deslocando nada. `LARISSA.txt` já é horário, en
 histórico passa intacto; é o que trava a convenção de sinal (`areaAssinadaM2 < 0` = horário)
 contra uma inversão acidental.
 
+## O marco de divisão: um por M, sem exceção
+
+Planta FAZENDA LAGOA SECA (serviço `5da4d729`, v17): dos três vértices M só o
+`DSBN-M-4501` saiu com traço verde. Os outros dois — `DSBN-M-4500` (LINHA FERREA) e
+`DSBN-M-4502` (ESTRADA VICINAL) — são faixa de domínio, e o traço era desenhado
+**dentro do laço de rótulos**, que faz `continue` nos trechos de via logo depois de
+escrever o nome da estrada. Com um marco só, a planta não dizia onde a divisa de cada
+confrontante começa e termina, e o leitor concluía que o vizinho tinha sido
+identificado no ponto errado.
+
+Dois agravantes no mesmo lugar: aquele laço também **funde** trechos vizinhos de mesmo
+descritivo (o agrupamento que existe para não repetir o bloco de texto 5× em volta do
+polígono), o que apagava o marco do M interno da fusão.
+
+> **Todo M é a troca de um confrontante para o outro, então todo M ganha o seu traço
+> verde** — via ou não, agrupado ou não.
+
+O desenho saiu para um laço próprio sobre `d.trechos` cru, antes do agrupamento. O
+diagnóstico `DiagPlanta` ganhou `marcos`, para o teste conferir a contagem sem abrir o
+PDF.
+
+### O que NÃO era o defeito
+
+Vale registrar, porque a primeira leitura apontou para o lado errado: os códigos dos
+vértices ficam **fora de sequência** em relação à `ordem` gravada depois que a planta é
+gerada com o PDF do SIGEF (na LAGOA SECA a `ordem` corre `P-14000, P-14028, P-14027,
+M-4502, …`). Isso é só consequência de `reconciliarVerticesBancoComSigef` renumerar
+`ordem` pela sequência do PDF preservando os códigos alocados numa geração anterior —
+não indica confrontação deslocada. O anel gravado é horário, `montarServico` não
+inverte nada nesse serviço, e memorial e planta cobrem exatamente as mesmas divisas.
+
+`tests/lagoa_seca_marcos.test.mjs` trava as duas coisas: a contagem de marcos e a
+igualdade **divisa a divisa** entre `montarServico` (memorial/planilha) e
+`montarTrechosDoSigef` + `gerar-planta` (planta oficial). Roda nos dois sentidos — o
+anel real e o mesmo imóvel invertido *com a confrontação deslocada um M*, que é o único
+jeito de descrever a mesma realidade ao contrário. São dois caminhos independentes lendo
+a mesma confrontação; a comparação existe para que não voltem a divergir em silêncio.
+
 ## Fim das heurísticas de texto
 
 `eh_via` explícito (checkbox "faixa de domínio pública") substitui as duas inferências

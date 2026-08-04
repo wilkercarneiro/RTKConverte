@@ -84,7 +84,12 @@ test("planta A1: PDF gerado com dimensões e conteúdo", async () => {
   assert.equal(diag.sobrepostos, 0, `${diag.sobrepostos} rótulo(s) sobre as linhas do terreno`);
   // o nome do confrontante fica no vão da divisa dele; sair do centro é exceção
   assert.ok(diag.deslocados <= 1, `${diag.deslocados} rótulos fora do centro do trecho`);
-  console.log(`    rótulos de trecho: ${diag.rotulos.length}, nenhum sobre as linhas, ${diag.deslocados} fora do centro`);
+  // TODO M ganha traço verde, inclusive os que abrem faixa de domínio (BA 408 e
+  // CORREDOR). O desenho antigo saía de dentro do laço de rótulos, que pula as
+  // vias no `continue`, e esses dois marcos não apareciam na planta.
+  assert.equal(diag.marcos.length, trechosPlanta.length,
+    `${diag.marcos.length} marcos para ${trechosPlanta.length} vértices M`);
+  console.log(`    rótulos de trecho: ${diag.rotulos.length}, nenhum sobre as linhas, ${diag.deslocados} fora do centro, ${diag.marcos.length} marcos`);
 
   // leitura real
   const doc = await PDFDocument.load(bytes);
