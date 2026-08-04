@@ -224,6 +224,28 @@ Afastar mais é livre — o nome continua no meio da divisa dele, só sai mais p
 desenho. `tests/lagoa_seca_marcos.test.mjs` cobra o desvio **lateral** de cada rótulo com
 tolerância de meio corpo.
 
+### A folga padrão
+
+Rótulo nenhum encosta em traço nenhum. E isso **não** se resolve escolhendo uma distância
+inicial confortável: quem decide é o teste de colisão, e ele só reprovava o candidato cuja
+caixa a linha *cruza*. Um nome podia parar a um ponto da divisa e passar como limpo.
+
+A folga é aplicada inflando a caixa do candidato dentro do próprio teste (`inflar`, e o
+parâmetro `folga` de `segCruzaObb`), então "não cruzar" passa a significar "não chegar
+perto" — para todos os candidatos de todos os rótulos, inclusive o de último recurso.
+
+Valor: `max(9 pt · K, 1,1% da diagonal do polígono)`. Proporcional como o resto, com piso
+em pontos para não sumir em imóvel pequeno, e acompanhando `K` porque a folha de posse sai
+reduzida à metade — folga desenhada é o dobro da percebida.
+
+Medido no `ff198218` (folga exigida 15,3 pt): os quatro blocos de confrontante ficam a
+17,8 · 20,0 · 21,1 · 28,6 pt do traço mais próximo. O preço é corpo: a média caiu de 22,1
+para ~19,5 pt. `tests/rotulos_sem_invadir.test.mjs` mede a distância real de cada bloco a
+cada traço e cobra o valor de `diag.folga`.
+
+Os nomes de via ficam de fora dessa medição — são girados, e a distância a partir da caixa
+envolvente subestima a folga real deles. A folga é garantida na busca pela caixa exata.
+
 ### Quando "ficar no meio" e "não invadir" se chocam
 
 Ganha **não invadir**. O caso é o ADERLÂNDIO REIS MOTA (serviço `ff198218`), cuja divisa

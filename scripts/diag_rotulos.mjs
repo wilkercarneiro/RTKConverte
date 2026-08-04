@@ -88,7 +88,23 @@ const meioETangente = (t) => {
   return { m: poly[t.inicioIdx], tg: { x: 1, y: 0 } };
 };
 
-console.log(`sobrepostos=${diag.sobrepostos} deslocados=${diag.deslocados} marcos=${diag.marcos.length} obstáculos=${diag.obstaculos.length}`);
+const distPontoSeg = (p, s) => {
+  const vx = s.x2 - s.x1, vy = s.y2 - s.y1, l2 = vx * vx + vy * vy;
+  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - s.x1) * vx + (p.y - s.y1) * vy) / l2));
+  return Math.hypot(p.x - (s.x1 + t * vx), p.y - (s.y1 + t * vy));
+};
+const distRetSeg = (r, s) => {
+  const cantos = [{ x: r.x1, y: r.y1 }, { x: r.x2, y: r.y1 }, { x: r.x2, y: r.y2 }, { x: r.x1, y: r.y2 }];
+  let d = Infinity;
+  for (const c of cantos) d = Math.min(d, distPontoSeg(c, s));
+  for (const p of [{ x: s.x1, y: s.y1 }, { x: s.x2, y: s.y2 }]) {
+    d = Math.min(d, Math.hypot(Math.max(r.x1 - p.x, 0, p.x - r.x2), Math.max(r.y1 - p.y, 0, p.y - r.y2)));
+  }
+  return d;
+};
+
+console.log(`sobrepostos=${diag.sobrepostos} deslocados=${diag.deslocados} marcos=${diag.marcos.length}`
+  + ` obstáculos=${diag.obstaculos.length} folga exigida=${diag.folga.toFixed(1)}pt`);
 diag.rotulos.forEach((r, i) => {
   const t = g.trechos[i];
   const cen = { x: (r.x1 + r.x2) / 2, y: (r.y1 + r.y2) / 2 };
@@ -112,6 +128,7 @@ diag.rotulos.forEach((r, i) => {
     `${(t?.descritivo ?? "?").split("\\")[0].slice(0, 24).padEnd(25)} ` +
     `corpo ${diag.corpos[i].toFixed(1)}pt  caixa ${(r.x2 - r.x1).toFixed(0)}×${(r.y2 - r.y1).toFixed(0)}  ` +
     `dist ${Math.hypot(cen.x - m.x, cen.y - m.y).toFixed(0)}pt  lateral ${lateral.toFixed(0)}pt  ` +
+    `folga ${Math.min(...diag.obstaculos.map((s) => distRetSeg(r, s))).toFixed(1)}pt  ` +
     `${cruzou ? `CRUZA ~${cruzou}` : "limpo"}`,
   );
 });

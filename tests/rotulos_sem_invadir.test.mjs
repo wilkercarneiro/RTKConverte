@@ -83,6 +83,44 @@ test("nenhum nome de vizinho por cima de linha do desenho", () => {
   assert.equal(diag.rotulos.length, 6, "seis confrontantes, seis rótulos");
 });
 
+test("nenhum nome fica colado numa linha — folga padrão respeitada", () => {
+  // Não cruzar não basta: um rótulo podia parar a um ponto da divisa e passar
+  // como limpo. A folga é exigida no próprio teste de colisão, inflando a caixa,
+  // então tem de aparecer como distância medida aqui.
+  //
+  // Só os blocos de confrontante entram: o nome de via é girado, e a distância
+  // medida a partir da caixa ENVOLVENTE subestima a folga real dele — a mesma
+  // razão pela qual a busca usa `segCruzaObb` para esses.
+  const distPontoSeg = (p, s) => {
+    const vx = s.x2 - s.x1, vy = s.y2 - s.y1;
+    const l2 = vx * vx + vy * vy;
+    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - s.x1) * vx + (p.y - s.y1) * vy) / l2));
+    return Math.hypot(p.x - (s.x1 + t * vx), p.y - (s.y1 + t * vy));
+  };
+  const distRetSeg = (r, s) => {
+    const cantos = [{ x: r.x1, y: r.y1 }, { x: r.x2, y: r.y1 }, { x: r.x2, y: r.y2 }, { x: r.x1, y: r.y2 }];
+    let d = Infinity;
+    for (const c of cantos) d = Math.min(d, distPontoSeg(c, s));
+    for (const p of [{ x: s.x1, y: s.y1 }, { x: s.x2, y: s.y2 }]) {
+      d = Math.min(d, Math.hypot(
+        Math.max(r.x1 - p.x, 0, p.x - r.x2), Math.max(r.y1 - p.y, 0, p.y - r.y2)));
+    }
+    return d;
+  };
+  g.trechos.forEach((t, i) => {
+    if (t.isEstrada) return;
+    const r = diag.rotulos[i];
+    let min = Infinity, culpado = null;
+    for (const s of diag.obstaculos) {
+      const d = distRetSeg(r, s);
+      if (d < min) { min = d; culpado = s; }
+    }
+    assert.ok(min >= diag.folga - 0.5,
+      `"${t.descritivo.split("\\")[0]}" ficou a ${min.toFixed(1)}pt de um traço`
+      + ` (folga exigida ${diag.folga.toFixed(1)}pt) em ${JSON.stringify(culpado)}`);
+  });
+});
+
 test("o deslize de último recurso não sai do espaço do próprio vizinho", () => {
   const poly = diag.poligono;
   // no máximo UM rótulo precisa deslizar nesta planta; os outros ficam no meio

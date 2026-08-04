@@ -230,6 +230,8 @@ export interface DiagPlanta {
   vias?: Seg[];
   /** corpo em que cada rótulo de trecho acabou saindo, na ordem de `rotulos` */
   corpos?: number[];
+  /** folga mínima exigida entre rótulo de trecho e traço do desenho */
+  folga?: number;
   /** o anel como foi desenhado, em pontos da folha */
   poligono?: Pt[];
 }
@@ -273,14 +275,31 @@ function segCruzaRet(s: Seg, r: Ret): boolean {
  */
 interface Obb { x: number; y: number; w: number; h: number; ang: number }
 
-function segCruzaObb(s: Seg, o: Obb): boolean {
+function segCruzaObb(s: Seg, o: Obb, folga = 0): boolean {
   const a = -o.ang * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
   const loc = (px: number, py: number) => {
     const dx = px - o.x, dy = py - o.y;
     return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
   };
   const p1 = loc(s.x1, s.y1), p2 = loc(s.x2, s.y2);
-  return segCruzaRet({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y }, { x1: 0, y1: 0, x2: o.w, y2: o.h });
+  return segCruzaRet(
+    { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y },
+    { x1: -folga, y1: -folga, x2: o.w + folga, y2: o.h + folga },
+  );
+}
+
+/**
+ * A caixa com a FOLGA PADRÃO em volta.
+ *
+ * Não basta escolher uma distância inicial confortável: quem decide é o teste de
+ * colisão, e ele só reprovava o candidato cuja caixa a linha CRUZA. Um rótulo
+ * podia então parar a um ponto da divisa e passar como limpo — encostado, que é
+ * o que não pode acontecer em hipótese nenhuma. Inflando a caixa, "não cruzar"
+ * passa a significar "não chegar perto", e a folga vale para todos os candidatos
+ * de todos os rótulos, inclusive o do último recurso.
+ */
+function inflar(r: Ret, folga: number): Ret {
+  return { x1: r.x1 - folga, y1: r.y1 - folga, x2: r.x2 + folga, y2: r.y2 + folga };
 }
 
 // caixa envolvente de um texto rotacionado (pdf-lib gira em torno da origem do texto)
@@ -305,12 +324,14 @@ function retTextoRot(x: number, y: number, w: number, h: number, angDeg: number)
  * afastar muito, e o deslize continua caro o bastante para nunca vencer enquanto
  * houver qualquer posição centrada livre (peso 20 > o pior caso centrado, 15,6).
  */
-function melhorLivre<T extends { ret: Ret; obb?: Obb; custo: number }>(candidatos: T[], obstaculos: Seg[], ocupado: Ret[]): T | null {
+function melhorLivre<T extends { ret: Ret; obb?: Obb; custo: number }>(
+  candidatos: T[], obstaculos: Seg[], ocupado: Ret[], folga = 0,
+): T | null {
   let melhor: T | null = null;
   for (const cand of candidatos) {
     if (melhor && cand.custo >= melhor.custo) continue;
-    if (obstaculos.some((s) => (cand.obb ? segCruzaObb(s, cand.obb) : segCruzaRet(s, cand.ret)))) continue;
-    if (ocupado.some((o) => retCruzaRet(cand.ret, o))) continue;
+    if (obstaculos.some((s) => (cand.obb ? segCruzaObb(s, cand.obb, folga) : segCruzaRet(s, inflar(cand.ret, folga))))) continue;
+    if (ocupado.some((o) => retCruzaRet(inflar(cand.ret, folga), o))) continue;
     melhor = cand;
   }
   return melhor;
@@ -325,11 +346,13 @@ function melhorLivre<T extends { ret: Ret; obb?: Obb; custo: number }>(candidato
  * SECA era pior — o rótulo saía pequeno, longe da divisa e ainda por cima da
  * linha. Empate fica com o primeiro, que é o mais próximo do centro do trecho.
  */
-function menosPior<T extends { ret: Ret; obb?: Obb }>(candidatos: T[], obstaculos: Seg[], ocupado: Ret[]): T {
+function menosPior<T extends { ret: Ret; obb?: Obb }>(
+  candidatos: T[], obstaculos: Seg[], ocupado: Ret[], folga = 0,
+): T {
   let melhor = candidatos[0], melhorN = Infinity;
   for (const cand of candidatos) {
-    const n = obstaculos.filter((s) => (cand.obb ? segCruzaObb(s, cand.obb) : segCruzaRet(s, cand.ret))).length
-      + ocupado.filter((o) => retCruzaRet(cand.ret, o)).length;
+    const n = obstaculos.filter((s) => (cand.obb ? segCruzaObb(s, cand.obb, folga) : segCruzaRet(s, inflar(cand.ret, folga)))).length
+      + ocupado.filter((o) => retCruzaRet(inflar(cand.ret, folga), o)).length;
     if (n < melhorN) { melhor = cand; melhorN = n; if (n === 0) break; }
   }
   return melhor;
@@ -468,6 +491,14 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     Math.max(...bbX) - Math.min(...bbX),
     Math.max(...bbY) - Math.min(...bbY),
   ) || 100;
+
+  // FOLGA PADRÃO entre qualquer rótulo de trecho e qualquer traço do desenho.
+  // Proporcional como o resto, e com piso em pontos para não sumir em imóvel
+  // pequeno. Vale para TODOS os candidatos, inclusive o de último recurso: um
+  // nome não pode encostar na linha em hipótese nenhuma. Na folha de posse a
+  // planta sai reduzida à metade, então a folga desenhada é o dobro da percebida
+  // — por isso ela acompanha K, como todo corpo pequeno deste desenho.
+  const FOLGA = Math.max(9 * K, 0.011 * diagPoly);
 
   const trechoDoIdx = (i: number): TrechoPlanta => {
     for (const t of d.trechos) {
@@ -693,7 +724,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
             obb: { x, y, w: vw, h: tam, ang: rot },
           };
         }));
-      const esc = melhorLivre(cands, obstaculos, ocupado) ?? menosPior(cands, obstaculos, ocupado);
+      const esc = melhorLivre(cands, obstaculos, ocupado, FOLGA) ?? menosPior(cands, obstaculos, ocupado, FOLGA);
       texto(c, nome, esc.x, esc.y, esc.tam, { bold: true, cor: PRETO, rot });
       ocupado.push(esc.ret);
       rotulosTrecho.push(esc.ret);
@@ -780,7 +811,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
         }
       }
     }
-    const esc = melhorLivre(cands, obstaculos, ocupado) ?? menosPior(cands, obstaculos, ocupado);
+    const esc = melhorLivre(cands, obstaculos, ocupado, FOLGA) ?? menosPior(cands, obstaculos, ocupado, FOLGA);
     for (const [li, lt] of esc.lbl.entries()) texto(c, lt, esc.lx, esc.ty - li * esc.esp, esc.tam);
     ocupado.push(esc.ret);
     rotulosTrecho.push(esc.ret);
@@ -1089,6 +1120,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     diag.marcos = marcos;
     diag.vias = vias;
     diag.corpos = corposTrecho;
+    diag.folga = FOLGA;
     diag.poligono = vs.map((v) => ({ x: X(v.e), y: Y(v.n) }));
   }
 
