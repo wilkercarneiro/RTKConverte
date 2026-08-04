@@ -739,30 +739,45 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // O afastamento só cresce se nem o menor corpo couber na distância da regra.
     // Crescer aqui NÃO fere a regra: o nome continua no meio do trecho do vizinho,
     // que é o que aponta para a divisa certa — só sai mais para fora do desenho.
-    // Deslizar para o lado, esse sim, continua proibido.
-    const AFASTS = [1, 1.25, 1.55, 1.9, 2.3];
+    const AFASTS = [1, 1.2, 1.4, 1.65, 1.9, 2.2, 2.55, 2.95, 3.4, 3.9];
+    // Deslize lateral, ÚLTIMO recurso — e só existe porque "não invadir" ganha de
+    // "ficar no meio". No ADERLÂNDIO REIS MOTA (serviço ff198218) a divisa fica no
+    // fundo de um "V" côncavo: a normal do meio do trecho aponta para dentro da
+    // própria reentrância, e nenhuma distância nem nenhum corpo limpa a aresta
+    // vizinha. Sem esta saída o rótulo era desenhado POR CIMA da linha, que é pior
+    // que sair um pouco do centro. O peso garante que ele só entre quando nada
+    // centrado estiver livre: 2000 por passo contra 909 do pior caso centrado.
+    const DESLS = [0, 0.25, -0.25, 0.5, -0.5, 0.8, -0.8];
+    const dir = { x: Math.cos(angSeg * Math.PI / 180), y: Math.sin(angSeg * Math.PI / 180) };
     const cands: { lbl: string[]; lx: number; ty: number; tam: number; esp: number; desl: number; custo: number; ret: Ret }[] = [];
-    for (const [ai, fa] of AFASTS.entries()) {
-      for (const [ei, escala] of ESCALAS.entries()) {
-        const tam = LBL_TAM * escala, esp = LBL_ESP * escala;
-        const lbl = quebrarLinhas(linhasDescritivo(t.descritivo), maxW, tam, f);
-        const blockW = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, tam)));
-        const altura = lbl.length * esp;
-        const MG = AFAST * fa;
-        // meio do trecho, empurrado para fora; o bloco é centrado nesse ponto
-        let lx = mx + nx * MG - blockW / 2;
-        let ty = my + ny * MG + altura / 2;
-        // e o bloco inteiro fica dentro da área de desenho — antes os rótulos
-        // laterais vazavam para fora da folha
-        lx = Math.max(dArea.x + 4, Math.min(lx, dArea.x + dArea.w - blockW - 4));
-        ty = Math.max(dArea.y + altura, Math.min(ty, dArea.y + dArea.h - tam));
-        cands.push({
-          lbl, lx, ty, tam, esp, desl: 0,
-          // manter a distância da regra vale mais que manter o corpo: 100 por
-          // degrau de afastamento contra 1 por degrau de corpo
-          custo: 100 * ai + ei,
-          ret: { x1: lx - 2, y1: ty - altura, x2: lx + blockW + 2, y2: ty + tam },
-        });
+    for (const [di, desl] of DESLS.entries()) {
+      for (const [ai, fa] of AFASTS.entries()) {
+        for (const [ei, escala] of ESCALAS.entries()) {
+          const tam = LBL_TAM * escala, esp = LBL_ESP * escala;
+          const lbl = quebrarLinhas(linhasDescritivo(t.descritivo), maxW, tam, f);
+          const blockW = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, tam)));
+          const altura = lbl.length * esp;
+          const MG = AFAST * fa;
+          // meio do trecho, empurrado para fora; o bloco é centrado nesse ponto
+          // o deslize é limitado pelo ESPAÇO DO VIZINHO: no máximo 0,4 do
+          // comprimento da divisa dele, para o nome nunca chegar ao vão do vizinho
+          // de baixo mesmo quando o desvio é a única saída contra a sobreposição
+          const passo = desl * Math.min(blockW, 0.4 * compTrecho);
+          let lx = mx + nx * MG + dir.x * passo - blockW / 2;
+          let ty = my + ny * MG + dir.y * passo + altura / 2;
+          // e o bloco inteiro fica dentro da área de desenho — antes os rótulos
+          // laterais vazavam para fora da folha
+          lx = Math.max(dArea.x + 4, Math.min(lx, dArea.x + dArea.w - blockW - 4));
+          ty = Math.max(dArea.y + altura, Math.min(ty, dArea.y + dArea.h - tam));
+          cands.push({
+            lbl, lx, ty, tam, esp, desl,
+            // 2000 por passo de deslize ≫ 9·100 (afastamento) + 10 (corpo) = 910:
+            // sair do meio só quando NADA centrado estiver livre. Depois disso,
+            // manter a distância da regra vale mais que manter o corpo.
+            custo: 2000 * Math.ceil(di / 2) + 100 * ai + ei,
+            ret: { x1: lx - 2, y1: ty - altura, x2: lx + blockW + 2, y2: ty + tam },
+          });
+        }
       }
     }
     const esc = melhorLivre(cands, obstaculos, ocupado) ?? menosPior(cands, obstaculos, ocupado);

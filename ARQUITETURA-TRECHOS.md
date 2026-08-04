@@ -220,11 +220,32 @@ O que existia antes era uma busca em que o **rótulo fugia** do obstáculo: afas
 as duas relatadas: nomes boiando a distâncias desiguais, e o nome do trecho apertado
 parando fora do vão do vizinho.
 
-**Deslizar deixou de existir.** Não é questão de estética: um nome fora do meio do trecho
-aponta para a divisa errada, que é o que o resto deste documento existe para evitar.
-Afastar mais, sim — o nome continua no meio da divisa dele, só sai mais para fora do
+Afastar mais é livre — o nome continua no meio da divisa dele, só sai mais para fora do
 desenho. `tests/lagoa_seca_marcos.test.mjs` cobra o desvio **lateral** de cada rótulo com
-tolerância de meio corpo; o deslize que ele tem de pegar era de 125 pt.
+tolerância de meio corpo.
+
+### Quando "ficar no meio" e "não invadir" se chocam
+
+Ganha **não invadir**. O caso é o ADERLÂNDIO REIS MOTA (serviço `ff198218`), cuja divisa
+fica no fundo de um "V" côncavo na face oeste: a normal do meio do trecho aponta para
+dentro da própria reentrância e a aresta vizinha atravessa o raio inteiro. Ali,
+
+- afastar não resolve — passado o limite da área de desenho o bloco é grampeado na borda
+  e volta a bater na mesma aresta;
+- encolher não resolve — o obstáculo é uma linha cruzando a região, não falta de espaço.
+
+A busca terminava em `menosPior`, que aceita sobreposição, e o nome saía **por cima da
+poligonal**. O deslize lateral voltou como último recurso, com dois limites:
+
+- **custo 2000 por passo**, contra 910 do pior caso centrado — só entra quando nenhuma
+  posição centrada está livre, então continua invisível nas plantas que não precisam dele;
+- **teto de 0,4 × o comprimento da divisa**, para o nome nunca alcançar o vão do vizinho
+  de baixo. É o limite que preserva o significado do rótulo mesmo quando ele tem de sair
+  do centro.
+
+Na planta do `ff198218`: cinco dos seis nomes ficam no meio, e o ADERLÂNDIO sai a 88 pt do
+centro, dentro do teto, limpo. `tests/rotulos_sem_invadir.test.mjs` trava os dois lados —
+zero sobreposição e o desvio lateral dentro do teto, trecho a trecho.
 
 Sem nenhuma posição livre, o recurso é `menosPior` — a que cruza menos coisa. Antes era
 "a última da lista", que é o extremo da busca e não tinha razão para ser a melhor.
