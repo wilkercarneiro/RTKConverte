@@ -226,6 +226,12 @@ export interface DiagPlanta {
   deslocados: number;
   /** traços verdes de divisão — tem de sair um por vértice M, via ou não */
   marcos?: Seg[];
+  /** as linhas duplas vermelhas, para conferir que caem FORA da poligonal */
+  vias?: Seg[];
+  /** corpo em que cada rótulo de trecho acabou saindo, na ordem de `rotulos` */
+  corpos?: number[];
+  /** o anel como foi desenhado, em pontos da folha */
+  poligono?: Pt[];
 }
 
 function retCruzaRet(a: Ret, b: Ret): boolean {
@@ -254,6 +260,29 @@ function segCruzaRet(s: Seg, r: Ret): boolean {
   return false;
 }
 
+/**
+ * Caixa REAL de um texto rotacionado, e a colisão exata contra ela.
+ *
+ * A caixa envolvente (`retTextoRot`) serve para reservar espaço, mas não para
+ * decidir sobreposição: num nome de via a ~50°, a envolvente é quase um quadrado
+ * que a própria divisa atravessa por dentro, faça o rótulo o que fizer. Enquanto
+ * o rótulo fugia do obstáculo isso só o empurrava para longe; depois que a
+ * posição virou regra e o corpo passou a ser quem cede, o falso positivo passou a
+ * encolher o nome da estrada até o piso — 12,8pt onde cabiam 22. Aqui o segmento
+ * é levado para o referencial do texto e testado contra o retângulo de verdade.
+ */
+interface Obb { x: number; y: number; w: number; h: number; ang: number }
+
+function segCruzaObb(s: Seg, o: Obb): boolean {
+  const a = -o.ang * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
+  const loc = (px: number, py: number) => {
+    const dx = px - o.x, dy = py - o.y;
+    return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
+  };
+  const p1 = loc(s.x1, s.y1), p2 = loc(s.x2, s.y2);
+  return segCruzaRet({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y }, { x1: 0, y1: 0, x2: o.w, y2: o.h });
+}
+
 // caixa envolvente de um texto rotacionado (pdf-lib gira em torno da origem do texto)
 function retTextoRot(x: number, y: number, w: number, h: number, angDeg: number): Ret {
   const a = angDeg * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
@@ -266,18 +295,25 @@ function retTextoRot(x: number, y: number, w: number, h: number, angDeg: number)
 }
 
 /**
- * Primeira posição da lista que não cruza nenhuma linha do desenho nem nenhum
- * rótulo já colocado. Os candidatos vêm ordenados do afastamento menor para o
- * maior, então o rótulo só se afasta o quanto for necessário. Sem nenhuma
- * posição livre, devolve null e o chamador decide.
+ * Entre os candidatos LIVRES, o de menor custo — não o primeiro da lista.
+ *
+ * A busca por ordem fixa ("esgote afastamento, depois quebra, depois corpo, e só
+ * então deslize") garante que o rótulo fique no vão do vizinho, mas paga caro por
+ * isso: prefere QUALQUER distância a QUALQUER deslize, então os blocos saíam
+ * boiando a 150pt da divisa, cada um a uma distância diferente. O custo deixa as
+ * quatro saídas competirem: afastar pouco e encolher um passo passa a ganhar de
+ * afastar muito, e o deslize continua caro o bastante para nunca vencer enquanto
+ * houver qualquer posição centrada livre (peso 20 > o pior caso centrado, 15,6).
  */
-function primeiraLivre<T extends { ret: Ret }>(candidatos: T[], obstaculos: Seg[], ocupado: Ret[]): T | null {
+function melhorLivre<T extends { ret: Ret; obb?: Obb; custo: number }>(candidatos: T[], obstaculos: Seg[], ocupado: Ret[]): T | null {
+  let melhor: T | null = null;
   for (const cand of candidatos) {
-    if (obstaculos.some((s) => segCruzaRet(s, cand.ret))) continue;
+    if (melhor && cand.custo >= melhor.custo) continue;
+    if (obstaculos.some((s) => (cand.obb ? segCruzaObb(s, cand.obb) : segCruzaRet(s, cand.ret)))) continue;
     if (ocupado.some((o) => retCruzaRet(cand.ret, o))) continue;
-    return cand;
+    melhor = cand;
   }
-  return null;
+  return melhor;
 }
 
 /**
@@ -289,10 +325,10 @@ function primeiraLivre<T extends { ret: Ret }>(candidatos: T[], obstaculos: Seg[
  * SECA era pior — o rótulo saía pequeno, longe da divisa e ainda por cima da
  * linha. Empate fica com o primeiro, que é o mais próximo do centro do trecho.
  */
-function menosPior<T extends { ret: Ret }>(candidatos: T[], obstaculos: Seg[], ocupado: Ret[]): T {
+function menosPior<T extends { ret: Ret; obb?: Obb }>(candidatos: T[], obstaculos: Seg[], ocupado: Ret[]): T {
   let melhor = candidatos[0], melhorN = Infinity;
   for (const cand of candidatos) {
-    const n = obstaculos.filter((s) => segCruzaRet(s, cand.ret)).length
+    const n = obstaculos.filter((s) => (cand.obb ? segCruzaObb(s, cand.obb) : segCruzaRet(s, cand.ret))).length
       + ocupado.filter((o) => retCruzaRet(cand.ret, o)).length;
     if (n < melhorN) { melhor = cand; melhorN = n; if (n === 0) break; }
   }
@@ -378,9 +414,61 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   const obstaculos: Seg[] = [];
   // caixas dos rótulos de trecho (confrontante e via) para o diagnóstico
   const rotulosTrecho: Ret[] = [];
+  const corposTrecho: number[] = [];
+  // caixa REAL dos rótulos girados, para o diagnóstico medir sobreposição com o
+  // mesmo critério da busca — pela envolvente, todo nome de via em diagonal
+  // aparecia como sobreposto sem estar
+  const obbsTrecho: (Obb | undefined)[] = [];
   // quantos não couberam centrados e tiveram de deslizar pela divisa
   let deslocados = 0;
   const nv = vs.length;
+
+  // ------------------- de que lado fica o "fora" -------------------
+  // Quem decide é o SENTIDO DO ANEL, não a distância ao centro da folha.
+  //
+  // O critério anterior era "o lado mais longe de (dcx, dcy)", que é o centro da
+  // ÁREA DE DESENHO — nem o centroide do imóvel. Num polígono convexo dá no
+  // mesmo; em côncavo, não: no braço estreito a noroeste da LAGOA SECA o centro
+  // da folha cai do lado de fora do braço, e a linha dupla da estrada era jogada
+  // para DENTRO da poligonal. Com o sentido do anel o lado é o mesmo para todas
+  // as arestas, côncavo ou não.
+  //
+  // Convenção: em coordenadas de tela (Y para cima), área assinada > 0 = anti-
+  // horário, e a normal externa da aresta a→b é (dy, -dx)/len.
+  let giro = 0;
+  for (let i = 0; i < nv; i++) {
+    const a = vs[i], b = vs[(i + 1) % nv];
+    giro += X(a.e) * Y(b.n) - X(b.e) * Y(a.n);
+  }
+  const sentido = giro >= 0 ? 1 : -1;
+  /** normal externa unitária da aresta i → i+1 */
+  const normalAresta = (i: number): Pt => {
+    const a = vs[i], b = vs[(i + 1) % nv];
+    const dx = X(b.e) - X(a.e), dy = Y(b.n) - Y(a.n);
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: sentido * dy / len, y: -sentido * dx / len };
+  };
+  /** normal externa unitária NO vértice i: bissetriz das duas arestas que o tocam */
+  const normalVertice = (i: number): Pt => {
+    const p = normalAresta((i - 1 + nv) % nv), q = normalAresta(i);
+    const x = p.x + q.x, y = p.y + q.y;
+    const l = Math.hypot(x, y);
+    // arestas antiparalelas (bico degenerado): fica com a normal da que sai
+    return l < 1e-6 ? q : { x: x / l, y: y / l };
+  };
+
+  const vias: Seg[] = [];
+
+  // Unidade PROPORCIONAL ao desenho. Todo afastamento de rótulo é medido nela, e
+  // não em pontos fixos: assim a mesma regra vale para um imóvel de 6 ha e um de
+  // 600, e os rótulos de uma planta ficam todos à mesma distância da divisa. Era
+  // a falta disso que deixava cada nome a uma distância diferente.
+  const bbX = vs.map((v) => X(v.e)), bbY = vs.map((v) => Y(v.n));
+  const diagPoly = Math.hypot(
+    Math.max(...bbX) - Math.min(...bbX),
+    Math.max(...bbY) - Math.min(...bbY),
+  ) || 100;
+
   const trechoDoIdx = (i: number): TrechoPlanta => {
     for (const t of d.trechos) {
       if (t.fimIdx > t.inicioIdx ? i >= t.inicioIdx && i < t.fimIdx : i >= t.inicioIdx || i < t.fimIdx) return t;
@@ -391,16 +479,13 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     const t = trechoDoIdx(i);
     if (!t.isEstrada) continue;
     const a = vs[i], b = vs[(i + 1) % nv];
-    const dx = X(b.e) - X(a.e), dy = Y(b.n) - Y(a.n);
-    const len = Math.hypot(dx, dy) || 1;
-    // normal apontando p/ FORA (lado oposto ao centroide)
-    let nx = -dy / len, ny = dx / len;
-    const mx = (X(a.e) + X(b.e)) / 2, my = (Y(a.n) + Y(b.n)) / 2;
-    if ((mx + nx * 10 - dcx) ** 2 + (my + ny * 10 - dcy) ** 2 < (mx - nx * 10 - dcx) ** 2 + (my - ny * 10 - dcy) ** 2) { nx = -nx; ny = -ny; }
+    // a linha dupla é SEMPRE por fora: a normal vem do sentido do anel
+    const { x: nx, y: ny } = normalAresta(i);
     for (const off of [5, 11]) {
       const seg = { x1: X(a.e) + nx * off, y1: Y(a.n) + ny * off, x2: X(b.e) + nx * off, y2: Y(b.n) + ny * off };
       linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8 * K, VERMELHO);
       obstaculos.push(seg);
+      vias.push(seg);
     }
   }
 
@@ -418,24 +503,25 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   const VERT_TAM = 7.5 * K;
   const ocupado: { x1: number; y1: number; x2: number; y2: number }[] = [];
   let rotulosOcultos = 0;
+  // Só o bolinha e o tique saem agora. O CÓDIGO fica reservado e é desenhado
+  // depois dos nomes dos vizinhos: quem cede lugar é ele, não o confrontante.
+  // Antes era ao contrário — os códigos entravam em `ocupado` primeiro e o bloco
+  // do vizinho tinha de se virar em volta deles.
+  const codigosPendentes: { codigo: string; lx: number; ly: number; ret: Ret }[] = [];
   for (let i = 0; i < nv; i++) {
     const v = vs[i];
     page.drawCircle({ x: X(v.e), y: Y(v.n), size: 1.4, color: PRETO });
-    // normal apontando p/ fora do polígono
-    let nx = X(v.e) - dcx, ny = Y(v.n) - dcy;
-    const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+    // fora do polígono pela bissetriz das duas arestas, não pelo centro da folha
+    const { x: nx, y: ny } = normalVertice(i);
     // tique do marco, como na planta de referência
     linha(c, X(v.e) + nx * 2, Y(v.n) + ny * 2, X(v.e) + nx * 6, Y(v.n) + ny * 6, 0.9);
     const w = f.widthOfTextAtSize(v.codigo, VERT_TAM);
     const lx = nx < 0 ? X(v.e) + nx * 8 - w : X(v.e) + nx * 8;
     const ly = Y(v.n) + ny * 8 - VERT_TAM / 2;
-    const cx = { x1: lx - 1.5, y1: ly - 1.5, x2: lx + w + 1.5, y2: ly + VERT_TAM + 1.5 };
-    if (ocupado.some((o) => !(cx.x2 < o.x1 || cx.x1 > o.x2 || cx.y2 < o.y1 || cx.y1 > o.y2))) {
-      rotulosOcultos++;
-      continue;
-    }
-    ocupado.push(cx);
-    texto(c, v.codigo, lx, ly, VERT_TAM, { cor: PRETO });
+    codigosPendentes.push({
+      codigo: v.codigo, lx, ly,
+      ret: { x1: lx - 1.5, y1: ly - 1.5, x2: lx + w + 1.5, y2: ly + VERT_TAM + 1.5 },
+    });
   }
 
   // ------------------- divisões de confrontação + rótulos -------------------
@@ -498,8 +584,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   for (const t of d.trechos) {
     const vm = vs[t.inicioIdx % nv];
     if (!vm) continue;
-    let gx = X(vm.e) - dcx, gy = Y(vm.n) - dcy;
-    const gl = Math.hypot(gx, gy) || 1; gx /= gl; gy /= gl;
+    const { x: gx, y: gy } = normalVertice(t.inicioIdx % nv);
     const x1 = X(vm.e), y1 = Y(vm.n), x2 = x1 + gx * 50, y2 = y1 + gy * 50;
     linha(c, x1, y1, x2, y2, 2.8 * K, VERDE);
     marcos.push({ x1, y1, x2, y2 });
@@ -540,9 +625,11 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     });
     let alvo = segLens.reduce((s, l) => s + l, 0) / 2;
     let mx = X(vs[idxs[0] % nv].e), my = Y(vs[idxs[0] % nv].n), angSeg = 0;
+    let idxMeio = idxs[0] % nv;
     for (const [k, i] of idxs.entries()) {
       if (alvo <= segLens[k] || k === idxs.length - 1) {
         const a = vs[i], b = vs[(i + 1) % nv];
+        idxMeio = i;
         if (a && b) {
           const fr = segLens[k] > 0 ? alvo / segLens[k] : 0;
           mx = X(a.e) + (X(b.e) - X(a.e)) * fr;
@@ -553,8 +640,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       }
       alvo -= segLens[k];
     }
-    let nx = mx - dcx, ny = my - dcy;
-    const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+    // rótulo empurrado para fora pela normal da ARESTA onde caiu o meio do trecho:
+    // em imóvel côncavo o vetor a partir do centro da folha apontava para dentro,
+    // e o bloco do vizinho ia parar em cima da área do imóvel
+    const { x: nx, y: ny } = normalAresta(idxMeio);
 
     if (t.isEstrada) {
       // Nome da via rotacionado ao longo do segmento, empurrado para fora até não
@@ -564,22 +653,33 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       // o texto é desenhado a partir da origem; recuar meia largura NA DIREÇÃO DA
       // ROTAÇÃO centraliza o nome sobre o meio do trecho
       const ra = rot * Math.PI / 180;
-      // Afastar da linha primeiro, em corpo cheio; encolher só se todos os
-      // afastamentos estiverem ocupados. O nome fica sempre centrado no trecho —
-      // ele acompanha a própria via, então nunca desliza para o trecho vizinho.
-      const cands = [1, 0.9, 0.82, 0.74].flatMap((escala) => {
-        const tam = LBL_TAM * escala;
-        const vw = c.fb.widthOfTextAtSize(nome, tam);
-        return [22, 30, 40, 52, 66, 82].map((o) => o * K).map((off) => {
-          const x = mx + nx * off - Math.cos(ra) * vw / 2;
-          const y = my + ny * off - Math.sin(ra) * vw / 2;
-          return { x, y, tam, ret: retTextoRot(x, y, vw, tam, rot) };
-        });
-      });
-      const esc = primeiraLivre(cands, obstaculos, ocupado) ?? menosPior(cands, obstaculos, ocupado);
+      // Mesma regra do bloco do confrontante, na medida proporcional: o nome fica
+      // no meio da via, encostado nela, e é o corpo que cede para caber. Já é
+      // centrado por construção — acompanha a própria estrada, não desliza.
+      const AFAST_VIA = Math.max(16 * K, 0.026 * diagPoly);
+      const escalasVia: number[] = [];
+      // piso de 0,7: abaixo disso o nome da via deixa de ser legível na A3, que
+      // sai reduzida à metade — encolher tem limite, cair fora da folha não tem
+      for (let s = 1; s >= 0.7; s -= 0.03) escalasVia.push(s);
+      const cands = [1, 1.35, 1.75, 2.2].flatMap((fa, ai) =>
+        escalasVia.map((escala, ei) => {
+          const tam = LBL_TAM * escala;
+          const vw = c.fb.widthOfTextAtSize(nome, tam);
+          const o = AFAST_VIA * fa;
+          const x = mx + nx * o - Math.cos(ra) * vw / 2;
+          const y = my + ny * o - Math.sin(ra) * vw / 2;
+          return {
+            x, y, tam, custo: 100 * ai + ei,
+            ret: retTextoRot(x, y, vw, tam, rot),
+            obb: { x, y, w: vw, h: tam, ang: rot },
+          };
+        }));
+      const esc = melhorLivre(cands, obstaculos, ocupado) ?? menosPior(cands, obstaculos, ocupado);
       texto(c, nome, esc.x, esc.y, esc.tam, { bold: true, cor: PRETO, rot });
       ocupado.push(esc.ret);
       rotulosTrecho.push(esc.ret);
+      corposTrecho.push(esc.tam);
+      obbsTrecho.push(esc.obb);
       continue;
     }
     // o traço verde de divisão já foi desenhado acima, um por M
@@ -592,55 +692,79 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // porque centrar fazia rótulos largos voltarem por cima do polígono — hoje
     // isso é impossível, porque a busca abaixo testa colisão contra as linhas.
     //
-    // Três saídas contra sobreposição, e a ORDEM entre elas é o que importa:
-    // AFASTAR o bloco do perímetro → QUEBRAR em mais linhas → REDUZIR o corpo.
-    // Só depois de esgotar as três é que o bloco desliza ao longo da divisa.
+    // REGRA DE POSIÇÃO — o lugar do nome não se negocia:
     //
-    // Era esta ordem que estava trocada: `desl` ficava no laço de dentro, então o
-    // rótulo escorregava até 1,05× da própria largura para o lado — saindo do vão
-    // do vizinho e indo parar na divisa do outro — antes de sequer tentar quebrar
-    // numa linha a mais. Sair do centro é a saída mais cara das quatro, porque é a
-    // única que muda o SIGNIFICADO do rótulo; encolher o texto custa só leitura, e
-    // o piso de 0,74 mantém o corpo acima de 9,6pt na folha A1.
-    const DESLS = [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9];
-    const ESCALAS = [1, 0.9, 0.82, 0.74];
-    const LARGURAS = [1, 0.62, 0.42];
-    const MARGENS = [30, 42, 56, 72, 90, 112, 140, 172, 208];
-    const dir = { x: Math.cos(angSeg * Math.PI / 180), y: Math.sin(angSeg * Math.PI / 180) };
-    const cands: { lbl: string[]; lx: number; ty: number; tam: number; esp: number; desl: number; ret: Ret }[] = [];
-    for (const desl of DESLS) {
-      for (const escala of ESCALAS) {
+    //   no meio do trecho do vizinho, para fora, a uma distância PROPORCIONAL ao
+    //   desenho (5,2% da diagonal do polígono, igual para todos os rótulos da
+    //   planta), com a largura do bloco proporcional ao COMPRIMENTO DA DIVISA dele.
+    //
+    // Quem se ajusta para caber é o TEXTO — a quebra de linha e o corpo, que
+    // encolhe continuamente até 55% — e, se ainda assim faltar espaço, os códigos
+    // dos vértices, que são desenhados depois e cedem lugar.
+    //
+    // O que havia antes era o oposto: o bloco fugia do obstáculo afastando-se até
+    // 208pt e deslizando até 1,05× da própria largura para o lado. Cada nome parava
+    // a uma distância diferente, e o do trecho apertado ia parar fora do vão do
+    // vizinho — o "desorganizado" relatado. Deslizamento agora não existe: um nome
+    // fora do meio do trecho dele aponta para a divisa errada, e isso não é questão
+    // de estética. Ver ARQUITETURA-TRECHOS.md.
+    const AFAST = Math.max(22 * K, 0.052 * diagPoly);
+    // largura do bloco proporcional ao espaço do vizinho, com piso para caber o
+    // nome mesmo em trecho curto e teto para não atravessar a folha
+    const compTrecho = segLens.reduce((s, l) => s + l, 0);
+    const maxW = Math.min(LBL_MAXW, Math.max(90 * K, 0.8 * compTrecho));
+    // escalas contínuas: o corpo cede de 1 até 0,55 em passos finos, para o bloco
+    // encolher só o necessário em vez de saltar de degrau em degrau
+    const ESCALAS: number[] = [];
+    for (let s = 1; s >= 0.7; s -= 0.03) ESCALAS.push(s);
+    // O afastamento só cresce se nem o menor corpo couber na distância da regra.
+    // Crescer aqui NÃO fere a regra: o nome continua no meio do trecho do vizinho,
+    // que é o que aponta para a divisa certa — só sai mais para fora do desenho.
+    // Deslizar para o lado, esse sim, continua proibido.
+    const AFASTS = [1, 1.25, 1.55, 1.9, 2.3];
+    const cands: { lbl: string[]; lx: number; ty: number; tam: number; esp: number; desl: number; custo: number; ret: Ret }[] = [];
+    for (const [ai, fa] of AFASTS.entries()) {
+      for (const [ei, escala] of ESCALAS.entries()) {
         const tam = LBL_TAM * escala, esp = LBL_ESP * escala;
-        for (const larg of LARGURAS) {
-          const lbl = quebrarLinhas(linhasDescritivo(t.descritivo), LBL_MAXW * larg, tam, f);
-          const blockW = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, tam)));
-          const altura = lbl.length * esp;
-          // afastamentos acompanham K: na folha de posse o texto é 1,7× maior e
-          // precisa recuar na mesma proporção para limpar as linhas
-          for (const mg of MARGENS) {
-            const MG = mg * K;
-            // ponto do meio do trecho, empurrado para fora; o bloco é centrado nele
-            const px0 = mx + nx * MG + dir.x * desl * blockW;
-            const py0 = my + ny * MG + dir.y * desl * blockW;
-            let lx = px0 - blockW / 2;
-            let ty = py0 + altura / 2;
-            // e o bloco inteiro fica dentro da área de desenho — antes os rótulos
-            // laterais vazavam para fora da folha
-            lx = Math.max(dArea.x + 4, Math.min(lx, dArea.x + dArea.w - blockW - 4));
-            ty = Math.max(dArea.y + altura, Math.min(ty, dArea.y + dArea.h - tam));
-            cands.push({
-              lbl, lx, ty, tam, esp, desl,
-              ret: { x1: lx - 2, y1: ty - altura, x2: lx + blockW + 2, y2: ty + tam },
-            });
-          }
-        }
+        const lbl = quebrarLinhas(linhasDescritivo(t.descritivo), maxW, tam, f);
+        const blockW = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, tam)));
+        const altura = lbl.length * esp;
+        const MG = AFAST * fa;
+        // meio do trecho, empurrado para fora; o bloco é centrado nesse ponto
+        let lx = mx + nx * MG - blockW / 2;
+        let ty = my + ny * MG + altura / 2;
+        // e o bloco inteiro fica dentro da área de desenho — antes os rótulos
+        // laterais vazavam para fora da folha
+        lx = Math.max(dArea.x + 4, Math.min(lx, dArea.x + dArea.w - blockW - 4));
+        ty = Math.max(dArea.y + altura, Math.min(ty, dArea.y + dArea.h - tam));
+        cands.push({
+          lbl, lx, ty, tam, esp, desl: 0,
+          // manter a distância da regra vale mais que manter o corpo: 100 por
+          // degrau de afastamento contra 1 por degrau de corpo
+          custo: 100 * ai + ei,
+          ret: { x1: lx - 2, y1: ty - altura, x2: lx + blockW + 2, y2: ty + tam },
+        });
       }
     }
-    const esc = primeiraLivre(cands, obstaculos, ocupado) ?? menosPior(cands, obstaculos, ocupado);
+    const esc = melhorLivre(cands, obstaculos, ocupado) ?? menosPior(cands, obstaculos, ocupado);
     for (const [li, lt] of esc.lbl.entries()) texto(c, lt, esc.lx, esc.ty - li * esc.esp, esc.tam);
     ocupado.push(esc.ret);
     rotulosTrecho.push(esc.ret);
+    corposTrecho.push(esc.tam);
+    obbsTrecho.push(undefined);
     if (esc.desl !== 0) deslocados++;
+  }
+
+  // ------------------- códigos dos vértices, por último -------------------
+  // Reservados lá em cima e desenhados só agora: o nome do vizinho tem posição
+  // fixada por regra, então quem cede é o código. Em divisas com muitos pontos
+  // quase alinhados (a face norte do MONOINO tem 13) eles já se suprimiam entre
+  // si; agora também cedem ao bloco do confrontante. Nada se perde no fluxo de
+  // matrícula — o quadro analítico lista TODOS os vértices.
+  for (const cp of codigosPendentes) {
+    if (ocupado.some((o) => retCruzaRet(cp.ret, o))) { rotulosOcultos++; continue; }
+    ocupado.push(cp.ret);
+    texto(c, cp.codigo, cp.lx, cp.ly, VERT_TAM, { cor: PRETO });
   }
 
   // ------------------- bússola (rosa dos ventos moderna) -------------------
@@ -923,9 +1047,15 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   if (diag) {
     diag.obstaculos = obstaculos;
     diag.rotulos = rotulosTrecho;
-    diag.sobrepostos = rotulosTrecho.filter((r) => obstaculos.some((s) => segCruzaRet(s, r))).length;
+    diag.sobrepostos = rotulosTrecho.filter((r, i) => {
+      const o = obbsTrecho[i];
+      return obstaculos.some((s) => (o ? segCruzaObb(s, o) : segCruzaRet(s, r)));
+    }).length;
     diag.deslocados = deslocados;
     diag.marcos = marcos;
+    diag.vias = vias;
+    diag.corpos = corposTrecho;
+    diag.poligono = vs.map((v) => ({ x: X(v.e), y: Y(v.n) }));
   }
 
   // posse: reduz o conteúdo e entrega a folha no A3 exato (420×297 mm) —

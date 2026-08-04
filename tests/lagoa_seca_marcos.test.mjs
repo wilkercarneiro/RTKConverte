@@ -224,6 +224,64 @@ test("os três M saem com traço verde, inclusive os de faixa de domínio", asyn
   // do posicionamento. O que se pode cobrar é que os blocos de confrontante —
   // que são axis-aligned e onde a medida vale — fiquem limpos.
   assert.ok(diag.sobrepostos <= 2, `${diag.sobrepostos} rótulos sobre as linhas`);
+
+  // A linha dupla vermelha é DA POLIGONAL PARA FORA, sempre. Este imóvel é
+  // côncavo — tem um braço estreito a noroeste — e era exatamente ali que o
+  // critério antigo ("o lado mais longe do centro da folha") jogava a estrada
+  // para dentro. O sentido do anel resolve o caso côncavo junto com o convexo.
+  // REGRA DE POSIÇÃO: o nome fica no MEIO do trecho do vizinho, empurrado para
+  // fora. O que se cobra aqui é o "meio" — o desvio LATERAL, ao longo da divisa,
+  // tem de ser nulo. É o que faz o nome apontar para a divisa certa; a distância
+  // radial é proporcional ao desenho e pode crescer se o espaço exigir, sem mudar
+  // de quem é aquela cerca.
+  const poly = diag.poligono;
+  const meioETangente = (t) => {
+    const idxs = [];
+    for (let i = t.inicioIdx; i !== t.fimIdx; i = (i + 1) % poly.length) idxs.push(i);
+    const lens = idxs.map((i) => Math.hypot(
+      poly[(i + 1) % poly.length].x - poly[i].x, poly[(i + 1) % poly.length].y - poly[i].y));
+    let alvo = lens.reduce((s, l) => s + l, 0) / 2;
+    for (const [k, i] of idxs.entries()) {
+      if (alvo <= lens[k] || k === idxs.length - 1) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const fr = lens[k] > 0 ? alvo / lens[k] : 0;
+        const L = lens[k] || 1;
+        return {
+          m: { x: a.x + (b.x - a.x) * fr, y: a.y + (b.y - a.y) * fr },
+          tg: { x: (b.x - a.x) / L, y: (b.y - a.y) / L },
+        };
+      }
+      alvo -= lens[k];
+    }
+    return { m: poly[t.inicioIdx], tg: { x: 1, y: 0 } };
+  };
+  diag.rotulos.forEach((r, i) => {
+    const { m, tg } = meioETangente(trechos[i]);
+    const cen = { x: (r.x1 + r.x2) / 2, y: (r.y1 + r.y2) / 2 };
+    const lateral = Math.abs((cen.x - m.x) * tg.x + (cen.y - m.y) * tg.y);
+    // tolerância de meio corpo: o centro da CAIXA fica meio corpo acima da âncora
+    // (a caixa vai da base da última linha ao topo da primeira), e numa divisa
+    // inclinada essa diferença projeta uns poucos pontos na tangente. O deslize
+    // que isto tem de pegar era de 0,3 × a largura do bloco — 125pt, duas ordens
+    // de grandeza acima.
+    const tol = Math.max(4, diag.corpos[i] * 0.6);
+    assert.ok(lateral < tol, `"${trechos[i].descritivo.split("\\")[0]}" saiu ${lateral.toFixed(0)}pt`
+      + ` fora do meio do trecho (tolerância ${tol.toFixed(0)}pt)`
+      + " — o nome passa a apontar para a divisa do vizinho");
+  });
+
+  assert.ok(diag.vias.length > 0, "as duas vias têm de desenhar linha dupla");
+  const dentro = (p, poly) => {
+    let d = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i], b = poly[j];
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) d = !d;
+    }
+    return d;
+  };
+  const invasoras = diag.vias.filter((s) =>
+    dentro({ x: (s.x1 + s.x2) / 2, y: (s.y1 + s.y2) / 2 }, diag.poligono));
+  assert.equal(invasoras.length, 0, `${invasoras.length} de ${diag.vias.length} linhas de estrada dentro da poligonal`);
   // era 1 antes da correção: só o M-4501, único trecho que não é faixa de domínio
   assert.equal(diag.marcos.length, 3, `${diag.marcos.length} marco(s) para 3 vértices M`);
   // e cada marco sai do SEU M, não de um vértice qualquer

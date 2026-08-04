@@ -172,32 +172,74 @@ anel real e o mesmo imóvel invertido *com a confrontação deslocada um M*, que
 jeito de descrever a mesma realidade ao contrário. São dois caminhos independentes lendo
 a mesma confrontação; a comparação existe para que não voltem a divergir em silêncio.
 
-## Onde o nome do vizinho pode ceder, e em que ordem
+## Que lado é "fora": o sentido do anel, nunca o centro da folha
 
-O bloco do confrontante fica centrado no **vão da divisa dele**. Quando não cabe, a busca
-tem quatro saídas, e a ordem entre elas é a regra:
+A linha dupla vermelha é **da poligonal para fora**. Quem decide o lado era isto:
 
-1. **afastar** do perímetro (30 → 208 pt · K);
-2. **quebrar** em mais linhas (100% → 62% → 42% da largura máxima);
-3. **reduzir o corpo** (100% → 74%, piso de ~9,6 pt na A1);
-4. **deslizar** ao longo da divisa (± 0,9 × a largura do bloco).
+```ts
+// normal apontando p/ FORA (lado oposto ao centroide)
+if (dist(meio + n, dcx, dcy) < dist(meio - n, dcx, dcy)) n = -n;
+```
 
-O deslizamento vem por último porque é a única das quatro que muda o **significado** do
-rótulo: sair do centro leva o nome para perto da divisa do vizinho de baixo, que é
-exatamente o que o resto deste documento existe para evitar. Encolher custa só leitura.
+`dcx, dcy` é o centro da **área de desenho** — nem o centroide do imóvel. Em polígono
+convexo dá no mesmo; em côncavo, não. Na LAGOA SECA, que tem um braço estreito a
+noroeste, o centro da folha cai **fora** do braço, e a linha era jogada para dentro da
+poligonal em **12 das arestas** da LINHA FERREA (todo o trecho `M-4500 → P-14008`, mais
+`P-14004 → P-14001`).
 
-Estava invertido: `desl` era o laço mais interno, então o bloco escorregava o máximo
-permitido antes de sequer tentar uma linha a mais. Foi o que apareceu na LAGOA SECA v18.
+A regra correta não depende de posição nenhuma, só do **sentido do anel**: em coordenadas
+de tela (Y para cima), área assinada > 0 = anti-horário, e a normal externa da aresta
+`a→b` é `(dy, -dx)/len`. O sinal é calculado uma vez e vale para todas as arestas,
+côncavas inclusive.
 
-Sem nenhum candidato livre, o recurso é `menosPior` — o que cruza menos coisa, empate com
-o mais próximo do centro. Antes era "o último da lista", que é o extremo da busca (corpo
-mínimo, afastamento máximo, deslizado ao máximo) e não tinha razão para ser o melhor.
+Duas funções, `normalAresta(i)` e `normalVertice(i)` (bissetriz das duas arestas que
+tocam o vértice), substituíram o critério do centro em **tudo que é "para fora"**: linha
+dupla de estrada, tique e código do vértice, traço verde do marco e a âncora do bloco do
+confrontante — este último ia parar por cima da área do imóvel pelo mesmo motivo.
 
-**Limitação conhecida:** a colisão do nome de via usa a caixa envolvente do texto
-*rotacionado*. Numa divisa diagonal de ~50°, essa caixa é quase um quadrado que a própria
-linha atravessa, e o rótulo conta como sobreposto faça o afastamento que fizer. Por isso
-`tests/lagoa_seca_marcos.test.mjs` cobra `sobrepostos` só dos blocos de confrontante, que
-são axis-aligned e onde a medida vale.
+`tests/lagoa_seca_marcos.test.mjs` confere ponto a ponto que nenhuma linha de estrada cai
+dentro do anel, usando `diag.vias` e `diag.poligono`.
+
+## O lugar do nome do vizinho é regra, não resultado de busca
+
+> **O nome fica no meio do trecho do vizinho, para fora, a uma distância proporcional ao
+> desenho, com a largura do bloco proporcional ao comprimento daquela divisa.**
+
+Quem se ajusta para caber é o **texto** (quebra de linha e corpo, contínuo de 100% a 70%)
+e, se ainda faltar espaço, os **códigos dos vértices**, que passaram a ser desenhados
+depois dos rótulos e cedem lugar. Antes era o contrário: os códigos entravam primeiro na
+lista de ocupados e o bloco do vizinho tinha de se virar em volta deles.
+
+As medidas são proporcionais de propósito — `0,052 × diagonal do polígono` para o
+afastamento, `0,8 × comprimento da divisa` para a largura do bloco. Em pontos fixos, a
+mesma regra dava resultados diferentes num imóvel de 6 ha e num de 600, e cada nome de
+uma planta parava a uma distância diferente. É o que estava por trás do "desorganizado".
+
+O que existia antes era uma busca em que o **rótulo fugia** do obstáculo: afastava-se até
+208 pt e deslizava até 1,05 × a própria largura ao longo da divisa. Duas consequências,
+as duas relatadas: nomes boiando a distâncias desiguais, e o nome do trecho apertado
+parando fora do vão do vizinho.
+
+**Deslizar deixou de existir.** Não é questão de estética: um nome fora do meio do trecho
+aponta para a divisa errada, que é o que o resto deste documento existe para evitar.
+Afastar mais, sim — o nome continua no meio da divisa dele, só sai mais para fora do
+desenho. `tests/lagoa_seca_marcos.test.mjs` cobra o desvio **lateral** de cada rótulo com
+tolerância de meio corpo; o deslize que ele tem de pegar era de 125 pt.
+
+Sem nenhuma posição livre, o recurso é `menosPior` — a que cruza menos coisa. Antes era
+"a última da lista", que é o extremo da busca e não tinha razão para ser a melhor.
+
+### Colisão do texto girado
+
+O nome da via é rotacionado ao longo da divisa, e a colisão dele era medida pela **caixa
+envolvente**. Numa diagonal de ~50° essa caixa é quase um quadrado que a própria linha
+atravessa por dentro — falso positivo garantido. Enquanto o rótulo fugia, isso só o
+empurrava para longe; depois que a posição virou regra e o corpo passou a ser quem cede,
+o mesmo falso positivo encolheu o nome da estrada até o piso (12,8 pt onde cabiam 22).
+
+`segCruzaObb` leva o segmento para o referencial do texto e testa contra o retângulo de
+verdade. O diagnóstico usa o mesmo critério — medir com a envolvente contava como
+sobreposto um rótulo que não estava.
 
 ## Fim das heurísticas de texto
 
