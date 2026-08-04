@@ -3,7 +3,8 @@
 // prontas para o memorial (DOCX) e a planilha (ODS).
 import {
   alocarCodigos, calcularAreaHa, calcularPerimetroM, calcularSegmentos,
-  calcularVertices, fmtGmsPlanilha, ordemMaisAoNorte, parseGmsPlanilha, rotacionarRing,
+  calcularVertices, ehSentidoHorario, fmtGmsPlanilha, ordemMaisAoNorte, parseGmsPlanilha,
+  rotacionarRing,
 } from "./geo.ts";
 import type { EntradaVertice, Proj4, Segmento, VerticeCalc } from "./geo.ts";
 import type { VerticeMemorial } from "./memorial.ts";
@@ -70,6 +71,32 @@ export interface ServicoCalculado {
   linhasOds: LinhaVertice[];
 }
 
+/**
+ * Inverte o sentido de percurso do anel levando a confrontação junto.
+ *
+ * A invariante é "o trecho de um M vai até o próximo M" (ARQUITETURA-TRECHOS.md).
+ * Invertendo o percurso, o mesmo pedaço físico de divisa passa a ser percorrido a
+ * partir do outro extremo: o que ia de M_a a M_b agora vai de M_b a M_a. A
+ * confrontação, portanto, tem de andar um M na nova sequência — sem isso cada
+ * confrontante sairia descrito na divisa do vizinho, que é exatamente o defeito
+ * que a arquitetura de trechos existe para evitar.
+ *
+ * Quais vértices são M não muda: os cantos onde o confrontante troca são os mesmos
+ * pontos, ande-se o perímetro para um lado ou para o outro. Só muda qual deles
+ * abre cada trecho.
+ */
+function inverterSentido<T extends { tipo: "M" | "P" | "V"; conf: VerticeServico }>(vs: T[]): T[] {
+  const invertido = vs.slice().reverse();
+  const idxM: number[] = [];
+  invertido.forEach((v, i) => { if (v.tipo === "M") idxM.push(i); });
+  const out = invertido.slice();
+  for (let k = 0; k < idxM.length; k++) {
+    // o M na posição k assume a confrontação do M seguinte (dando a volta no anel)
+    out[idxM[k]] = { ...invertido[idxM[k]], conf: invertido[idxM[(k + 1) % idxM.length]].conf };
+  }
+  return out;
+}
+
 export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado {
   const entradas: EntradaVertice[] = inp.vertices.map((v) => ({
     numTxt: v.numTxt,
@@ -86,9 +113,13 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
   // saem todos deste mesmo anel.
   const ordemInicial = ordemMaisAoNorte(calc);
 
-  // ring rotacionado a partir do vértice inicial
+  // ring no sentido horário, rotacionado a partir do vértice inicial
   const juntos = calc.map((c, i) => ({ ...c, tipo: inp.vertices[i].tipo, metodo: inp.vertices[i].metodo, codigoManual: inp.vertices[i].codigoManual ?? null, conf: inp.vertices[i] }));
-  const ring0 = rotacionarRing(juntos, ordemInicial);
+  // O SIGEF exige o perímetro descrito no sentido horário. O TXT do levantamento
+  // vem em qualquer sentido, então normalizamos aqui — antes de alocar códigos,
+  // para que a numeração acompanhe a sequência que vai ser publicada.
+  const anel = ehSentidoHorario(juntos) ? juntos : inverterSentido(juntos);
+  const ring0 = rotacionarRing(anel, ordemInicial);
 
   // códigos alocados na ordem do memorial
   const codigos = alocarCodigos(ring0, inp.prefixo, inp.contadores);

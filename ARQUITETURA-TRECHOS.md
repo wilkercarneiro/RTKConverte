@@ -102,6 +102,38 @@ nenhum teste alcançava.
 **Regra que fica:** ao mudar onde a confrontação mora, varra TODOS os caminhos que a leem.
 Foram três: o desenho, a reconciliação e a montagem dos trechos a partir do PDF.
 
+## Sentido horário e o deslocamento da confrontação
+
+O SIGEF exige o perímetro descrito **no sentido horário**, começando pelo vértice mais ao
+norte. O início já era normalizado (`ordemMaisAoNorte`); o sentido não era — saía o do TXT
+do levantamento, que vem dos dois jeitos. `montarServico` agora normaliza os dois, antes de
+alocar códigos, para que a numeração acompanhe a sequência publicada.
+
+Inverter o anel **não é só dar `reverse()`**, e é aqui que a invariante deste documento
+morde. Se o trecho de um M vai até o próximo M, então ao andar o perímetro ao contrário o
+mesmo pedaço de divisa passa a ser percorrido a partir do outro extremo: o que ia de `M_a`
+a `M_b` agora vai de `M_b` a `M_a`. Sem deslocar, `M_b` continuaria abrindo o trecho dele e
+cada confrontante sairia descrito na divisa do vizinho — exatamente o defeito da LAGOA SECA,
+por outro caminho.
+
+Regra: na sequência invertida, cada M assume a confrontação do M **seguinte**, dando a volta
+no anel (`inverterSentido`, em `servico.ts`). Quais vértices são M não muda — os cantos onde
+o confrontante troca são os mesmos pontos, ande-se para um lado ou para o outro; muda só
+quem abre cada trecho.
+
+Consequência importante para a tela: **a divisa física coberta por cada confrontante é
+preservada**. O preview desenha na ordem gravada, a planta sai na ordem horária, e a linha
+dupla vermelha cai nos mesmos segmentos nas duas — não reabre o sintoma "a tela mostra a
+estrada e o PDF não".
+
+Os testes em `tests/sentido_horario.test.mjs` não conferem a aritmética do deslocamento, que
+seria circular: comparam a cobertura **declarada na entrada** (cada M até o próximo M, na
+ordem digitada) com a **cobertura efetiva na saída**, divisa a divisa. Há também uma guarda
+contra teste que passaria à toa — as duas entradas têm de produzir confrontação diferente,
+senão a inversão não está deslocando nada. `LARISSA.txt` já é horário, então o arquivo
+histórico passa intacto; é o que trava a convenção de sinal (`areaAssinadaM2 < 0` = horário)
+contra uma inversão acidental.
+
 ## Fim das heurísticas de texto
 
 `eh_via` explícito (checkbox "faixa de domínio pública") substitui as duas inferências

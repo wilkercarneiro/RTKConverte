@@ -13,8 +13,11 @@ import type { ServicoInput } from "../_shared/servico.ts";
 import { GEO_DEF, fmtBR, fmtGmsPlanilha, utmDef } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
-import type { DadosPlanta, TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
+import type { TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
 import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef } from "../_shared/reconciliacao.ts";
+import {
+  bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, montarDadosPlanta,
+} from "../_shared/planta_dados.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -24,18 +27,6 @@ const CORS = {
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
-
-function b64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-function dataHojeBR(): string {
-  const agora = new Date(Date.now() - 3 * 3600 * 1000);
-  return `${String(agora.getUTCDate()).padStart(2, "0")}/${String(agora.getUTCMonth() + 1).padStart(2, "0")}/${agora.getUTCFullYear()}`;
-}
 
 // "-39°05'04,737\"" → graus decimais
 function gmsPdfParaDeg(s: string): number {
@@ -76,7 +67,7 @@ Deno.serve(async (req) => {
     if (servico.tipo === "pecas" || pdf_base64) {
       // -------- fluxo via PDF do SIGEF (valores SGL) --------
       if (!pdf_base64) return json({ erro: "Envie o PDF do SIGEF para gerar a planta deste serviço" }, 422);
-      const proxy = await getDocumentProxy(b64ToBytes(pdf_base64));
+      const proxy = await getDocumentProxy(bytesDeBase64(pdf_base64));
       const { text } = await extractText(proxy, { mergePages: true });
       const sigef = parseSigefTexto(text as string);
       const lon0 = gmsPdfParaDeg(sigef.linhas[0].lon);

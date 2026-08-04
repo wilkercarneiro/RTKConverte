@@ -350,15 +350,26 @@ export function calcularSegmentos(ring: VerticeCalc[]): Segmento[] {
   return segs;
 }
 
-// Área (shoelace) no plano re-projetado, em hectares.
-export function calcularAreaHa(ring: { eProj: number; nProj: number }[]): number {
+// Área com sinal (shoelace) no plano re-projetado, em m². O plano é destro
+// (eProj p/ leste, nProj p/ norte), então soma > 0 = anti-horário, < 0 = horário.
+export function areaAssinadaM2(ring: { eProj: number; nProj: number }[]): number {
   let soma = 0;
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i];
     const b = ring[(i + 1) % ring.length];
     soma += a.eProj * b.nProj - b.eProj * a.nProj;
   }
-  return Math.abs(soma / 2) / 10000;
+  return soma / 2;
+}
+
+// Área (shoelace) no plano re-projetado, em hectares. Independe do sentido.
+export function calcularAreaHa(ring: { eProj: number; nProj: number }[]): number {
+  return Math.abs(areaAssinadaM2(ring)) / 10000;
+}
+
+// Sentido de percurso exigido pelo SIGEF na descrição do perímetro: horário.
+export function ehSentidoHorario(ring: { eProj: number; nProj: number }[]): boolean {
+  return areaAssinadaM2(ring) < 0;
 }
 
 // Perímetro = soma das distâncias PUBLICADAS (2 casas), p/ auto-consistência com o memorial.
