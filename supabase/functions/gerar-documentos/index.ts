@@ -1,6 +1,11 @@
 // Edge Function gerar-documentos: monta o serviço a partir do banco (fonte da
 // verdade), aloca códigos de vértice (transação nos contadores do credenciado),
-// gera Memorial DOCX + Planilha ODS e salva no bucket `gerados` (sobrescreve).
+// gera Memorial DOCX + Planilha ODS + Planta PDF e salva no bucket `gerados`.
+//
+// A planta daqui sai do MESMO cálculo que alimenta o memorial e a planilha — é a
+// planta da etapa anterior ao SIGEF. Depois da certificação, gerar-planta produz
+// a planta oficial a partir do PDF do SIGEF, no mesmo padrão de folha. As duas
+// convivem: uma não substitui a outra.
 import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import JSZip from "jszip";
@@ -10,6 +15,10 @@ import type { Proj4 } from "../_shared/geo.ts";
 import { buildDocumentXml, buildDocxSkeleton } from "../_shared/docx.ts";
 import type { DadosMemorial } from "../_shared/memorial.ts";
 import { patchOdsContent } from "../_shared/ods.ts";
+import { gerarPlantaPdf } from "../_shared/planta.ts";
+import {
+  bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, montarDadosPlanta,
+} from "../_shared/planta_dados.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -20,17 +29,12 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-function dataHojeBR(): string {
-  const agora = new Date(Date.now() - 3 * 3600 * 1000); // UTC-3
-  const d = String(agora.getUTCDate()).padStart(2, "0");
-  const m = String(agora.getUTCMonth() + 1).padStart(2, "0");
-  return `${d}/${m}/${agora.getUTCFullYear()}`;
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { servico_id } = await req.json();
+    // a imagem de satélite é opcional aqui: sem ela a planta sai com o quadro
+    // PLANTA DE SITUAÇÃO vazio e um aviso pedindo o reenvio
+    const { servico_id, satelite_base64, satelite_tipo } = await req.json();
     if (!servico_id) return json({ erro: "servico_id ausente" }, 400);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -65,6 +69,8 @@ Deno.serve(async (req) => {
     const rt = servico.rt_id
       ? (await supa.from("responsaveis_tecnicos").select().eq("id", servico.rt_id).single()).data
       : null;
+    // desenhista do carimbo da planta (Configurações)
+    const { data: cfgDes } = await supa.from("config_empresa").select("value").eq("key", "desenhista").maybeSingle();
 
     // alocação de códigos: incrementa contadores apenas quando há vértice sem código
     const precisaAlocar = vertRows.some((v: { codigo: string | null; inserido_manual: boolean }) => !v.codigo && !v.inserido_manual);
@@ -191,6 +197,34 @@ Deno.serve(async (req) => {
     zipOds.file("content.xml", patched, { compression: "DEFLATE" });
     const odsBuf = await zipOds.generateAsync({ type: "uint8array" });
 
+    // ------------------------- PLANTA (PDF) -------------------------
+    // Mesmo padrão de folha da planta pós-SIGEF (A1 matrícula / A3 posse), mas
+    // desenhada com a geometria que acabou de gerar o memorial e a planilha.
+    // Uma falha aqui não derruba o DOCX/ODS: vira aviso e os dois seguem.
+    const avisosGeracao = [...conf.avisos];
+    let plantaBuf: Uint8Array | null = null;
+    const posse = servico.tipo_imovel === "posse";
+    try {
+      const dadosPlanta = montarDadosPlanta({
+        servico, rt, cred,
+        desenhista: cfgDes?.value ?? "",
+        geometria: geometriaDoCalculo(calc),
+        fuso: servico.fuso_utm,
+        trt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
+        dataStr: dataHojeBR(),
+        logo: await carregarLogoPlanta(supa),
+        satelite: satelite_base64
+          ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
+          : null,
+      });
+      if (!dadosPlanta.satelite) {
+        avisosGeracao.push("Planta gerada sem imagem de satélite — o quadro PLANTA DE SITUAÇÃO ficou vazio. Envie a imagem e gere os documentos de novo.");
+      }
+      plantaBuf = await gerarPlantaPdf(dadosPlanta);
+    } catch (e) {
+      avisosGeracao.push(`Memorial e planilha gerados, mas a planta falhou: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     // ------------------------- upload + status + histórico -------------------------
     // cada geração é uma nova VERSÃO preservada (histórico em documentos_gerados)
     const { data: vmax } = await supa.from("documentos_gerados").select("versao")
@@ -206,21 +240,42 @@ Deno.serve(async (req) => {
       upsert: true, contentType: "application/vnd.oasis.opendocument.spreadsheet",
     });
     if (u2.error) throw u2.error;
-    await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
-    await supa.from("documentos_gerados").insert([
+
+    // a planta desta etapa mora ao lado dos outros dois, na MESMA versão
+    const pPlanta = `${servico_id}/v${versao}/planta-sistema.pdf`;
+    const docs = [
       { servico_id, versao, tipo: "memorial_docx", titulo: "Memorial Descritivo (DOCX)", path: pDocx },
       { servico_id, versao, tipo: "planilha_ods", titulo: "Planilha SIGEF (ODS)", path: pOds },
-    ]);
+    ];
+    if (plantaBuf) {
+      const u3 = await supa.storage.from("gerados").upload(pPlanta, plantaBuf, { upsert: true, contentType: "application/pdf" });
+      if (u3.error) {
+        plantaBuf = null;
+        avisosGeracao.push(`Memorial e planilha gerados, mas o envio da planta falhou: ${u3.error.message}`);
+      } else {
+        docs.push({
+          servico_id, versao, tipo: "planta_pdf_sistema",
+          titulo: `Planta ${posse ? "A3" : "A1"} (PDF · dados do sistema)`, path: pPlanta,
+        });
+      }
+    }
+    await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
+    await supa.from("documentos_gerados").insert(docs);
 
     // URLs assinadas com download direto (Content-Disposition: attachment)
     const nomeBase = (servico.denominacao ?? "documento").replace(/[\\/:*?"<>|]/g, "-").trim();
     const s1 = await supa.storage.from("gerados").createSignedUrl(pDocx, 3600, { download: `Memorial - ${nomeBase}.docx` });
     const s2 = await supa.storage.from("gerados").createSignedUrl(pOds, 3600, { download: `Planilha SIGEF - ${nomeBase}.ods` });
+    const s3 = plantaBuf
+      ? await supa.storage.from("gerados").createSignedUrl(pPlanta, 3600, { download: `Planta - ${nomeBase}.pdf` })
+      : null;
     return json({
       ok: true,
-      avisos: conf.avisos,
+      avisos: avisosGeracao,
       memorial_docx: s1.data?.signedUrl,
       planilha_ods: s2.data?.signedUrl,
+      planta_pdf: s3?.data?.signedUrl ?? null,
+      folha: posse ? "A3" : "A1",
       resumo: {
         areaHa: calc.areaHa,
         perimetroM: calc.perimetroM,

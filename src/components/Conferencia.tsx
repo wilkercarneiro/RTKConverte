@@ -23,6 +23,10 @@ import { Avisos, Passos, ProximaAcao, Secao, StatusSalvamento, irPara, type Acao
 interface Gerado {
   memorial_docx: string;
   planilha_ods: string;
+  // planta da etapa pré-SIGEF: sai do mesmo cálculo do memorial e da planilha
+  planta_pdf?: string | null;
+  folha?: string;
+  avisos?: string[];
   resumo: { areaHa: number; perimetroM: number; qtdM: number; qtdP: number; qtdV: number; verticeInicial: string };
 }
 
@@ -328,11 +332,14 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         // recarrega o serviço corrigido e regera os documentos direto do banco
         const { data: sv } = await supabase.from("servicos").select().eq("id", servico.id).single();
         if (sv) setServico(sv as Servico);
-        const g = await chamarFuncao<Gerado>("gerar-documentos", { servico_id: servico.id });
+        const g = await chamarFuncao<Gerado>("gerar-documentos", {
+          servico_id: servico.id,
+          satelite_base64: satelite?.b64, satelite_tipo: satelite?.tipo,
+        });
         setGerado(g);
         const { data: vs } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
         if (vs) setVertices(vs as Vertice[]);
-        avisar("ok", "Sobreposição corrigida e planilha regerada — baixe a nova ODS e reenvie ao SIGEF.");
+        avisar("ok", "Sobreposição corrigida — planilha, memorial e planta regerados. Baixe a nova ODS e reenvie ao SIGEF.");
       } else {
         avisar("alerta", "Nenhuma sobreposição de interior detectada com os CSVs enviados — nada foi alterado.");
       }
@@ -401,13 +408,24 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       irPara(pendencias[0].alvo, true);
       return;
     }
+    // a planta sai junto do memorial e da planilha, e o quadro PLANTA DE SITUAÇÃO
+    // é da imagem de satélite — sem ela a planta nasceria incompleta
+    if (!satelite) {
+      setErro("Envie a imagem de satélite: ela entra no quadro PLANTA DE SITUAÇÃO da planta.");
+      irPara("bloco-satelite", true);
+      return;
+    }
     setOcupado(true);
     setErro(null);
     try {
       await salvar();
-      const r = await chamarFuncao<Gerado>("gerar-documentos", { servico_id: servico.id });
+      const r = await chamarFuncao<Gerado>("gerar-documentos", {
+        servico_id: servico.id,
+        satelite_base64: satelite.b64, satelite_tipo: satelite.tipo,
+      });
       setGerado(r);
-      avisar("ok", "Memorial e planilha gerados com sucesso.");
+      for (const a of r.avisos ?? []) avisar("alerta", a);
+      avisar("ok", r.planta_pdf ? "Memorial, planilha e planta gerados com sucesso." : "Memorial e planilha gerados com sucesso.");
       const { data } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
       if (data) setVertices(data as Vertice[]);
       requestAnimationFrame(() => document.querySelector(".gerados")?.scrollIntoView({ behavior: "smooth", block: "center" }));
@@ -451,10 +469,14 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       estado: confrontantesPreenchidos > 0 ? "feita" : pendencias.length === 0 ? "ativa" : "futura",
       alvo: "bloco-confrontantes",
     },
-    { rotulo: "Documentos", estado: docsProntos ? "feita" : "futura", alvo: docsProntos ? "bloco-gerados" : undefined },
+    {
+      rotulo: "Memorial, planilha & planta",
+      estado: docsProntos ? "feita" : "futura",
+      alvo: docsProntos ? "bloco-gerados" : undefined,
+    },
     { rotulo: "PDF do SIGEF", estado: sigefB64 ? "feita" : docsProntos ? "ativa" : "futura", alvo: docsProntos ? "bloco-sigef" : undefined },
     {
-      rotulo: "Planta & Peças",
+      rotulo: "Planta do SIGEF & Peças",
       estado: plantaUrl && pecasProntas ? "feita" : sigefB64 ? "ativa" : "futura",
       alvo: sigefB64 ? "bloco-planta" : undefined,
     },
@@ -472,10 +494,21 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         onClick: () => irPara(pendencias[0].alvo, true),
       };
     }
+    // a imagem de satélite agora é pedida ANTES da geração: a planta sai junto
+    // do memorial e da planilha, e o quadro PLANTA DE SITUAÇÃO vem dela
+    if (!satelite && !docsProntos) {
+      return {
+        tom: "neutro",
+        titulo: "Envie a imagem de satélite da área",
+        detalhe: "entra no quadro PLANTA DE SITUAÇÃO — a mesma imagem serve à planta desta etapa e à planta do SIGEF",
+        rotuloBotao: "Enviar imagem",
+        onClick: () => irPara("bloco-satelite"),
+      };
+    }
     if (!docsProntos) {
       return {
         tom: "neutro",
-        titulo: "Pronto para gerar o Memorial e a Planilha",
+        titulo: "Pronto para gerar o Memorial, a Planilha e a Planta",
         detalhe: `${preview.areaHa} ha · ${preview.perimetroM} m · ${preview.qtdM}/${preview.qtdP}/${preview.qtdV} vértices M/P/V${confrontantesPreenchidos === 0 ? " · nenhum confrontante descrito (opcional)" : ""}`,
         rotuloBotao: "⚡ Gerar documentos",
         onClick: gerar,
@@ -485,7 +518,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       return {
         tom: "neutro",
         titulo: "Certifique a planilha no SIGEF e envie o PDF de volta",
-        detalhe: "o PDF de prévia/certificação libera a planta e as 7 peças técnicas",
+        detalhe: "o PDF de prévia/certificação libera a planta oficial e as 7 peças técnicas",
         rotuloBotao: "Enviar PDF",
         onClick: () => irPara("bloco-sigef"),
       };
@@ -494,15 +527,15 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       return {
         tom: "neutro",
         titulo: "Envie a imagem de satélite da área",
-        detalhe: "obrigatória para o quadro PLANTA DE SITUAÇÃO",
+        detalhe: "obrigatória para o quadro PLANTA DE SITUAÇÃO da planta do SIGEF",
         rotuloBotao: "Enviar imagem",
-        onClick: () => irPara("bloco-planta"),
+        onClick: () => irPara("bloco-satelite"),
       };
     }
     if (!plantaUrl) {
       return {
         tom: "neutro",
-        titulo: `Gere a Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"}`,
+        titulo: `Gere a Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} do SIGEF`,
         rotuloBotao: "Ir para a planta",
         onClick: () => irPara("bloco-planta"),
       };
@@ -515,7 +548,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         onClick: () => irPara("bloco-pecas"),
       };
     }
-    return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, planta e peças gerados — tudo disponível no histórico abaixo" };
+    return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, as duas plantas e as peças gerados — tudo disponível no histórico abaixo" };
   }, [pendencias, docsProntos, sigefB64, satelite, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel]);
 
   // selos das seções recolhidas: dizem o que há dentro sem precisar abrir
@@ -869,12 +902,30 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         </div>
       </section>
 
+      {/* ---------------- Imagem de satélite: entra na planta desta etapa e na pós-SIGEF ---------------- */}
+      <section className="bloco" id="bloco-satelite">
+        <header>
+          <span className="num-bloco">🛰</span>
+          <h3>Imagem de satélite</h3>
+          <span className="desc">entra no quadro PLANTA DE SITUAÇÃO · a mesma imagem serve às duas plantas</span>
+        </header>
+        <label className="dropzone" style={{ padding: "14px 18px" }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
+          {satelite
+            ? <><b>🛰 {satelite.nome}</b><span>clique para trocar a imagem</span></>
+            : <><b>🛰 Enviar imagem de satélite (PNG/JPG)</b><span>necessária para gerar a planta junto do memorial e da planilha</span></>}
+          <input type="file" accept="image/png,image/jpeg" hidden
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
+        </label>
+      </section>
+
       {gerado && (
         <section className="bloco gerados" id="bloco-gerados">
           <header>
             <span className="num-bloco">✓</span>
             <h3>Documentos gerados</h3>
-            <span className="desc">regeração ilimitada — os arquivos são sobrescritos a cada geração</span>
+            <span className="desc">regeração ilimitada — cada geração vira uma nova versão no histórico</span>
           </header>
           <div className="downloads">
             <a className="botao-download" href={gerado.memorial_docx} target="_blank" rel="noreferrer">
@@ -883,6 +934,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <a className="botao-download" href={gerado.planilha_ods} target="_blank" rel="noreferrer">
               <span className="ext">ODS</span> Planilha SIGEF
             </a>
+            {gerado.planta_pdf && (
+              <a className="botao-download" href={gerado.planta_pdf} target="_blank" rel="noreferrer">
+                <span className="ext">PDF</span> Planta {gerado.folha ?? "A1"} (dados do sistema)
+              </a>
+            )}
           </div>
           <p style={{ color: "var(--texto-2)" }}>
             Vértice inicial {gerado.resumo.verticeInicial} · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
@@ -895,12 +951,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         <section className="bloco" style={{ opacity: 0.6 }}>
           <header>
             <span className="num-bloco">4</span>
-            <h3>PDF do SIGEF, planta e peças</h3>
-            <span className="desc">liberados após a geração do memorial e da planilha</span>
+            <h3>PDF do SIGEF, planta oficial e peças</h3>
+            <span className="desc">liberados após a geração do memorial, da planilha e da planta</span>
           </header>
           <p style={{ color: "var(--texto-2)", margin: 0 }}>
-            Gere o Memorial (DOCX) e a Planilha (ODS) no botão "⚡ Gerar documentos" no rodapé ·
-            certifique no SIGEF · envie o PDF aqui · gere a Planta e as peças técnicas.
+            Gere o Memorial (DOCX), a Planilha (ODS) e a Planta (PDF) no botão "⚡ Gerar documentos" no rodapé ·
+            certifique no SIGEF · envie o PDF aqui · gere a Planta do SIGEF e as peças técnicas.
           </p>
         </section>
       ) : (
@@ -1006,8 +1062,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         <section className="bloco" id="bloco-planta">
           <header>
             <span className="num-bloco">5</span>
-            <h3>Planta {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</h3>
-            <span className="desc">{servico.tipo_imovel === "posse" ? "folha A3 sem quadro analítico (posse)" : "folha A1 com quadro analítico (matrícula)"} · escala automática · carimbo e desenhista vêm das Configurações</span>
+            <h3>Planta {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"} do SIGEF</h3>
+            <span className="desc">mesmo padrão da planta gerada com o memorial, mas desenhada a partir do PDF certificado do SIGEF · escala automática · carimbo e desenhista vêm das Configurações</span>
           </header>
           <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
             <label className="dropzone" style={{ padding: "14px 18px", flex: "1 1 280px" }}
@@ -1021,11 +1077,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             </label>
             <button className="principal" disabled={gerandoPlanta || !satelite} onClick={gerarPlanta}
               title={!satelite ? "Envie a imagem de satélite primeiro" : undefined}>
-              {gerandoPlanta ? "Gerando planta…" : `🗺 Gerar Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} (PDF)`}
+              {gerandoPlanta ? "Gerando planta…" : `🗺 Gerar Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} do SIGEF (PDF)`}
             </button>
             {plantaUrl && (
               <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
-                <span className="ext">PDF</span> Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"}
+                <span className="ext">PDF</span> Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"} (SIGEF)
               </a>
             )}
           </div>
@@ -1154,7 +1210,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <span className="acoes">
             <button disabled={ocupado} onClick={apenasSalvar}>Salvar rascunho</button>
             <button disabled={ocupado} className="principal" onClick={gerar}
-              title={pendencias.length ? `Pendências: ${pendencias.map((p) => p.msg).join("; ")}` : "Gerar Memorial DOCX + Planilha ODS"}>
+              title={pendencias.length
+                ? `Pendências: ${pendencias.map((p) => p.msg).join("; ")}`
+                : satelite ? "Gerar Memorial DOCX + Planilha ODS + Planta PDF" : "Envie a imagem de satélite para gerar a planta junto"}>
               {ocupado ? "Gerando…" : "⚡ Gerar documentos"}
             </button>
           </span>

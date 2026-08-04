@@ -7,10 +7,8 @@ import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import { extractText, getDocumentProxy } from "unpdf";
 import { parseSigefTexto } from "../_shared/sigef_pdf.ts";
-import type { LinhaSigef } from "../_shared/sigef_pdf.ts";
 import { montarServico } from "../_shared/servico.ts";
 import type { ServicoInput } from "../_shared/servico.ts";
-import { GEO_DEF, fmtBR, fmtGmsPlanilha, utmDef } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
@@ -131,70 +129,26 @@ Deno.serve(async (req) => {
           ehVia: v.eh_via, cns: v.cns, matricula: v.matricula,
         })),
       };
-      const calc = montarServico(input, proj4);
-      latMedia = calc.ring[0].latDeg;
-      const posDe = new Map(calc.ring.map((v, i) => [v.ordem, i]));
-      vertices = calc.ring.map((v, i) => ({
-        codigo: v.codigo, e: v.eProj, n: v.nProj,
-        lonFmt: fmtGmsPlanilha(v.lonGms, "lon"), latFmt: fmtGmsPlanilha(v.latGms, "lat"),
-        alt: String(v.h).replace(".", ","),
-        azFmt: calc.segs[i].azimuteFmt, distFmt: calc.segs[i].distFmt,
-        vante: calc.ring[(i + 1) % calc.ring.length].codigo,
-      }));
-      trechosPlanta = calc.trechosOrdenados.map((t, k) => ({
-        descritivo: t.descritivo,
-        isEstrada: t.ehVia,
-        inicioIdx: posDe.get(t.verticeInicioOrdem) ?? 0,
-        fimIdx: posDe.get(calc.trechosOrdenados[(k + 1) % calc.trechosOrdenados.length].verticeInicioOrdem) ?? 0,
-      }));
-      areaFmt = fmtBR(calc.areaHa, 4);
-      perimetroFmt = fmtBR(calc.perimetroM, 2);
+      const g = geometriaDoCalculo(montarServico(input, proj4));
+      latMedia = g.latMediaDeg;
+      vertices = g.vertices;
+      trechosPlanta = g.trechos;
+      areaFmt = g.areaFmt;
+      perimetroFmt = g.perimetroFmt;
     }
 
-    // -------- logo da empresa --------
-    let logo: DadosPlanta["logo"] = null;
-    for (const [nome, tipo] of [["logo-empresa.png", "png"], ["logo-empresa.jpg", "jpg"]] as const) {
-      const dl = await supa.storage.from("templates").download(nome);
-      if (!dl.error && dl.data) { logo = { bytes: new Uint8Array(await dl.data.arrayBuffer()), tipo }; break; }
-    }
-
-    const areaHaNum = parseFloat(areaFmt.replace(/\./g, "").replace(",", "."));
     const posse = servico.tipo_imovel === "posse";
-    const proprietarios: DadosPlanta["proprietarios"] = [{
-      nome: servico.detentor_nome ?? "",
-      cpf: servico.detentor_cpf ?? "",
-      rg: servico.detentor_rg ?? null,
-      isEspolio: !!servico.is_espolio,
-      inventarianteNome: servico.inventariante_nome ?? null,
-      inventarianteCpf: servico.inventariante_cpf ?? null,
-      inventarianteRg: servico.inventariante_rg ?? null,
-    }];
-    if (servico.requerente2_nome && !posse) proprietarios.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "" });
-
-    const dados: DadosPlanta = {
-      vertices, trechos: trechosPlanta,
-      denominacao: servico.denominacao,
-      proprietarios,
-      tipoImovel: posse ? "posse" : "matricula",
-      matricula: servico.matricula ?? "",
-      cns: servico.cns ?? "",
-      sncr: servico.codigo_sncr ?? "",
-      municipioUf: `${servico.municipio}-${servico.uf}`,
-      areaFmt, tarefasFmt: fmtBR(areaHaNum * 10000 / 4356, 2), perimetroFmt,
-      mcAbs: Math.abs(6 * fuso - 183), fuso, latMediaDeg: latMedia,
-      trt,
-      rt: {
-        nome: rt?.nome ?? "", formacao: rt?.formacao ?? "",
-        conselhoSigla: rt?.conselho_sigla ?? "CFTA", conselhoNumero: rt?.conselho_numero ?? "",
-        codigoCredenciado: cred?.prefixo_vertice ?? servico.codigo_sncr ?? "",
-      },
+    const dados = montarDadosPlanta({
+      servico, rt, cred,
       desenhista: cfgDes?.value ?? "",
+      geometria: { vertices, trechos: trechosPlanta, areaFmt, perimetroFmt, latMediaDeg: latMedia },
+      fuso, trt,
       dataStr: dataHojeBR(),
-      logo,
+      logo: await carregarLogoPlanta(supa),
       satelite: satelite_base64
-        ? { bytes: b64ToBytes(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
+        ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
         : null,
-    };
+    });
 
     const pdfBytes = await gerarPlantaPdf(dados);
     const { data: vmax } = await supa.from("documentos_gerados").select("versao")
@@ -203,14 +157,16 @@ Deno.serve(async (req) => {
     const path = `${servico_id}/v${versao}/planta.pdf`;
     const up = await supa.storage.from("gerados").upload(path, pdfBytes, { upsert: true, contentType: "application/pdf" });
     if (up.error) throw up.error;
-    await supa.from("documentos_gerados").insert([{ servico_id, versao, tipo: "planta_pdf", titulo: `Planta ${posse ? "A3" : "A1"} (PDF)`, path }]);
+    // "SIGEF" no título/nome do arquivo: esta é a planta oficial, para não se
+    // confundir com a que sai junto do memorial (gerar-documentos, tipo planta_pdf_sistema)
+    await supa.from("documentos_gerados").insert([{ servico_id, versao, tipo: "planta_pdf", titulo: `Planta ${posse ? "A3" : "A1"} (PDF · SIGEF)`, path }]);
     const nomeBase = servico.denominacao.replace(/[\\/:*?"<>|]/g, "-").trim();
-    const s = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `Planta - ${nomeBase}.pdf` });
+    const s = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `Planta SIGEF - ${nomeBase}.pdf` });
 
     return json({
       ok: true,
       planta_pdf: s.data?.signedUrl,
-      resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!logo, folha: posse ? "A3" : "A1" },
+      resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!dados.logo, folha: posse ? "A3" : "A1" },
     });
   } catch (err) {
     return json({ erro: err instanceof Error ? err.message : String(err) }, 400);

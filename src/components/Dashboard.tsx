@@ -21,7 +21,9 @@ interface Props {
 /** Etapas concluídas de um serviço, deduzidas dos documentos já gerados. */
 interface Progresso { docs: boolean; planta: boolean; pecas: boolean }
 
-const TIPOS_ETAPA1 = new Set(["memorial_docx", "planilha_ods"]);
+// a planta 'do sistema' sai junto do memorial e da planilha — é a mesma etapa;
+// 'planta_pdf' é a planta oficial, desenhada depois a partir do PDF do SIGEF
+const TIPOS_ETAPA1 = new Set(["memorial_docx", "planilha_ods", "planta_pdf_sistema"]);
 
 export function Dashboard({ onNovoGeo, onNovoPecas, onConfig, onAbrir, onAbrirCliente }: Props) {
   const [servicos, setServicos] = useState<Servico[]>([]);
