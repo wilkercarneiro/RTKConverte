@@ -270,6 +270,20 @@ test("os três M saem com traço verde, inclusive os de faixa de domínio", asyn
       + " — o nome passa a apontar para a divisa do vizinho");
   });
 
+  // NENHUM traço do desenho pode ficar por baixo de um nome de vizinho. A lista
+  // de obstáculos tem de conter tudo que é linha: poligonal, linha dupla das
+  // vias, tique de cada vértice e o traço verde de cada marco. Os dois últimos
+  // faltavam — o traço verde tem 50pt e sai bem no vão onde o nome cai.
+  assert.ok(diag.obstaculos.length >= ANEL.length * 2 + diag.vias.length + diag.marcos.length,
+    `só ${diag.obstaculos.length} obstáculos para ${ANEL.length} arestas + ${ANEL.length} tiques`
+    + ` + ${diag.vias.length} linhas de via + ${diag.marcos.length} marcos`);
+  for (const m of diag.marcos) {
+    assert.ok(
+      diag.obstaculos.some((s) => Math.hypot(s.x1 - m.x1, s.y1 - m.y1) < 0.01 && Math.hypot(s.x2 - m.x2, s.y2 - m.y2) < 0.01),
+      "o traço verde do marco tem de entrar na lista de obstáculos dos rótulos",
+    );
+  }
+
   assert.ok(diag.vias.length > 0, "as duas vias têm de desenhar linha dupla");
   const dentro = (p, poly) => {
     let d = false;

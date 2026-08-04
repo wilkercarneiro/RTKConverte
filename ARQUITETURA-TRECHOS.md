@@ -229,6 +229,24 @@ tolerância de meio corpo; o deslize que ele tem de pegar era de 125 pt.
 Sem nenhuma posição livre, o recurso é `menosPior` — a que cruza menos coisa. Antes era
 "a última da lista", que é o extremo da busca e não tinha razão para ser a melhor.
 
+### A lista de obstáculos é a definição de "não invadir"
+
+O rótulo desvia do que estiver na lista `obstaculos`, e só disso. Ela nasceu com a
+poligonal e a linha dupla das vias; faltavam **o tique de cada vértice** e **o traço verde
+de cada marco** — este com 50 pt, saindo exatamente do vão onde o nome cai. Entraram os
+dois.
+
+Um caso à parte, porque não é linha: a **legenda** é desenhada no fim, com fundo branco
+opaco, no canto inferior esquerdo da área de desenho — ou seja, apagava o rótulo que
+tivesse caído ali. O comentário antigo dizia isso com todas as letras ("cobre a malha e os
+rótulos que passam atrás"). O espaço dela agora é reservado em `legendaRet` **antes** de
+posicionar rótulo nenhum, e o desenho no fim usa o mesmo retângulo, para os dois não
+divergirem. A bússola já escolhia canto livre sozinha.
+
+Regra que fica: **desenhou traço ou caixa opaca na área de desenho, registra**. O teste
+confere a contagem e exige cada marco na lista, mas quem acrescentar um elemento novo tem
+de acrescentar a asserção junto — nenhum teste adivinha o que ainda não existe.
+
 ### Colisão do texto girado
 
 O nome da via é rotacionado ao longo da divisa, e a colisão dele era medida pela **caixa

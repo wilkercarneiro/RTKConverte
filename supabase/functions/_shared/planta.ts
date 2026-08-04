@@ -503,6 +503,15 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   const VERT_TAM = 7.5 * K;
   const ocupado: { x1: number; y1: number; x2: number; y2: number }[] = [];
   let rotulosOcultos = 0;
+  // A legenda é desenhada no fim, com fundo BRANCO OPACO, no canto inferior
+  // esquerdo da área de desenho — ou seja, apaga qualquer rótulo que tenha caído
+  // ali. O espaço dela é reservado agora, antes de posicionar nome nenhum: da
+  // parte do rótulo não adianta não invadir se depois vem a legenda por cima.
+  const legendaRet: Ret = {
+    x1: dArea.x + 6, y1: dArea.y + 2,
+    x2: dArea.x + 6 + 300 * K, y2: dArea.y + 2 + 124 * K,
+  };
+  ocupado.push(legendaRet);
   // Só o bolinha e o tique saem agora. O CÓDIGO fica reservado e é desenhado
   // depois dos nomes dos vizinhos: quem cede lugar é ele, não o confrontante.
   // Antes era ao contrário — os códigos entravam em `ocupado` primeiro e o bloco
@@ -514,7 +523,13 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // fora do polígono pela bissetriz das duas arestas, não pelo centro da folha
     const { x: nx, y: ny } = normalVertice(i);
     // tique do marco, como na planta de referência
-    linha(c, X(v.e) + nx * 2, Y(v.n) + ny * 2, X(v.e) + nx * 6, Y(v.n) + ny * 6, 0.9);
+    const tique = {
+      x1: X(v.e) + nx * 2, y1: Y(v.n) + ny * 2,
+      x2: X(v.e) + nx * 6, y2: Y(v.n) + ny * 6,
+    };
+    linha(c, tique.x1, tique.y1, tique.x2, tique.y2, 0.9);
+    // o tique é linha do desenho como qualquer outra: nenhum rótulo passa por cima
+    obstaculos.push(tique);
     const w = f.widthOfTextAtSize(v.codigo, VERT_TAM);
     const lx = nx < 0 ? X(v.e) + nx * 8 - w : X(v.e) + nx * 8;
     const ly = Y(v.n) + ny * 8 - VERT_TAM / 2;
@@ -589,6 +604,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     linha(c, x1, y1, x2, y2, 2.8 * K, VERDE);
     marcos.push({ x1, y1, x2, y2 });
   }
+  // O traço verde tem 50pt e sai de dentro do vão de um vizinho para o do outro:
+  // é o obstáculo mais fácil de um bloco atropelar, e era o único traço do desenho
+  // que não estava na lista. Nome de vizinho não invade NADA.
+  obstaculos.push(...marcos);
   // Trechos contíguos do MESMO confrontante viram um único rótulo: no caso real
   // a FAZENDA KAGADOS chegava em 5 trechos seguidos e o bloco de texto saía
   // repetido 5× em volta do polígono.
@@ -1027,10 +1046,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // legenda no canto inferior esquerdo da área de desenho — caixa compacta
   // (a anterior tinha 640×258pt e comia um quarto do desenho)
   {
-    const lx = dArea.x + 12, boxW = 300 * K, boxH = 124 * K;
-    // fundo branco opaco: a legenda cobre a malha e os rótulos que passam atrás
-    page.drawRectangle({ x: lx - 6, y: dArea.y + 2, width: boxW, height: boxH, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 0.8 });
-    const lyTop = dArea.y + 2 + boxH;
+    // mesma caixa reservada lá em cima em `legendaRet` — nenhum rótulo caiu aqui
+    const lx = legendaRet.x1 + 6, boxW = legendaRet.x2 - legendaRet.x1, boxH = legendaRet.y2 - legendaRet.y1;
+    page.drawRectangle({ x: legendaRet.x1, y: legendaRet.y1, width: boxW, height: boxH, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 0.8 });
+    const lyTop = legendaRet.y2;
     texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 17 * K, 11 * K, { bold: true });
     const itens: [ReturnType<typeof rgb>, string][] = [
       [VERMELHO, "ESTRADA"], [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
