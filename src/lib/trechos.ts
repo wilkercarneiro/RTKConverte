@@ -39,13 +39,17 @@ export const SEM_CONFRONTACAO: Confrontacao = {
 const RE_VIA =
   /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|LINHA\s+F[ÉE]RREA|FERROVIA|FERROVI[ÁA]RI[AO]|LEITO\s+FERROVI[ÁA]RIO|RIO|RIACHO|C[ÓO]RREGO|LAGOA?|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
 
+/** LA3 = limite artificial de faixa de domínio: é sempre via. */
+export const ehViaPorLimite = (tipoLimite?: string | null): boolean =>
+  /^LA3\b/i.test((tipoLimite ?? "").trim());
+
 /**
- * Faixas de domínio da planta: trecho marcado como via, ou cujo rótulo é uma
- * (CORREDOR, ESTRADA, LINHA FÉRREA, BA 408, BR 116…). Sai uma declaração de
- * faixa de domínio por via distinta — não há campo para digitar a via.
+ * Faixas de domínio da planta: trecho com limite LA3, marcado como via, ou cujo
+ * rótulo é uma (CORREDOR, ESTRADA, LINHA FÉRREA, BA 408, BR 116…). Sai uma
+ * declaração de faixa de domínio por via distinta — não há campo para digitar.
  */
 export function viasDaPlanta(
-  trechos: { descritivo?: string | null; apelido_txt?: string | null; eh_via?: boolean | null }[],
+  trechos: { descritivo?: string | null; apelido_txt?: string | null; tipo_limite?: string | null; eh_via?: boolean | null }[],
 ): string[] {
   const vistas = new Set<string>();
   const out: string[] = [];
@@ -55,7 +59,7 @@ export function viasDaPlanta(
     // "(MATR.4.403/CNS...) FAZENDA RIO CLARO" é imóvel, não via — o rótulo com
     // etiqueta entre parênteses e o descritivo com CPF nunca viram faixa sozinhos
     const ehImovel = /^\([^)]*\)/.test(rotulo) || /CPF\s*:/i.test(t.descritivo ?? "");
-    const ehVia = !!t.eh_via || (!ehImovel && RE_VIA.test(rotulo));
+    const ehVia = ehViaPorLimite(t.tipo_limite) || !!t.eh_via || (!ehImovel && RE_VIA.test(rotulo));
     if (!ehVia) continue;
     const k = rotulo.toUpperCase();
     if (vistas.has(k)) continue;

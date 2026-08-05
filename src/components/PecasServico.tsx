@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
 import { rotuloRT, TIPOS_LIMITE, UFS } from "../lib/domains";
 import { contarPreenchidos, useAutosave, useAvisos } from "../lib/ux";
-import { viasDaPlanta } from "../lib/trechos";
+import { ehViaPorLimite, viasDaPlanta } from "../lib/trechos";
 import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { Avisos, Passos, ProximaAcao, Secao, StatusSalvamento, irPara, type Acao, type Passo } from "./ui";
@@ -433,10 +433,13 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                   {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
                 </select>
               </label>
-              <label title="Estrada, rodovia, corredor, rio — desenhada na planta como linha dupla vermelha">
-                <input type="checkbox" checked={t.eh_via}
+              <label title={ehViaPorLimite(t.tipo_limite)
+                ? "LA3 é limite de faixa de domínio: sempre via"
+                : "Estrada, rodovia, corredor, linha férrea, rio — desenhada na planta como linha dupla vermelha"}>
+                <input type="checkbox" checked={t.eh_via || ehViaPorLimite(t.tipo_limite)}
+                  disabled={ehViaPorLimite(t.tipo_limite)}
                   onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, eh_via: e.target.checked } : x)))} />
-                {" "}faixa de domínio pública
+                {" "}faixa de domínio pública{ehViaPorLimite(t.tipo_limite) ? " (LA3)" : ""}
               </label>
               <span style={{ flex: 1 }} />
               <button className="remover" title="Remover trecho" onClick={() => setTrechos((ts) => ts.filter((_, j) => j !== i))}>✕</button>

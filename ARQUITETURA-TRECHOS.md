@@ -332,7 +332,29 @@ frágeis que marcavam estrada onde não havia:
 - `PecasServico.tsx:107` — `/\\/.test(...) ? "LA1" : "LA3"`, que gravava LA3 no banco e
   congelava o erro mesmo depois de corrigir o descritivo.
 
-`tipo_limite` continua existindo como campo de domínio SIGEF, mas deixa de decidir traçado.
+`tipo_limite` continua existindo como campo de domínio SIGEF. Uma única exceção voltou a
+valer: **LA3 é faixa de domínio, sempre** (`ehViaPorLimite`, em `_shared/servico.ts`,
+`_shared/pecas.ts` e `src/lib/trechos.ts`) — vale para o traçado, para o preview e para a
+declaração de faixa de domínio, com o checkbox aparecendo marcado e travado.
+
+Isso não é a heurística antiga de volta: LA3 só existe no banco quando alguém escolhe LA3
+no seletor. O que causava o falso positivo era a importação *gravar* LA3 sozinha a partir
+do texto (`/\\/.test(...) ? "LA1" : "LA3"`); hoje ela grava sempre LA1.
+
+## Faixa de domínio: onde ela é reconhecida
+
+Um serviço pode ter várias — corredor, estrada, linha férrea, BA/BR — e sai **uma
+declaração por faixa distinta** (`gerarDeclaracoesVia`), com a tabela de vértices daquele
+trecho. Não há campo para digitar a via: ela vem da planta, por três caminhos, nesta ordem:
+
+1. `tipo_limite = LA3`;
+2. `eh_via` marcado no trecho;
+3. rótulo reconhecido (`RE_VIA`: ESTRADA, RODOVIA, CORREDOR, SERVIDÃO, LINHA FÉRREA,
+   FERROVIA, RIO, RIACHO, CÓRREGO, AÇUDE, BR/BA nnn…), desde que o descritivo não tenha
+   CPF nem etiqueta `(MATR…)` — "FAZENDA RIO CLARO" é imóvel, não rio.
+
+O mesmo trecho repetido no anel (a via que aparece antes e depois de um vizinho) vira uma
+declaração só, com os vértices dos dois pedaços.
 
 ## Validação antes de gerar
 

@@ -12,7 +12,7 @@ import {
   rotuloRT, SITUACOES, TIPOS_LIMITE, TIPOS_PESSOA, UFS,
 } from "../lib/domains";
 import { calcularPreviewLocal } from "../lib/preview";
-import { moverConfrontacao, SEM_CONFRONTACAO, viasDaPlanta } from "../lib/trechos";
+import { ehViaPorLimite, moverConfrontacao, SEM_CONFRONTACAO, viasDaPlanta } from "../lib/trechos";
 import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux";
 import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
 import type { ResultadoParse } from "./Upload";
@@ -158,7 +158,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         apelido_txt: v.apelido_txt,
         descritivo: v.descritivo ?? "",
         tipo_limite: v.tipo_limite ?? "LA1",
-        eh_via: v.eh_via,
+        // LA3 vale como faixa de domínio por si só — o preview mostra a linha
+        // dupla vermelha igual à planta e às peças (ver ehViaPorLimite)
+        eh_via: v.eh_via || ehViaPorLimite(v.tipo_limite),
         cns: v.cns,
         matricula: v.matricula,
       })),
@@ -768,10 +770,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                         {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
                       </select>
                     </label>
-                    <label title="Estrada, rodovia, corredor, rio — desenhada na planta como linha dupla vermelha">
-                      <input type="checkbox" checked={t.eh_via}
+                    <label title={ehViaPorLimite(t.tipo_limite)
+                      ? "LA3 é limite de faixa de domínio: sempre via"
+                      : "Estrada, rodovia, corredor, linha férrea, rio — desenhada na planta como linha dupla vermelha"}>
+                      <input type="checkbox" checked={t.eh_via || ehViaPorLimite(t.tipo_limite)}
+                        disabled={ehViaPorLimite(t.tipo_limite)}
                         onChange={(e) => setTrecho(t, { eh_via: e.target.checked })} />
-                      {" "}faixa de domínio pública
+                      {" "}faixa de domínio pública{ehViaPorLimite(t.tipo_limite) ? " (LA3)" : ""}
                     </label>
                     <label>CNS <input style={{ width: 110 }} value={t.cns ?? ""} onChange={(e) => setTrecho(t, { cns: e.target.value || null })} /></label>
                     <label>Matrícula <input style={{ width: 100 }} value={t.matricula ?? ""} onChange={(e) => setTrecho(t, { matricula: e.target.value || null })} /></label>

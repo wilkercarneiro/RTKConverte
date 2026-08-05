@@ -100,6 +100,20 @@ test("faixa de domínio: linha férrea reconhecida e trecho marcado na planta ma
   assert.equal(parseDescritivo("TRECHO DA CONCESSIONÁRIA").ehVia, false);
 });
 
+test("LA3 é faixa de domínio por si só, qualquer que seja o rótulo", () => {
+  // rótulo que nenhuma palavra-chave pegaria, mas com limite LA3
+  const descs = { ...DESCS, "DSBN-M-3608": { descritivo: "MALHA DA CONCESSIONÁRIA XYZ", tipoLimite: "LA3" } };
+  const { trechos: ts } = montarTrechosPecas(sigef.linhas, new Map(Object.entries(descs)));
+  const v = ts.find((t) => t.descritivo === "MALHA DA CONCESSIONÁRIA XYZ");
+  assert.ok(v?.ehVia, "LA3 deveria ser faixa de domínio");
+  assert.equal(v.pessoas.length, 0, "faixa de domínio não vira carta de anuência");
+  // LA1 com o mesmo rótulo continua sendo confrontante comum
+  const outro = montarTrechosPecas(sigef.linhas, new Map(Object.entries(
+    { ...DESCS, "DSBN-M-3608": { descritivo: "MALHA DA CONCESSIONÁRIA XYZ", tipoLimite: "LA1" } },
+  ))).trechos.find((t) => t.descritivo === "MALHA DA CONCESSIONÁRIA XYZ");
+  assert.equal(outro.ehVia, false);
+});
+
 test("declaração por faixa: três vias na planta geram três declarações", async () => {
   // mesma planta, com a linha férrea no lugar do trecho da FAZENDA PAU D'ÁGUA
   const descs = { ...DESCS, "DSBN-M-3608": { descritivo: "LINHA FÉRREA", tipoLimite: "LA3", ehVia: true } };

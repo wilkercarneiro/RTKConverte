@@ -197,6 +197,13 @@ export interface DadosPecas {
 export const RE_VIA =
   /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|LINHA\s+F[ÉE]RREA|FERROVIA|FERROVI[ÁA]RI[AO]|LEITO\s+FERROVI[ÁA]RIO|RIO|RIACHO|C[ÓO]RREGO|LAGOA?|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
 
+// LA3 é limite artificial de faixa de domínio no domínio do SIGEF: todo trecho
+// LA3 é faixa de domínio, tenha o rótulo que tiver ("BA 408", "LINHA FÉRREA",
+// o nome da concessionária ou nada disso). Vale sozinho, sem depender do texto.
+export function ehViaPorLimite(tipoLimite: string | null | undefined): boolean {
+  return /^LA3\b/i.test((tipoLimite ?? "").trim());
+}
+
 // "do BA 408" / "da ESTRADA VICINAL" / "da LINHA FÉRREA" — artigo usado em
 // "faixa de domínio ..."
 export function artigoVia(rotulo: string): string {
@@ -635,7 +642,7 @@ export function montarTrechosPecas(
     if (ini || !atual) {
       const info = ini ?? (ultimoInicio ? ultimoInicio[1] : { descritivo: l.confrontacao, tipoLimite: "LA1" });
       const jaExiste = ini ? trechos.find((t) => t.descritivo === info.descritivo && t.tipoLimite === info.tipoLimite && t.linhas.length === 0) : undefined;
-      const parsed = parseDescritivo(info.descritivo, !!info.ehVia);
+      const parsed = parseDescritivo(info.descritivo, !!info.ehVia || ehViaPorLimite(info.tipoLimite));
       atual = jaExiste ?? {
         descritivo: info.descritivo,
         tipoLimite: info.tipoLimite,

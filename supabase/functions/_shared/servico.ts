@@ -135,7 +135,9 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
       verticeInicioOrdem: v.ordem,
       descritivo: v.conf.descritivo ?? "",
       tipoLimite: v.conf.tipoLimite ?? "LA1",
-      ehVia: v.conf.ehVia ?? false,
+      // LA3 é o limite artificial de faixa de domínio: vale como via sozinho,
+      // sem depender da marca nem do rótulo. Mesma regra das peças (pecas.ts).
+      ehVia: (v.conf.ehVia ?? false) || ehViaPorLimite(v.conf.tipoLimite),
       cns: v.conf.cns ?? null,
       matricula: v.conf.matricula ?? null,
     }));
@@ -230,6 +232,10 @@ export function validarConfrontacoes(
  * aquela decidia no momento de DESENHAR, sem o usuário ver nem poder discordar.
  * LAGOA fica de fora de propósito — é nome comum de fazenda na região.
  */
+/** LA3 = limite artificial de faixa de domínio: é sempre via. */
+export const ehViaPorLimite = (tipoLimite?: string | null): boolean =>
+  /^LA3\b/i.test((tipoLimite ?? "").trim());
+
 const RE_VIA_APELIDO =
   /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|LINHA\s+F[ÉE]RREA|FERROVIA|FERROVI[ÁA]RI[AO]|LEITO\s+FERROVI[ÁA]RIO|RIO|RIACHO|C[ÓO]RREGO|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
 
