@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { inflateSync } from "node:zlib";
 import proj4lib from "proj4";
 import { PDFDocument } from "pdf-lib";
 import { parseTxt, fmtBR, fmtGmsPlanilha } from "../supabase/functions/_shared/geo.ts";
@@ -10,6 +11,23 @@ import { gerarPlantaPdf } from "../supabase/functions/_shared/planta.ts";
 
 const proj4 = (f, t, c) => proj4lib(f, t, c);
 mkdirSync(new URL("./out/", import.meta.url), { recursive: true });
+
+// matrizes `cm` que embrulham o conteúdo da página — é por elas que a folha de
+// posse vira A3, e é nelas que se lê se a redução foi mesmo proporcional
+async function transformacoesDoConteudo(bytes) {
+  const pg = (await PDFDocument.load(bytes)).getPage(0);
+  const doc = pg.doc;
+  const out = [];
+  for (const ref of pg.node.normalizedEntries().Contents.asArray()) {
+    const bruto = Buffer.from(doc.context.lookup(ref).getContents());
+    let txt;
+    try { txt = inflateSync(bruto).toString("latin1"); } catch { txt = bruto.toString("latin1"); }
+    for (const m of txt.matchAll(/(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) cm/g)) {
+      out.push(m.slice(1).map(Number));
+    }
+  }
+  return out;
+}
 
 // serviço do Anexo A (igual ao gerador.test)
 const pontos = parseTxt(readFileSync(new URL("../reference/LARISSA.txt", import.meta.url), "utf8"));
@@ -139,6 +157,53 @@ test("planta de posse: folha A3 sem quadro analítico", async () => {
   assert.ok(Math.abs(width - 420 * 2.834645669) < 1, `largura ${width}`);
   assert.ok(Math.abs(height - 297 * 2.834645669) < 1, `altura ${height}`);
   console.log(`    planta-posse-teste.pdf: ${(bytes.length / 1024).toFixed(0)} KB, A3 paisagem OK`);
+});
+
+test("A3 é a A1 reduzida: mesmo desenho, muda só a proporção", async () => {
+  // As regras dos nomes de vizinho são proporcionais ao desenho, mas os pisos em
+  // pontos eram multiplicados por 1,7 só na posse — na A3 os pisos venciam a
+  // proporção e a mesma planta saía com dois arranjos. O desenho tem de ser bit a
+  // bit o mesmo nos dois fluxos; o que muda é a folha no fim.
+  const comum = {
+    vertices: ring.map((v, i) => ({
+      codigo: v.codigo, e: v.eProj, n: v.nProj,
+      lonFmt: fmtGmsPlanilha(v.lonGms, "lon"), latFmt: fmtGmsPlanilha(v.latGms, "lat"),
+      alt: String(v.h).replace(".", ","),
+      azFmt: servico.segs[i].azimuteFmt, distFmt: servico.segs[i].distFmt,
+      vante: ring[(i + 1) % ring.length].codigo,
+    })),
+    trechos: trechosPlanta,
+    denominacao: "FAZENDA SÃO DOMINGOS",
+    proprietarios: [{ nome: "ANTONIO DE TESTE COSTA", cpf: "111.222.333-44" }],
+    matricula: "12345", cns: "00.770-8", sncr: "950.033.008.028-6",
+    municipioUf: "FEIRA DE SANTANA-BA",
+    areaFmt: fmtBR(servico.areaHa, 4), tarefasFmt: fmtBR(servico.areaHa * 10000 / 4356, 2),
+    perimetroFmt: fmtBR(servico.perimetroM, 2),
+    mcAbs: 39, fuso: 24, latMediaDeg: -12.2, trt: "BR20251208584",
+    rt: { nome: "TECNICO DE TESTE", formacao: "Técnico em Agropecuária", conselhoSigla: "CFTA", conselhoNumero: "0578839458-9", codigoCredenciado: "DSBN" },
+    desenhista: "JANETE OLIVEIRA", dataStr: "22/07/2026", logo: null,
+  };
+  const d1 = {}, d3 = {};
+  await gerarPlantaPdf({ ...comum, tipoImovel: "matricula" }, d1);
+  const a3 = await gerarPlantaPdf({ ...comum, tipoImovel: "posse" }, d3);
+
+  assert.deepEqual(d3.poligono, d1.poligono, "a poligonal saiu em outro lugar na A3");
+  assert.deepEqual(d3.rotulos, d1.rotulos, "os nomes de vizinho saíram em outro arranjo na A3");
+  assert.deepEqual(d3.corpos, d1.corpos, "os nomes de vizinho saíram em outro corpo na A3");
+  assert.equal(d3.folga, d1.folga, "a folga mínima mudou entre A1 e A3");
+
+  // e a redução é PROPORCIONAL: um fator só para os dois eixos, conteúdo centrado
+  const pg = (await PDFDocument.load(a3)).getPage(0);
+  const w3 = 420 * 2.834645669, h3 = 297 * 2.834645669;
+  assert.ok(Math.abs(pg.getWidth() - w3) < 1 && Math.abs(pg.getHeight() - h3) < 1);
+  const cms = await transformacoesDoConteudo(a3);
+  const escala = cms.find((m) => m[0] !== 1);
+  assert.ok(escala, "faltou a escala do conteúdo na A3");
+  assert.equal(escala[0], escala[3], "escala anisotrópica: a A3 sairia achatada");
+  const desloc = cms.find((m) => m[0] === 1);
+  assert.ok(desloc && Math.abs(desloc[5] - (h3 - 594 * 2.834645669 * escala[0]) / 2) < 0.01,
+    "conteúdo não ficou centrado na folha A3");
+  console.log(`    A3 = A1 × ${escala[0].toFixed(4)}, ${d3.rotulos.length} rótulos idênticos`);
 });
 
 test("planta de espólio com inventariante: PDF gerado com dados do inventariante", async () => {

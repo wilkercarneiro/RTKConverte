@@ -234,14 +234,34 @@ A folga é aplicada inflando a caixa do candidato dentro do próprio teste (`inf
 parâmetro `folga` de `segCruzaObb`), então "não cruzar" passa a significar "não chegar
 perto" — para todos os candidatos de todos os rótulos, inclusive o de último recurso.
 
-Valor: `max(9 pt · K, 1,1% da diagonal do polígono)`. Proporcional como o resto, com piso
-em pontos para não sumir em imóvel pequeno, e acompanhando `K` porque a folha de posse sai
-reduzida à metade — folga desenhada é o dobro da percebida.
+Valor: `max(9 pt, 1,1% da diagonal do polígono)`. Proporcional como o resto, com piso em
+pontos para não sumir em imóvel pequeno. Vale igual na A1 e na A3 — ver *A3 é a A1
+reduzida*, abaixo.
 
-Medido no `ff198218` (folga exigida 15,3 pt): os quatro blocos de confrontante ficam a
+Medido no `ff198218` (folga exigida 14,9 pt): os quatro blocos de confrontante ficam a
 17,8 · 20,0 · 21,1 · 28,6 pt do traço mais próximo. O preço é corpo: a média caiu de 22,1
 para ~19,5 pt. `tests/rotulos_sem_invadir.test.mjs` mede a distância real de cada bloco a
 cada traço e cobra o valor de `diag.folga`.
+
+### A3 é a A1 reduzida
+
+A planta de posse sai em A3 e a de matrícula em A1, e a diferença entre as duas folhas é
+**só a proporção**: o desenho é o mesmo, montado nas mesmas medidas em pontos, e no fim o
+conteúdo é reduzido por um fator único (`420/841 ≈ 0,4994`, aplicado aos dois eixos, com o
+resto de 1,1 pt de altura repartido em cima e embaixo para a moldura ficar centrada).
+
+Havia antes um fator `K = 1,7` que ampliava os corpos pequenos do desenho **só na posse**,
+para ganhar legibilidade depois da redução. Isso funcionava enquanto as distâncias de
+rótulo eram números fixos de pontos. Com as regras proporcionais desta seção, não funciona
+mais: só os *pisos* acompanhavam `K`, então na A3 o piso vencia a proporção, o bloco de
+texto quebrava em outra largura, a caixa reservada da legenda passava de 300×124 pt para
+510×211 pt e o arranjo dos nomes saía diferente do da A1 — a mesma planta com dois layouts,
+e as regras aferidas só num deles.
+
+`K` não existe mais. `tests/planta.test.mjs` gera a mesma planta nos dois fluxos e compara
+`diag.poligono`, `diag.rotulos`, `diag.corpos` e `diag.folga`: têm de ser idênticos. O que
+continua diferente na posse é conteúdo, não desenho — sem quadro analítico, "(POSSE)" no
+lugar de "(MATR./CNS.)", assinatura do posseiro, `FOLHA 01 001 A3`.
 
 Os nomes de via ficam de fora dessa medição — são girados, e a distância a partir da caixa
 envolvente subestima a folga real deles. A folga é garantida na busca pela caixa exata.

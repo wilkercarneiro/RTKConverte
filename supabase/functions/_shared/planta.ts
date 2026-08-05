@@ -373,13 +373,21 @@ function linhasDescritivo(descritivo: string): string[] {
 // ---------------------------------------------------------------------------
 export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise<Uint8Array> {
   const posse = d.tipoImovel === "posse";
-  // A folha de posse é desenhada em A1 e reduzida à metade no fim (A3). Os
-  // corpos pequenos do desenho são ampliados por K aqui para continuarem
-  // legíveis depois dessa redução.
-  const K = posse ? 1.7 : 1;
+  // A folha de posse É a folha de matrícula, só que menor: MESMAS regras, MESMO
+  // desenho, MESMAS medidas em pontos — muda a proporção no fim e nada mais.
+  //
+  // Antes os corpos pequenos do desenho eram ampliados por K = 1,7 na posse, para
+  // ganhar legibilidade depois da redução. Isso funcionava enquanto as distâncias
+  // de rótulo eram números fixos de pontos, mas as regras novas dos nomes de
+  // vizinho são PROPORCIONAIS ao desenho (fração da diagonal do polígono) e só os
+  // pisos acompanhavam K. Resultado: na A3 os pisos venciam a proporção, o bloco
+  // de texto quebrava em outra largura, a caixa da legenda reservava 510×211pt no
+  // lugar de 300×124 e o arranjo saía diferente do da A1 — a mesma planta com
+  // dois layouts. A regra agora é uma só; a legibilidade vem da redução única do
+  // fim, como em qualquer prancha reduzida.
   const pdf = await PDFDocument.create();
   // a folha é sempre desenhada nas medidas A1; p/ posse o conteúdo é reduzido
-  // à metade no final (setSize+scaleContent), virando um A3 proporcional
+  // proporcionalmente no final (scaleContent+setSize), virando um A3
   const page = pdf.addPage([W, H]);
   const f = await pdf.embedFont(StandardFonts.Helvetica);
   const fb = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -416,7 +424,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   const passo = stepCands.find((s) => s >= alvoM) ?? 5000;
   const e0 = Math.ceil((cxE - dArea.w / 2 * mPorPt) / passo) * passo;
   const n0 = Math.ceil((cxN - dArea.h / 2 * mPorPt) / passo) * passo;
-  const GRID_TAM = 11 * K; // discreto, como na planta de referência
+  const GRID_TAM = 11; // discreto, como na planta de referência
   for (let e = e0; X(e) < dArea.x + dArea.w; e += passo) {
     linha(c, X(e), dArea.y, X(e), dArea.y + dArea.h, 0.4, CINZA, [2, 4]);
     const et = `E=${fmtMilhar(e)}`;
@@ -495,10 +503,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // FOLGA PADRÃO entre qualquer rótulo de trecho e qualquer traço do desenho.
   // Proporcional como o resto, e com piso em pontos para não sumir em imóvel
   // pequeno. Vale para TODOS os candidatos, inclusive o de último recurso: um
-  // nome não pode encostar na linha em hipótese nenhuma. Na folha de posse a
-  // planta sai reduzida à metade, então a folga desenhada é o dobro da percebida
-  // — por isso ela acompanha K, como todo corpo pequeno deste desenho.
-  const FOLGA = Math.max(9 * K, 0.011 * diagPoly);
+  // nome não pode encostar na linha em hipótese nenhuma. Vale igual na A1 e na
+  // A3: o piso é medido no desenho, que é o mesmo nas duas — a A3 só é reduzida
+  // depois de pronta, e a redução leva a folga junto, na mesma proporção.
+  const FOLGA = Math.max(9, 0.011 * diagPoly);
 
   const trechoDoIdx = (i: number): TrechoPlanta => {
     for (const t of d.trechos) {
@@ -514,7 +522,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     const { x: nx, y: ny } = normalAresta(i);
     for (const off of [5, 11]) {
       const seg = { x1: X(a.e) + nx * off, y1: Y(a.n) + ny * off, x2: X(b.e) + nx * off, y2: Y(b.n) + ny * off };
-      linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8 * K, VERMELHO);
+      linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, VERMELHO);
       obstaculos.push(seg);
       vias.push(seg);
     }
@@ -523,7 +531,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // ------------------- polígono -------------------
   for (let i = 0; i < nv; i++) {
     const a = vs[i], b = vs[(i + 1) % nv];
-    linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 3.4 * K, AZUL);
+    linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 3.4, AZUL);
     obstaculos.push({ x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) });
   }
   // vértices + códigos. Em divisas com muitos pontos quase alinhados (a face
@@ -531,7 +539,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // ilegível: aqui o texto é pequeno e o rótulo que colidiria com outro já
   // desenhado é suprimido — nenhum dado se perde, o quadro analítico lista
   // TODOS os vértices.
-  const VERT_TAM = 7.5 * K;
+  const VERT_TAM = 7.5;
   const ocupado: { x1: number; y1: number; x2: number; y2: number }[] = [];
   let rotulosOcultos = 0;
   // A legenda é desenhada no fim, com fundo BRANCO OPACO, no canto inferior
@@ -540,7 +548,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // parte do rótulo não adianta não invadir se depois vem a legenda por cima.
   const legendaRet: Ret = {
     x1: dArea.x + 6, y1: dArea.y + 2,
-    x2: dArea.x + 6 + 300 * K, y2: dArea.y + 2 + 124 * K,
+    x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124,
   };
   ocupado.push(legendaRet);
   // Só o bolinha e o tique saem agora. O CÓDIGO fica reservado e é desenhado
@@ -598,7 +606,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     const larguraUnit = Math.max(...centroLinhas.map((l) => fb.widthOfTextAtSize(l, 1)));
     let tam = 0, esp = 0, bx0 = polo.x, byTopo = polo.y;
     // teto de 18pt: acima disso o bloco fica maior que os títulos do carimbo
-    for (let t = 18 * K; t >= 4 * K; t -= 0.5) {
+    for (let t = 18; t >= 4; t -= 0.5) {
       const bw = larguraUnit * t;
       const e = t * 1.35;
       const bh = centroLinhas.length * e;
@@ -609,7 +617,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       }
     }
     if (tam === 0) { // imóvel estreito demais: menor corpo possível, ainda no polo
-      tam = 4 * K; esp = tam * 1.35;
+      tam = 4; esp = tam * 1.35;
       bx0 = polo.x - (larguraUnit * tam) / 2;
       byTopo = polo.y + (centroLinhas.length * esp) / 2;
     }
@@ -632,7 +640,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     if (!vm) continue;
     const { x: gx, y: gy } = normalVertice(t.inicioIdx % nv);
     const x1 = X(vm.e), y1 = Y(vm.n), x2 = x1 + gx * 50, y2 = y1 + gy * 50;
-    linha(c, x1, y1, x2, y2, 2.8 * K, VERDE);
+    linha(c, x1, y1, x2, y2, 2.8, VERDE);
     marcos.push({ x1, y1, x2, y2 });
   }
   // O traço verde tem 50pt e sai de dentro do vão de um vizinho para o do outro:
@@ -657,7 +665,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       grupos.pop();
     }
   }
-  const LBL_TAM = 13 * K, LBL_ESP = 16 * K, LBL_MAXW = 310 * K;
+  const LBL_TAM = 13, LBL_ESP = 16, LBL_MAXW = 310;
   for (const t of grupos) {
     // ponto médio GEOMÉTRICO do trecho: metade do comprimento da linha do
     // confrontante — o rótulo fica centralizado no "raio" da confrontação
@@ -706,10 +714,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       // Mesma regra do bloco do confrontante, na medida proporcional: o nome fica
       // no meio da via, encostado nela, e é o corpo que cede para caber. Já é
       // centrado por construção — acompanha a própria estrada, não desliza.
-      const AFAST_VIA = Math.max(16 * K, 0.026 * diagPoly);
+      const AFAST_VIA = Math.max(16, 0.026 * diagPoly);
       const escalasVia: number[] = [];
-      // piso de 0,7: abaixo disso o nome da via deixa de ser legível na A3, que
-      // sai reduzida à metade — encolher tem limite, cair fora da folha não tem
+      // piso de 0,7: abaixo disso o nome da via deixa de ser legível depois da
+      // redução para A3 — encolher tem limite, cair fora da folha não tem
       for (let s = 1; s >= 0.7; s -= 0.03) escalasVia.push(s);
       const cands = [1, 1.35, 1.75, 2.2].flatMap((fa, ai) =>
         escalasVia.map((escala, ei) => {
@@ -758,11 +766,11 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // vizinho — o "desorganizado" relatado. Deslizamento agora não existe: um nome
     // fora do meio do trecho dele aponta para a divisa errada, e isso não é questão
     // de estética. Ver ARQUITETURA-TRECHOS.md.
-    const AFAST = Math.max(22 * K, 0.052 * diagPoly);
+    const AFAST = Math.max(22, 0.052 * diagPoly);
     // largura do bloco proporcional ao espaço do vizinho, com piso para caber o
     // nome mesmo em trecho curto e teto para não atravessar a folha
     const compTrecho = segLens.reduce((s, l) => s + l, 0);
-    const maxW = Math.min(LBL_MAXW, Math.max(90 * K, 0.8 * compTrecho));
+    const maxW = Math.min(LBL_MAXW, Math.max(90, 0.8 * compTrecho));
     // escalas contínuas: o corpo cede de 1 até 0,55 em passos finos, para o bloco
     // encolher só o necessário em vez de saltar de degrau em degrau
     const ESCALAS: number[] = [];
@@ -838,7 +846,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   {
     // afastada do canto p/ não cobrir os rótulos N=/E= da malha (que ocupam
     // as bordas), e maior p/ acompanhar a nova escala dos textos
-    const R = 58 * K;
+    const R = 58;
     // canto livre: preferência pelo superior esquerdo (padrão da planta de
     // referência), caindo p/ outro canto se lá já houver polígono ou rótulo —
     // o inferior esquerdo é reservado à legenda
@@ -882,7 +890,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     }
     // miolo e letra N
     page.drawCircle({ x: bx, y: by, size: 4.5, borderWidth: 1.2, borderColor: PRETO, color: rgb(1, 1, 1) });
-    texto(c, "N", bx, by + R + 10, 22 * K, { bold: true, center: true });
+    texto(c, "N", bx, by + R + 10, 22, { bold: true, center: true });
   }
 
   // ============================ BARRA LATERAL ============================
@@ -1096,17 +1104,17 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     const lx = legendaRet.x1 + 6, boxW = legendaRet.x2 - legendaRet.x1, boxH = legendaRet.y2 - legendaRet.y1;
     page.drawRectangle({ x: legendaRet.x1, y: legendaRet.y1, width: boxW, height: boxH, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 0.8 });
     const lyTop = legendaRet.y2;
-    texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 17 * K, 11 * K, { bold: true });
+    texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 17, 11, { bold: true });
     const itens: [ReturnType<typeof rgb>, string][] = [
       [VERMELHO, "ESTRADA"], [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
     ];
-    let lyy = lyTop - 38 * K;
+    let lyy = lyTop - 38;
     for (const [cor, nome] of itens) {
-      linha(c, lx, lyy + 3, lx + 38 * K, lyy + 3, 3.4, cor);
-      texto(c, nome, lx + 46 * K, lyy, 9.5 * K);
-      lyy -= 20 * K;
+      linha(c, lx, lyy + 3, lx + 38, lyy + 3, 3.4, cor);
+      texto(c, nome, lx + 46, lyy, 9.5);
+      lyy -= 20;
     }
-    texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 9.5 * K);
+    texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 9.5);
   }
 
   if (diag) {
@@ -1124,11 +1132,20 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     diag.poligono = vs.map((v) => ({ x: X(v.e), y: Y(v.n) }));
   }
 
-  // posse: reduz o conteúdo e entrega a folha no A3 exato (420×297 mm) —
-  // meia-A1 seria 420,5 mm, então o eixo X escala por 420/841 (~0,4994)
+  // posse: a MESMA folha, entregue no A3 exato (420×297 mm).
+  //
+  // Um único fator para os dois eixos — é isso que faz da A3 uma redução e não
+  // uma folha diferente. Meia-A1 daria 420,5×297, então quem manda é o eixo mais
+  // apertado (420/841 ≈ 0,4994) e sobra 1,1pt de altura, repartida em cima e
+  // embaixo para a moldura continuar centrada. Escalar cada eixo pelo seu próprio
+  // fator caberia igual, mas achataria o desenho 0,12% na horizontal: o círculo
+  // da bússola viraria elipse e a escala gráfica deixaria de bater com a numérica.
   if (posse) {
     const w3 = 420 * MM, h3 = 297 * MM;
-    page.scaleContent(w3 / W, h3 / H);
+    const s = Math.min(w3 / W, h3 / H);
+    // ordem importa: o translate é aplicado por fora da escala (T · S)
+    page.scaleContent(s, s);
+    page.translateContent((w3 - W * s) / 2, (h3 - H * s) / 2);
     page.setSize(w3, h3);
   }
 
