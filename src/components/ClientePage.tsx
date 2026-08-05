@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { useAutosave, useAvisos } from "../lib/ux";
-import { Avisos, Secao, StatusSalvamento } from "./ui";
+import { Avisos, BotaoPerigo, Secao, StatusSalvamento } from "./ui";
 import type { Cliente, Servico } from "../lib/types";
 
 interface Props {
@@ -50,6 +50,14 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoGeo, on
     } catch (e) {
       avisar("erro", e instanceof Error ? e.message : String(e));
     }
+  }
+
+  // Os serviços do cliente NÃO são apagados junto: a FK é 'on delete set null',
+  // eles voltam para o dashboard sem cliente vinculado.
+  async function excluirCliente() {
+    const { error } = await supabase.from("clientes").delete().eq("id", clienteId);
+    if (error) { avisar("erro", `Não foi possível excluir o cliente: ${error.message}`); return; }
+    onVoltar();
   }
 
   const dataFmt = (iso?: string) => (iso ? new Date(iso).toLocaleDateString("pt-BR") : "—");
@@ -99,8 +107,17 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoGeo, on
           )}
         </Secao>
 
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
           <button className="principal" onClick={salvar}>Salvar cliente</button>
+          <span className="esticar" style={{ flex: 1 }} />
+          <span style={{ color: "var(--texto-2)", fontSize: 12 }}>
+            {servicos.length > 0
+              ? `excluir mantém os ${servicos.length} serviço(s), sem cliente vinculado`
+              : "este cliente não tem serviços"}
+          </span>
+          <BotaoPerigo titulo={`Excluir cliente "${cliente.nome}"`}
+            confirmacao={servicos.length > 0 ? `excluir e desvincular ${servicos.length} serviço(s)` : "excluir mesmo"}
+            onConfirmar={excluirCliente}>🗑 Excluir cliente</BotaoPerigo>
         </div>
       </section>
 

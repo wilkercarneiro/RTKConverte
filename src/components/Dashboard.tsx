@@ -65,6 +65,18 @@ export function Dashboard({ onNovoGeo, onNovoPecas, onConfig, onAbrir, onAbrirCl
     if (data) { setNovoNome(""); onAbrirCliente((data as Cliente).id); }
   }
 
+  // Excluir cliente não apaga os serviços dele: a FK é 'on delete set null',
+  // então eles continuam existindo, só ficam sem cliente vinculado.
+  async function excluirCliente(c: Cliente) {
+    const meus = servicos.filter((s) => s.cliente_id === c.id).length;
+    const { error } = await supabase.from("clientes").delete().eq("id", c.id);
+    if (error) { avisar("erro", `Não foi possível excluir o cliente: ${error.message}`); return; }
+    avisar("ok", meus > 0
+      ? `Cliente "${c.nome}" excluído. ${meus} serviço(s) continuam na lista, agora sem cliente.`
+      : `Cliente "${c.nome}" excluído.`);
+    carregar();
+  }
+
   async function excluir(s: Servico) {
     const { error } = await supabase.from("servicos").delete().eq("id", s.id);
     if (error) { avisar("erro", `Não foi possível excluir: ${error.message}`); return; }
@@ -187,7 +199,7 @@ export function Dashboard({ onNovoGeo, onNovoPecas, onConfig, onAbrir, onAbrirCl
             {carregando ? <p style={{ color: "var(--texto-2)" }}><span className="spinner" /> Carregando…</p> : (
               <div className="tabela-wrap" style={{ maxHeight: 440 }}>
                 <table className="tabela-vertices dash-lista">
-                  <thead><tr><th>Cliente</th><th>CPF/CNPJ</th><th>Telefone</th><th>Serviços</th><th>Concluídos</th></tr></thead>
+                  <thead><tr><th>Cliente</th><th>CPF/CNPJ</th><th>Telefone</th><th>Serviços</th><th>Concluídos</th><th></th></tr></thead>
                   <tbody>
                     {clientes
                       .filter((c) => `${c.nome} ${c.cpf_cnpj ?? ""}`.toLowerCase().includes(filtro.toLowerCase()))
@@ -202,6 +214,11 @@ export function Dashboard({ onNovoGeo, onNovoPecas, onConfig, onAbrir, onAbrirCl
                             <td>{c.telefone ?? "—"}</td>
                             <td>{meus.length}</td>
                             <td>{meus.filter((s) => s.status === "gerado").length}</td>
+                            <td>
+                              <BotaoPerigo titulo={`Excluir cliente "${c.nome}"`}
+                                confirmacao={meus.length > 0 ? `excluir e desvincular ${meus.length} serviço(s)` : "excluir mesmo"}
+                                onConfirmar={() => excluirCliente(c)}>✕</BotaoPerigo>
+                            </td>
                           </tr>
                         );
                       })}
