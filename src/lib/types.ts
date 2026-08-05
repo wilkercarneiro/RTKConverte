@@ -60,6 +60,8 @@ export interface Servico {
   requerente2_genero: "M" | "F" | null;
   endereco_detentor: string | null;
   area_matricula_ha: string | null;
+  // obsoleto: as faixas de domínio saem dos trechos da planta (uma declaração
+  // por via). A coluna continua no banco só por causa dos serviços antigos.
   via_dominio: string | null;
   is_espolio?: boolean | null;
   inventariante_nome?: string | null;

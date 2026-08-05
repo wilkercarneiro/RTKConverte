@@ -185,19 +185,47 @@ export interface DadosPecas {
   trt: string;                    // "BR20250804764"
   dataStr: string;                // "03/06/2026"
   rt: DadosRt;
-  viaDominio: string | null;      // "BA 408"
+  // sem campo de via: as faixas de domínio saem dos próprios trechos da planta
   sigef: DadosSigef;
   trechos: TrechoPecas[];
   confrontacaoDe: (codigoVertice: string) => string; // descritivo completo p/ tabela do doc 2
 }
 
-// Faixa de domínio pública: estrada, corredor, rio, rodovia etc.
-const RE_VIA =
-  /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|RIO|RIACHO|C[ÓO]RREGO|LAGOA?|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
+// Faixa de domínio pública: estrada, corredor, linha férrea, rio, rodovia (BA/BR…)
+// etc. Uma planta pode ter mais de uma — cada trecho reconhecido aqui vira uma
+// declaração de faixa de domínio própria (ver gerarDeclaracoesVia).
+export const RE_VIA =
+  /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|LINHA\s+F[ÉE]RREA|FERROVIA|FERROVI[ÁA]RI[AO]|LEITO\s+FERROVI[ÁA]RIO|RIO|RIACHO|C[ÓO]RREGO|LAGOA?|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
 
-// "do BA 408" / "da ESTRADA VICINAL" — artigo usado em "faixa de domínio ..."
+// "do BA 408" / "da ESTRADA VICINAL" / "da LINHA FÉRREA" — artigo usado em
+// "faixa de domínio ..."
 export function artigoVia(rotulo: string): string {
-  return /^(ESTRADA|RODOVIA|SERVID[ÃA]O|LAGOA|AVENIDA|RUA|FAIXA)/i.test(rotulo.trim()) ? "da" : "do";
+  return /^(ESTRADA|RODOVIA|SERVID[ÃA]O|LAGOA|AVENIDA|RUA|FAIXA|LINHA|FERROVIA|MALHA|VIA)/i
+    .test(rotulo.trim()) ? "da" : "do";
+}
+
+// rótulo da via como sai nas peças: "BA 408", "CORREDOR", "LINHA FÉRREA"
+export function rotuloVia(t: TrechoPecas): string {
+  return (t.imovelLabel || t.descritivo).split("\\")[0].trim();
+}
+
+// vias da planta, na ordem do perímetro e sem repetir a mesma faixa — cada uma
+// gera sua declaração de faixa de domínio.
+export function viasDaPlanta(trechos: TrechoPecas[]): TrechoPecas[] {
+  const vistos = new Set<string>();
+  const out: TrechoPecas[] = [];
+  for (const t of trechos) {
+    if (!t.ehVia || t.linhas.length === 0) continue;
+    const k = chaveTexto(rotuloVia(t));
+    if (vistos.has(k)) {
+      // mesma via em dois trechos do anel: junta os vértices numa só declaração
+      out.find((x) => chaveTexto(rotuloVia(x)) === k)!.linhas.push(...t.linhas);
+      continue;
+    }
+    vistos.add(k);
+    out.push({ ...t, linhas: [...t.linhas] });
+  }
+  return out;
 }
 
 // Extrai pessoas e rótulo do imóvel a partir do descritivo formal.
@@ -205,7 +233,10 @@ export function artigoVia(rotulo: string): string {
 //   "(MATR.4.403/CNS.00.803-7) FAZENDA TERRA NOVA\ CARLOS...\ CPF:...\ DIVALDO...\ CPF:..."
 //   "MARIA NINA DA SILVA COSTA\ CPF:666.186.815-53"  (confrontante sem rótulo de imóvel)
 //   "ESTRADA VICINAL" | "BA 408" | "CORREDOR"        (faixa de domínio pública)
-export function parseDescritivo(descritivo: string): { pessoas: PessoaConfrontante[]; imovelLabel: string; posse: boolean; ehVia: boolean } {
+// `forcarVia` vem do trecho marcado como faixa de domínio na planta (eh_via):
+// vale mesmo que o rótulo não seja reconhecido pelo texto (ex.: "LINHA FÉRREA
+// DO SUL", "TRECHO DA CONCESSIONÁRIA").
+export function parseDescritivo(descritivo: string, forcarVia = false): { pessoas: PessoaConfrontante[]; imovelLabel: string; posse: boolean; ehVia: boolean } {
   const partes = descritivo.split("\\").map((p) => p.trim()).filter(Boolean);
   const m = partes[0]?.match(/^\(([^)]*)\)\s*(.+)$/);
   const lerPessoas = (ps: string[]): PessoaConfrontante[] => {
@@ -222,14 +253,17 @@ export function parseDescritivo(descritivo: string): { pessoas: PessoaConfrontan
   if (m) {
     const tag = m[1].trim();
     const nomeImovel = m[2].trim();
-    return { pessoas: lerPessoas(partes.slice(1)), imovelLabel: `${nomeImovel} (${tag})`, posse: /^POSSE$/i.test(tag), ehVia: false };
+    return { pessoas: lerPessoas(partes.slice(1)), imovelLabel: `${nomeImovel} (${tag})`, posse: /^POSSE$/i.test(tag), ehVia: forcarVia };
   }
   // sem "(TAG) imóvel": ou é faixa de domínio pública, ou lista de pessoas
   const temCpf = partes.some((p) => /^CPF\s*:/i.test(p));
   if (!temCpf && partes.length === 1 && RE_VIA.test(partes[0])) {
     return { pessoas: [], imovelLabel: partes[0], posse: false, ehVia: true };
   }
-  return { pessoas: lerPessoas(partes), imovelLabel: "", posse: false, ehVia: false };
+  if (forcarVia && !temCpf) {
+    return { pessoas: [], imovelLabel: partes[0] ?? "", posse: false, ehVia: true };
+  }
+  return { pessoas: lerPessoas(partes), imovelLabel: "", posse: false, ehVia: forcarVia };
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +348,15 @@ const EX = {
   dataExtenso: "03 de junho de 2026",
   tarefas: "192,98",
 };
+
+// Troca da via de exemplo nos modelos: só faz sentido quando a planta tem uma
+// única faixa de domínio. Com duas ou mais, uma substituição global escolheria
+// arbitrariamente uma delas (e poderia reescrever a via certa de outro trecho);
+// nesse caso o texto certo vem bloco a bloco na declaração (gerarDeclaracoesVia).
+function rotuloDaViaUnica(d: DadosPecas): string | null {
+  const vias = viasDaPlanta(d.trechos);
+  return vias.length === 1 ? rotuloVia(vias[0]) : null;
+}
 
 function rotProp(r: Requerente): string { return r.genero === "F" ? "Proprietária" : "Proprietário"; }
 function nacional(r: Requerente): string { return r.genero === "F" ? "BRASILEIRA" : "BRASILEIRO"; }
@@ -402,7 +445,9 @@ export function mapaComum(d: DadosPecas): [string, string][] {
     [EX.identidade, d.rt.identidade],
     // endereço / via / datas
     [EX.endereco, d.endereco],
-    [EX.via, d.viaDominio ?? EX.via],
+    // via do modelo: rede de segurança para menções fora da declaração (doc 7,
+    // que troca a via bloco a bloco). Sem via na planta, o texto do modelo fica.
+    [EX.via, rotuloDaViaUnica(d) ?? EX.via],
     [EX.dataExtenso, dataPorExtenso(d.dataStr)],
     [EX.data, d.dataStr],
     // município — variações usadas nos modelos (maiúsculas e título)
@@ -540,7 +585,7 @@ export function gerarDeclaracoesVia(
   mapa: [string, string][],
   exVia: string,
 ): string | null {
-  const vias = d.trechos.filter((t) => t.ehVia && t.linhas.length > 0);
+  const vias = viasDaPlanta(d.trechos);
   if (vias.length === 0) return null;
   const bodyM = xml.match(/<w:body>([\s\S]*?)(<w:sectPr[\s\S]*?<\/w:sectPr>)?<\/w:body>/);
   if (!bodyM) throw new Error("Declaração de faixa: body não encontrado");
@@ -554,7 +599,7 @@ export function gerarDeclaracoesVia(
   const prot = blocos[0];
   const saida: string[] = [];
   for (const v of vias) {
-    const rotulo = (v.imovelLabel || v.descritivo).trim();
+    const rotulo = rotuloVia(v);
     let bloco = prot.join("");
     bloco = mapearTabelas(bloco, EH_TBL_VERTICES, (tbl) =>
       reconstruirTabela(tbl, EH_LINHA_VERTICE, v.linhas.map(linhaVertice7)));
@@ -578,7 +623,7 @@ export function gerarDeclaracoesVia(
 // ---------------------------------------------------------------------------
 export function montarTrechosPecas(
   linhas: LinhaSigef[],
-  inicios: Map<string, { descritivo: string; tipoLimite: string }>,
+  inicios: Map<string, { descritivo: string; tipoLimite: string; ehVia?: boolean }>,
 ): { trechos: TrechoPecas[]; confrontacaoDe: (codigo: string) => string } {
   const trechos: TrechoPecas[] = [];
   const porCodigo = new Map<string, string>();
@@ -590,7 +635,7 @@ export function montarTrechosPecas(
     if (ini || !atual) {
       const info = ini ?? (ultimoInicio ? ultimoInicio[1] : { descritivo: l.confrontacao, tipoLimite: "LA1" });
       const jaExiste = ini ? trechos.find((t) => t.descritivo === info.descritivo && t.tipoLimite === info.tipoLimite && t.linhas.length === 0) : undefined;
-      const parsed = parseDescritivo(info.descritivo);
+      const parsed = parseDescritivo(info.descritivo, !!info.ehVia);
       atual = jaExiste ?? {
         descritivo: info.descritivo,
         tipoLimite: info.tipoLimite,
@@ -821,6 +866,7 @@ export function mapaPosse(d: DadosPecas): [string, string][] {
     [EX.rtCpf, d.rt.cpf],
     [EX.identidade, d.rt.identidade],
     // endereço / datas / município
+    [EXP.via, rotuloDaViaUnica(d) ?? EXP.via],
     [EXP.endereco, d.endereco],
     [EXP.dataExtenso, dataPorExtenso(d.dataStr)],
     [EXP.data, d.dataStr],

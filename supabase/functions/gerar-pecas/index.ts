@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import { extractText, getDocumentProxy } from "unpdf";
 import { parseSigefTexto } from "../_shared/sigef_pdf.ts";
-import { gerarPecasPosseXml, gerarPecasXml, montarTrechosPecas } from "../_shared/pecas.ts";
+import { gerarPecasPosseXml, gerarPecasXml, montarTrechosPecas, rotuloVia, viasDaPlanta } from "../_shared/pecas.ts";
 import type { DadosPecas, Requerente } from "../_shared/pecas.ts";
 
 const CORS = {
@@ -100,10 +100,18 @@ Deno.serve(async (req) => {
     // ---------------- trechos: código do vértice inicial → descritivo ----------------
     // serviço 'pecas': o trecho guarda o código direto (codigo_inicio);
     // serviço 'geo': resolve pelo vértice na ordem indicada.
-    const inicios = new Map<string, { descritivo: string; tipoLimite: string }>();
+    const inicios = new Map<string, { descritivo: string; tipoLimite: string; ehVia?: boolean }>();
     for (const t of trechoRows ?? []) {
       const codigo = t.codigo_inicio || (vertices ?? []).find((x) => x.ordem === t.vertice_inicio_ordem)?.codigo;
-      if (codigo) inicios.set(codigo, { descritivo: t.descritivo || t.apelido_txt || "", tipoLimite: t.tipo_limite });
+      if (codigo) {
+        inicios.set(codigo, {
+          descritivo: t.descritivo || t.apelido_txt || "",
+          tipoLimite: t.tipo_limite,
+          // faixa de domínio marcada na planta manda; sem marca, o rótulo do
+          // trecho ainda é reconhecido pelo texto (ESTRADA, CORREDOR, BA 408…)
+          ehVia: !!t.eh_via,
+        });
+      }
     }
     // fallback: PDF de outra geração (códigos diferentes) → detecta trechos pela
     // mudança da confrontação e tenta casar com o descritivo completo do banco
@@ -118,6 +126,7 @@ Deno.serve(async (req) => {
           inicios.set(l.codigo, {
             descritivo: match?.descritivo || l.confrontacao.replace(/\.{3}$/, ""),
             tipoLimite: match?.tipo_limite ?? "LA1",
+            ehVia: !!match?.eh_via,
           });
         }
       }
@@ -138,7 +147,6 @@ Deno.serve(async (req) => {
     if (servico.requerente2_nome && !posse) {
       requerentes.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "", genero: servico.requerente2_genero === "F" ? "F" : "M" });
     }
-    const viaAuto = trechos.find((t) => t.ehVia)?.descritivo ?? null;
     const dados: DadosPecas = {
       requerentes,
       rg: servico.detentor_rg ?? null,
@@ -167,7 +175,6 @@ Deno.serve(async (req) => {
         identidade: rt!.identidade ?? "",
         cpf: rt!.cpf ?? "",
       },
-      viaDominio: servico.via_dominio || viaAuto,
       sigef, trechos, confrontacaoDe,
     };
 
@@ -217,7 +224,7 @@ Deno.serve(async (req) => {
         trt: dados.trt,
         vertices: sigef.linhas.length,
         cartas: trechos.filter((t) => !t.ehVia && t.pessoas.length > 0).length,
-        via: trechos.filter((t) => t.ehVia).map((t) => t.descritivo).join(", ") || null,
+        via: viasDaPlanta(trechos).map(rotuloVia).join(", ") || null,
       },
     });
   } catch (err) {

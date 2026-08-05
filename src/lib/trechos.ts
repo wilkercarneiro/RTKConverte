@@ -33,6 +33,38 @@ export const SEM_CONFRONTACAO: Confrontacao = {
   cns: null, matricula: null, apelido_txt: null,
 };
 
+// Faixa de domínio pública reconhecida pelo rótulo do trecho. Espelha RE_VIA de
+// supabase/functions/_shared/pecas.ts — as duas precisam andar juntas, senão a
+// prévia da tela mostra faixas diferentes das que saem nas peças.
+const RE_VIA =
+  /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|LINHA\s+F[ÉE]RREA|FERROVIA|FERROVI[ÁA]RI[AO]|LEITO\s+FERROVI[ÁA]RIO|RIO|RIACHO|C[ÓO]RREGO|LAGOA?|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
+
+/**
+ * Faixas de domínio da planta: trecho marcado como via, ou cujo rótulo é uma
+ * (CORREDOR, ESTRADA, LINHA FÉRREA, BA 408, BR 116…). Sai uma declaração de
+ * faixa de domínio por via distinta — não há campo para digitar a via.
+ */
+export function viasDaPlanta(
+  trechos: { descritivo?: string | null; apelido_txt?: string | null; eh_via?: boolean | null }[],
+): string[] {
+  const vistas = new Set<string>();
+  const out: string[] = [];
+  for (const t of trechos) {
+    const rotulo = (t.descritivo || t.apelido_txt || "").split("\\")[0].trim();
+    if (!rotulo) continue;
+    // "(MATR.4.403/CNS...) FAZENDA RIO CLARO" é imóvel, não via — o rótulo com
+    // etiqueta entre parênteses e o descritivo com CPF nunca viram faixa sozinhos
+    const ehImovel = /^\([^)]*\)/.test(rotulo) || /CPF\s*:/i.test(t.descritivo ?? "");
+    const ehVia = !!t.eh_via || (!ehImovel && RE_VIA.test(rotulo));
+    if (!ehVia) continue;
+    const k = rotulo.toUpperCase();
+    if (vistas.has(k)) continue;
+    vistas.add(k);
+    out.push(rotulo);
+  }
+  return out;
+}
+
 /**
  * Move a confrontação de um vértice M para outro vértice do perímetro, levando
  * junto descritivo, apelido, tipo de limite, faixa de domínio, CNS e matrícula.

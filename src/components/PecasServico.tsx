@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
 import { rotuloRT, TIPOS_LIMITE, UFS } from "../lib/domains";
 import { contarPreenchidos, useAutosave, useAvisos } from "../lib/ux";
+import { viasDaPlanta } from "../lib/trechos";
 import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { Avisos, Passos, ProximaAcao, Secao, StatusSalvamento, irPara, type Acao, type Passo } from "./ui";
@@ -247,6 +248,9 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   if (!servico.rt_id) pendencias.push({ msg: "selecione o Responsável Técnico", alvo: "pc-rt" });
 
   const semDescritivo = trechos.filter((t) => !t.descritivo.trim()).length;
+  // faixas de domínio: identificadas na planta (marca do trecho ou rótulo do
+  // confrontante), uma declaração por via — não há campo para digitar
+  const vias = viasDaPlanta(trechos);
 
   const passos: Passo[] = [
     { rotulo: "PDF do SIGEF", estado: "feita" },
@@ -337,9 +341,11 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
             <label>CNS (cartório) <input value={servico.cns ?? ""} onChange={(e) => campo("cns", e.target.value)} /></label>
             <label>Código SNCR <input value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
             <label>Área constante na matrícula (ha) <input placeholder="ex.: 86" value={servico.area_matricula_ha ?? ""} onChange={(e) => campo("area_matricula_ha", e.target.value || null)} /></label>
-            <label>Via da faixa de domínio
-              <input placeholder="ex.: BA 408" value={servico.via_dominio ?? ""} onChange={(e) => campo("via_dominio", e.target.value || null)} />
-              <small className="sub">{trechos.some((t) => t.eh_via) ? "há trecho marcado como faixa de domínio — informe a via" : "só é usada se algum trecho for faixa de domínio"}</small>
+            <label style={{ gridColumn: "span 2" }}>Faixas de domínio (detectadas na planta)
+              <input readOnly value={vias.length ? vias.join(" · ") : "nenhuma"} />
+              <small className="sub">{vias.length
+                ? `sai ${vias.length} ${vias.length > 1 ? "declarações" : "declaração"} de faixa de domínio, uma por via`
+                : "sem estrada, corredor, linha férrea ou rodovia na confrontação — a declaração não é gerada"}</small>
             </label>
           </div>
         </Secao>

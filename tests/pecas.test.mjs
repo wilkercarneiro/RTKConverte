@@ -86,6 +86,37 @@ test("parseDescritivo: confrontante sem rótulo de imóvel e faixa de domínio",
   assert.equal(semCpf.pessoas.length, 1);
 });
 
+test("faixa de domínio: linha férrea reconhecida e trecho marcado na planta manda", () => {
+  // rótulos que a planta pode trazer, além de estrada/corredor/BA/BR
+  for (const via of ["LINHA FÉRREA", "LINHA FERREA", "FERROVIA CENTRO-ATLÂNTICA", "BR 116"]) {
+    assert.equal(parseDescritivo(via).ehVia, true, `${via} deveria ser via`);
+  }
+  // marcado como faixa de domínio na planta (eh_via) mesmo sem palavra-chave
+  const forcado = parseDescritivo("TRECHO DA CONCESSIONÁRIA", true);
+  assert.equal(forcado.ehVia, true);
+  assert.equal(forcado.pessoas.length, 0);
+  assert.equal(forcado.imovelLabel, "TRECHO DA CONCESSIONÁRIA");
+  // sem a marca, o mesmo rótulo continua sendo confrontante comum
+  assert.equal(parseDescritivo("TRECHO DA CONCESSIONÁRIA").ehVia, false);
+});
+
+test("declaração por faixa: três vias na planta geram três declarações", async () => {
+  // mesma planta, com a linha férrea no lugar do trecho da FAZENDA PAU D'ÁGUA
+  const descs = { ...DESCS, "DSBN-M-3608": { descritivo: "LINHA FÉRREA", tipoLimite: "LA3", ehVia: true } };
+  const m = montarTrechosPecas(sigef.linhas, new Map(Object.entries(descs)));
+  const tpl = {};
+  for (let i = 1; i <= 7; i++) {
+    const zip = await JSZip.loadAsync(readFileSync(new URL(`../reference/pecas/${NOMES[i - 1]}.docx`, import.meta.url)));
+    tpl[String(i)] = await zip.file("word/document.xml").async("string");
+  }
+  const xmls = gerarPecasXml(tpl, { ...dados, trechos: m.trechos, confrontacaoDe: m.confrontacaoDe });
+  const t7 = dec(xmls["7"].replace(/<[^>]+>/g, ""));
+  assert.equal((t7.match(/vem à presença de V\. Sa\./g) ?? []).length, 3, "uma declaração por faixa");
+  assert.ok(t7.includes("faixa de domínio da LINHA FÉRREA"), "artigo feminino da linha férrea");
+  assert.ok(t7.includes("faixa de domínio do BA 408"));
+  assert.ok(t7.includes("faixa de domínio do CORREDOR"));
+});
+
 // ---------- geração das 7 peças ----------
 const NOMES = ["1-memorial-descritivo", "2-memorial-tabular", "3-cartas-anuencia", "4-declaracao-tecnico", "5-declaracao-proprietario", "6-requerimento", "7-declaracao-faixa-dominio"];
 const dados = {
@@ -102,7 +133,6 @@ const dados = {
   areaMatriculaHa: "86", mcAbs: 39,
   trt: "BR20250804764", dataStr: "22/07/2026",
   rt: { nome: "TECNICO DE TESTE", formacao: "Técnico em Agrimensura", conselhoSigla: "CREA", conselhoNumero: "12345-D", identidade: "11.111.111-11 SSP/BA", cpf: "999.888.777-66" },
-  viaDominio: "BA 408",
   sigef, trechos, confrontacaoDe,
 };
 const dec = (s) => s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'");

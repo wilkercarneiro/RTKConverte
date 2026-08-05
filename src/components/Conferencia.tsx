@@ -12,7 +12,7 @@ import {
   rotuloRT, SITUACOES, TIPOS_LIMITE, TIPOS_PESSOA, UFS,
 } from "../lib/domains";
 import { calcularPreviewLocal } from "../lib/preview";
-import { moverConfrontacao, SEM_CONFRONTACAO } from "../lib/trechos";
+import { moverConfrontacao, SEM_CONFRONTACAO, viasDaPlanta } from "../lib/trechos";
 import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux";
 import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
 import type { ResultadoParse } from "./Upload";
@@ -169,6 +169,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     () => calcularPreviewLocal(servico.fuso_utm ?? 24, vertices, trechosOrdenados, credenciado),
     [servico.fuso_utm, vertices, trechosOrdenados, credenciado],
   );
+  // faixas de domínio: saem da própria planta (trecho marcado como via ou rótulo
+  // do confrontante), uma declaração por via — sem campo para digitar
+  const viasDetectadas = useMemo(() => viasDaPlanta(trechosOrdenados), [trechosOrdenados]);
   // não é escolha do usuário: o SIGEF exige começar pelo vértice mais ao norte
   const verticeInicial = preview.verticeInicialOrdem ?? -1;
 
@@ -1117,9 +1120,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <label>Área constante na matrícula (ha)
             <input placeholder="ex.: 86" value={servico.area_matricula_ha ?? ""} onChange={(e) => campo("area_matricula_ha", e.target.value || null)} />
           </label>
-          <label>Via da faixa de domínio
-            <input placeholder="ex.: BA 408" value={servico.via_dominio ?? ""} onChange={(e) => campo("via_dominio", e.target.value || null)} />
-            <small className="sub">{trechosOrdenados.some((t) => t.eh_via) ? "há trecho marcado como faixa de domínio — informe a via" : "só é usada se algum trecho for faixa de domínio"}</small>
+          <label>Faixas de domínio (detectadas na planta)
+            <input readOnly value={viasDetectadas.length ? viasDetectadas.join(" · ") : "nenhuma"} />
+            <small className="sub">{viasDetectadas.length
+              ? `sai ${viasDetectadas.length} ${viasDetectadas.length > 1 ? "declarações" : "declaração"} de faixa de domínio, uma por via`
+              : "sem estrada, corredor, linha férrea ou rodovia na confrontação — a declaração não é gerada"}</small>
           </label>
         </div>
 

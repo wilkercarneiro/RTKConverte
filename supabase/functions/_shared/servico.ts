@@ -231,7 +231,7 @@ export function validarConfrontacoes(
  * LAGOA fica de fora de propósito — é nome comum de fazenda na região.
  */
 const RE_VIA_APELIDO =
-  /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|RIO|RIACHO|C[ÓO]RREGO|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
+  /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|LINHA\s+F[ÉE]RREA|FERROVIA|FERROVI[ÁA]RI[AO]|LEITO\s+FERROVI[ÁA]RIO|RIO|RIACHO|C[ÓO]RREGO|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
 
 // Sugestões pós-parse: tipos (M nos inícios de trecho, P nos demais) e trechos
 // derivados dos rótulos do TXT (apelido = parte após "/").
