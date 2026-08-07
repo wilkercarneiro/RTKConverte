@@ -204,6 +204,57 @@ planta real, não no papel.
 
 ---
 
+---
+
+## Execução — 2026-08-07
+
+### O que ficou pronto
+
+| Fase | Estado | Onde |
+|---|---|---|
+| 0 · fundação | feito | `0011_modalidades_e_glebas.sql` (aplicada), `types.ts`, `tests/nao_regressao_completo.test.mjs` |
+| 1 · casca | feito | `AppShell`, `Inicio`, `Clientes`, `Servicos`, `lib/rota.ts`, `lib/modalidades.ts` |
+| 2 · conferência | feito | folha A4, códigos `PROV-`, tabular via `sigefDoCalculo`, gate em `Conferencia` |
+| 3 · glebas | feito | `GlebasEditor`, tabela `glebas`, desenho em `planta.ts` |
+| 4 · deploy | parcial | `gerar-documentos` e `gerar-planta` publicadas; `gerar-pecas` pendente |
+
+Verde em toda parte: **99 testes**, `tsc -b --force`, `deno check` nas três
+functions, `vite build`.
+
+### Smoke contra a produção
+
+`scripts/smoke_modalidades.mjs` cria dois serviços descartáveis com o mesmo anel,
+gera os documentos dos dois e apaga:
+
+```
+CONFERÊNCIA    folha A4 · provisório · PROV-P-0000 · contadores 4554/14416/900 → 4554/14416/900
+COMPLETO       folha A1 · oficial    · DSBN-P-14416 · contadores 4554/14416/900 → 4558/14444/900
+área idêntica nos dois: 6,7238 ha
+```
+
+A conferência não encostou na numeração; o completo consumiu exatamente 4 M e
+28 P, como antes da reestruturação.
+
+### Pendências
+
+1. **`gerar-pecas` precisa de um redeploy.** O smoke pegou um bug de runtime: o
+   filtro `apenas` recortava também o conjunto de TEMPLATES, e `gerarPecasXml` lê
+   `tpl["1"]`, `tpl["2"]`… sem guarda — a peça que sobrava quebrava por causa das
+   que não foram baixadas. Corrigido no fonte (baixa todas, filtra na emissão),
+   mas o token do Supabase CLI expirou no meio. Falta:
+   `npx supabase login && npx supabase functions deploy gerar-pecas --project-ref utxqkbgfgpbczqjtieyu`
+2. **O smoke queimou numeração real.** O teste do serviço completo passa pela RPC
+   `alocar_contadores` de verdade — é o que se está provando — e consumiu
+   M 4555-4558 e P 14417-14444, que nenhum imóvel usará. Nenhum vértice real está
+   nessa faixa (conferido). Para devolver:
+   ```sql
+   update credenciados set contador_m = 4554, contador_p = 14416, contador_v = 900
+   where prefixo_vertice = 'DSBN' and contador_m = 4558 and contador_p = 14444;
+   ```
+   O script já devolve sozinho a partir de agora; esta corrida foi antes disso.
+3. **Front-end não publicado.** `npm run build` passa; o deploy na Vercel continua
+   fora deste trabalho.
+
 ## Rede de proteção
 
 1. **Teste de não-regressão antes de tudo.** Um teste que roda o fluxo `completo`

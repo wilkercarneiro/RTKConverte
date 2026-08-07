@@ -13,6 +13,9 @@ import {
 } from "../lib/domains";
 import { calcularPreviewLocal } from "../lib/preview";
 import { ehViaPorLimite, moverConfrontacao, SEM_CONFRONTACAO, viasDaPlanta } from "../lib/trechos";
+import { chaveDoServico, rotuloCurto, vaiAoSigef } from "../lib/modalidades";
+import { areaHaDoAnel, GlebasEditor } from "./GlebasEditor";
+import type { Gleba } from "../lib/types";
 import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux";
 import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
 import type { ResultadoParse } from "./Upload";
@@ -95,6 +98,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [relatorioSobre, setRelatorioSobre] = useState<RelatorioSobreposicao | null>(null);
 
   const [clientes, setClientes] = useState<Cliente[]>([]);
+  // glebas do serviço (só carregadas e salvas quando o serviço as tem)
+  const [glebas, setGlebas] = useState<Gleba[]>([]);
+  const [tabular, setTabular] = useState<{ titulo: string; url: string }[] | null>(null);
+  const [gerandoTabular, setGerandoTabular] = useState(false);
 
   const { avisos, avisar, fechar } = useAvisos();
 
@@ -117,8 +124,23 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       });
   }, [inicial.servico.id]);
 
+  // Glebas só são consultadas quando o serviço as tem: um serviço completo
+  // comum não faz esta ida ao banco nem carrega estado que não vai usar.
+  useEffect(() => {
+    if (!inicial.servico.tem_glebas) return;
+    supabase.from("glebas").select().eq("servico_id", inicial.servico.id).order("ordem")
+      .then(({ data }) => setGlebas((data as Gleba[]) ?? []));
+  }, [inicial.servico.id, inicial.servico.tem_glebas]);
+
   // etapa 1 concluída: documentos (ODS+DOCX) já gerados nesta sessão ou em sessão anterior
   const docsProntos = gerado !== null || servico.status === "gerado";
+
+  // MODALIDADE. A conferência de área é prévia: para no memorial, não vai ao
+  // SIGEF e não gera as 7 peças. Quem responde "até onde vai" é `vaiAoSigef`
+  // (src/lib/modalidades.ts) — a MESMA função que a lista de serviços usa para
+  // calcular o progresso, para que as duas telas nunca discordem.
+  const ehConferencia = !vaiAoSigef(servico);
+  const temGlebas = !!servico.tem_glebas;
 
   const credenciado = credenciados.find((c) => c.id === servico.credenciado_id) ?? null;
   const rtSel = rts.find((r) => r.id === servico.rt_id) ?? null;
@@ -287,15 +309,34 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     if (servico.rt_id) {
       await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
     }
+    // Glebas: upsert com id estável e remoção do que saiu da tela, o mesmo
+    // padrão dos vértices. Nada acontece em serviço sem glebas.
+    if (servico.tem_glebas) {
+      const linhas = glebas.map((g, i) => ({
+        id: g.id ?? crypto.randomUUID(),
+        servico_id: id,
+        ordem: i,
+        nome: g.nome,
+        anel: g.anel,
+      }));
+      const ids = linhas.map((l) => `"${l.id}"`).join(",");
+      const del = supabase.from("glebas").delete().eq("servico_id", id);
+      const { error: e4 } = await (linhas.length ? del.not("id", "in", `(${ids})`) : del);
+      if (e4) throw e4;
+      if (linhas.length) {
+        const { error: e5 } = await supabase.from("glebas").upsert(linhas, { onConflict: "id" });
+        if (e5) throw e5;
+      }
+    }
   }
 
   // Autossalvamento de tudo que a tela edita — inclusive a confrontação, que
   // mora nos vértices. Suspenso enquanto uma rotina do servidor está no ar:
   // gerar/corrigir gravam e releem o serviço, e uma escrita concorrente
   // sobrescreveria o que acabou de voltar.
-  const emRotina = ocupado || corrigindo || gerandoPecas || gerandoPlanta;
+  const emRotina = ocupado || corrigindo || gerandoPecas || gerandoPlanta || gerandoTabular;
   const auto = useAutosave(
-    { servico, vertices, rtExtras },
+    { servico, vertices, rtExtras, glebas },
     async () => { await salvar(); },
     { ativo: !emRotina && vertices.length > 0, atraso: 1500 },
   );
@@ -406,6 +447,26 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     }
   }
 
+  // ------- conferência de área: Memorial Tabular sem PDF do SIGEF -------
+  // Chama a MESMA gerar-pecas do fluxo completo, com `origem: "calculo"`: as
+  // peças continuam saindo de um gerador só. Ver sigefDoCalculo.
+  async function gerarTabular() {
+    setGerandoTabular(true);
+    setErro(null);
+    try {
+      await salvar();
+      const r = await chamarFuncao<PecasGeradas>("gerar-pecas", {
+        servico_id: servico.id, origem: "calculo", apenas: ["2"],
+      });
+      setTabular(r.arquivos);
+      avisar("ok", "Memorial Tabular gerado a partir do cálculo do sistema (prévia).");
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGerandoTabular(false);
+    }
+  }
+
   async function gerar() {
     if (pendencias.length > 0) {
       setTentouGerar(true);
@@ -467,6 +528,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const confrontantesPreenchidos = trechosOrdenados.filter((t) => t.descritivo || t.apelido_txt).length;
   const pecasProntas = pecas !== null;
 
+  // A trilha da conferência tem 3 etapas e termina nos documentos; a do serviço
+  // completo segue até as peças. É a mesma lista, cortada — não duas listas.
   const passos: Passo[] = [
     { rotulo: "Dados", estado: pendencias.length === 0 ? "feita" : "ativa", alvo: "bloco-dados" },
     {
@@ -474,17 +537,24 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       estado: confrontantesPreenchidos > 0 ? "feita" : pendencias.length === 0 ? "ativa" : "futura",
       alvo: "bloco-confrontantes",
     },
+    ...(temGlebas ? [{
+      rotulo: "Glebas",
+      estado: (glebas.some((g) => g.anel.length >= 3) ? "feita" : "ativa") as Passo["estado"],
+      alvo: "bloco-glebas",
+    }] : []),
     {
-      rotulo: "Memorial, planilha & planta",
+      rotulo: ehConferencia ? "Memorial & planta" : "Memorial, planilha & planta",
       estado: docsProntos ? "feita" : "futura",
       alvo: docsProntos ? "bloco-gerados" : undefined,
     },
-    { rotulo: "PDF do SIGEF", estado: sigefB64 ? "feita" : docsProntos ? "ativa" : "futura", alvo: docsProntos ? "bloco-sigef" : undefined },
-    {
-      rotulo: "Planta do SIGEF & Peças",
-      estado: plantaUrl && pecasProntas ? "feita" : sigefB64 ? "ativa" : "futura",
-      alvo: sigefB64 ? "bloco-planta" : undefined,
-    },
+    ...(ehConferencia ? [] : [
+      { rotulo: "PDF do SIGEF", estado: (sigefB64 ? "feita" : docsProntos ? "ativa" : "futura") as Passo["estado"], alvo: docsProntos ? "bloco-sigef" : undefined },
+      {
+        rotulo: "Planta do SIGEF & Peças",
+        estado: (plantaUrl && pecasProntas ? "feita" : sigefB64 ? "ativa" : "futura") as Passo["estado"],
+        alvo: sigefB64 ? "bloco-planta" : undefined,
+      },
+    ]),
   ];
 
   // Interface preditiva: a tela é longa e o processo tem 5 estágios — este
@@ -517,6 +587,14 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         detalhe: `${preview.areaHa} ha · ${preview.perimetroM} m · ${preview.qtdM}/${preview.qtdP}/${preview.qtdV} vértices M/P/V${confrontantesPreenchidos === 0 ? " · nenhum confrontante descrito (opcional)" : ""}`,
         rotuloBotao: "⚡ Gerar documentos",
         onClick: gerar,
+      };
+    }
+    // A conferência acaba aqui: não há SIGEF nem peças depois dos documentos.
+    if (ehConferencia) {
+      return {
+        tom: "pronto",
+        titulo: "Conferência concluída",
+        detalhe: "memorial e planta de prévia gerados — os códigos são provisórios e a numeração oficial não foi consumida",
       };
     }
     if (!sigefB64) {
@@ -554,7 +632,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       };
     }
     return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, as duas plantas e as peças gerados — tudo disponível no histórico abaixo" };
-  }, [pendencias, docsProntos, sigefB64, satelite, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel]);
+  }, [pendencias, docsProntos, sigefB64, satelite, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia]);
 
   // selos das seções recolhidas: dizem o que há dentro sem precisar abrir
   const seloRegistro = contarPreenchidos([
@@ -569,7 +647,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       <Passos passos={passos} />
 
       <header className="topo">
-        <button className="fantasma" onClick={onVoltar}>← Dashboard</button>
+        <button className="fantasma" onClick={onVoltar}>← Serviços</button>
+        <span className={`chip mod-${chaveDoServico(servico)}`}>{rotuloCurto[chaveDoServico(servico)]}</span>
         <span className="arquivo">📄 {servico.nome_arquivo_txt}</span>
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
         <span className="esticar" />
@@ -910,6 +989,27 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         </div>
       </section>
 
+      {/* ---------------- Glebas: só no serviço com gleba ----------------
+          Fica ANTES da geração de propósito: as divisões têm de estar montadas
+          quando a planta for desenhada, que é o pedido do fluxo de gleba. */}
+      {temGlebas && (
+        <section className="bloco" id="bloco-glebas">
+          <header>
+            <span className="num-bloco">🧩</span>
+            <h3>Glebas</h3>
+            <span className="desc">
+              {glebas.length} gleba(s) — desenhadas dentro do perímetro, na mesma planta
+            </span>
+          </header>
+          <GlebasEditor
+            glebas={glebas}
+            vertices={vertices}
+            areaTotalHa={Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0}
+            onChange={setGlebas}
+          />
+        </section>
+      )}
+
       {/* ---------------- Imagem de satélite: entra na planta desta etapa e na pós-SIGEF ---------------- */}
       <section className="bloco" id="bloco-satelite">
         <header>
@@ -954,8 +1054,55 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         </section>
       )}
 
-      {/* ---------------- Etapa 4: documento do SIGEF (só após gerar os documentos) ---------------- */}
-      {!docsProntos ? (
+      {/* ---------------- Conferência de área: entregas opcionais ----------------
+          A conferência para aqui. No lugar do SIGEF e das peças, o que ela
+          oferece é o Memorial Tabular e a escolha da folha da planta. */}
+      {ehConferencia && (
+        <section className="bloco" id="bloco-conferencia">
+          <header>
+            <span className="num-bloco">📐</span>
+            <h3>Entregas da conferência</h3>
+            <span className="desc">prévia de área — não vai ao SIGEF e não consome numeração oficial</span>
+          </header>
+
+          <div className="grade">
+            <label>Folha da planta
+              <select value={servico.folha_conferencia ?? "A4"}
+                onChange={(e) => campo("folha_conferencia", e.target.value as Servico["folha_conferencia"])}>
+                <option value="A4">A4 (297×210 mm)</option>
+                <option value="A3">A3 (420×297 mm)</option>
+              </select>
+              <small className="sub">vale na próxima geração dos documentos</small>
+            </label>
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            <button onClick={gerarTabular} disabled={!docsProntos || gerandoTabular}>
+              {gerandoTabular ? <><span className="spinner" /> Gerando…</> : "📄 Gerar Memorial Tabular"}
+            </button>
+            <p className="sub" style={{ marginTop: 6 }}>
+              {docsProntos
+                ? "Sai do cálculo do sistema, com os mesmos azimutes e distâncias do Memorial Descritivo. Não são os valores SGL que o SIGEF devolve após certificar — por isso vale como prévia."
+                : "Gere primeiro o memorial e a planta no botão do rodapé."}
+            </p>
+          </div>
+
+          {tabular && (
+            <div className="downloads" style={{ marginTop: 10 }}>
+              {tabular.map((a) => (
+                <a key={a.url} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
+                  <span className="ext">DOCX</span> {a.titulo}
+                </a>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ---------------- Etapa 4: documento do SIGEF (só após gerar os documentos) ----------------
+          Não montado na conferência: os handlers de SIGEF não podem ficar
+          acessíveis numa modalidade que não passa por ele. */}
+      {ehConferencia ? null : !docsProntos ? (
         <section className="bloco" style={{ opacity: 0.6 }}>
           <header>
             <span className="num-bloco">4</span>
@@ -1065,8 +1212,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         </section>
       )}
 
-      {/* ---------------- Etapa 5A: planta (A1 matrícula / A3 posse) ---------------- */}
-      {docsProntos && sigefB64 && (
+      {/* ---------------- Etapa 5A: planta (A1 matrícula / A3 posse) ----------------
+          `!ehConferencia` é redundante com `sigefB64` (a conferência não tem
+          onde carregar o PDF), mas explícito: a condição de existir é a
+          modalidade, não o efeito colateral de um estado vazio. */}
+      {!ehConferencia && docsProntos && sigefB64 && (
         <section className="bloco" id="bloco-planta">
           <header>
             <span className="num-bloco">5</span>
@@ -1097,7 +1247,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       )}
 
       {/* ---------------- Etapa 5B: peças técnicas ---------------- */}
-      {docsProntos && sigefB64 && (
+      {!ehConferencia && docsProntos && sigefB64 && (
       <section className="bloco" id="bloco-pecas">
         <header>
           <span className="num-bloco">6</span>

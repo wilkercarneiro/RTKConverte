@@ -24,10 +24,44 @@ export interface DocumentoGerado {
   created_at: string;
 }
 
+/**
+ * O que o cliente contratou. Eixo INDEPENDENTE de `Servico.tipo`, que diz de
+ * onde vêm os dados (TXT do levantamento × PDF do SIGEF).
+ *
+ *   completo    — memorial + planilha + planta → SIGEF → planta oficial + peças
+ *   conferencia — prévia de área: memorial (códigos provisórios), tabular e
+ *                 planta opcionais, sem SIGEF e sem peças
+ */
+export type Modalidade = "completo" | "conferencia";
+
+/** Folha da planta. `undefined` mantém a regra histórica: posse → A3, resto → A1. */
+export type Folha = "A1" | "A3" | "A4";
+
+/**
+ * Sub-polígono desenhado DENTRO do perímetro, na mesma planta.
+ * `anel` em coordenadas UTM do fuso do serviço: [[E, N], ...].
+ */
+export interface Gleba {
+  id?: string;
+  servico_id: string;
+  ordem: number;
+  nome: string;
+  anel: [number, number][];
+}
+
 export interface Servico {
   id: string;
   created_at?: string;
   tipo: "geo" | "pecas";
+  /** O que foi contratado. Serviços antigos são 'completo' pelo default da coluna. */
+  modalidade: Modalidade;
+  /** Serviço com glebas: liga o editor e o desenho dos sub-polígonos. */
+  tem_glebas: boolean;
+  /**
+   * Folha da planta da conferência (o operador escolhe). Nulo = A4.
+   * Não se aplica ao serviço completo, que segue posse → A3 / matrícula → A1.
+   */
+  folha_conferencia: Folha | null;
   cliente_id?: string | null;
   status: "rascunho" | "gerado";
   nome_arquivo_txt: string | null;

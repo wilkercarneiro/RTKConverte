@@ -16,9 +16,11 @@ import { buildDocumentXml, buildDocxSkeleton } from "../_shared/docx.ts";
 import type { DadosMemorial } from "../_shared/memorial.ts";
 import { patchOdsContent } from "../_shared/ods.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
+import type { Folha } from "../_shared/planta.ts";
 import {
-  bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, montarDadosPlanta,
+  bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta,
 } from "../_shared/planta_dados.ts";
+import type { GlebaRow } from "../_shared/planta_dados.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -28,6 +30,16 @@ const CORS = {
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+
+/**
+ * Prefixo dos códigos de uma conferência de área.
+ *
+ * Precisa ser reconhecível a olho nu no documento: quem receber um memorial com
+ * "PROV-M-0001" não confunde com o oficial "DSBN-M-4542". É também o que permite
+ * detectar, na promoção a serviço completo, quais códigos têm de ser refeitos.
+ */
+const PREFIXO_PROVISORIO = "PROV";
+const ehCodigoProvisorio = (c: string | null) => !!c && c.startsWith(`${PREFIXO_PROVISORIO}-`);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -72,10 +84,27 @@ Deno.serve(async (req) => {
     // desenhista do carimbo da planta (Configurações)
     const { data: cfgDes } = await supa.from("config_empresa").select("value").eq("key", "desenhista").maybeSingle();
 
+    // Conferência de área é PRÉVIA: não vai ao SIGEF, então não pode queimar a
+    // numeração oficial do credenciado. Os contadores do Anexo A só andam para
+    // frente — código consumido numa conferência que não fecha é código perdido.
+    // Por isso a conferência aloca com prefixo próprio e contadores locais, sem
+    // encostar na tabela `credenciados`. Ao promover a conferência a serviço
+    // completo, os códigos provisórios são limpos e a alocação oficial roda.
+    const conferencia = servico.modalidade === "conferencia";
+    const prefixo = conferencia ? PREFIXO_PROVISORIO : cred.prefixo_vertice;
+
+    // PROMOÇÃO a serviço completo: uma conferência que virou serviço de verdade
+    // chega aqui com todos os vértices já codificados — em PROV. Sem zerar esses
+    // códigos, `precisaAlocar` daria falso e o memorial oficial sairia numerado
+    // como prévia. Um código provisório num serviço completo vale como ausente.
+    if (!conferencia) {
+      for (const v of vertRows) if (ehCodigoProvisorio(v.codigo)) v.codigo = null;
+    }
+
     // alocação de códigos: incrementa contadores apenas quando há vértice sem código
     const precisaAlocar = vertRows.some((v: { codigo: string | null; inserido_manual: boolean }) => !v.codigo && !v.inserido_manual);
     let contadores = { M: 0, P: 0, V: 0 };
-    if (precisaAlocar) {
+    if (precisaAlocar && !conferencia) {
       const consumo = { M: 0, P: 0, V: 0 };
       for (const v of vertRows) if (!v.inserido_manual || !v.codigo) consumo[v.tipo as "M" | "P" | "V"]++;
       const { data: base, error: eA } = await supa.rpc("alocar_contadores", {
@@ -113,7 +142,7 @@ Deno.serve(async (req) => {
     const input: ServicoInput = {
       fusoUtm: servico.fuso_utm,
       verticeInicialOrdem: servico.vertice_inicial ?? 0,
-      prefixo: cred.prefixo_vertice,
+      prefixo,
       contadores,
       vertices,
     };
@@ -204,6 +233,19 @@ Deno.serve(async (req) => {
     const avisosGeracao = [...conf.avisos];
     let plantaBuf: Uint8Array | null = null;
     const posse = servico.tipo_imovel === "posse";
+
+    // Glebas só são lidas quando o serviço as tem. `undefined` no montador é o
+    // que preserva a planta do serviço completo exatamente como era.
+    const glebas = servico.tem_glebas
+      ? glebasParaPlanta(((await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")).data ?? []) as GlebaRow[])
+      : undefined;
+
+    // A conferência circula impressa em mesa, não em prancheta: sai em A4 por
+    // padrão, ou na folha que o operador escolheu na tela. Serviço completo não
+    // passa `folha` e cai na regra de sempre.
+    const folha: Folha | undefined = conferencia
+      ? ((["A1", "A3", "A4"].includes(servico.folha_conferencia ?? "") ? servico.folha_conferencia : "A4") as Folha)
+      : undefined;
     try {
       const dadosPlanta = montarDadosPlanta({
         servico, rt, cred,
@@ -216,6 +258,7 @@ Deno.serve(async (req) => {
         satelite: satelite_base64
           ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
           : null,
+        folha, glebas,
       });
       if (!dadosPlanta.satelite) {
         avisosGeracao.push("Planta gerada sem imagem de satélite — o quadro PLANTA DE SITUAÇÃO ficou vazio. Envie a imagem e gere os documentos de novo.");
@@ -243,9 +286,14 @@ Deno.serve(async (req) => {
 
     // a planta desta etapa mora ao lado dos outros dois, na MESMA versão
     const pPlanta = `${servico_id}/v${versao}/planta-sistema.pdf`;
+    // O título é o que o operador lê no histórico. Numa conferência ele precisa
+    // dizer PRÉVIA: os códigos são provisórios e os documentos não servem para
+    // protocolar. Ver PREFIXO_PROVISORIO.
+    const selo = conferencia ? " · PRÉVIA" : "";
+    const folhaSaida = folha ?? (posse ? "A3" : "A1");
     const docs = [
-      { servico_id, versao, tipo: "memorial_docx", titulo: "Memorial Descritivo (DOCX)", path: pDocx },
-      { servico_id, versao, tipo: "planilha_ods", titulo: "Planilha SIGEF (ODS)", path: pOds },
+      { servico_id, versao, tipo: "memorial_docx", titulo: `Memorial Descritivo (DOCX)${selo}`, path: pDocx },
+      { servico_id, versao, tipo: "planilha_ods", titulo: `Planilha SIGEF (ODS)${selo}`, path: pOds },
     ];
     if (plantaBuf) {
       const u3 = await supa.storage.from("gerados").upload(pPlanta, plantaBuf, { upsert: true, contentType: "application/pdf" });
@@ -255,9 +303,15 @@ Deno.serve(async (req) => {
       } else {
         docs.push({
           servico_id, versao, tipo: "planta_pdf_sistema",
-          titulo: `Planta ${posse ? "A3" : "A1"} (PDF · dados do sistema)`, path: pPlanta,
+          titulo: `Planta ${folhaSaida} (PDF · dados do sistema)${selo}`, path: pPlanta,
         });
       }
+    }
+    if (conferencia) {
+      avisosGeracao.push(
+        `Conferência de área: os vértices saíram com códigos provisórios (${PREFIXO_PROVISORIO}-…) e a numeração oficial do credenciado NÃO foi consumida. ` +
+        "Ao converter em serviço completo, os códigos oficiais são alocados na próxima geração.",
+      );
     }
     await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
     await supa.from("documentos_gerados").insert(docs);
@@ -275,7 +329,9 @@ Deno.serve(async (req) => {
       memorial_docx: s1.data?.signedUrl,
       planilha_ods: s2.data?.signedUrl,
       planta_pdf: s3?.data?.signedUrl ?? null,
-      folha: posse ? "A3" : "A1",
+      folha: folhaSaida,
+      modalidade: servico.modalidade ?? "completo",
+      provisorio: conferencia,
       resumo: {
         areaHa: calc.areaHa,
         perimetroM: calc.perimetroM,

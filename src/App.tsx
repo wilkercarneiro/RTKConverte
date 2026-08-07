@@ -1,26 +1,27 @@
 import { useEffect, useState } from "react";
 import { configOk, supabase } from "./lib/supabase";
 import { Login } from "./components/Login";
-import { Dashboard } from "./components/Dashboard";
+import { AppShell } from "./components/AppShell";
+import { Inicio } from "./components/Inicio";
+import { Clientes } from "./components/Clientes";
+import { Servicos } from "./components/Servicos";
 import { Upload, type ResultadoParse } from "./components/Upload";
 import { Conferencia } from "./components/Conferencia";
 import { PecasServico } from "./components/PecasServico";
 import { Configuracoes } from "./components/Configuracoes";
 import { ClientePage } from "./components/ClientePage";
+import { definicaoDe } from "./lib/modalidades";
+import type { ChaveServico } from "./lib/modalidades";
+import { useRota } from "./lib/rota";
 import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
-
-type Tela =
-  | { t: "dashboard" }
-  | { t: "upload"; clienteId?: string }
-  | { t: "conferencia"; parse: ResultadoParse }
-  | { t: "pecas"; servicoId: string | null; clienteId?: string }
-  | { t: "config" }
-  | { t: "cliente"; clienteId: string };
 
 export default function App() {
   const [logado, setLogado] = useState<boolean | null>(null);
-  const [tela, setTela] = useState<Tela>({ t: "dashboard" });
-  const [abrindo, setAbrindo] = useState(false);
+  const { rota, ir, substituir } = useRota();
+  // serviço aberto (carregado sob demanda pela rota #/servico/:id)
+  const [aberto, setAberto] = useState<ResultadoParse | null>(null);
+  const [carregandoServico, setCarregandoServico] = useState(false);
+  const [erroServico, setErroServico] = useState<string | null>(null);
 
   useEffect(() => {
     if (!configOk) return;
@@ -29,35 +30,37 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // reabre um serviço existente do dashboard
-  async function abrir(s: Servico) {
-    if (s.tipo === "pecas") {
-      setTela({ t: "pecas", servicoId: s.id });
-      return;
-    }
-    setAbrindo(true);
-    try {
+  // A rota é a fonte da verdade da navegação: o serviço da URL é carregado aqui,
+  // e não empurrado por quem clicou. É isso que faz atualizar a página (F5) e o
+  // botão voltar do navegador continuarem funcionando dentro de um serviço.
+  const servicoIdRota = rota.t === "servico" ? rota.id : null;
+  useEffect(() => {
+    if (!servicoIdRota || !logado) { setAberto(null); return; }
+    if (aberto?.servico.id === servicoIdRota) return;
+    let cancelado = false;
+    setCarregandoServico(true);
+    setErroServico(null);
+    (async () => {
+      const { data: s } = await supabase.from("servicos").select().eq("id", servicoIdRota).single();
+      if (cancelado) return;
+      if (!s) { setErroServico("Serviço não encontrado."); setCarregandoServico(false); return; }
+      const servico = s as Servico;
+      if (servico.tipo === "pecas") { setAberto({ servico, vertices: [], trechos: [], preview: previewVazio(servico) }); setCarregandoServico(false); return; }
       const [{ data: vertices }, { data: trechos }] = await Promise.all([
-        supabase.from("vertices").select().eq("servico_id", s.id).order("ordem"),
-        supabase.from("trechos_confrontantes").select().eq("servico_id", s.id).order("vertice_inicio_ordem"),
+        supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem"),
+        supabase.from("trechos_confrontantes").select().eq("servico_id", servico.id).order("vertice_inicio_ordem"),
       ]);
-      setTela({
-        t: "conferencia",
-        parse: {
-          servico: s,
-          vertices: (vertices as Vertice[]) ?? [],
-          trechos: (trechos as Trecho[]) ?? [],
-          preview: {
-            fuso: s.fuso_utm ?? 24, epsg: 31960 + (s.fuso_utm ?? 24),
-            candidatos: [s.fuso_utm ?? 24], fusoAmbiguo: false, foraDaUf: false,
-            areaHa: 0, perimetroM: 0, qtdM: 0, qtdP: 0, qtdV: 0,
-          },
-        },
+      if (cancelado) return;
+      setAberto({
+        servico,
+        vertices: (vertices as Vertice[]) ?? [],
+        trechos: (trechos as Trecho[]) ?? [],
+        preview: previewVazio(servico),
       });
-    } finally {
-      setAbrindo(false);
-    }
-  }
+      setCarregandoServico(false);
+    })();
+    return () => { cancelado = true; };
+  }, [servicoIdRota, logado]);
 
   if (!configOk) {
     return (
@@ -72,9 +75,8 @@ export default function App() {
   }
   if (logado === null) return <div className="centro">Carregando...</div>;
   if (!logado) return <Login onOk={() => setLogado(true)} />;
-  if (abrindo) return <div className="centro"><span className="spinner" />&nbsp; Abrindo serviço…</div>;
 
-  // Serviço 1 criado a partir de um cliente: vincula e pré-preenche o detentor
+  /** Serviço criado a partir de um cliente: vincula e pré-preenche o detentor. */
   async function vincularCliente(parse: ResultadoParse, clienteId?: string): Promise<ResultadoParse> {
     if (!clienteId) return parse;
     const { data: c } = await supabase.from("clientes").select().eq("id", clienteId).single();
@@ -86,41 +88,118 @@ export default function App() {
       detentor_cpf: cli.cpf_cnpj,
       detentor_genero: cli.genero,
       endereco_detentor: cli.endereco,
+      is_espolio: cli.is_espolio ?? false,
+      inventariante_nome: cli.inventariante_nome ?? null,
+      inventariante_cpf: cli.inventariante_cpf ?? null,
+      inventariante_rg: cli.inventariante_rg ?? null,
     };
+    await supabase.from("servicos").update(patch).eq("id", parse.servico.id);
+    return { ...parse, servico: { ...parse.servico, ...patch } as Servico };
+  }
+
+  /**
+   * Grava a modalidade escolhida no cartão. O `parse-txt` cria o serviço com os
+   * defaults do banco ('completo', sem glebas); quem escolheu outra coisa
+   * carimba aqui, uma vez só, antes de a tela de conferência abrir.
+   */
+  async function aplicarModalidade(parse: ResultadoParse, chave: ChaveServico): Promise<ResultadoParse> {
+    const campos = definicaoDe(chave).campos;
+    const patch = { modalidade: campos.modalidade, tem_glebas: campos.tem_glebas };
     await supabase.from("servicos").update(patch).eq("id", parse.servico.id);
     return { ...parse, servico: { ...parse.servico, ...patch } };
   }
 
-  switch (tela.t) {
-    case "upload":
-      return <Upload
-        onParsed={async (parse) => setTela({ t: "conferencia", parse: await vincularCliente(parse, tela.clienteId) })}
-        onVoltar={() => setTela({ t: "dashboard" })} />;
-    case "conferencia":
-      return <Conferencia inicial={tela.parse} onVoltar={() => setTela({ t: "dashboard" })} />;
-    case "pecas":
-      return <PecasServico servicoId={tela.servicoId} clienteId={tela.clienteId} onVoltar={() => setTela({ t: "dashboard" })} />;
-    case "config":
-      return <Configuracoes onVoltar={() => setTela({ t: "dashboard" })} />;
+  const abrirServico = (s: Servico) => ir({ t: "servico", id: s.id });
+
+  switch (rota.t) {
+    case "novo": {
+      const def = definicaoDe(rota.chave as ChaveServico);
+      if (def.campos.tipo === "pecas") {
+        return (
+          <AppShell rota={rota} ir={ir}>
+            <PecasServico servicoId={null} clienteId={rota.clienteId} onVoltar={() => ir({ t: "inicio" })} />
+          </AppShell>
+        );
+      }
+      return (
+        <AppShell rota={rota} ir={ir}>
+          <Upload
+            definicao={def}
+            onParsed={async (parse) => {
+              const comCliente = await vincularCliente(parse, rota.clienteId);
+              const pronto = await aplicarModalidade(comCliente, def.chave);
+              setAberto(pronto);
+              // replace: voltar não pode retornar à tela de upload de um TXT
+              // que já foi consumido e virou serviço.
+              substituir({ t: "servico", id: pronto.servico.id });
+            }}
+            onVoltar={() => ir({ t: "inicio" })}
+          />
+        </AppShell>
+      );
+    }
+
+    case "servico": {
+      if (carregandoServico) return <AppShell rota={rota} ir={ir}><div className="centro"><span className="spinner" />&nbsp; Abrindo serviço…</div></AppShell>;
+      if (erroServico || !aberto) {
+        return (
+          <AppShell rota={rota} ir={ir}>
+            <div className="centro">
+              <div>
+                <h2>{erroServico ?? "Serviço não encontrado"}</h2>
+                <button className="principal" onClick={() => ir({ t: "servicos" })}>Ver todos os serviços</button>
+              </div>
+            </div>
+          </AppShell>
+        );
+      }
+      return (
+        <AppShell rota={rota} ir={ir}>
+          {aberto.servico.tipo === "pecas"
+            ? <PecasServico servicoId={aberto.servico.id} onVoltar={() => ir({ t: "servicos" })} />
+            : <Conferencia inicial={aberto} onVoltar={() => ir({ t: "servicos" })} />}
+        </AppShell>
+      );
+    }
+
     case "cliente":
       return (
-        <ClientePage
-          clienteId={tela.clienteId}
-          onVoltar={() => setTela({ t: "dashboard" })}
-          onAbrirServico={abrir}
-          onNovoGeo={(cid) => setTela({ t: "upload", clienteId: cid })}
-          onNovoPecas={(cid) => setTela({ t: "pecas", servicoId: null, clienteId: cid })}
-        />
+        <AppShell rota={rota} ir={ir}>
+          <ClientePage
+            clienteId={rota.id}
+            onVoltar={() => ir({ t: "clientes" })}
+            onAbrirServico={abrirServico}
+            onNovoServico={(chave) => ir({ t: "novo", chave, clienteId: rota.id })}
+          />
+        </AppShell>
       );
+
+    case "clientes":
+      return <AppShell rota={rota} ir={ir}><Clientes onAbrir={(id) => ir({ t: "cliente", id })} /></AppShell>;
+
+    case "servicos":
+      return <AppShell rota={rota} ir={ir}><Servicos onAbrir={abrirServico} onNovo={() => ir({ t: "inicio" })} /></AppShell>;
+
+    case "config":
+      return <AppShell rota={rota} ir={ir}><Configuracoes onVoltar={() => ir({ t: "inicio" })} /></AppShell>;
+
     default:
       return (
-        <Dashboard
-          onNovoGeo={() => setTela({ t: "upload" })}
-          onNovoPecas={() => setTela({ t: "pecas", servicoId: null })}
-          onConfig={() => setTela({ t: "config" })}
-          onAbrir={abrir}
-          onAbrirCliente={(clienteId) => setTela({ t: "cliente", clienteId })}
-        />
+        <AppShell rota={rota} ir={ir}>
+          <Inicio onNovo={(chave) => ir({ t: "novo", chave })} onAbrir={abrirServico} />
+        </AppShell>
       );
   }
+}
+
+/**
+ * O preview real é recalculado dentro da Conferencia a partir dos vértices; o
+ * que vai aqui é só o fuso, que a tela precisa antes do primeiro cálculo.
+ */
+function previewVazio(s: Servico): ResultadoParse["preview"] {
+  const fuso = s.fuso_utm ?? 24;
+  return {
+    fuso, epsg: 31960 + fuso, candidatos: [fuso], fusoAmbiguo: false, foraDaUf: false,
+    areaHa: 0, perimetroM: 0, qtdM: 0, qtdP: 0, qtdV: 0,
+  };
 }

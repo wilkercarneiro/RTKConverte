@@ -28,6 +28,23 @@ export interface TrechoPlanta {
   fimIdx: number;       // índice do vértice inicial do PRÓXIMO trecho
 }
 
+/** Folha de entrega. Ausente = regra histórica (posse → A3, resto → A1). */
+export type Folha = "A1" | "A3" | "A4";
+
+/**
+ * Sub-polígono desenhado DENTRO do perímetro, na mesma folha.
+ *
+ * O anel vem em coordenadas do MESMO plano dos vértices do perímetro, para que
+ * o enquadramento não precise ser recalculado: gleba é interna por definição,
+ * então a bounding box continua saindo só do perímetro — é isso que mantém a
+ * planta de um serviço SEM glebas idêntica à de antes.
+ */
+export interface GlebaPlanta {
+  nome: string;
+  areaFmt: string;               // "12,4051"
+  anel: { e: number; n: number }[];
+}
+
 export interface ProprietarioPlanta {
   nome: string;
   cpf: string;
@@ -44,6 +61,8 @@ export interface DadosPlanta {
   denominacao: string;
   proprietarios: ProprietarioPlanta[];
   tipoImovel?: "matricula" | "posse";  // posse → A3 sem quadro analítico
+  folha?: Folha;                    // sobrepõe a folha; ausente = regra de tipoImovel
+  glebas?: GlebaPlanta[];           // sub-polígonos internos; ausente/vazio = nada muda
   matricula: string;
   cns: string;
   sncr: string;
@@ -68,11 +87,23 @@ export interface DadosPlanta {
 const MM = 2.834645669; // pt por mm
 const W = 841 * MM;     // A1 paisagem
 const H = 594 * MM;
+
+// Folhas de entrega, em mm (paisagem). O desenho é SEMPRE feito em A1; estas
+// medidas só valem na redução final. Ver o fim de gerarPlantaPdf.
+const FOLHAS_MM: Record<Folha, [number, number]> = {
+  A1: [841, 594],
+  A3: [420, 297],
+  A4: [297, 210],
+};
 const AZUL = rgb(0, 0.2, 0.85);
 const VERMELHO = rgb(0.85, 0.05, 0.05);
 const VERDE = rgb(0.05, 0.65, 0.15);
 const PRETO = rgb(0, 0, 0);
 const CINZA = rgb(0.45, 0.45, 0.45);
+// Divisa interna de gleba. Cor própria porque a legenda já gastou o vermelho
+// (estrada), o azul (poligonal), o verde (confrontação) e o cinza (malha): usar
+// qualquer um deles faria a divisa de gleba ser lida como outra coisa.
+const MAGENTA = rgb(0.6, 0.1, 0.55);
 
 // escala proporcional ao desenho: menor escala redonda em que o polígono cabe
 // (passo 50/100/500 conforme a ordem de grandeza) — sem saltar p/ degraus
@@ -373,6 +404,11 @@ function linhasDescritivo(descritivo: string): string[] {
 // ---------------------------------------------------------------------------
 export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise<Uint8Array> {
   const posse = d.tipoImovel === "posse";
+  // Qual folha sai. `d.folha` ausente reproduz a regra histórica — posse em A3,
+  // resto em A1 — para que nenhum chamador antigo mude de comportamento por ter
+  // ganhado um campo. A A4 existe para a conferência de área, que é prévia e
+  // circula impressa em mesa, não em prancheta.
+  const folha: Folha = d.folha ?? (posse ? "A3" : "A1");
   // A folha de posse É a folha de matrícula, só que menor: MESMAS regras, MESMO
   // desenho, MESMAS medidas em pontos — muda a proporção no fim e nada mais.
   //
@@ -534,6 +570,43 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 3.4, AZUL);
     obstaculos.push({ x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) });
   }
+  // ------------------- glebas (divisas internas) -------------------
+  // Serviço com gleba é o serviço completo com sub-polígonos DENTRO do perímetro
+  // — não é outro tipo de planta. Por isso o bloco inteiro vive atrás desta
+  // guarda: sem gleba, nem uma linha daqui executa e o PDF sai byte a byte igual
+  // ao de antes (lacrado em tests/nao_regressao_completo.test.mjs).
+  //
+  // Desenhado DEPOIS do polígono de propósito: as divisas internas entram em
+  // `obstaculos` para que nenhum rótulo de confrontante caia por cima delas, e a
+  // poligonal azul continua sendo o traço mais forte da folha.
+  for (const gl of d.glebas ?? []) {
+    const pts = gl.anel;
+    if (pts.length < 3) continue;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const seg = { x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) };
+      linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 1.8, MAGENTA, [7, 4]);
+      obstaculos.push(seg);
+    }
+    // Rótulo no centroide da ÁREA (fórmula do polígono), não na média dos
+    // vértices: em gleba com um lado muito subdividido a média puxa o nome para
+    // aquele lado e ele sai fora da figura.
+    let a2 = 0, cx = 0, cy = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[(i + 1) % pts.length];
+      const px = X(p.e), py = Y(p.n), qx = X(q.e), qy = Y(q.n);
+      const cross = px * qy - qx * py;
+      a2 += cross;
+      cx += (px + qx) * cross;
+      cy += (py + qy) * cross;
+    }
+    const [gx, gy] = Math.abs(a2) < 1e-9
+      ? [pts.reduce((s, p) => s + X(p.e), 0) / pts.length, pts.reduce((s, p) => s + Y(p.n), 0) / pts.length]
+      : [cx / (3 * a2), cy / (3 * a2)];
+    texto(c, gl.nome, gx, gy + 3, 11, { bold: true, cor: MAGENTA, center: true });
+    texto(c, `${gl.areaFmt} ha`, gx, gy - 10, 9.5, { cor: MAGENTA, center: true });
+  }
+
   // vértices + códigos. Em divisas com muitos pontos quase alinhados (a face
   // norte do MONOINO tem 13) os códigos em corpo grande viravam um borrão
   // ilegível: aqui o texto é pequeno e o rótulo que colidiria com outro já
@@ -546,9 +619,14 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // esquerdo da área de desenho — ou seja, apaga qualquer rótulo que tenha caído
   // ali. O espaço dela é reservado agora, antes de posicionar nome nenhum: da
   // parte do rótulo não adianta não invadir se depois vem a legenda por cima.
+  // A caixa cresce uma linha quando há gleba, para caber a entrada nova na
+  // legenda. Sem gleba a altura é a de sempre — a reserva de espaço é feita
+  // ANTES de posicionar rótulo nenhum, então mudá-la mudaria o arranjo da folha
+  // inteira, e não só a legenda.
+  const temGlebas = (d.glebas?.length ?? 0) > 0;
   const legendaRet: Ret = {
     x1: dArea.x + 6, y1: dArea.y + 2,
-    x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124,
+    x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124 + (temGlebas ? 20 : 0),
   };
   ocupado.push(legendaRet);
   // Só o bolinha e o tique saem agora. O CÓDIGO fica reservado e é desenhado
@@ -1084,7 +1162,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       ["COORDENADA", ["UTM"]],
       ["DATUM", ["SIRGAS2000", `M.C -${d.mcAbs}Wgr Fuso: ${d.fuso}${letraFuso(d.latMediaDeg)}`]],
       ["DATA", [d.dataStr]],
-      ["FOLHA", [posse ? "01 001 A3" : "01 001 A1"]],
+      ["FOLHA", [`01 001 ${folha}`]],
     ];
     for (const [i, [rot, vals]] of itens.entries()) {
       const col = i % 4, row = Math.floor(i / 4);
@@ -1108,6 +1186,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     const itens: [ReturnType<typeof rgb>, string][] = [
       [VERMELHO, "ESTRADA"], [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
     ];
+    if (temGlebas) itens.push([MAGENTA, "DIVISÃO DE GLEBAS"]);
     let lyy = lyTop - 38;
     for (const [cor, nome] of itens) {
       linha(c, lx, lyy + 3, lx + 38, lyy + 3, 3.4, cor);
@@ -1132,21 +1211,24 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     diag.poligono = vs.map((v) => ({ x: X(v.e), y: Y(v.n) }));
   }
 
-  // posse: a MESMA folha, entregue no A3 exato (420×297 mm).
+  // A MESMA folha, entregue na medida pedida. O desenho inteiro é sempre feito
+  // em A1 e reduzido aqui no fim — é isso que faz da A3 (e agora da A4) uma
+  // redução, e não uma segunda planta com outro layout.
   //
-  // Um único fator para os dois eixos — é isso que faz da A3 uma redução e não
-  // uma folha diferente. Meia-A1 daria 420,5×297, então quem manda é o eixo mais
-  // apertado (420/841 ≈ 0,4994) e sobra 1,1pt de altura, repartida em cima e
-  // embaixo para a moldura continuar centrada. Escalar cada eixo pelo seu próprio
-  // fator caberia igual, mas achataria o desenho 0,12% na horizontal: o círculo
-  // da bússola viraria elipse e a escala gráfica deixaria de bater com a numérica.
-  if (posse) {
-    const w3 = 420 * MM, h3 = 297 * MM;
-    const s = Math.min(w3 / W, h3 / H);
+  // Um único fator para os dois eixos. Meia-A1 daria 420,5×297, então quem manda
+  // é o eixo mais apertado (420/841 ≈ 0,4994) e sobra 1,1pt de altura, repartida
+  // em cima e embaixo para a moldura continuar centrada. Escalar cada eixo pelo
+  // seu próprio fator caberia igual, mas achataria o desenho 0,12% na horizontal:
+  // o círculo da bússola viraria elipse e a escala gráfica deixaria de bater com
+  // a numérica.
+  if (folha !== "A1") {
+    const [wf, hf] = FOLHAS_MM[folha];
+    const w2 = wf * MM, h2 = hf * MM;
+    const s = Math.min(w2 / W, h2 / H);
     // ordem importa: o translate é aplicado por fora da escala (T · S)
     page.scaleContent(s, s);
-    page.translateContent((w3 - W * s) / 2, (h3 - H * s) / 2);
-    page.setSize(w3, h3);
+    page.translateContent((w2 - W * s) / 2, (h2 - H * s) / 2);
+    page.setSize(w2, h2);
   }
 
   return await pdf.save();

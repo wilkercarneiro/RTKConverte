@@ -3,10 +3,17 @@
 // modelos oficiais da empresa no bucket `templates/pecas`.
 import { createClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
+import proj4mod from "proj4";
 import { extractText, getDocumentProxy } from "unpdf";
 import { parseSigefTexto } from "../_shared/sigef_pdf.ts";
+import type { DadosSigef } from "../_shared/sigef_pdf.ts";
 import { gerarPecasPosseXml, gerarPecasXml, montarTrechosPecas, rotuloVia, viasDaPlanta } from "../_shared/pecas.ts";
 import type { DadosPecas, Requerente } from "../_shared/pecas.ts";
+import { montarServico } from "../_shared/servico.ts";
+import { geometriaDoCalculo, sigefDoCalculo } from "../_shared/planta_dados.ts";
+import type { Proj4 } from "../_shared/geo.ts";
+
+const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -50,8 +57,14 @@ const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 2
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { servico_id, pdf_base64, modo } = await req.json();
-    if (!pdf_base64) return json({ erro: "pdf_base64 é obrigatório" }, 400);
+    // `origem: "calculo"` gera as peças a partir do cálculo do próprio sistema,
+    // sem PDF do SIGEF. É o que a CONFERÊNCIA DE ÁREA usa para tirar o Memorial
+    // Tabular: conferência é o que se faz ANTES de mandar ao SIGEF, então exigir
+    // o PDF ali seria exigir o resultado do passo que ainda não aconteceu.
+    // `apenas` restringe quais peças saem (a conferência pede só a "2").
+    const { servico_id, pdf_base64, modo, origem, apenas } = await req.json();
+    const doCalculo = origem === "calculo";
+    if (!pdf_base64 && !doCalculo) return json({ erro: "pdf_base64 é obrigatório" }, 400);
 
     // ---------------- modo "analisar": só lê o PDF e devolve o resumo ----------------
     // Usado pelo Serviço 2 (peças direto do PDF) p/ pré-preencher o cadastro.
@@ -91,17 +104,65 @@ Deno.serve(async (req) => {
     if (!rt) faltando.push("responsável técnico");
     if (faltando.length) return json({ erro: `Complete os dados do serviço antes: ${faltando.join(", ")}` }, 422);
 
-    // ---------------- PDF ----------------
-    const pdfBytes = b64ToBytes(pdf_base64);
-    const pdf = await getDocumentProxy(pdfBytes);
-    const { text } = await extractText(pdf, { mergePages: true });
-    const sigef = parseSigefTexto(text as string);
+    // ---------------- origem dos dados: PDF do SIGEF ou cálculo próprio ----------------
+    const cred = servico.credenciado_id
+      ? (await supa.from("credenciados").select().eq("id", servico.credenciado_id).single()).data
+      : null;
+
+    let sigef: DadosSigef;
+    // trechos vindos do cálculo, quando é ele a origem (chave = código do M)
+    let iniciosDoCalculo: Map<string, { descritivo: string; tipoLimite: string; ehVia?: boolean }> | null = null;
+
+    if (doCalculo) {
+      if (!vertices?.length) return json({ erro: "Serviço sem vértices" }, 422);
+      if (vertices.some((v) => !v.codigo)) {
+        return json({ erro: "Gere o memorial antes das peças — os códigos dos vértices são alocados na geração" }, 422);
+      }
+      const calc = montarServico({
+        fusoUtm: servico.fuso_utm ?? 24,
+        prefixo: cred?.prefixo_vertice ?? "",
+        contadores: { M: 0, P: 0, V: 0 },
+        vertices: vertices.map((v) => ({
+          ordem: v.ordem, numTxt: v.num_txt,
+          e: v.e === null ? null : Number(v.e), n: v.n === null ? null : Number(v.n),
+          latGmsStr: v.inserido_manual ? v.lat_gms : null,
+          lonGmsStr: v.inserido_manual ? v.lon_gms : null,
+          h: Number(v.h), sigmaPos: Number(v.sigma_pos), sigmaH: Number(v.sigma_h),
+          tipo: v.tipo, metodo: v.metodo, codigoManual: v.codigo, inserido: v.inserido_manual,
+          descritivo: v.descritivo || v.apelido_txt || "", tipoLimite: v.tipo_limite,
+          ehVia: v.eh_via, cns: v.cns, matricula: v.matricula,
+        })),
+      }, proj4);
+      // A confrontação de cada vértice sai do trecho a que ele pertence — a
+      // mesma invariante "de M a M" do resto do sistema (ARQUITETURA-TRECHOS.md),
+      // e não da string truncada que o PDF traria.
+      const descPorCodigo = new Map(calc.ring.map((v) => [v.codigo, v.trecho.descritivo]));
+      sigef = sigefDoCalculo(geometriaDoCalculo(calc), {
+        servico, rt, cred,
+        trt: servico.trt?.trim() || (rt?.trt ?? "").trim(),
+        confrontacaoDe: (c) => descPorCodigo.get(c) ?? "",
+      });
+      iniciosDoCalculo = new Map(
+        calc.ring
+          .filter((v) => v.iniciaTrecho)
+          .map((v) => [v.codigo, {
+            descritivo: v.iniciaTrecho!.descritivo,
+            tipoLimite: v.iniciaTrecho!.tipoLimite,
+            ehVia: v.iniciaTrecho!.ehVia,
+          }]),
+      );
+    } else {
+      const pdfBytes = b64ToBytes(pdf_base64);
+      const pdf = await getDocumentProxy(pdfBytes);
+      const { text } = await extractText(pdf, { mergePages: true });
+      sigef = parseSigefTexto(text as string);
+    }
 
     // ---------------- trechos: código do vértice inicial → descritivo ----------------
     // serviço 'pecas': o trecho guarda o código direto (codigo_inicio);
     // serviço 'geo': resolve pelo vértice na ordem indicada.
-    const inicios = new Map<string, { descritivo: string; tipoLimite: string; ehVia?: boolean }>();
-    for (const t of trechoRows ?? []) {
+    const inicios = iniciosDoCalculo ?? new Map<string, { descritivo: string; tipoLimite: string; ehVia?: boolean }>();
+    for (const t of iniciosDoCalculo ? [] : (trechoRows ?? [])) {
       const codigo = t.codigo_inicio || (vertices ?? []).find((x) => x.ordem === t.vertice_inicio_ordem)?.codigo;
       if (codigo) {
         inicios.set(codigo, {
@@ -114,8 +175,9 @@ Deno.serve(async (req) => {
       }
     }
     // fallback: PDF de outra geração (códigos diferentes) → detecta trechos pela
-    // mudança da confrontação e tenta casar com o descritivo completo do banco
-    if (!sigef.linhas.some((l) => inicios.has(l.codigo))) {
+    // mudança da confrontação e tenta casar com o descritivo completo do banco.
+    // Não se aplica à origem 'calculo': lá os códigos são os mesmos por construção.
+    if (!iniciosDoCalculo && !sigef.linhas.some((l) => inicios.has(l.codigo))) {
       inicios.clear();
       let ultima = "";
       for (const l of sigef.linhas) {
@@ -179,11 +241,19 @@ Deno.serve(async (req) => {
     };
 
     // ---------------- templates → geração → upload ----------------
-    const PECAS = posse ? PECAS_POSSE : PECAS_MATRICULA;
+    // `apenas` recorta o que é ENTREGUE, não o que é gerado: gerarPecasXml lê
+    // tpl["1"], tpl["2"], … sem guarda, então recortar o conjunto de templates
+    // faria a peça que sobrou quebrar por causa das que não foram baixadas.
+    // Baixar tudo e filtrar na emissão mantém o gerador intocado — ele é o
+    // núcleo do fluxo que já funciona.
+    const filtro: string[] | null = Array.isArray(apenas) && apenas.length ? apenas.map(String) : null;
+    const TODAS = posse ? PECAS_POSSE : PECAS_MATRICULA;
+    const PECAS = TODAS.filter(([num]) => !filtro || filtro.includes(num));
+    if (PECAS.length === 0) return json({ erro: `Nenhuma peça corresponde a: ${filtro?.join(", ")}` }, 422);
     const pasta = posse ? "pecas-posse" : "pecas";
     const zips: Record<string, JSZip> = {};
     const tplXml: Record<string, string> = {};
-    for (const [num, arquivo] of PECAS) {
+    for (const [num, arquivo] of TODAS) {
       const dl = await supa.storage.from("templates").download(`${pasta}/${arquivo}.docx`);
       if (dl.error || !dl.data) return json({ erro: `Template ${pasta}/${arquivo}.docx não encontrado no Storage` }, 500);
       const zip = await JSZip.loadAsync(await dl.data.arrayBuffer());

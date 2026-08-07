@@ -5,17 +5,19 @@ import { supabase } from "../lib/supabase";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { useAutosave, useAvisos } from "../lib/ux";
 import { Avisos, BotaoPerigo, Secao, StatusSalvamento } from "./ui";
+import { SERVICOS, chaveDoServico, rotuloCurto } from "../lib/modalidades";
+import type { ChaveServico } from "../lib/modalidades";
 import type { Cliente, Servico } from "../lib/types";
 
 interface Props {
   clienteId: string;
   onVoltar: () => void;
   onAbrirServico: (s: Servico) => void;
-  onNovoGeo: (clienteId: string) => void;
-  onNovoPecas: (clienteId: string) => void;
+  /** Uma porta só para todas as modalidades: elas saem de SERVICOS, não de props. */
+  onNovoServico: (chave: ChaveServico) => void;
 }
 
-export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoGeo, onNovoPecas }: Props) {
+export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico }: Props) {
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [servicos, setServicos] = useState<Servico[]>([]);
   const { avisos, avisar, fechar } = useAvisos();
@@ -66,12 +68,17 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoGeo, on
     <div className="conferencia" style={{ paddingBottom: 40 }}>
       <Avisos avisos={avisos} onFechar={fechar} />
       <header className="topo">
-        <button className="fantasma" onClick={onVoltar}>← Dashboard</button>
+        <button className="fantasma" onClick={onVoltar}>← Clientes</button>
         <span className="arquivo">👤 {cliente.nome}</span>
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
         <span className="esticar" />
-        <button onClick={() => onNovoGeo(clienteId)}>+ Serviço 1 (TXT)</button>
-        <button onClick={() => onNovoPecas(clienteId)}>+ Serviço 2 (PDF SIGEF)</button>
+        {/* Um botão por modalidade, direto de SERVICOS: acrescentar uma
+            modalidade não exige mais tocar nesta tela. */}
+        {SERVICOS.map((d) => (
+          <button key={d.chave} onClick={() => onNovoServico(d.chave)} title={d.resumo}>
+            + {d.icone} {d.titulo}
+          </button>
+        ))}
       </header>
 
       <section className="bloco">
@@ -125,11 +132,11 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoGeo, on
         <header><h3>Serviços deste cliente</h3><span className="desc">{servicos.length} serviço(s)</span></header>
         {servicos.length === 0 ? <p style={{ color: "var(--texto-2)" }}>Nenhum serviço ainda — crie pelos botões acima.</p> : (
           <table className="tabela-vertices dash-lista">
-            <thead><tr><th>Tipo</th><th>Imóvel</th><th>Status</th><th>Criado em</th></tr></thead>
+            <thead><tr><th>Modalidade</th><th>Imóvel</th><th>Status</th><th>Criado em</th></tr></thead>
             <tbody>
               {servicos.map((s) => (
                 <tr key={s.id} className="linha-servico" onClick={() => onAbrirServico(s)}>
-                  <td>{s.tipo === "pecas" ? <span className="chip tipo-pecas">2 · Peças</span> : <span className="chip tipo-geo">1 · Geo</span>}</td>
+                  <td><span className={`chip mod-${chaveDoServico(s)}`}>{rotuloCurto[chaveDoServico(s)]}</span></td>
                   <td><b>{s.denominacao ?? "(sem denominação)"}</b> {s.municipio ? `· ${s.municipio}-${s.uf}` : ""}</td>
                   <td>{s.status === "gerado" ? <span className="chip ok-chip">gerado</span> : <span className="chip P">rascunho</span>}</td>
                   <td style={{ color: "var(--texto-2)" }}>{dataFmt(s.created_at)}</td>
