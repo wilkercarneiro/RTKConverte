@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   acrescentarSemRepetir, areaHaDoAnel, grudarNoPerimetro, indiceNoPerimetro,
-  mesmoPonto, trechoDoPerimetro,
+  mesmoPonto, sentidoDoContorno, trechoDoPerimetro,
 } from "../src/lib/glebas.ts";
 
 test("trecho anda para frente quando esse é o caminho curto", () => {
@@ -72,6 +72,46 @@ test("área do contorno bate com a shoelace, em hectares", () => {
   assert.equal(areaHaDoAnel([...quadrado].reverse()).toFixed(4), "1.0000");
   // contorno que não fecha polígono não tem área
   assert.equal(areaHaDoAnel([[0, 0], [100, 0]]), 0);
+});
+
+// ---- direção do contorno: o que impedia o anel de sair cruzado ----
+//
+// Clicar salteado ligava dois vértices por uma corda que atravessava o imóvel.
+// Com o clique seguindo o perímetro, sobra decidir PARA QUE LADO andar — e o
+// "caminho mais curto" inverte assim que o contorno passa da metade do anel,
+// que era exatamente quando o desenho saía embolado.
+
+test("o rumo sai dos dois últimos vértices do contorno", () => {
+  const per = [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0]];
+  assert.equal(sentidoDoContorno(per, [[1, 0], [2, 0]]), 1, "1→2 é para a frente");
+  assert.equal(sentidoDoContorno(per, [[4, 0], [3, 0]]), -1, "4→3 é para trás");
+});
+
+test("o rumo dá a volta no anel", () => {
+  const per = [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0]];
+  // 5 → 0 é um passo para a frente (fechando o anel), não cinco para trás
+  assert.equal(sentidoDoContorno(per, [[5, 0], [0, 0]]), 1);
+});
+
+test("sem dois vértices do perímetro consecutivos, não há rumo a inferir", () => {
+  const per = [[0, 0], [1, 0], [2, 0], [3, 0]];
+  assert.equal(sentidoDoContorno(per, [[1, 0]]), null, "um ponto só");
+  assert.equal(sentidoDoContorno(per, [[9, 9], [8, 8]]), null, "pontos livres");
+});
+
+test("mantido o rumo, o trecho NÃO inverte depois da metade do anel", () => {
+  // é o caso que embolava: de 2 para 7 num anel de 10, o caminho curto é para
+  // trás (5 passos) e o longo para a frente (5)... em 12 fica explícito:
+  const total = 12;
+  // curto seria voltar (de 2 para 9 são 5 passos para trás, 7 para a frente)
+  assert.deepEqual(trechoDoPerimetro(total, 2, 9), [1, 0, 11, 10, 9], "sem rumo: caminho curto");
+  // mas se o contorno já vinha para a FRENTE, tem de continuar para a frente
+  assert.deepEqual(trechoDoPerimetro(total, 2, 9, 1), [3, 4, 5, 6, 7, 8, 9]);
+});
+
+test("rumo para trás percorre o outro lado", () => {
+  assert.deepEqual(trechoDoPerimetro(10, 8, 5, -1), [7, 6, 5]);
+  assert.deepEqual(trechoDoPerimetro(10, 8, 5, 1), [9, 0, 1, 2, 3, 4, 5]);
 });
 
 test("trecho longo de perímetro entra de uma vez só", () => {

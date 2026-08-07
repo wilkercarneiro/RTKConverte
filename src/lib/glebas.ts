@@ -33,23 +33,47 @@ export const indiceNoPerimetro = (perimetro: PontoAnel[], p: PontoAnel): number 
 /**
  * Os vértices entre `de` e `ate`, andando PELO PERÍMETRO, sem incluir `de`.
  *
- * Vai pelo caminho MAIS CURTO: uma divisa de gleba acompanha um pedaço contíguo
- * do contorno, e o pedaço curto é o que se quer em quase todo caso. Para o outro
- * lado, o operador clica um ponto no meio antes — o que também é como se
- * descreve o trecho em voz alta ("passa pelo canto de baixo e sobe").
+ * `sentido` manda quando é informado. Sem ele, vai pelo caminho MAIS CURTO —
+ * bom para o primeiro trecho, quando ainda não há direção estabelecida.
  *
- * Empate (exatamente meio perímetro) resolve para a frente, que é a ordem em que
- * o anel é publicado.
+ * Por que o sentido importa: o contorno de uma gleba acompanha um pedaço
+ * contíguo do perímetro, sempre no mesmo rumo. Quando o operador já passou da
+ * metade do anel, o "caminho mais curto" inverte e volta por trás — e o anel sai
+ * cruzado. Continuar no rumo que ele já vinha seguindo é o que evita isso.
  */
-export function trechoDoPerimetro(total: number, de: number, ate: number): number[] {
+export function trechoDoPerimetro(total: number, de: number, ate: number, sentido?: 1 | -1): number[] {
   if (total <= 0 || de < 0 || ate < 0) return [];
   const frente = ((ate - de) % total + total) % total;
   const tras = ((de - ate) % total + total) % total;
-  const quantos = Math.min(frente, tras);
-  const passo = frente <= tras ? 1 : -1;
+  const passo = sentido ?? (frente <= tras ? 1 : -1);
+  const quantos = passo === 1 ? frente : tras;
   const out: number[] = [];
   for (let k = 1; k <= quantos; k++) out.push((((de + passo * k) % total) + total) % total);
   return out;
+}
+
+/**
+ * Em que rumo o contorno já vinha andando pelo perímetro.
+ *
+ * Sai dos dois últimos pontos que são vértices do perímetro: se o penúltimo é o
+ * 7 e o último é o 8, o rumo é para a frente. `null` quando ainda não há dois
+ * pontos consecutivos do perímetro para comparar — aí quem decide é o caminho
+ * mais curto.
+ */
+export function sentidoDoContorno(perimetro: PontoAnel[], anel: PontoAnel[]): 1 | -1 | null {
+  const total = perimetro.length;
+  if (total < 2 || anel.length < 2) return null;
+  const idx = anel.map((p) => indiceNoPerimetro(perimetro, p));
+  for (let k = idx.length - 1; k >= 1; k--) {
+    const b = idx[k], a = idx[k - 1];
+    if (a < 0 || b < 0 || a === b) continue;
+    const frente = ((b - a) % total + total) % total;
+    const tras = ((a - b) % total + total) % total;
+    // um salto de exatamente meio anel não diz rumo nenhum
+    if (frente === tras) continue;
+    return frente < tras ? 1 : -1;
+  }
+  return null;
 }
 
 /**

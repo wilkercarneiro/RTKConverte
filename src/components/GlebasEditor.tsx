@@ -5,7 +5,7 @@
 // diziam onde cada um ficava. A lista de pontos continua aqui ao lado, como
 // conferência e como saída de emergência — quem tem a coordenada exata digita —
 // mas o caminho normal é apontar na figura.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Gleba, Trecho, Vertice } from "../lib/types";
 import { areaHaDoAnel } from "../lib/glebas";
 import { CORES } from "./MapaSVG";
@@ -32,15 +32,46 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
   const [sel, setSel] = useState(0);
   const [ponto, setPonto] = useState({ e: "", n: "" });
 
+  // Pilha de desfazer sobre a lista INTEIRA de glebas, não sobre o contorno da
+  // ativa: assim Ctrl+Z também desfaz criar e excluir gleba, e não só cliques.
+  // Errar um ponto e ter de apagar o contorno todo para consertar era o pior
+  // defeito do editor.
+  const [historico, setHistorico] = useState<Gleba[][]>([]);
+  const guardar = () => setHistorico((h) => [...h.slice(-49), glebas]);
+  const aplicar = (novo: Gleba[]) => { guardar(); onChange(novo); };
+  const desfazer = () => {
+    if (!historico.length) return;
+    onChange(historico[historico.length - 1]);
+    setHistorico((h) => h.slice(0, -1));
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z") return;
+      // não sequestra o desfazer de quem está digitando num campo
+      const alvo = e.target as HTMLElement | null;
+      if (alvo && /^(INPUT|TEXTAREA|SELECT)$/.test(alvo.tagName)) return;
+      e.preventDefault();
+      desfazer();
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [historico, glebas]);
+
   const ativa = Math.min(sel, Math.max(0, glebas.length - 1));
   const atual = glebas[ativa] ?? null;
   const somaHa = glebas.reduce((s, g) => s + areaHaDoAnel(g.anel), 0);
 
+  /** Muda sem registrar: o mapa já registrou pelo `onSnapshot` antes de mexer. */
   function editar(i: number, patch: Partial<Gleba>) {
     onChange(glebas.map((g, k) => (k === i ? { ...g, ...patch } : g)));
   }
+  /** Muda registrando — para as ações que partem daqui, e não do mapa. */
+  function editarComDesfazer(i: number, patch: Partial<Gleba>) {
+    aplicar(glebas.map((g, k) => (k === i ? { ...g, ...patch } : g)));
+  }
   function nova() {
-    onChange([...glebas, {
+    aplicar([...glebas, {
       id: crypto.randomUUID(),
       servico_id: servicoId,
       ordem: glebas.length,
@@ -50,7 +81,7 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
     setSel(glebas.length);
   }
   function remover(i: number) {
-    onChange(glebas.filter((_, k) => k !== i).map((g, k) => ({ ...g, ordem: k })));
+    aplicar(glebas.filter((_, k) => k !== i).map((g, k) => ({ ...g, ordem: k })));
     setSel(0);
   }
 
@@ -92,6 +123,7 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
             glebas={glebas}
             ativa={ativa}
             onChange={(anel) => editar(ativa, { anel })}
+            onSnapshot={guardar}
           />
 
           <div className="gleba-painel">
@@ -105,15 +137,15 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
 
             <div className="gleba-acoes">
               <button className="fantasma" disabled={!atual.anel.length}
-                onClick={() => editar(ativa, { anel: atual.anel.slice(0, -1) })}>
+                onClick={() => editarComDesfazer(ativa, { anel: atual.anel.slice(0, -1) })}>
                 ↶ Desfazer último ponto
               </button>
               <button className="fantasma" disabled={!atual.anel.length}
-                onClick={() => editar(ativa, { anel: [] })}>
+                onClick={() => editarComDesfazer(ativa, { anel: [] })}>
                 Limpar contorno
               </button>
               <button className="fantasma" disabled={atual.anel.length < 3}
-                onClick={() => editar(ativa, { anel: [...atual.anel].reverse() })}
+                onClick={() => editarComDesfazer(ativa, { anel: [...atual.anel].reverse() })}
                 title="inverte o sentido do contorno — não muda a área, só a ordem dos pontos">
                 ⇄ Inverter sentido
               </button>
@@ -130,7 +162,7 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
                       <li key={k}>
                         <span className="mono">E {fmt(e, 3)} · N {fmt(n, 3)}</span>
                         <button className="fantasma" title="remover ponto"
-                          onClick={() => editar(ativa, { anel: atual.anel.filter((_, i) => i !== k) })}>✕</button>
+                          onClick={() => editarComDesfazer(ativa, { anel: atual.anel.filter((_, i) => i !== k) })}>✕</button>
                       </li>
                     ))}
                   </ol>
@@ -146,7 +178,7 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
                   onClick={() => {
                     const e = Number(ponto.e.replace(",", ".")), n = Number(ponto.n.replace(",", "."));
                     if (Number.isFinite(e) && Number.isFinite(n)) {
-                      editar(ativa, { anel: [...atual.anel, [e, n]] });
+                      editarComDesfazer(ativa, { anel: [...atual.anel, [e, n]] });
                       setPonto({ e: "", n: "" });
                     }
                   }}>+ por coordenada</button>

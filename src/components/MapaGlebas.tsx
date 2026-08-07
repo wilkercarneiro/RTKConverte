@@ -5,17 +5,28 @@
 // 12 cliques em botões que não diziam ONDE ficavam. Aqui o contorno é montado em
 // cima da própria figura, e em bloco:
 //
-//   clique num vértice do perímetro ....... acrescenta aquele vértice
-//   SHIFT + clique num vértice ............ acrescenta o TRECHO INTEIRO do
-//                                           último ponto até ele, pelo caminho
-//                                           mais curto do perímetro
+//   clique num vértice .................... entra no contorno JUNTO COM o trecho
+//                                           do perímetro desde o último ponto;
+//                                           clicar de novo no MESMO vértice tira
+//   ALT + clique num vértice .............. liga em linha reta, sem passar pelo
+//                                           perímetro — é o corte que fecha a
+//                                           gleba por dentro
 //   arrastar sobre o vazio ................ retângulo de seleção: entram todos
 //                                           os vértices dentro dele, na ordem
 //                                           do perímetro
-//   clique no vazio ....................... ponto livre naquela coordenada
 //   arrastar uma alça ..................... move o ponto (gruda no vértice do
 //                                           perímetro quando chega perto)
 //   duplo clique numa alça ................ remove o ponto
+//   Ctrl+Z ................................ desfaz (no GlebasEditor)
+//
+// O clique seguir o perímetro é o padrão porque é o caso comum: o contorno de
+// uma gleba acompanha a divisa do imóvel, e ligar dois vértices salteados em
+// linha reta produzia uma corda atravessando a figura e um anel cruzado.
+//
+// Clicar no VAZIO não faz nada de propósito. Antes criava um ponto livre naquela
+// coordenada, e o efeito prático era outro: quem errava a mira no vértice ganhava
+// um ponto que não existe no levantamento, sem perceber. Ponto sem levantamento
+// só entra pelo campo de coordenada, onde é uma decisão explícita.
 //
 // A conversão tela → E/N usa a matriz do próprio SVG (getScreenCTM), e não uma
 // regra de três sobre o bounding box: com `preserveAspectRatio` o desenho ganha
@@ -23,7 +34,8 @@
 import { useMemo, useRef, useState } from "react";
 import type { Gleba, Trecho, Vertice } from "../lib/types";
 import {
-  acrescentarSemRepetir, grudarNoPerimetro, indiceNoPerimetro, mesmoPonto, trechoDoPerimetro,
+  acrescentarSemRepetir, grudarNoPerimetro, indiceNoPerimetro, mesmoPonto, sentidoDoContorno,
+  trechoDoPerimetro,
 } from "../lib/glebas";
 import type { PontoAnel } from "../lib/glebas";
 import { trechoDoVertice } from "../lib/trechos";
@@ -41,9 +53,15 @@ interface Props {
   /** Índice da gleba que recebe os cliques. */
   ativa: number;
   onChange: (anel: [number, number][]) => void;
+  /**
+   * Chamado ANTES de cada mudança discreta (e uma vez por arrasto, no início),
+   * para o editor guardar o estado anterior. É o que faz o Ctrl+Z desfazer um
+   * clique errado em vez de obrigar a apagar o contorno inteiro.
+   */
+  onSnapshot: () => void;
 }
 
-export function MapaGlebas({ vertices, trechos, glebas, ativa, onChange }: Props) {
+export function MapaGlebas({ vertices, trechos, glebas, ativa, onChange, onSnapshot }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [arrasto, setArrasto] = useState<{ tipo: "alca"; i: number } | { tipo: "caixa"; x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -92,12 +110,30 @@ export function MapaGlebas({ vertices, trechos, glebas, ativa, onChange }: Props
   const set = (a: PontoAnel[]) => onChange(a);
   const add = (e: number, n: number) => set([...anel, [e, n]]);
 
-  /** SHIFT + clique: pega o trecho inteiro do último ponto até `destino`. */
-  function addTrecho(destino: number) {
+  /**
+   * Clique num vértice.
+   *
+   * Se ele já está no contorno, SAI — errar a mira e ter de apagar tudo para
+   * consertar era o pior defeito do editor; assim, desfazer um clique é repetir
+   * o clique, no mesmo lugar onde o erro foi cometido.
+   *
+   * Se não está, entra JUNTO COM O TRECHO do perímetro que o separa do último
+   * ponto. Clicar salteado ligava os dois pontos por uma corda que atravessava o
+   * imóvel e o anel saía cruzado — o "bugando" do relato. O contorno de uma
+   * gleba acompanha o perímetro; ligar em linha reta é a exceção (alt+clique),
+   * não o padrão.
+   */
+  function alternarVertice(i: number, reta: boolean) {
+    const p = perimetro[i];
+    onSnapshot();
+    const semEle = anel.filter((q) => !mesmoPonto(q, p));
+    if (semEle.length !== anel.length) { set(semEle); return; }
     const ultimo = anel.length ? indiceNoPerimetro(perimetro, anel[anel.length - 1]) : -1;
-    if (ultimo < 0) { add(vs[destino].x, vs[destino].y); return; }
-    const idx = trechoDoPerimetro(vs.length, ultimo, destino);
-    set(acrescentarSemRepetir(anel, idx.map((i) => perimetro[i])));
+    // corda reta pedida, primeiro ponto, ou vindo de um ponto livre (que não tem
+    // posição no perímetro para se andar a partir dela)
+    if (reta || ultimo < 0) { set([...anel, p]); return; }
+    const idx = trechoDoPerimetro(vs.length, ultimo, i, sentidoDoContorno(perimetro, anel) ?? undefined);
+    set(acrescentarSemRepetir(anel, idx.map((k) => perimetro[k])));
   }
 
   /** Retângulo de seleção: todos os vértices dentro, na ordem do perímetro. */
@@ -110,7 +146,7 @@ export function MapaGlebas({ vertices, trechos, glebas, ativa, onChange }: Props
         return sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
       })
       .map((p) => [p.x, p.y] as PontoAnel);
-    if (dentro.length) set(acrescentarSemRepetir(anel, dentro));
+    if (dentro.length) { onSnapshot(); set(acrescentarSemRepetir(anel, dentro)); }
   }
 
   function moverAlca(i: number, sx: number, sy: number) {
@@ -149,11 +185,10 @@ export function MapaGlebas({ vertices, trechos, glebas, ativa, onChange }: Props
         }}
         onPointerUp={(e) => {
           if (!arrasto) return;
-          if (arrasto.tipo === "caixa") {
-            const mexeu = Math.hypot(arrasto.x1 - arrasto.x0, arrasto.y1 - arrasto.y0) > 4;
-            // arrastou = seleção em bloco; clique seco no vazio = ponto livre
-            if (mexeu) addCaixa(arrasto);
-            else add(ex(arrasto.x0), ny(arrasto.y0));
+          // Só o ARRASTO seleciona. Clique seco no vazio não faz nada: criar um
+          // ponto ali era transformar erro de mira em vértice inexistente.
+          if (arrasto.tipo === "caixa" && Math.hypot(arrasto.x1 - arrasto.x0, arrasto.y1 - arrasto.y0) > 4) {
+            addCaixa(arrasto);
           }
           setArrasto(null);
           (e.currentTarget as SVGSVGElement).releasePointerCapture(e.pointerId);
@@ -213,11 +248,14 @@ export function MapaGlebas({ vertices, trechos, glebas, ativa, onChange }: Props
                 onPointerLeave={() => setHover((h) => (h === i ? null : h))}
                 onPointerDown={(e) => {
                   e.stopPropagation();
-                  if (e.shiftKey) addTrecho(i);
-                  else add(p.x, p.y);
+                  alternarVertice(i, e.altKey);
                 }}
               >
-                <title>{`${p.v.codigo ?? p.v.num_txt ?? p.v.ordem} · shift+clique = trecho inteiro`}</title>
+                <title>
+                  {`${p.v.codigo ?? p.v.num_txt ?? p.v.ordem}`}
+                  {usado ? " · clique para tirar do contorno" : " · clique para incluir"}
+                  {" · alt+clique liga em reta"}
+                </title>
               </circle>
             </g>
           );
@@ -233,10 +271,13 @@ export function MapaGlebas({ vertices, trechos, glebas, ativa, onChange }: Props
               style={{ cursor: "grab" }}
               onPointerDown={(e) => {
                 e.stopPropagation();
+                // snapshot uma vez, no início do arrasto: o movimento dispara
+                // dezenas de onChange e cada um viraria um passo de desfazer
+                onSnapshot();
                 setArrasto({ tipo: "alca", i });
                 (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
               }}
-              onDoubleClick={(e) => { e.stopPropagation(); set(anel.filter((_, k) => k !== i)); }}
+              onDoubleClick={(e) => { e.stopPropagation(); onSnapshot(); set(anel.filter((_, k) => k !== i)); }}
             >
               <title>{`ponto ${i + 1} · arraste para mover · duplo clique remove`}</title>
             </circle>
@@ -257,9 +298,11 @@ export function MapaGlebas({ vertices, trechos, glebas, ativa, onChange }: Props
       </svg>
 
       <p className="mapa-ajuda">
-        <b>clique</b> num vértice para incluir · <b>shift+clique</b> pega o trecho inteiro ·
-        <b> arraste no vazio</b> para selecionar vários · <b>clique no vazio</b> cria ponto livre ·
-        <b> arraste a alça</b> para ajustar (gruda no vértice) · <b>duplo clique</b> remove
+        <b>clique</b> num vértice inclui — <b>clique de novo</b> tira ·
+        <b> alt+clique</b> liga em reta (o corte que fecha a gleba) ·
+        <b> arraste no vazio</b> seleciona vários ·
+        <b> arraste a alça</b> ajusta (gruda no vértice) · <b>duplo clique</b> remove ·
+        <b> Ctrl+Z</b> desfaz
       </p>
     </div>
   );
