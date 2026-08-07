@@ -72,6 +72,30 @@ export function dadosPlantaDe(g, extra = {}) {
   };
 }
 
+/**
+ * Uma GlebaPlanta a partir de índices do anel do imóvel.
+ *
+ * É como a gleba nasce de verdade: o operador escolhe vértices JÁ levantados no
+ * mapa, e o sistema herda deles código, lat/lon e altitude. Montar a fixture do
+ * mesmo jeito evita testar um formato que a tela nunca produz.
+ */
+export function glebaDe(g, indices, nome, extra = {}) {
+  const vertices = indices.map((i, k) => {
+    const v = g.vertices[i];
+    const w = g.vertices[indices[(k + 1) % indices.length]];
+    return { ...v, vante: w.codigo };
+  });
+  return {
+    nome,
+    areaFmt: "1,0000",
+    tarefasFmt: "2,30",
+    perimetroFmt: "400,00",
+    identificacao: [`(MATR.1.234/CNS.00.810-2)`, `FAZENDA SALGADA VELHA - ${nome}`, "FULANO DE TAL", "CPF:000.000.000-00"],
+    vertices,
+    ...extra,
+  };
+}
+
 /** Milímetro em pontos PDF, e as folhas em pontos. */
 export const MM = 2.834645669;
 export const FOLHAS_PT = {

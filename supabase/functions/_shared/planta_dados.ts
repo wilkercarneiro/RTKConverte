@@ -7,7 +7,7 @@
 // As duas saem no MESMO padrão de folha (gerarPlantaPdf): o que muda é só de
 // onde vêm vértices, trechos, área e perímetro. Este módulo existe para que esse
 // "mesmo padrão" seja o mesmo código, e não duas cópias que divergem com o tempo.
-import { areaAssinadaM2, fmtBR, fmtGmsPlanilha } from "./geo.ts";
+import { areaAssinadaM2, calcularPerimetroM, calcularSegmentos, fmtBR, fmtGmsPlanilha } from "./geo.ts";
 import type { ServicoCalculado } from "./servico.ts";
 import type { DadosPlanta, Folha, GlebaPlanta, TrechoPlanta, VerticePlanta } from "./planta.ts";
 import type { DadosSigef } from "./sigef_pdf.ts";
@@ -20,22 +20,85 @@ export interface GlebaRow {
 }
 
 /**
- * Glebas do banco no formato do desenho, com a área de cada uma calculada.
+ * Glebas do banco no formato do desenho.
  *
- * A área sai da mesma shoelace do perímetro (`areaAssinadaM2`), no mesmo plano:
- * é isso que faz a soma das glebas fechar com a área do imóvel quando elas
- * cobrem o perímetro inteiro. Gleba com menos de 3 pontos não fecha polígono e
- * é descartada aqui, antes de chegar ao desenho.
+ * Uma gleba NÃO é um contorno decorativo: na planta ela é uma poligonal com
+ * quadro analítico, área e perímetro próprios. Por isso cada ponto do anel é
+ * casado com o vértice correspondente do levantamento — é de lá que saem código,
+ * latitude, longitude e altitude — e azimute e distância são recalculados sobre
+ * o anel DA GLEBA, não copiados do perímetro: a gleba fecha por dentro, e o lado
+ * que fecha não existe no perímetro.
+ *
+ * Ponto que não casa com vértice nenhum entra sem código (é um ponto livre
+ * digitado na tela); ele desenha, mas sai em branco no quadro analítico, o que
+ * é o sinal visível de que falta levantar aquele canto.
  */
-export function glebasParaPlanta(rows: GlebaRow[]): GlebaPlanta[] {
+export function glebasParaPlanta(
+  rows: GlebaRow[],
+  calc: ServicoCalculado,
+  servico: ServicoRow,
+): GlebaPlanta[] {
+  // índice por coordenada arredondada ao milímetro
+  const chave = (e: number, n: number) => `${e.toFixed(3)}|${n.toFixed(3)}`;
+  const porCoord = new Map(calc.ring.map((v) => [chave(v.eProj, v.nProj), v]));
+
   return rows
     .filter((g) => (g.anel?.length ?? 0) >= 3)
     .sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0))
-    .map((g) => {
-      const anel = g.anel!.map(([e, n]) => ({ e, n }));
-      const m2 = Math.abs(areaAssinadaM2(anel.map((p) => ({ eProj: p.e, nProj: p.n }))));
-      return { nome: g.nome ?? "", areaFmt: fmtBR(m2 / 10000, 4), anel };
+    .map((g, gi) => {
+      const nome = (g.nome ?? "").trim() || `GLEBA ${gi + 1}`;
+      const casados = g.anel!.map(([e, n]) => ({ e, n, v: porCoord.get(chave(e, n)) ?? null }));
+
+      // segmentos do anel da gleba, no mesmo plano re-projetado do perímetro
+      const anelCalc = casados.map((p, i) => ({ ordem: i, eProj: p.e, nProj: p.n }));
+      const segs = calcularSegmentos(anelCalc);
+      const m2 = Math.abs(areaAssinadaM2(anelCalc));
+      const areaHa = m2 / 10000;
+
+      const vertices: VerticePlanta[] = casados.map((p, i) => ({
+        codigo: p.v?.codigo ?? "",
+        e: p.e, n: p.n,
+        lonFmt: p.v ? fmtGmsPlanilha(p.v.lonGms, "lon") : "",
+        latFmt: p.v ? fmtGmsPlanilha(p.v.latGms, "lat") : "",
+        alt: p.v ? String(p.v.h).replace(".", ",") : "",
+        azFmt: segs[i].azimuteFmt,
+        distFmt: segs[i].distFmt,
+        vante: casados[(i + 1) % casados.length].v?.codigo ?? "",
+      }));
+
+      // Aresta de faixa de domínio: a que SAI de um vértice cujo trecho é via.
+      // A estrada que separa duas glebas encosta nas duas, e cada uma leva a sua
+      // linha dupla — é o que faltava quando a via só era desenhada no perímetro.
+      const viasIdx = casados.flatMap((p, i) => (p.v?.trecho.ehVia ? [i] : []));
+
+      return {
+        nome,
+        areaFmt: fmtBR(areaHa, 4),
+        tarefasFmt: fmtBR(areaHa * 10000 / 4356, 2),
+        perimetroFmt: fmtBR(calcularPerimetroM(segs), 2),
+        identificacao: identificacaoDaGleba(servico, nome),
+        vertices,
+        viasIdx,
+      };
     });
+}
+
+/**
+ * As linhas do bloco de identificação de uma gleba, no formato da planta de
+ * referência: matrícula/CNS (ou POSSE), denominação com o nome da gleba,
+ * proprietário e CPF, e o inventariante quando é espólio.
+ */
+function identificacaoDaGleba(s: ServicoRow, nomeGleba: string): string[] {
+  const linhas: string[] = [];
+  linhas.push(s.tipo_imovel === "posse" ? "(POSSE)" : `(MATR.${s.matricula ?? ""}/CNS.${s.cns ?? ""})`);
+  linhas.push(`${(s.denominacao ?? "").toUpperCase()} - ${nomeGleba}`);
+  linhas.push((s.detentor_nome ?? "").toUpperCase());
+  if (s.detentor_cpf) linhas.push(`CPF:${s.detentor_cpf}`);
+  if (s.is_espolio && s.inventariante_nome) {
+    linhas.push(`INVENTARIANTE:${s.inventariante_nome.toUpperCase()}`);
+    if (s.inventariante_cpf) linhas.push(`CPF:${s.inventariante_cpf}`);
+  }
+  return linhas;
 }
 
 export interface GeometriaPlanta {

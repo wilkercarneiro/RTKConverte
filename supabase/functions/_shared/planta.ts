@@ -32,17 +32,29 @@ export interface TrechoPlanta {
 export type Folha = "A1" | "A3" | "A4";
 
 /**
- * Sub-polígono desenhado DENTRO do perímetro, na mesma folha.
+ * Uma gleba do imóvel.
  *
- * O anel vem em coordenadas do MESMO plano dos vértices do perímetro, para que
- * o enquadramento não precise ser recalculado: gleba é interna por definição,
- * então a bounding box continua saindo só do perímetro — é isso que mantém a
- * planta de um serviço SEM glebas idêntica à de antes.
+ * NÃO é uma divisa interna decorativa: na planta de referência da empresa
+ * (FAZENDA MAURICÉIA) cada gleba é uma POLIGONAL própria — mesmo azul, mesma
+ * espessura da poligonal do terreno —, com bloco de identificação completo,
+ * linha no quadro analítico e área/perímetro próprios no rodapé. A legenda não
+ * tem entrada de "divisão de gleba" porque gleba não é um tipo de traço: é o
+ * imóvel, dividido.
+ *
+ * Os vértices vêm no MESMO plano do perímetro, então o enquadramento continua
+ * saindo do perímetro e a planta de um serviço sem glebas não muda.
  */
 export interface GlebaPlanta {
-  nome: string;
-  areaFmt: string;               // "12,4051"
-  anel: { e: number; n: number }[];
+  nome: string;                  // "GLEBA 1"
+  areaFmt: string;               // "502,2827"
+  tarefasFmt: string;            // "1.153,08"
+  perimetroFmt: string;          // "11.147,32"
+  /** Bloco de identificação, uma linha por linha desenhada. */
+  identificacao: string[];
+  /** O anel da gleba, com o que o quadro analítico precisa de cada vértice. */
+  vertices: VerticePlanta[];
+  /** Índices do anel cuja aresta de saída é faixa de domínio (linha vermelha). */
+  viasIdx?: number[];
 }
 
 export interface ProprietarioPlanta {
@@ -100,10 +112,6 @@ const VERMELHO = rgb(0.85, 0.05, 0.05);
 const VERDE = rgb(0.05, 0.65, 0.15);
 const PRETO = rgb(0, 0, 0);
 const CINZA = rgb(0.45, 0.45, 0.45);
-// Divisa interna de gleba. Cor própria porque a legenda já gastou o vermelho
-// (estrada), o azul (poligonal), o verde (confrontação) e o cinza (malha): usar
-// qualquer um deles faria a divisa de gleba ser lida como outra coisa.
-const MAGENTA = rgb(0.6, 0.1, 0.55);
 
 // escala proporcional ao desenho: menor escala redonda em que o polígono cabe
 // (passo 50/100/500 conforme a ordem de grandeza) — sem saltar p/ degraus
@@ -431,6 +439,11 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // ganhado um campo. A A4 existe para a conferência de área, que é prévia e
   // circula impressa em mesa, não em prancheta.
   const folha: Folha = d.folha ?? (posse ? "A3" : "A1");
+  // Gleba com menos de 3 vértices não fecha polígono: não desenha, não entra no
+  // quadro analítico e não entra no rodapé. Filtrada UMA vez aqui para que as
+  // três decisões não possam divergir — era assim que uma gleba pela metade
+  // sumia do desenho mas continuava aparecendo na área do rodapé.
+  const glebas = (d.glebas ?? []).filter((g) => g.vertices.length >= 3);
   // A folha de posse É a folha de matrícula, só que menor: MESMAS regras, MESMO
   // desenho, MESMAS medidas em pontos — muda a proporção no fim e nada mais.
   //
@@ -592,113 +605,55 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 3.4, AZUL);
     obstaculos.push({ x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) });
   }
-  // ------------------- glebas (divisas internas) -------------------
-  // Serviço com gleba é o serviço completo com sub-polígonos DENTRO do perímetro
-  // — não é outro tipo de planta. Por isso o bloco inteiro vive atrás desta
-  // guarda: sem gleba, nem uma linha daqui executa e o PDF sai byte a byte igual
-  // ao de antes (lacrado em tests/nao_regressao_completo.test.mjs).
+  // ------------------- glebas -------------------
   //
-  // Desenhado DEPOIS do polígono de propósito: as divisas internas entram em
-  // `obstaculos` para que nenhum rótulo de confrontante caia por cima delas, e a
-  // poligonal azul continua sendo o traço mais forte da folha.
+  // Gleba NÃO é divisa interna: na planta de referência da empresa (FAZENDA
+  // MAURICÉIA) cada gleba é uma POLIGONAL própria — mesmo azul, mesma espessura
+  // da poligonal do terreno — e a legenda não ganha entrada nova, porque gleba
+  // não é um tipo de traço: é o imóvel, dividido. Duas glebas separadas pela
+  // estrada, cada uma com a sua linha dupla vermelha na borda que a encosta.
+  //
+  // Todo este bloco vive atrás da guarda: sem gleba, nenhuma linha daqui executa
+  // e o PDF sai igual ao de antes (lacrado em nao_regressao_completo.test.mjs).
   const rotulosGleba: Ret[] = [];
   const divisasGleba: Seg[] = [];
-  if (d.glebas?.length) {
-    // ------- 1. divisas: cada traço UMA vez -------
-    //
-    // Duas glebas vizinhas compartilham a divisa entre elas, e uma gleba que
-    // acompanha o contorno compartilha aresta com a poligonal. Desenhando gleba
-    // por gleba, esses traços saíam DUAS e TRÊS vezes sobrepostos: o tracejado
-    // de uma caía no vão do da outra e o resultado parecia linha cheia mal
-    // impressa — e, em cima da linha dupla vermelha da estrada, virava borrão.
-    //
-    // A chave é o par de extremos arredondado ao milímetro, sem ordem: a mesma
-    // divisa vista das duas glebas dá a mesma chave e só o primeiro desenha.
-    const chaveSeg = (a: Pt, b: Pt) => {
-      const k = (p: Pt) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
-      const [u, v] = [k(a), k(b)].sort();
-      return `${u}|${v}`;
-    };
-    // As arestas da poligonal entram JÁ USADAS: onde a gleba encosta no
-    // perímetro, quem manda é o traço do perímetro (azul, ou a dupla vermelha da
-    // faixa de domínio). Sobrepor magenta ali só suja.
-    const desenhados = new Set<string>();
-    for (let i = 0; i < nv; i++) {
-      const a = vs[i], b = vs[(i + 1) % nv];
-      desenhados.add(chaveSeg({ x: X(a.e), y: Y(a.n) }, { x: X(b.e), y: Y(b.n) }));
+  for (const gl of glebas) {
+    const gv = gl.vertices;
+    const viasGl = new Set(gl.viasIdx ?? []);
+
+    // "fora" da gleba pelo sentido do PRÓPRIO anel dela, como no perímetro:
+    // é o que joga a linha dupla da estrada para o lado certo mesmo em gleba
+    // côncava, onde o centro da folha apontaria para dentro.
+    let giroG = 0;
+    for (let k = 0; k < gv.length; k++) {
+      const u = gv[k], w = gv[(k + 1) % gv.length];
+      giroG += X(u.e) * Y(w.n) - X(w.e) * Y(u.n);
     }
+    const sg = giroG >= 0 ? 1 : -1;
 
-    for (const gl of d.glebas) {
-      const pts = gl.anel;
-      if (pts.length < 3) continue;
-      for (let i = 0; i < pts.length; i++) {
-        const a = pts[i], b = pts[(i + 1) % pts.length];
-        const p = { x: X(a.e), y: Y(a.n) }, q = { x: X(b.e), y: Y(b.n) };
-        const chave = chaveSeg(p, q);
-        if (desenhados.has(chave)) continue;
-        desenhados.add(chave);
-        const seg = { x1: p.x, y1: p.y, x2: q.x, y2: q.y };
-        linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 1.8, MAGENTA, [7, 4]);
-        obstaculos.push(seg);
-        divisasGleba.push(seg);
-      }
-    }
+    for (let i = 0; i < gv.length; i++) {
+      const a = gv[i], b = gv[(i + 1) % gv.length];
+      const p = { x: X(a.e), y: Y(a.n) }, q = { x: X(b.e), y: Y(b.n) };
 
-    // ------- 2. rótulos: um lugar por gleba, sem pisar em ninguém -------
-    for (const gl of d.glebas) {
-      const pts = gl.anel;
-      if (pts.length < 3) continue;
-      const anel: Pt[] = pts.map((p) => ({ x: X(p.e), y: Y(p.n) }));
-
-      // Centroide da ÁREA (fórmula do polígono), não a média dos vértices: em
-      // gleba com um lado muito subdividido a média puxa o nome para aquele lado.
-      let a2 = 0, sx = 0, sy = 0;
-      for (let i = 0; i < anel.length; i++) {
-        const p = anel[i], q = anel[(i + 1) % anel.length];
-        const cross = p.x * q.y - q.x * p.y;
-        a2 += cross; sx += (p.x + q.x) * cross; sy += (p.y + q.y) * cross;
-      }
-      const centro: Pt = Math.abs(a2) < 1e-9
-        ? { x: anel.reduce((s, p) => s + p.x, 0) / anel.length, y: anel.reduce((s, p) => s + p.y, 0) / anel.length }
-        : { x: sx / (3 * a2), y: sy / (3 * a2) };
-
-      const area = `${gl.areaFmt} ha`;
-      // O tamanho cede antes da posição: um nome menor no lugar certo é melhor
-      // que um nome grande empurrado para fora da gleba que ele nomeia.
-      let posto = false;
-      for (const tam of [11, 9.5, 8, 7]) {
-        const tamA = tam * 0.86;
-        const w = Math.max(c.fb.widthOfTextAtSize(gl.nome, tam), c.f.widthOfTextAtSize(area, tamA));
-        const h = tam + tamA + 4;
-        // candidatos: o centroide e, em volta dele, deslocamentos crescentes
-        const passo = Math.max(14, h);
-        const cands: Pt[] = [centro];
-        for (let anel2 = 1; anel2 <= 3; anel2++) {
-          for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
-            cands.push({ x: centro.x + dx * passo * anel2, y: centro.y + dy * passo * anel2 });
-          }
+      // A estrada que separa uma gleba da outra encosta nas DUAS, e cada uma
+      // leva a sua dupla vermelha por fora. Desenhar a via só no perímetro era
+      // o que deixava a estrada do meio "encavalada".
+      if (viasGl.has(i)) {
+        const dx = q.x - p.x, dy = q.y - p.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = sg * dy / len, nyy = -sg * dx / len;
+        for (const off of [5, 11]) {
+          const seg = { x1: p.x + nx * off, y1: p.y + nyy * off, x2: q.x + nx * off, y2: q.y + nyy * off };
+          linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, VERMELHO);
+          obstaculos.push(seg);
+          vias.push(seg);
         }
-        for (const p of cands) {
-          const r: Ret = { x1: p.x - w / 2 - 2, y1: p.y - h / 2 - 2, x2: p.x + w / 2 + 2, y2: p.y + h / 2 + 2 };
-          // dentro da PRÓPRIA gleba: senão o nome de uma acaba dentro da vizinha
-          if (!pontoEmPoligono(p, anel)) continue;
-          if (rotulosGleba.some((o) => retCruzaRet(o, r))) continue;
-          texto(c, gl.nome, p.x, p.y + 2, tam, { bold: true, cor: MAGENTA, center: true });
-          texto(c, area, p.x, p.y + 2 - tamA - 2, tamA, { cor: MAGENTA, center: true });
-          rotulosGleba.push(r);
-          posto = true;
-          break;
-        }
-        if (posto) break;
       }
-      // Último recurso: gleba estreita demais para caber o nome dentro dela.
-      // Sai no centroide em corpo mínimo — melhor uma gleba com o nome apertado
-      // do que uma gleba anônima na planta.
-      if (!posto) {
-        texto(c, gl.nome, centro.x, centro.y + 2, 7, { bold: true, cor: MAGENTA, center: true });
-        const w = c.fb.widthOfTextAtSize(gl.nome, 7);
-        rotulosGleba.push({ x1: centro.x - w / 2, y1: centro.y - 4, x2: centro.x + w / 2, y2: centro.y + 10 });
-      }
+
+      linha(c, p.x, p.y, q.x, q.y, 3.4, AZUL);
+      const seg = { x1: p.x, y1: p.y, x2: q.x, y2: q.y };
+      obstaculos.push(seg);
+      divisasGleba.push(seg);
     }
   }
 
@@ -714,14 +669,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // esquerdo da área de desenho — ou seja, apaga qualquer rótulo que tenha caído
   // ali. O espaço dela é reservado agora, antes de posicionar nome nenhum: da
   // parte do rótulo não adianta não invadir se depois vem a legenda por cima.
-  // A caixa cresce uma linha quando há gleba, para caber a entrada nova na
-  // legenda. Sem gleba a altura é a de sempre — a reserva de espaço é feita
-  // ANTES de posicionar rótulo nenhum, então mudá-la mudaria o arranjo da folha
-  // inteira, e não só a legenda.
-  const temGlebas = (d.glebas?.length ?? 0) > 0;
   const legendaRet: Ret = {
     x1: dArea.x + 6, y1: dArea.y + 2,
-    x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124 + (temGlebas ? 20 : 0),
+    x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124,
   };
   ocupado.push(legendaRet);
   // Os nomes das glebas já estão na folha: reservá-los agora impede que um
@@ -1090,37 +1040,59 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // Altura de linha adaptativa: a planta tem de trazer TODOS os vértices.
     // Antes a tabela era cortada em 15 linhas e remetia ao memorial tabular
     // ("… +40 vértices"), o que deixava a peça incompleta.
-    const disp = tableTop - headH - (yCursor - h) - 12;
-    const rowH = Math.max(6.5, Math.min(20, disp / Math.max(1, vs.length)));
-    const tamCel = Math.max(5, Math.min(11, rowH - 2.5));
-    const maxLinhas = Math.max(1, Math.floor(disp / rowH));
-    const linhasQ = vs.slice(0, maxLinhas);
-    const tableBot = tableTop - headH - linhasQ.length * rowH;
-    // moldura, linha do cabeçalho e divisões verticais
-    caixa(c, tx0, tableBot, tw, tableTop - tableBot, 1);
-    linha(c, tx0, tableTop - headH, tx0 + tw, tableTop - headH, 1);
-    let vx = tx0;
-    for (const w of cols.slice(0, -1)) { vx += w; linha(c, vx, tableBot, vx, tableTop, 0.6); }
-    // divisões horizontais entre as linhas
-    for (let r = 1; r < linhasQ.length; r++) {
-      const ly = tableTop - headH - r * rowH;
-      linha(c, tx0, ly, tx0 + tw, ly, 0.35, CINZA);
+    // Com glebas, o quadro vira UMA TABELA POR GLEBA, cada uma com o seu
+    // cabeçalho — é o que a planta de referência faz. Sem glebas, uma tabela só
+    // com o anel do imóvel, exatamente como antes.
+    const blocos: { titulo: string | null; linhas: VerticePlanta[] }[] = glebas.length
+      ? glebas.map((g) => ({ titulo: g.nome, linhas: g.vertices }))
+      : [{ titulo: null, linhas: vs }];
+    const totalLinhas = blocos.reduce((s, b) => s + b.linhas.length, 0);
+    const TIT_H = 15;  // faixa do título de cada gleba
+    // Espaço útil dividido por TODAS as linhas de TODAS as tabelas: com duas
+    // glebas o quadro não pode dar a cada uma a altura que daria a um anel só,
+    // ou a segunda tabela vaza para fora da caixa.
+    const dispTotal = tableTop - headH * blocos.length - (yCursor - h) - 12
+      - blocos.filter((b) => b.titulo).length * TIT_H;
+    const rowH = Math.max(5.5, Math.min(20, dispTotal / Math.max(1, totalLinhas)));
+    const tamCel = Math.max(4.5, Math.min(11, rowH - 2.5));
+
+    let cursorQ = tableTop;
+    let cortadas = 0;
+    for (const bloco of blocos) {
+      if (bloco.titulo) {
+        texto(c, bloco.titulo, tx0, cursorQ - 11, 11, { bold: true });
+        cursorQ -= TIT_H;
+      }
+      const espaco = cursorQ - headH - (yCursor - h) - 8;
+      const cabem = Math.max(1, Math.floor(espaco / rowH));
+      const linhasQ = bloco.linhas.slice(0, cabem);
+      cortadas += bloco.linhas.length - linhasQ.length;
+      const topo = cursorQ;
+      const bot = topo - headH - linhasQ.length * rowH;
+
+      caixa(c, tx0, bot, tw, topo - bot, 1);
+      linha(c, tx0, topo - headH, tx0 + tw, topo - headH, 1);
+      let vx = tx0;
+      for (const w of cols.slice(0, -1)) { vx += w; linha(c, vx, bot, vx, topo, 0.6); }
+      for (let r = 1; r < linhasQ.length; r++) {
+        const ly = topo - headH - r * rowH;
+        linha(c, tx0, ly, tx0 + tw, ly, 0.35, CINZA);
+      }
+      let hx = tx0;
+      for (const [i, hh] of heads.entries()) {
+        texto(c, hh, hx + cols[i] / 2, topo - headH + 7, 10, { bold: true, center: true });
+        hx += cols[i];
+      }
+      for (const [r, v] of linhasQ.entries()) {
+        const vals = [v.codigo, `${v.codigo}-${v.vante}`, v.lonFmt, v.latFmt, v.azFmt, v.distFmt, v.alt];
+        const ty = topo - headH - (r + 1) * rowH + (rowH - tamCel) / 2 + 1;
+        let cx2 = tx0;
+        for (const [i, val] of vals.entries()) { textoFit(c, val, cx2 + cols[i] / 2, ty, tamCel, cols[i] - 6, { center: true }); cx2 += cols[i]; }
+      }
+      cursorQ = bot - 8;
     }
-    // cabeçalho centrado por coluna
-    let hx = tx0;
-    for (const [i, hh] of heads.entries()) {
-      texto(c, hh, hx + cols[i] / 2, tableTop - headH + 7, 10, { bold: true, center: true });
-      hx += cols[i];
-    }
-    // valores centrados por coluna (encolhem se não couberem na coluna)
-    for (const [r, v] of linhasQ.entries()) {
-      const vals = [v.codigo, `${v.codigo}-${v.vante}`, v.lonFmt, v.latFmt, v.azFmt, v.distFmt, v.alt];
-      const ty = tableTop - headH - (r + 1) * rowH + (rowH - tamCel) / 2 + 1;
-      let cx2 = tx0;
-      for (const [i, val] of vals.entries()) { textoFit(c, val, cx2 + cols[i] / 2, ty, tamCel, cols[i] - 6, { center: true }); cx2 += cols[i]; }
-    }
-    if (vs.length > linhasQ.length) {
-      texto(c, `… +${vs.length - linhasQ.length} vértices (ver memorial tabular)`, tx0, tableBot - 12, 10, { cor: CINZA });
+    if (cortadas > 0) {
+      texto(c, `… +${cortadas} vértices (ver memorial tabular)`, tx0, cursorQ - 4, 10, { cor: CINZA });
     }
     yCursor -= h;
   }
@@ -1252,10 +1224,19 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     caixa(c, sbX, yCursor - h, SB_W, h);
     const cw = SB_W / 4;
     // valores longos quebram em 2 linhas dentro da célula em vez de encolher
+    // Com glebas, área e perímetro saem POR GLEBA — é o que a planta de
+    // referência faz ("GLEBA 1: 502,2827 HA/1.153,08 TAREFAS", "PERÍMETRO
+    // GLEBA 1: 11.147,32 m"). Um total só não serve: cada gleba é certificada
+    // e negociada por si.
+    const gl = glebas;
     const itens: [string, string[]][] = [
       ["ESCALA", [`1:${fmtMilhar(escala)}`]],
-      ["ÁREA", [`${d.areaFmt} HA`, `${d.tarefasFmt} TAREFAS`]],
-      ["PERÍMETRO", [`${d.perimetroFmt} m`]],
+      ["ÁREA", gl.length
+        ? gl.map((g) => `${g.nome}: ${g.areaFmt} HA/${g.tarefasFmt} TAREFAS`)
+        : [`${d.areaFmt} HA`, `${d.tarefasFmt} TAREFAS`]],
+      ["PERÍMETRO", gl.length
+        ? gl.map((g) => `${g.nome}: ${g.perimetroFmt} m`)
+        : [`${d.perimetroFmt} m`]],
       ["DESENHISTA", [d.desenhista || "—"]],
       ["COORDENADA", ["UTM"]],
       ["DATUM", ["SIRGAS2000", `M.C -${d.mcAbs}Wgr Fuso: ${d.fuso}${letraFuso(d.latMediaDeg)}`]],
@@ -1273,6 +1254,82 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     linha(c, sbX, yCursor - h / 2, sbX + SB_W, yCursor - h / 2, 0.5);
   }
 
+  // ------------------- bloco de identificação de cada gleba -------------------
+  //
+  // Formato da planta de referência: matrícula/CNS, denominação com o nome da
+  // gleba, proprietário, CPF, inventariante e a linha de ÁREA — o mesmo bloco de
+  // um confrontante, porque é a mesma informação. Um nome curto no centroide,
+  // que era o que a primeira versão fazia, não diz de quem é a gleba nem quanto
+  // ela tem.
+  //
+  // Desenhado no FIM, quando `obstaculos` e `ocupado` já têm tudo: assim o bloco
+  // desvia dos traços do desenho, dos nomes dos vizinhos e dos códigos de
+  // vértice, em vez de ser desviado por eles.
+  for (const gl of glebas) {
+    const anelGl: Pt[] = gl.vertices.map((v) => ({ x: X(v.e), y: Y(v.n) }));
+
+    // centroide da ÁREA: em gleba com um lado muito subdividido a média dos
+    // vértices puxa o bloco para aquele lado
+    let a2 = 0, sx = 0, sy = 0;
+    for (let i = 0; i < anelGl.length; i++) {
+      const p = anelGl[i], q = anelGl[(i + 1) % anelGl.length];
+      const cr = p.x * q.y - q.x * p.y;
+      a2 += cr; sx += (p.x + q.x) * cr; sy += (p.y + q.y) * cr;
+    }
+    const centro: Pt = Math.abs(a2) < 1e-9
+      ? { x: anelGl.reduce((s, p) => s + p.x, 0) / anelGl.length, y: anelGl.reduce((s, p) => s + p.y, 0) / anelGl.length }
+      : { x: sx / (3 * a2), y: sy / (3 * a2) };
+
+    const linhasId = [...gl.identificacao, `AREA:${gl.areaFmt} HA/ ${gl.tarefasFmt} TAREFAS`];
+
+    let posto = false;
+    for (const tam of [13, 11.5, 10, 8.5, 7]) {
+      const esp = tam * 1.25;
+      const lbl = quebrarLinhas(linhasId, 330, tam, f);
+      const bw = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, tam)));
+      const bh = lbl.length * esp;
+      // dentro da própria gleba primeiro (é onde a referência põe o bloco da
+      // GLEBA 1); depois em volta, para a gleba estreita que não comporta
+      const cands: Pt[] = [centro];
+      for (const raio of [1, 1.6, 2.4, 3.2]) {
+        for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+          cands.push({ x: centro.x + dx * bw * 0.62 * raio, y: centro.y + dy * (bh + 22) * raio });
+        }
+      }
+      for (const [ci, p] of cands.entries()) {
+        const r: Ret = { x1: p.x - bw / 2 - 6, y1: p.y - bh / 2 - 6, x2: p.x + bw / 2 + 6, y2: p.y + bh / 2 + 6 };
+        if (r.x1 < dArea.x || r.x2 > dArea.x + dArea.w || r.y1 < dArea.y || r.y2 > dArea.y + dArea.h) continue;
+        // o primeiro candidato exige estar DENTRO da gleba; os demais aceitam
+        // ficar fora, que é como a referência trata a gleba pequena
+        if (ci === 0 && !pontoEmPoligono(p, anelGl)) continue;
+        if (obstaculos.some((s) => segCruzaRet(s, r))) continue;
+        if (ocupado.some((o) => retCruzaRet(o, r))) continue;
+        const topo = p.y + bh / 2;
+        for (const [li, lt] of lbl.entries()) {
+          texto(c, lt, r.x1 + 6, topo - tam - li * esp, tam, { bold: li === 1 });
+        }
+        // traço verde por baixo, como nos blocos de confrontante da referência
+        linha(c, r.x1 + 4, r.y1 + 3, r.x2 - 4, r.y1 + 3, 2, VERDE);
+        ocupado.push(r);
+        rotulosGleba.push(r);
+        posto = true;
+        break;
+      }
+      if (posto) break;
+    }
+    // Último recurso: sai no centroide em corpo mínimo. Uma gleba com o bloco
+    // apertado é melhor que uma gleba anônima na planta.
+    if (!posto) {
+      const lbl = quebrarLinhas(linhasId, 300, 7, f);
+      const bw = Math.max(...lbl.map((l) => f.widthOfTextAtSize(l, 7)));
+      const bh = lbl.length * 9;
+      for (const [li, lt] of lbl.entries()) {
+        texto(c, lt, centro.x - bw / 2, centro.y + bh / 2 - 7 - li * 9, 7, { bold: li === 1 });
+      }
+      rotulosGleba.push({ x1: centro.x - bw / 2, y1: centro.y - bh / 2, x2: centro.x + bw / 2, y2: centro.y + bh / 2 });
+    }
+  }
+
   // legenda no canto inferior esquerdo da área de desenho — caixa compacta
   // (a anterior tinha 640×258pt e comia um quarto do desenho)
   {
@@ -1284,7 +1341,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     const itens: [ReturnType<typeof rgb>, string][] = [
       [VERMELHO, "ESTRADA"], [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
     ];
-    if (temGlebas) itens.push([MAGENTA, "DIVISÃO DE GLEBAS"]);
+    // Gleba NÃO ganha entrada na legenda: ela sai como POLIGONAL DO TERRENO,
+    // que já está listada. Foi assim que a planta de referência resolveu, e é
+    // coerente — a gleba é o imóvel dividido, não um traço de outro tipo.
     let lyy = lyTop - 38;
     for (const [cor, nome] of itens) {
       linha(c, lx, lyy + 3, lx + 38, lyy + 3, 3.4, cor);

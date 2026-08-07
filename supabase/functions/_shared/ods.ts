@@ -183,8 +183,8 @@ function verticeRowXml(l: LinhaVertice): string {
     `</table:table-row>`;
 }
 
-function patchPerimetro(xml: string, d: DadosPerimetro): string {
-  const t = getTable(xml, "perimetro_1");
+function patchPerimetro(xml: string, d: DadosPerimetro, aba = "perimetro_1"): string {
+  const t = getTable(xml, aba);
   const { head, rows, tail } = splitRows(t.slice);
   patchRowCell(rows, findRowByLabel(rows, "Denominação:"), 1, d.denominacaoParcela);
   patchRowCell(rows, findRowByLabel(rows, "Parcela número:"), 1, d.parcelaNumero);
@@ -222,6 +222,37 @@ function patchPerimetro(xml: string, d: DadosPerimetro): string {
   return t.before + head + out.join("") + tail + t.after;
 }
 
-export function patchOdsContent(xml: string, ident: DadosIdentificacao, per: DadosPerimetro): string {
-  return patchPerimetro(patchIdentificacao(xml, ident), per);
+/**
+ * Preenche a planilha. Com mais de um perímetro (serviço com glebas), o arquivo
+ * sai com `perimetro_1`, `perimetro_2`… — UM arquivo, uma aba por gleba.
+ *
+ * O template oficial do SIGEF traz só `perimetro_1`, então as demais são CLONES
+ * daquela aba: mesma estrutura, mesmos estilos e mesmas validações, que são
+ * referenciados por nome e continuam valendo. Clonar é o único caminho que não
+ * inventa layout — construir a aba do zero significaria adivinhar a planilha que
+ * o SIGEF aceita.
+ */
+export function patchOdsContent(
+  xml: string,
+  ident: DadosIdentificacao,
+  per: DadosPerimetro | DadosPerimetro[],
+): string {
+  const lista = Array.isArray(per) ? per : [per];
+  if (lista.length === 0) throw new Error("Nenhum perímetro para gravar na planilha");
+  let out = patchIdentificacao(xml, ident);
+
+  // as abas extras são criadas ANTES de qualquer preenchimento, a partir da aba
+  // original ainda intacta: clonar uma aba já preenchida arrastaria os vértices
+  // da gleba anterior junto
+  if (lista.length > 1) {
+    const molde = getTable(out, "perimetro_1").slice;
+    const novas = lista.slice(1).map((_, i) =>
+      molde.replace(/(<table:table\s[^>]*table:name=")perimetro_1(")/, `$1perimetro_${i + 2}$2`)
+    ).join("");
+    const t = getTable(out, "perimetro_1");
+    out = t.before + t.slice + novas + t.after;
+  }
+
+  for (const [i, p] of lista.entries()) out = patchPerimetro(out, p, `perimetro_${i + 1}`);
+  return out;
 }

@@ -271,6 +271,42 @@ qualquer coisa. Passam a morar em `gerados/{servico_id}/entrada/`. A leitura é
 preguiçosa — ao abrir a tela só se lista a pasta; o arquivo desce quando for de
 fato gerar.
 
+### Rodada 3 — o modelo de gleba, corrigido pela planta de referência
+
+A planta **FAZENDA MAURICÉIA-A1** da própria empresa desmentiu o modelo das
+rodadas 1 e 2. Gleba **não** é divisa interna tracejada com um nome no meio:
+
+| | rodada 1–2 (errado) | planta de referência |
+|---|---|---|
+| traço | magenta tracejado 1,8pt | **azul 3,4pt — a mesma poligonal do terreno** |
+| legenda | entrada "DIVISÃO DE GLEBAS" | **nenhuma** — gleba não é tipo de traço |
+| rótulo | nome + área no centroide | **bloco completo**: matrícula/CNS, denominação com o nome da gleba, proprietário, CPF, inventariante, `AREA:… HA/… TAREFAS`, com traço verde por baixo |
+| quadro analítico | uma tabela do imóvel | **uma tabela por gleba**, cada uma com o seu título |
+| rodapé | área e perímetro do imóvel | **área e perímetro por gleba** |
+| estrada entre glebas | desenhada só no perímetro | **cada gleba leva a sua linha dupla** na borda que a estrada encosta |
+
+Foi o que causou os dois defeitos relatados: a estrada do meio "encavalada" era a
+via desenhada uma vez só, no perímetro, em vez de uma por gleba; e os textos
+empilhados eram o rótulo curto no centroide de glebas vizinhas.
+
+**Modelo novo.** `GlebaPlanta` deixou de ser um contorno (`anel`) e passou a
+carregar `vertices` (com código, lat/lon, altitude, azimute e distância),
+`identificacao`, `tarefasFmt` e `perimetroFmt`. Cada ponto do anel é casado com o
+vértice do levantamento — é de lá que vêm os dados —, e azimute e distância são
+**recalculados sobre o anel da gleba**: a gleba fecha por dentro, e o lado que
+fecha não existe no perímetro.
+
+**Planilha.** Um arquivo, uma aba por gleba: `perimetro_1`, `perimetro_2`… O
+template oficial traz só `perimetro_1`, então as demais são clones dela — mesma
+estrutura, mesmos estilos e validações, que são referenciados por nome. Clonar é
+o único caminho que não inventa layout. Testado contra o `reference/PLANTA.ODS`
+real, não contra XML de mentira.
+
+**Separar em serviços.** Botão no bloco de glebas: cria um serviço por gleba,
+copiando os vértices **com os códigos que já têm** — eles são do levantamento,
+não do serviço, e realocar geraria dois códigos oficiais para o mesmo marco de
+campo. O serviço de origem fica intacto: separar não move nada.
+
 ### Pendências
 
 1. ~~`gerar-pecas` precisa de um redeploy.~~ **Resolvido.** O smoke tinha pegado um

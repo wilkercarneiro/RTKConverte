@@ -155,6 +155,41 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ------------------------- glebas -------------------------
+    // Carregadas antes do DOCX/ODS porque a PLANILHA também depende delas: com
+    // glebas o arquivo sai com uma aba de perímetro por gleba.
+    const glebas = servico.tem_glebas
+      ? glebasParaPlanta(
+        ((await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")).data ?? []) as GlebaRow[],
+        calc,
+        servico,
+      )
+      : undefined;
+
+    // Uma aba `perimetro_N` por gleba, na ordem em que foram montadas. Sem
+    // glebas, um perímetro só — exatamente o que a planilha sempre teve.
+    const porCodigo = new Map(calc.linhasOds.map((l) => [l.codigo, l]));
+    const hemisferio = calc.ring[0].latDeg < 0 ? "Sul" : "Norte";
+    const perimetrosOds = glebas?.length
+      ? glebas.map((g, i) => ({
+        denominacaoParcela: g.nome,
+        parcelaNumero: String(i + 1).padStart(3, "0"),
+        lado: servico.lado ?? "Externo",
+        mcAbs: calc.mcAbs,
+        hemisferio,
+        // vértice sem código é ponto livre digitado na tela: não tem linha na
+        // planilha, e sair de fora é o sinal de que falta levantá-lo
+        linhas: g.vertices.map((v) => porCodigo.get(v.codigo)).filter((l): l is NonNullable<typeof l> => !!l),
+      }))
+      : [{
+        denominacaoParcela: servico.denominacao_parcela ?? "Parte 1",
+        parcelaNumero: servico.parcela_numero ?? "001",
+        lado: servico.lado ?? "Externo",
+        mcAbs: calc.mcAbs,
+        hemisferio,
+        linhas: calc.linhasOds,
+      }];
+
     // ------------------------- DOCX -------------------------
     const dadosMemorial: DadosMemorial = {
       imovel: servico.denominacao ?? "",
@@ -209,14 +244,7 @@ Deno.serve(async (req) => {
       cns: servico.cns ?? "",
       matricula: servico.matricula ?? "",
       municipioUf: `${servico.municipio}-${servico.uf}`,
-    }, {
-      denominacaoParcela: servico.denominacao_parcela ?? "Parte 1",
-      parcelaNumero: servico.parcela_numero ?? "001",
-      lado: servico.lado ?? "Externo",
-      mcAbs: calc.mcAbs,
-      hemisferio: calc.ring[0].latDeg < 0 ? "Sul" : "Norte",
-      linhas: calc.linhasOds,
-    });
+    }, perimetrosOds);
     const zipOds = new JSZip();
     zipOds.file("mimetype", await zipIn.file("mimetype")!.async("uint8array"), { compression: "STORE" });
     for (const name of Object.keys(zipIn.files)) {
@@ -233,12 +261,6 @@ Deno.serve(async (req) => {
     const avisosGeracao = [...conf.avisos];
     let plantaBuf: Uint8Array | null = null;
     const posse = servico.tipo_imovel === "posse";
-
-    // Glebas só são lidas quando o serviço as tem. `undefined` no montador é o
-    // que preserva a planta do serviço completo exatamente como era.
-    const glebas = servico.tem_glebas
-      ? glebasParaPlanta(((await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")).data ?? []) as GlebaRow[])
-      : undefined;
 
     // A conferência circula impressa em mesa, não em prancheta: sai em A4 por
     // padrão, ou na folha que o operador escolheu na tela. Serviço completo não

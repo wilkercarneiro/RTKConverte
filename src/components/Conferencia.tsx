@@ -21,7 +21,7 @@ import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/
 import type { ResultadoParse } from "./Upload";
 import { CORES, MapaSVG } from "./MapaSVG";
 import { HistoricoDocs } from "./HistoricoDocs";
-import { Avisos, Passos, ProximaAcao, Secao, StatusSalvamento, irPara, type Acao, type Passo } from "./ui";
+import { Avisos, BotaoPerigo, Passos, ProximaAcao, Secao, StatusSalvamento, irPara, type Acao, type Passo } from "./ui";
 
 interface Gerado {
   memorial_docx: string;
@@ -360,6 +360,76 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     async () => { await salvar(); },
     { ativo: !emRotina && vertices.length > 0, atraso: 1500 },
   );
+
+  // ------- separar as glebas em serviços próprios -------
+  //
+  // Uma gleba pode ser negociada e certificada sozinha. Quando isso acontece,
+  // ela deixa de ser um desenho dentro do serviço do imóvel e vira um serviço
+  // com vida própria — com o seu memorial, a sua planilha e o seu envio ao SIGEF.
+  //
+  // Os vértices são COPIADOS com os códigos que já têm: eles são do levantamento,
+  // não do serviço, e realocar geraria dois códigos oficiais para o mesmo marco
+  // de campo. O serviço de origem fica intacto — separar não é mover.
+  async function separarGlebas() {
+    const fechadas = glebas.filter((g) => g.anel.length >= 3);
+    if (!fechadas.length) { setErro("Nenhuma gleba fechada para separar."); return; }
+    setOcupado(true);
+    setErro(null);
+    try {
+      await salvar();
+      const { id: _id, created_at: _c, ...campos } = servico as Servico & { created_at?: string };
+      const chave = (e: number, n: number) => `${e.toFixed(3)}|${n.toFixed(3)}`;
+      const porCoord = new Map(
+        vertices.filter((v) => v.e !== null && v.n !== null)
+          .map((v) => [chave(Number(v.e), Number(v.n)), v]),
+      );
+      const criados: string[] = [];
+      for (const g of fechadas) {
+        const { data: novo, error } = await supabase.from("servicos").insert({
+          ...campos,
+          tem_glebas: false,
+          status: "rascunho",
+          denominacao_parcela: g.nome,
+          // a origem continua existindo e continua com as glebas desenhadas
+        }).select().single();
+        if (error) throw error;
+        const linhas = g.anel
+          .map(([e, n], i) => {
+            const v = porCoord.get(chave(e, n));
+            return {
+              servico_id: (novo as Servico).id,
+              ordem: i,
+              num_txt: v?.num_txt ?? null,
+              rotulo_txt: v?.rotulo_txt ?? null,
+              e, n,
+              h: v?.h ?? 0,
+              sigma_pos: v?.sigma_pos ?? 0,
+              sigma_h: v?.sigma_h ?? 0,
+              tipo: v?.tipo ?? "P",
+              codigo: v?.codigo ?? null,
+              metodo: v?.metodo ?? "PG6",
+              inserido_manual: v?.inserido_manual ?? false,
+              lat_gms: v?.lat_gms ?? "",
+              lon_gms: v?.lon_gms ?? "",
+              descritivo: v?.descritivo ?? null,
+              tipo_limite: v?.tipo_limite ?? null,
+              eh_via: v?.eh_via ?? false,
+              cns: v?.cns ?? null,
+              matricula: v?.matricula ?? null,
+              apelido_txt: v?.apelido_txt ?? null,
+            };
+          });
+        const { error: eV } = await supabase.from("vertices").insert(linhas);
+        if (eV) throw eV;
+        criados.push(g.nome);
+      }
+      avisar("ok", `${criados.length} serviço(s) criado(s): ${criados.join(", ")}. Este serviço continua como está — separar não move nada.`);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOcupado(false);
+    }
+  }
 
   // ------- entradas que sobrevivem à geração -------
   //
@@ -1086,6 +1156,19 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             areaTotalHa={Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0}
             onChange={setGlebas}
           />
+          {glebas.filter((g) => g.anel.length >= 3).length > 0 && (
+            <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <BotaoPerigo
+                titulo="Separar cada gleba em um serviço próprio"
+                confirmacao={`criar ${glebas.filter((g) => g.anel.length >= 3).length} serviço(s)`}
+                onConfirmar={separarGlebas}
+              >⧉ Separar glebas em serviços</BotaoPerigo>
+              <span className="sub" style={{ flex: 1, minWidth: 260 }}>
+                Cria um serviço por gleba, com os vértices e os códigos que ela já tem.
+                Este serviço continua como está — separar não move nada.
+              </span>
+            </div>
+          )}
         </section>
       )}
 

@@ -330,7 +330,12 @@ export interface Segmento {
 
 // Segmentos consecutivos no plano re-projetado, incluindo fechamento último→primeiro.
 // `ordem` recebida já deve estar na sequência do perímetro (ring).
-export function calcularSegmentos(ring: VerticeCalc[]): Segmento[] {
+//
+// Pede só os três campos que usa, e não um VerticeCalc inteiro: o anel de uma
+// GLEBA é um subconjunto do perímetro fechado por dentro, e exigir os campos
+// geodésicos completos obrigaria a fabricar GMS falso para pontos que só têm
+// coordenada plana. Ver glebasParaPlanta.
+export function calcularSegmentos(ring: Pick<VerticeCalc, "ordem" | "eProj" | "nProj">[]): Segmento[] {
   const segs: Segmento[] = [];
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i];

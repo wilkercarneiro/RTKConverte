@@ -11,7 +11,7 @@ import proj4lib from "proj4";
 import { montarServico } from "../supabase/functions/_shared/servico.ts";
 import { geometriaDoCalculo } from "../supabase/functions/_shared/planta_dados.ts";
 import { gerarPlantaPdf } from "../supabase/functions/_shared/planta.ts";
-import { dadosPlantaDe, ehFolha, entrada, mesmoDesenho } from "./fixtures/salgada_velha.mjs";
+import { dadosPlantaDe, ehFolha, entrada, glebaDe, mesmoDesenho } from "./fixtures/salgada_velha.mjs";
 
 const proj4 = (f, t, c) => proj4lib(f, t, c);
 const geo = () => geometriaDoCalculo(montarServico(entrada(), proj4));
@@ -37,30 +37,17 @@ test("folha ausente preserva a regra histórica", async () => {
   assert.equal(await mesmoDesenho(mExpl, m), true);
 });
 
-// duas glebas internas ao perímetro da SALGADA VELHA
-const GLEBAS = [
-  {
-    nome: "GLEBA 1",
-    areaFmt: "3,1200",
-    anel: [
-      { e: 480750, n: 8732980 }, { e: 480900, n: 8732960 },
-      { e: 480900, n: 8733040 }, { e: 480750, n: 8733010 },
-    ],
-  },
-  {
-    nome: "GLEBA 2",
-    areaFmt: "3,6038",
-    anel: [
-      { e: 480900, n: 8732960 }, { e: 481040, n: 8732900 },
-      { e: 481080, n: 8733100 }, { e: 480900, n: 8733040 },
-    ],
-  },
+// duas glebas montadas de vértices do próprio levantamento, que é como a tela
+// as produz
+const glebas = (g) => [
+  glebaDe(g, [0, 1, 2, 3], "GLEBA 1"),
+  glebaDe(g, [10, 11, 12, 13, 14], "GLEBA 2"),
 ];
 
 test("glebas desenhadas mudam o PDF; sem glebas ele não muda", async () => {
   const g = geo();
   const sem = await gerarPlantaPdf(dadosPlantaDe(g));
-  const com = await gerarPlantaPdf(dadosPlantaDe(g, { glebas: GLEBAS }));
+  const com = await gerarPlantaPdf(dadosPlantaDe(g, { glebas: glebas(g) }));
   assert.equal(await mesmoDesenho(com, sem), false, "o desenho tem de mudar com gleba");
   assert.ok(com.length > 1000);
 });
@@ -69,18 +56,16 @@ test("gleba degenerada (menos de 3 pontos) é ignorada sem quebrar", async () =>
   const g = geo();
   const sem = await gerarPlantaPdf(dadosPlantaDe(g));
   // uma gleba de 2 pontos não fecha polígono: não desenha, e não derruba a planta
-  const degenerada = await gerarPlantaPdf(dadosPlantaDe(g, {
-    glebas: [{ nome: "X", areaFmt: "0,0000", anel: [{ e: 480800, n: 8732990 }, { e: 480900, n: 8733000 }] }],
-  }));
+  const degenerada = await gerarPlantaPdf(dadosPlantaDe(g, { glebas: [glebaDe(g, [0, 1], "X")] }));
   assert.ok(degenerada.length > 1000, "a planta tem de sair mesmo assim");
-  // a legenda ainda cresce (o campo veio preenchido), então o PDF difere do sem-gleba
-  assert.equal(await mesmoDesenho(degenerada, sem), false);
+  // nada foi desenhado, então o resultado é o mesmo de uma planta sem gleba
+  assert.equal(await mesmoDesenho(degenerada, sem), true);
 });
 
 test("glebas convivem com a redução de folha", async () => {
   const g = geo();
   for (const folha of ["A1", "A3", "A4"]) {
-    const pdf = await gerarPlantaPdf(dadosPlantaDe(g, { folha, glebas: GLEBAS }));
+    const pdf = await gerarPlantaPdf(dadosPlantaDe(g, { folha, glebas: glebas(g) }));
     assert.equal(await ehFolha(pdf, folha), true, `gleba em ${folha}`);
   }
 });

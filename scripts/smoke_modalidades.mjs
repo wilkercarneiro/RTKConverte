@@ -112,6 +112,37 @@ try {
   if (!vk.every((v) => v.codigo.startsWith(`${cred.prefixo_vertice}-`))) throw new Error("FALHOU: códigos não são oficiais");
   if (rc.resumo.areaHa.toFixed(4) !== rk.resumo.areaHa.toFixed(4)) throw new Error("FALHOU: a área mudou entre as modalidades");
 
+  console.log("== SERVIÇO COM GLEBA (duas poligonais, duas abas na planilha) ==");
+  try {
+    const idGl = await criarServico("completo", true);
+    // duas glebas montadas de vértices do próprio levantamento, como a tela faz
+    const { data: vgs } = await supa.from("vertices").select("ordem, e, n").eq("servico_id", idGl).order("ordem");
+    const anelDe = (idx) => idx.map((i) => [Number(vgs[i].e), Number(vgs[i].n)]);
+    const { error: eG } = await supa.from("glebas").insert([
+      { servico_id: idGl, ordem: 0, nome: "GLEBA 1", anel: anelDe([0, 1, 2, 3]) },
+      { servico_id: idGl, ordem: 1, nome: "GLEBA 2", anel: anelDe([10, 11, 12, 13, 14]) },
+    ]);
+    if (eG) throw eG;
+
+    const rg = await fn("gerar-documentos", { servico_id: idGl });
+    console.log("  folha:", rg.folha, "| área do imóvel:", rg.resumo.areaHa.toFixed(4));
+
+    // a planilha tem de sair com uma aba de perímetro por gleba
+    const JSZip = (await import("jszip")).default;
+    const ods = await (await fetch(rg.planilha_ods)).arrayBuffer();
+    const xml = await (await JSZip.loadAsync(ods)).file("content.xml").async("string");
+    const abas = [...xml.matchAll(/<table:table table:name="([^"]+)"/g)].map((m) => m[1])
+      .filter((n) => n.startsWith("perimetro"));
+    console.log("  abas de perímetro:", JSON.stringify(abas));
+    if (abas.length !== 2) throw new Error(`esperava perimetro_1 e perimetro_2, veio ${JSON.stringify(abas)}`);
+    if (!xml.includes("GLEBA 1") || !xml.includes("GLEBA 2")) throw new Error("as abas não nomeiam as glebas");
+    if (!rg.planta_pdf) throw new Error("a planta com glebas não saiu");
+    console.log("  planta com glebas gerada");
+  } catch (e) {
+    falhas++;
+    console.error("  FALHOU (gleba):", e.message.slice(0, 250));
+  }
+
   if (falhas) {
     console.error(`\n${falhas} verificação(ões) falharam.`);
     process.exitCode = 1;
