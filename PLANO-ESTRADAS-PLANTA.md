@@ -74,6 +74,24 @@ checkbox", não "o SIGEF classificou como LA3").
    correções de faixa de domínio dos commits `8794278` e `6165e29`).
 5. **[verificação]** Regerar as plantas dos serviços afetados e conferir.
 
+### Veredicto: bug do sistema, não erro do usuário
+
+Verificação feita em 2026-08-07 sobre o serviço mais recente
+(`915ee577-43ae-4d92-8d68-6b0181f0f1d9`, FAZENDA SALGADA VELHA, reimportado às
+15:14 UTC; plantas geradas 15:16 e 15:19 UTC):
+
+- **O cadastro está certo.** Os dois trechos de via estão marcados com
+  `tipo_limite = 'LA3'` — `ESTRADA VICINAL` (ordem 3) e `LINHA FERREA`
+  (ordem 14) — que é a única forma que a tela permite (com LA3 o checkbox fica
+  marcado e desabilitado). Os 4 vértices M estão bem distribuídos: cada via
+  ocupa exatamente uma aresta.
+- **A produção continua com o código antigo.** `gerar-planta` segue na v31 e
+  `gerar-documentos` na v18, ambas de 2026-08-05 18:22 UTC, com o mesmo
+  `ezbr_sha256` de antes. O deploy do passo 4 nunca aconteceu.
+- **Com o código corrigido o desenho sai certo.** `scripts/diag_estradas.mjs`
+  sobre este mesmo anel produz 2 arestas vermelhas, exatamente as marcadas:
+  `DSBN-M-4542→DSBN-M-4543` e `DSBN-P-14312→DSBN-M-4544`.
+
 ### Estado da execução
 
 | Passo | Estado |
@@ -81,11 +99,30 @@ checkbox", não "o SIGEF classificou como LA3").
 | 1. `reconciliacao.ts` com fallback LA3 | feito |
 | 2. `pecas.ts` reexportando a regra única | feito |
 | 3. `tests/salgada_velha_la3.test.mjs` | feito — 74 testes passando, `tsc -b` limpo |
-| 4. deploy | **pendente** — `bash scripts/deploy-functions.sh` (exige `npx supabase login`) |
-| 5. verificação | pendente, depende do passo 4 |
+| 4. deploy | feito em 2026-08-07 ~16:51 UTC |
+| 5. verificação | feito — bundle publicado confere |
 
-O deploy não pôde ser executado aqui: não há credencial do Supabase na máquina
-(`supabase projects list` → `Unauthorized`) e `supabase login` é interativo.
+#### Deploy
+
+| Function | Antes | Depois | `ezbr_sha256` |
+|---|---|---|---|
+| `gerar-planta` | v31 | **v32** | `dfd559…` → `14e72b…` |
+| `gerar-documentos` | v18 | **v19** | `c4c4a2…` → `294eab…` |
+| `gerar-pecas` | v11 | **v12** | `6ad9c9…` → `246c26…` |
+
+#### Verificação do bundle publicado
+
+`get_edge_function('gerar-planta')` agora contém os três pontos de decisão, que
+antes não existiam em produção:
+
+```
+ehVia: (v.conf.ehVia ?? false) || ehViaPorLimite(v.conf.tipoLimite)   // fluxo 'geo'
+ehVia: !!t.eh_via || ehViaPorLimite(t.tipo_limite)                    // SIGEF, item 1
+ehVia: !!v.eh_via || ehViaPorLimite(v.tipo_limite)                    // SIGEF, item 2
+/^LA3\b/
+```
+
+Falta apenas **regerar as plantas** dos serviços afetados pela tela.
 
 ## Achados adicionais (fora do escopo do sintoma, não alterados)
 
