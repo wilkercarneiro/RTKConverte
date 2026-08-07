@@ -235,15 +235,51 @@ COMPLETO       folha A1 · oficial    · DSBN-P-14416 · contadores 4554/14416/9
 A conferência não encostou na numeração; o completo consumiu exatamente 4 M e
 28 P, como antes da reestruturação.
 
+### Rodada 2 — editor visual e defeitos da primeira planta com glebas
+
+**Editor visual** (`MapaGlebas.tsx` + `lib/glebas.ts`). Montar uma gleba que
+acompanha 12 vértices custava 12 cliques numa fileira de chips que não dizia
+onde cada vértice ficava. Agora o contorno é montado sobre a própria figura:
+
+| gesto | efeito |
+|---|---|
+| clique num vértice | acrescenta aquele vértice |
+| **shift + clique** | acrescenta o TRECHO INTEIRO até ele, pelo caminho mais curto do perímetro |
+| **arrastar no vazio** | retângulo de seleção — entram todos os vértices dentro |
+| clique no vazio | ponto livre naquela coordenada |
+| arrastar uma alça | move o ponto, grudando no vértice do perímetro a menos de 12 px |
+| duplo clique numa alça | remove o ponto |
+
+O mapa desenha as faixas de domínio em vermelho como saem na planta — sem isso
+não é reconhecível como a planta e não há razão para confiar nele.
+
+**Divisas sobrepostas.** Desenhar gleba por gleba fazia a divisa entre duas
+vizinhas sair duas vezes (o tracejado de uma caindo no vão da outra, parecendo
+linha cheia mal impressa) e, sobre a linha dupla vermelha da estrada, três. Agora
+cada traço tem uma chave — o par de extremos, sem ordem — e só é desenhado uma
+vez. As arestas da poligonal entram já marcadas como usadas: onde a gleba encosta
+no perímetro, quem manda é o traço do perímetro.
+
+**Nomes empilhados.** O rótulo ia no centroide, sem olhar o vizinho. Agora
+procura lugar entre 25 candidatos em volta do centroide, exige estar DENTRO da
+própria gleba (senão o nome de uma acaba dentro da outra, nomeando a errada) e
+cede no tamanho — 11 → 9,5 → 8 → 7 pt — antes de ceder na posição.
+
+**Estado preservado entre gerações.** A imagem de satélite e o PDF do SIGEF viviam
+só no estado do React: fechar a aba obrigava a reenviar os dois para regerar
+qualquer coisa. Passam a morar em `gerados/{servico_id}/entrada/`. A leitura é
+preguiçosa — ao abrir a tela só se lista a pasta; o arquivo desce quando for de
+fato gerar.
+
 ### Pendências
 
-1. **`gerar-pecas` precisa de um redeploy.** O smoke pegou um bug de runtime: o
-   filtro `apenas` recortava também o conjunto de TEMPLATES, e `gerarPecasXml` lê
-   `tpl["1"]`, `tpl["2"]`… sem guarda — a peça que sobrava quebrava por causa das
-   que não foram baixadas. Corrigido no fonte (baixa todas, filtra na emissão),
-   mas o token do Supabase CLI expirou no meio. Falta:
-   `npx supabase login && npx supabase functions deploy gerar-pecas --project-ref utxqkbgfgpbczqjtieyu`
-2. **O smoke queimou numeração real.** O teste do serviço completo passa pela RPC
+1. ~~`gerar-pecas` precisa de um redeploy.~~ **Resolvido.** O smoke tinha pegado um
+   bug de runtime: o filtro `apenas` recortava também o conjunto de TEMPLATES, e
+   `gerarPecasXml` lê `tpl["1"]`, `tpl["2"]`… sem guarda — a peça que sobrava
+   quebrava por causa das que não foram baixadas. Corrigido (baixa todas, filtra
+   na emissão) e publicado; o smoke agora sai com
+   `peças: 2 - Memorial Tabular | vértices: 32`.
+2. **O smoke queimou numeração real, uma vez.** O teste do serviço completo passa pela RPC
    `alocar_contadores` de verdade — é o que se está provando — e consumiu
    M 4555-4558 e P 14417-14444, que nenhum imóvel usará. Nenhum vértice real está
    nessa faixa (conferido). Para devolver:
@@ -251,7 +287,10 @@ A conferência não encostou na numeração; o completo consumiu exatamente 4 M 
    update credenciados set contador_m = 4554, contador_p = 14416, contador_v = 900
    where prefixo_vertice = 'DSBN' and contador_m = 4558 and contador_p = 14444;
    ```
-   O script já devolve sozinho a partir de agora; esta corrida foi antes disso.
+   O script passou a devolver sozinho e já o faz nas corridas seguintes
+   (`numeração devolvida: 4575/14601 → 4571/14573`); só a primeira corrida ficou
+   sem devolução, e desde então serviços reais avançaram os contadores, então
+   aquela faixa não é mais recuperável sem risco. São 4 M e 28 P perdidos.
 3. **Front-end não publicado.** `npm run build` passa; o deploy na Vercel continua
    fora deste trabalho.
 

@@ -1,0 +1,83 @@
+// Seleção de pontos do contorno da gleba.
+//
+// É a parte que erra calado: um trecho que anda para o lado errado do perímetro
+// produz uma gleba com a forma de tudo menos o que se queria, e isso só apareceria
+// na planta impressa. Por isso a decisão de QUAIS pontos entram mora em
+// src/lib/glebas.ts, fora do componente, e é provada aqui.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  acrescentarSemRepetir, areaHaDoAnel, grudarNoPerimetro, indiceNoPerimetro,
+  mesmoPonto, trechoDoPerimetro,
+} from "../src/lib/glebas.ts";
+
+test("trecho anda para frente quando esse é o caminho curto", () => {
+  // perímetro de 10 vértices: de 2 até 5 são 3 passos para frente, 7 para trás
+  assert.deepEqual(trechoDoPerimetro(10, 2, 5), [3, 4, 5]);
+});
+
+test("trecho anda para trás quando esse é o caminho curto", () => {
+  // de 8 até 6 são 2 passos para trás e 8 para frente
+  assert.deepEqual(trechoDoPerimetro(10, 8, 6), [7, 6]);
+});
+
+test("trecho dá a volta no anel quando é mais curto por ali", () => {
+  // de 1 até 9: para trás são 2 passos (0, 9); para frente seriam 8
+  assert.deepEqual(trechoDoPerimetro(10, 1, 9), [0, 9]);
+});
+
+test("empate exato resolve para a frente, a ordem em que o anel é publicado", () => {
+  assert.deepEqual(trechoDoPerimetro(8, 0, 4), [1, 2, 3, 4]);
+});
+
+test("trecho de um vértice para ele mesmo não acrescenta nada", () => {
+  assert.deepEqual(trechoDoPerimetro(10, 3, 3), []);
+});
+
+test("perímetro vazio ou índice inválido não quebra", () => {
+  assert.deepEqual(trechoDoPerimetro(0, 0, 0), []);
+  assert.deepEqual(trechoDoPerimetro(10, -1, 5), []);
+});
+
+test("selecionar a mesma área duas vezes não duplica o contorno", () => {
+  // sem isso a shoelace devolveria área errada com o anel repetido
+  const anel = [[10, 10], [20, 10]];
+  const novos = [[20, 10], [20, 20]];
+  assert.deepEqual(acrescentarSemRepetir(anel, novos), [[10, 10], [20, 10], [20, 20]]);
+});
+
+test("pontos a menos de 1 mm são o mesmo ponto", () => {
+  assert.equal(mesmoPonto([480000.0001, 8730000], [480000, 8730000]), true);
+  assert.equal(mesmoPonto([480000.01, 8730000], [480000, 8730000]), false);
+});
+
+test("indiceNoPerimetro acha o vértice e devolve -1 para ponto livre", () => {
+  const per = [[10, 10], [20, 10], [20, 20]];
+  assert.equal(indiceNoPerimetro(per, [20, 10]), 1);
+  assert.equal(indiceNoPerimetro(per, [15, 15]), -1);
+});
+
+test("o ímã gruda no vértice mais próximo, e só dentro do raio", () => {
+  const per = [{ x: 100, y: 100 }, { x: 200, y: 100 }];
+  assert.deepEqual(grudarNoPerimetro(per, { x: 105, y: 103 }, 12), { x: 100, y: 100 });
+  // 30 px de distância com raio 12: não gruda, o ponto fica onde foi solto
+  assert.equal(grudarNoPerimetro(per, { x: 130, y: 100 }, 12), null);
+});
+
+test("área do contorno bate com a shoelace, em hectares", () => {
+  // quadrado de 100 m de lado = 10.000 m² = 1 ha
+  const quadrado = [[0, 0], [100, 0], [100, 100], [0, 100]];
+  assert.equal(areaHaDoAnel(quadrado).toFixed(4), "1.0000");
+  // sentido invertido dá a MESMA área: o operador pode desenhar em qualquer sentido
+  assert.equal(areaHaDoAnel([...quadrado].reverse()).toFixed(4), "1.0000");
+  // contorno que não fecha polígono não tem área
+  assert.equal(areaHaDoAnel([[0, 0], [100, 0]]), 0);
+});
+
+test("trecho longo de perímetro entra de uma vez só", () => {
+  // o caso que motivou o editor visual: uma gleba que acompanha 12 vértices
+  // saía a 12 cliques; com shift+clique é um só.
+  const idx = trechoDoPerimetro(40, 5, 17);
+  assert.equal(idx.length, 12);
+  assert.deepEqual(idx, [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+});

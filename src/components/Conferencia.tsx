@@ -100,6 +100,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [clientes, setClientes] = useState<Cliente[]>([]);
   // glebas do serviço (só carregadas e salvas quando o serviço as tem)
   const [glebas, setGlebas] = useState<Gleba[]>([]);
+  // o que ficou guardado no Storage de gerações anteriores (só os nomes)
+  const [salvo, setSalvo] = useState<{ satelite?: { nome: string; tipo: "png" | "jpg" }; sigef?: string }>({});
   const [tabular, setTabular] = useState<{ titulo: string; url: string }[] | null>(null);
   const [gerandoTabular, setGerandoTabular] = useState(false);
 
@@ -124,6 +126,20 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       });
   }, [inicial.servico.id]);
 
+  // O que sobrou da última geração. Só a LISTA, não os arquivos: saber que a
+  // imagem existe já permite gerar de novo sem pedir nada ao operador.
+  useEffect(() => {
+    supabase.storage.from("gerados").list(`${inicial.servico.id}/entrada`).then(({ data }) => {
+      const achados: { satelite?: { nome: string; tipo: "png" | "jpg" }; sigef?: string } = {};
+      for (const f of data ?? []) {
+        if (f.name === "satelite.png") achados.satelite = { nome: f.name, tipo: "png" };
+        else if (f.name === "satelite.jpg") achados.satelite = { nome: f.name, tipo: "jpg" };
+        else if (f.name === "sigef.pdf") achados.sigef = f.name;
+      }
+      setSalvo(achados);
+    });
+  }, [inicial.servico.id]);
+
   // Glebas só são consultadas quando o serviço as tem: um serviço completo
   // comum não faz esta ida ao banco nem carrega estado que não vai usar.
   useEffect(() => {
@@ -141,6 +157,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // calcular o progresso, para que as duas telas nunca discordem.
   const ehConferencia = !vaiAoSigef(servico);
   const temGlebas = !!servico.tem_glebas;
+  // "temos o PDF" inclui o que ficou guardado: reabrir o serviço não pode
+  // esconder a planta e as peças só porque o arquivo não está na memória
+  const temSigef = !!sigefB64 || !!salvo.sigef;
+  const temSatelite = !!satelite || !!salvo.satelite;
 
   const credenciado = credenciados.find((c) => c.id === servico.credenciado_id) ?? null;
   const rtSel = rts.find((r) => r.id === servico.rt_id) ?? null;
@@ -341,11 +361,58 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     { ativo: !emRotina && vertices.length > 0, atraso: 1500 },
   );
 
+  // ------- entradas que sobrevivem à geração -------
+  //
+  // A imagem de satélite e o PDF do SIGEF viviam SÓ no estado do React: fechar a
+  // aba obrigava a reenviar os dois para regerar qualquer coisa. Como refazer um
+  // projeto é rotina — corrigiu um confrontante, gera de novo — os dois passam a
+  // morar no Storage, ao lado dos documentos do serviço.
+  //
+  // A leitura é preguiçosa de propósito: ao abrir a tela só se LISTA a pasta
+  // (barato), e o arquivo em si só desce quando for de fato gerar. Baixar uma
+  // imagem de satélite de vários MB toda vez que a tela abre pagaria caro por
+  // algo que nem sempre é usado.
+  const PASTA_ENTRADA = `${servico.id}/entrada`;
+
+  async function guardarEntrada(nome: string, bytes: Blob | File, tipo: string) {
+    const up = await supabase.storage.from("gerados")
+      .upload(`${PASTA_ENTRADA}/${nome}`, bytes, { upsert: true, contentType: tipo });
+    if (up.error) avisar("alerta", `O arquivo foi aceito, mas não ficou guardado para a próxima geração: ${up.error.message}`);
+  }
+
+  async function baixarEntrada(nome: string): Promise<string | null> {
+    const dl = await supabase.storage.from("gerados").download(`${PASTA_ENTRADA}/${nome}`);
+    if (dl.error || !dl.data) return null;
+    return bufParaBase64(await dl.data.arrayBuffer());
+  }
+
+  /** Base64 da imagem de satélite: a da sessão, ou a guardada na geração anterior. */
+  async function garantirSatelite(): Promise<{ b64: string; tipo: "png" | "jpg" } | null> {
+    if (satelite) return satelite;
+    if (!salvo.satelite) return null;
+    const b64 = await baixarEntrada(salvo.satelite.nome);
+    if (!b64) return null;
+    const s = { b64, tipo: salvo.satelite.tipo, nome: salvo.satelite.nome };
+    setSatelite(s);
+    return s;
+  }
+
+  /** Base64 do PDF do SIGEF, com a mesma regra. */
+  async function garantirSigef(): Promise<string | null> {
+    if (sigefB64) return sigefB64;
+    if (!salvo.sigef) return null;
+    const b64 = await baixarEntrada("sigef.pdf");
+    if (b64) { setSigefB64(b64); setSigefNome(salvo.sigef); }
+    return b64;
+  }
+
   // ------- etapa 2: documento do SIGEF -------
   async function carregarSigef(file: File) {
     setSigefB64(bufParaBase64(await file.arrayBuffer()));
     setSigefNome(file.name);
     setErroPecas(null);
+    await guardarEntrada("sigef.pdf", file, "application/pdf");
+    setSalvo((s) => ({ ...s, sigef: file.name }));
     avisar("ok", "PDF do SIGEF carregado — agora gere a Planta e as peças técnicas.");
   }
 
@@ -406,20 +473,27 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       return;
     }
     setErro(null);
-    setSatelite({ b64: bufParaBase64(await file.arrayBuffer()), tipo: ehPng ? "png" : "jpg", nome: file.name });
+    const tipo = ehPng ? "png" : "jpg";
+    setSatelite({ b64: bufParaBase64(await file.arrayBuffer()), tipo, nome: file.name });
+    // guardada com nome fixo: trocar a imagem substitui a anterior em vez de
+    // deixar duas na pasta sem dizer qual vale
+    await guardarEntrada(`satelite.${tipo}`, file, ehPng ? "image/png" : "image/jpeg");
+    setSalvo((s) => ({ ...s, satelite: { nome: `satelite.${tipo}`, tipo } }));
   }
 
   // ------- etapa 3A: planta (A1 matrícula / A3 posse) -------
   async function gerarPlanta() {
-    if (!sigefB64) { setErro("Envie o PDF do SIGEF na etapa anterior"); return; }
-    if (!satelite) { setErro("Envie a imagem de satélite para gerar a planta"); return; }
     setGerandoPlanta(true);
     setErro(null);
     try {
+      const pdf = await garantirSigef();
+      if (!pdf) { setGerandoPlanta(false); setErro("Envie o PDF do SIGEF na etapa anterior"); return; }
+      const sat = await garantirSatelite();
+      if (!sat) { setGerandoPlanta(false); setErro("Envie a imagem de satélite para gerar a planta"); return; }
       await salvar();
       const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", {
-        servico_id: servico.id, pdf_base64: sigefB64,
-        satelite_base64: satelite.b64, satelite_tipo: satelite.tipo,
+        servico_id: servico.id, pdf_base64: pdf,
+        satelite_base64: sat.b64, satelite_tipo: sat.tipo,
       });
       setPlantaUrl(r.planta_pdf);
       avisar("ok", `Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} gerada.`);
@@ -432,12 +506,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
 
   // ------- etapa 3B: peças técnicas -------
   async function gerarPecas() {
-    if (!sigefB64) { setErroPecas("Envie o PDF do SIGEF na etapa anterior"); return; }
     setGerandoPecas(true);
     setErroPecas(null);
     try {
+      const pdf = await garantirSigef();
+      if (!pdf) { setGerandoPecas(false); setErroPecas("Envie o PDF do SIGEF na etapa anterior"); return; }
       await salvar();
-      const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64: sigefB64 });
+      const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64: pdf });
       setPecas(r);
       avisar("ok", "7 peças técnicas geradas.");
     } catch (e) {
@@ -474,20 +549,22 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       irPara(pendencias[0].alvo, true);
       return;
     }
-    // a planta sai junto do memorial e da planilha, e o quadro PLANTA DE SITUAÇÃO
-    // é da imagem de satélite — sem ela a planta nasceria incompleta
-    if (!satelite) {
-      setErro("Envie a imagem de satélite: ela entra no quadro PLANTA DE SITUAÇÃO da planta.");
-      irPara("bloco-satelite", true);
-      return;
-    }
     setOcupado(true);
     setErro(null);
     try {
+      // a planta sai junto do memorial e da planilha, e o quadro PLANTA DE
+      // SITUAÇÃO é da imagem de satélite — a da sessão ou a guardada antes
+      const sat = await garantirSatelite();
+      if (!sat) {
+        setOcupado(false);
+        setErro("Envie a imagem de satélite: ela entra no quadro PLANTA DE SITUAÇÃO da planta.");
+        irPara("bloco-satelite", true);
+        return;
+      }
       await salvar();
       const r = await chamarFuncao<Gerado>("gerar-documentos", {
         servico_id: servico.id,
-        satelite_base64: satelite.b64, satelite_tipo: satelite.tipo,
+        satelite_base64: sat.b64, satelite_tipo: sat.tipo,
       });
       setGerado(r);
       for (const a of r.avisos ?? []) avisar("alerta", a);
@@ -548,10 +625,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       alvo: docsProntos ? "bloco-gerados" : undefined,
     },
     ...(ehConferencia ? [] : [
-      { rotulo: "PDF do SIGEF", estado: (sigefB64 ? "feita" : docsProntos ? "ativa" : "futura") as Passo["estado"], alvo: docsProntos ? "bloco-sigef" : undefined },
+      { rotulo: "PDF do SIGEF", estado: (temSigef ? "feita" : docsProntos ? "ativa" : "futura") as Passo["estado"], alvo: docsProntos ? "bloco-sigef" : undefined },
       {
         rotulo: "Planta do SIGEF & Peças",
-        estado: (plantaUrl && pecasProntas ? "feita" : sigefB64 ? "ativa" : "futura") as Passo["estado"],
+        estado: (plantaUrl && pecasProntas ? "feita" : temSigef ? "ativa" : "futura") as Passo["estado"],
         alvo: sigefB64 ? "bloco-planta" : undefined,
       },
     ]),
@@ -571,7 +648,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     }
     // a imagem de satélite agora é pedida ANTES da geração: a planta sai junto
     // do memorial e da planilha, e o quadro PLANTA DE SITUAÇÃO vem dela
-    if (!satelite && !docsProntos) {
+    if (!temSatelite && !docsProntos) {
       return {
         tom: "neutro",
         titulo: "Envie a imagem de satélite da área",
@@ -597,7 +674,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         detalhe: "memorial e planta de prévia gerados — os códigos são provisórios e a numeração oficial não foi consumida",
       };
     }
-    if (!sigefB64) {
+    if (!temSigef) {
       return {
         tom: "neutro",
         titulo: "Certifique a planilha no SIGEF e envie o PDF de volta",
@@ -606,7 +683,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         onClick: () => irPara("bloco-sigef"),
       };
     }
-    if (!satelite) {
+    if (!temSatelite) {
       return {
         tom: "neutro",
         titulo: "Envie a imagem de satélite da área",
@@ -632,7 +709,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       };
     }
     return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, as duas plantas e as peças gerados — tudo disponível no histórico abaixo" };
-  }, [pendencias, docsProntos, sigefB64, satelite, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia]);
+  }, [pendencias, docsProntos, temSigef, temSatelite, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia]);
 
   // selos das seções recolhidas: dizem o que há dentro sem precisar abrir
   const seloRegistro = contarPreenchidos([
@@ -1004,6 +1081,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <GlebasEditor
             glebas={glebas}
             vertices={vertices}
+            trechos={trechosOrdenados}
+            servicoId={servico.id}
             areaTotalHa={Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0}
             onChange={setGlebas}
           />
@@ -1022,7 +1101,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
           {satelite
             ? <><b>🛰 {satelite.nome}</b><span>clique para trocar a imagem</span></>
-            : <><b>🛰 Enviar imagem de satélite (PNG/JPG)</b><span>necessária para gerar a planta junto do memorial e da planilha</span></>}
+            : salvo.satelite
+              ? <><b>🛰 imagem guardada da geração anterior</b><span>não precisa reenviar — clique só se quiser trocar</span></>
+              : <><b>🛰 Enviar imagem de satélite (PNG/JPG)</b><span>necessária para gerar a planta junto do memorial e da planilha</span></>}
           <input type="file" accept="image/png,image/jpeg" hidden
             onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
         </label>
@@ -1121,9 +1202,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <h3>Documento do SIGEF</h3>
             <span className="desc">após certificar a planilha, envie o PDF de prévia/certificação — ele libera a planta e as peças</span>
           </header>
-          {sigefB64 ? (
+          {sigefB64 || salvo.sigef ? (
             <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-              <span className="ok" style={{ margin: 0 }}>📄 {sigefNome} carregado</span>
+              <span className="ok" style={{ margin: 0 }}>
+                📄 {sigefB64 ? `${sigefNome} carregado` : "PDF guardado da geração anterior"}
+              </span>
               <label style={{ cursor: "pointer", color: "var(--primaria)" }}>
                 trocar PDF
                 <input type="file" accept=".pdf" hidden
@@ -1216,7 +1299,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           `!ehConferencia` é redundante com `sigefB64` (a conferência não tem
           onde carregar o PDF), mas explícito: a condição de existir é a
           modalidade, não o efeito colateral de um estado vazio. */}
-      {!ehConferencia && docsProntos && sigefB64 && (
+      {!ehConferencia && docsProntos && temSigef && (
         <section className="bloco" id="bloco-planta">
           <header>
             <span className="num-bloco">5</span>
@@ -1247,7 +1330,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       )}
 
       {/* ---------------- Etapa 5B: peças técnicas ---------------- */}
-      {!ehConferencia && docsProntos && sigefB64 && (
+      {!ehConferencia && docsProntos && temSigef && (
       <section className="bloco" id="bloco-pecas">
         <header>
           <span className="num-bloco">6</span>

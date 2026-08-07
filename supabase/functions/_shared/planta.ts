@@ -265,6 +265,10 @@ export interface DiagPlanta {
   folga?: number;
   /** o anel como foi desenhado, em pontos da folha */
   poligono?: Pt[];
+  /** divisas de gleba EFETIVAMENTE traçadas — as repetidas não entram aqui */
+  divisasGleba?: Seg[];
+  /** caixas dos nomes de gleba, para conferir que não se sobrepõem */
+  rotulosGleba?: Ret[];
 }
 
 function retCruzaRet(a: Ret, b: Ret): boolean {
@@ -280,6 +284,24 @@ function segCruzaSeg(
   const d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
   const d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
   return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/**
+ * Ponto dentro do polígono (ray casting).
+ *
+ * O rótulo de uma gleba precisa cair DENTRO dela: em glebas vizinhas, um nome
+ * empurrado para escapar do vizinho acabava dentro da gleba ao lado, nomeando a
+ * errada — o que é pior que dois nomes juntos, porque parece certo.
+ */
+function pontoEmPoligono(p: Pt, anel: Pt[]): boolean {
+  let dentro = false;
+  for (let i = 0, j = anel.length - 1; i < anel.length; j = i++) {
+    const a = anel[i], b = anel[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y || 1e-9) + a.x) {
+      dentro = !dentro;
+    }
+  }
+  return dentro;
 }
 
 function segCruzaRet(s: Seg, r: Ret): boolean {
@@ -579,32 +601,105 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // Desenhado DEPOIS do polígono de propósito: as divisas internas entram em
   // `obstaculos` para que nenhum rótulo de confrontante caia por cima delas, e a
   // poligonal azul continua sendo o traço mais forte da folha.
-  for (const gl of d.glebas ?? []) {
-    const pts = gl.anel;
-    if (pts.length < 3) continue;
-    for (let i = 0; i < pts.length; i++) {
-      const a = pts[i], b = pts[(i + 1) % pts.length];
-      const seg = { x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) };
-      linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 1.8, MAGENTA, [7, 4]);
-      obstaculos.push(seg);
+  const rotulosGleba: Ret[] = [];
+  const divisasGleba: Seg[] = [];
+  if (d.glebas?.length) {
+    // ------- 1. divisas: cada traço UMA vez -------
+    //
+    // Duas glebas vizinhas compartilham a divisa entre elas, e uma gleba que
+    // acompanha o contorno compartilha aresta com a poligonal. Desenhando gleba
+    // por gleba, esses traços saíam DUAS e TRÊS vezes sobrepostos: o tracejado
+    // de uma caía no vão do da outra e o resultado parecia linha cheia mal
+    // impressa — e, em cima da linha dupla vermelha da estrada, virava borrão.
+    //
+    // A chave é o par de extremos arredondado ao milímetro, sem ordem: a mesma
+    // divisa vista das duas glebas dá a mesma chave e só o primeiro desenha.
+    const chaveSeg = (a: Pt, b: Pt) => {
+      const k = (p: Pt) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
+      const [u, v] = [k(a), k(b)].sort();
+      return `${u}|${v}`;
+    };
+    // As arestas da poligonal entram JÁ USADAS: onde a gleba encosta no
+    // perímetro, quem manda é o traço do perímetro (azul, ou a dupla vermelha da
+    // faixa de domínio). Sobrepor magenta ali só suja.
+    const desenhados = new Set<string>();
+    for (let i = 0; i < nv; i++) {
+      const a = vs[i], b = vs[(i + 1) % nv];
+      desenhados.add(chaveSeg({ x: X(a.e), y: Y(a.n) }, { x: X(b.e), y: Y(b.n) }));
     }
-    // Rótulo no centroide da ÁREA (fórmula do polígono), não na média dos
-    // vértices: em gleba com um lado muito subdividido a média puxa o nome para
-    // aquele lado e ele sai fora da figura.
-    let a2 = 0, cx = 0, cy = 0;
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i], q = pts[(i + 1) % pts.length];
-      const px = X(p.e), py = Y(p.n), qx = X(q.e), qy = Y(q.n);
-      const cross = px * qy - qx * py;
-      a2 += cross;
-      cx += (px + qx) * cross;
-      cy += (py + qy) * cross;
+
+    for (const gl of d.glebas) {
+      const pts = gl.anel;
+      if (pts.length < 3) continue;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        const p = { x: X(a.e), y: Y(a.n) }, q = { x: X(b.e), y: Y(b.n) };
+        const chave = chaveSeg(p, q);
+        if (desenhados.has(chave)) continue;
+        desenhados.add(chave);
+        const seg = { x1: p.x, y1: p.y, x2: q.x, y2: q.y };
+        linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 1.8, MAGENTA, [7, 4]);
+        obstaculos.push(seg);
+        divisasGleba.push(seg);
+      }
     }
-    const [gx, gy] = Math.abs(a2) < 1e-9
-      ? [pts.reduce((s, p) => s + X(p.e), 0) / pts.length, pts.reduce((s, p) => s + Y(p.n), 0) / pts.length]
-      : [cx / (3 * a2), cy / (3 * a2)];
-    texto(c, gl.nome, gx, gy + 3, 11, { bold: true, cor: MAGENTA, center: true });
-    texto(c, `${gl.areaFmt} ha`, gx, gy - 10, 9.5, { cor: MAGENTA, center: true });
+
+    // ------- 2. rótulos: um lugar por gleba, sem pisar em ninguém -------
+    for (const gl of d.glebas) {
+      const pts = gl.anel;
+      if (pts.length < 3) continue;
+      const anel: Pt[] = pts.map((p) => ({ x: X(p.e), y: Y(p.n) }));
+
+      // Centroide da ÁREA (fórmula do polígono), não a média dos vértices: em
+      // gleba com um lado muito subdividido a média puxa o nome para aquele lado.
+      let a2 = 0, sx = 0, sy = 0;
+      for (let i = 0; i < anel.length; i++) {
+        const p = anel[i], q = anel[(i + 1) % anel.length];
+        const cross = p.x * q.y - q.x * p.y;
+        a2 += cross; sx += (p.x + q.x) * cross; sy += (p.y + q.y) * cross;
+      }
+      const centro: Pt = Math.abs(a2) < 1e-9
+        ? { x: anel.reduce((s, p) => s + p.x, 0) / anel.length, y: anel.reduce((s, p) => s + p.y, 0) / anel.length }
+        : { x: sx / (3 * a2), y: sy / (3 * a2) };
+
+      const area = `${gl.areaFmt} ha`;
+      // O tamanho cede antes da posição: um nome menor no lugar certo é melhor
+      // que um nome grande empurrado para fora da gleba que ele nomeia.
+      let posto = false;
+      for (const tam of [11, 9.5, 8, 7]) {
+        const tamA = tam * 0.86;
+        const w = Math.max(c.fb.widthOfTextAtSize(gl.nome, tam), c.f.widthOfTextAtSize(area, tamA));
+        const h = tam + tamA + 4;
+        // candidatos: o centroide e, em volta dele, deslocamentos crescentes
+        const passo = Math.max(14, h);
+        const cands: Pt[] = [centro];
+        for (let anel2 = 1; anel2 <= 3; anel2++) {
+          for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+            cands.push({ x: centro.x + dx * passo * anel2, y: centro.y + dy * passo * anel2 });
+          }
+        }
+        for (const p of cands) {
+          const r: Ret = { x1: p.x - w / 2 - 2, y1: p.y - h / 2 - 2, x2: p.x + w / 2 + 2, y2: p.y + h / 2 + 2 };
+          // dentro da PRÓPRIA gleba: senão o nome de uma acaba dentro da vizinha
+          if (!pontoEmPoligono(p, anel)) continue;
+          if (rotulosGleba.some((o) => retCruzaRet(o, r))) continue;
+          texto(c, gl.nome, p.x, p.y + 2, tam, { bold: true, cor: MAGENTA, center: true });
+          texto(c, area, p.x, p.y + 2 - tamA - 2, tamA, { cor: MAGENTA, center: true });
+          rotulosGleba.push(r);
+          posto = true;
+          break;
+        }
+        if (posto) break;
+      }
+      // Último recurso: gleba estreita demais para caber o nome dentro dela.
+      // Sai no centroide em corpo mínimo — melhor uma gleba com o nome apertado
+      // do que uma gleba anônima na planta.
+      if (!posto) {
+        texto(c, gl.nome, centro.x, centro.y + 2, 7, { bold: true, cor: MAGENTA, center: true });
+        const w = c.fb.widthOfTextAtSize(gl.nome, 7);
+        rotulosGleba.push({ x1: centro.x - w / 2, y1: centro.y - 4, x2: centro.x + w / 2, y2: centro.y + 10 });
+      }
+    }
   }
 
   // vértices + códigos. Em divisas com muitos pontos quase alinhados (a face
@@ -629,6 +724,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124 + (temGlebas ? 20 : 0),
   };
   ocupado.push(legendaRet);
+  // Os nomes das glebas já estão na folha: reservá-los agora impede que um
+  // código de vértice caia por cima — o código cede, como cede para a legenda.
+  ocupado.push(...rotulosGleba);
   // Só o bolinha e o tique saem agora. O CÓDIGO fica reservado e é desenhado
   // depois dos nomes dos vizinhos: quem cede lugar é ele, não o confrontante.
   // Antes era ao contrário — os códigos entravam em `ocupado` primeiro e o bloco
@@ -1209,6 +1307,8 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     diag.corpos = corposTrecho;
     diag.folga = FOLGA;
     diag.poligono = vs.map((v) => ({ x: X(v.e), y: Y(v.n) }));
+    diag.divisasGleba = divisasGleba;
+    diag.rotulosGleba = rotulosGleba;
   }
 
   // A MESMA folha, entregue na medida pedida. O desenho inteiro é sempre feito
