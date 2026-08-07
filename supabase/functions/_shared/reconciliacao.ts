@@ -6,6 +6,10 @@
 import type { LinhaSigef } from "./sigef_pdf.ts";
 import { GEO_DEF, utmDef } from "./geo.ts";
 import type { Proj4 } from "./geo.ts";
+// Mesma regra de faixa de domínio do fluxo 'geo' (montarServico): LA3 é via
+// sozinho. Importada, não copiada — foi justamente uma cópia a menos aqui que
+// deixava a planta do SIGEF sem a linha vermelha que a do sistema desenhava.
+import { ehViaPorLimite } from "./servico.ts";
 
 export interface VerticeBanco {
   id?: string;
@@ -71,6 +75,7 @@ export interface TrechoBanco {
   descritivo?: string | null;
   apelido_txt?: string | null;
   eh_via?: boolean | null;
+  tipo_limite?: string | null;
 }
 
 /**
@@ -101,7 +106,11 @@ export function montarTrechosDoSigef(
     .map((t) => {
       const cod = t.codigo_inicio ?? codPorOrdem.get(t.vertice_inicio_ordem) ?? null;
       return cod && idxDe.has(cod)
-        ? { idx: idxDe.get(cod)!, descritivo: t.descritivo || t.apelido_txt || "", ehVia: !!t.eh_via }
+        ? {
+          idx: idxDe.get(cod)!,
+          descritivo: t.descritivo || t.apelido_txt || "",
+          ehVia: !!t.eh_via || ehViaPorLimite(t.tipo_limite),
+        }
         : null;
     })
     .filter((s): s is TrechoSigef => s !== null);
@@ -112,7 +121,7 @@ export function montarTrechosDoSigef(
       .map((v) => ({
         idx: idxDe.get(v.codigo)!,
         descritivo: v.descritivo || v.apelido_txt || "",
-        ehVia: !!v.eh_via,
+        ehVia: !!v.eh_via || ehViaPorLimite(v.tipo_limite),
       }));
   }
 

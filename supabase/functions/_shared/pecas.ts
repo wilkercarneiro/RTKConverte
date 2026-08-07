@@ -200,9 +200,12 @@ export const RE_VIA =
 // LA3 é limite artificial de faixa de domínio no domínio do SIGEF: todo trecho
 // LA3 é faixa de domínio, tenha o rótulo que tiver ("BA 408", "LINHA FÉRREA",
 // o nome da concessionária ou nada disso). Vale sozinho, sem depender do texto.
-export function ehViaPorLimite(tipoLimite: string | null | undefined): boolean {
-  return /^LA3\b/i.test((tipoLimite ?? "").trim());
-}
+//
+// A regra mora em servico.ts e é só reexportada aqui: enquanto havia uma cópia
+// por módulo, bastava uma delas ficar para trás para a planta e as peças
+// discordarem sobre o que é estrada.
+import { ehViaPorLimite } from "./servico.ts";
+export { ehViaPorLimite };
 
 // "do BA 408" / "da ESTRADA VICINAL" / "da LINHA FÉRREA" — artigo usado em
 // "faixa de domínio ..."
