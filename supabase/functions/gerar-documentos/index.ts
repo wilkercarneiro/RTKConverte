@@ -109,8 +109,16 @@ Deno.serve(async (req) => {
     // chega aqui com todos os vértices já codificados, mas com códigos que nunca
     // foram alocados. Sem zerá-los, `precisaAlocar` daria falso e o memorial
     // oficial sairia com uma numeração que o credenciado não reservou.
-    if (!conferencia) {
-      for (const v of vertRows) if (ehCodigoProvisorio(v)) v.codigo = null;
+    //
+    // A conferência faz a sua própria limpeza: uma prévia gerada antes desta
+    // mudança carrega códigos "PROV-…", e como regerar reaproveita o que já tem
+    // código, o prefixo legado ficaria preso ao serviço para sempre. Zerar aqui
+    // faz a próxima geração renumerar com o prefixo do credenciado.
+    for (const v of vertRows) {
+      if (v.inserido_manual) continue;   // código digitado pelo operador, não alocado
+      if (!conferencia ? ehCodigoProvisorio(v) : v.codigo?.startsWith(`${PREFIXO_PROVISORIO}-`)) {
+        v.codigo = null;
+      }
     }
 
     // alocação de códigos: incrementa contadores apenas quando há vértice sem código
