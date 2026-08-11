@@ -1060,13 +1060,19 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // — reaparece na FAIXA INFERIOR, logo depois desta seção.
   const sbTop = H - 20, sbBot = 20;
   // posse não leva quadro analítico — as demais seções ganham o espaço dele
-  const alturas = posse
+  // A conferência em A3 segue a MESMA organização da planta de posse: sem quadro
+  // analítico, com a Planta de Situação grande no topo. É a folha de prévia — o
+  // quadro é a tabela que o SIGEF confere, e a prévia ainda não passou por ele.
+  // Sem o quadro, os blocos que ficam herdam o espaço dele, e a ordem resultante
+  // (situação · carimbo · planimétrico · RT · rodapé) é a do modelo.
+  const semQuadro = posse || !!d.conferencia;
+  const alturas = semQuadro
     ? { quadro: 0, situacao: 0.30, carimbo: 0.12, planimetrico: 0.42, rodape: 0.16 }
     : { quadro: 0.38, situacao: 0.12, carimbo: 0.08, planimetrico: 0.31, rodape: 0.11 };
   let yCursor = sbTop;
 
   // ---- QUADRO ANALÍTICO (tabela com grade, colunas centradas) ----
-  if (!posse && !simples) {
+  if (!semQuadro && !simples) {
     const h = (sbTop - sbBot) * alturas.quadro;
     const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "QUADRO ANALÍTICO");
     const heads = ["VÉRTICE", "LADO", "LONGITUDE", "LATITUDE", "AZIMUTE", "DIST.(m)", "ALTIT."];

@@ -55,15 +55,27 @@ test("na conferência o desenho não leva código de vértice, mas leva confront
   assert.match(a4, /LINHA FERREA/);
 });
 
-test("A3 da conferência é a folha do serviço completo", async () => {
+test("A3 da conferência segue a organização da planta de posse", async () => {
   const g = geo();
   const a3 = await planta(g, { folha: "A3", conferencia: true });
   assert.equal(await ehFolha(a3, "A3"), true);
   const t = await textoDe(a3);
-  // o arranjo completo, inteiro — inclusive o quadro analítico, que é onde os
-  // códigos continuam listados depois de saírem do desenho
-  assert.match(t, /QUADRO ANALÍTICO/);
+  // barra lateral inteira, menos o quadro analítico: é a tabela que o SIGEF
+  // confere, e a prévia ainda não passou por ele
+  assert.doesNotMatch(t, /QUADRO ANALÍTICO/);
+  assert.match(t, /PLANTA DE SITUAÇÃO/);
+  assert.match(t, /CARIMBO DA EMPRESA/);
   assert.match(t, /PLANIMÉTRICO DO IMÓVEL/);
+  assert.match(t, /RESPONSÁVEL TÉCNICO/);
+  assert.match(t, /01 001 A3/);
+  // sem quadro e sem rótulo no desenho, nenhum código de prévia sobra na folha
+  assert.doesNotMatch(t, /DSBN-/);
+});
+
+test("a organização de posse não vaza para o serviço completo de matrícula", async () => {
+  const t = await textoDe(await planta(geo(), {}));
+  // sem `conferencia`, a matrícula continua com o quadro analítico de sempre
+  assert.match(t, /QUADRO ANALÍTICO/);
   assert.match(t, /DSBN-/);
 });
 

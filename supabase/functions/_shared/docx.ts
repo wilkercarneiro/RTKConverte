@@ -31,9 +31,14 @@ const LINHA_ASSINATURA = "_".repeat(60);
  * sem depender de um .docx modelo mantido à mão no Storage.
  *
  * Vive num cabeçalho porque é assim que o OOXML repete um elemento em todas as
- * páginas: o corpo do documento só desenha o que cabe no fluxo. `behindDoc` +
- * `alphaModFix` são o que fazem dela um timbre e não uma figura por cima do
- * texto.
+ * páginas: o corpo do documento só desenha o que cabe no fluxo.
+ *
+ * A marcação é VML (`w:pict`), não DrawingML. É a que o próprio Word grava em
+ * "Design → Marca d'água → Imagem", e por isso é a que todo leitor renderiza —
+ * Word, LibreOffice, Google Docs, WPS. A primeira versão usava DrawingML com
+ * `alphaModFix`, que é XML válido mas cujo esmaecimento nem todo leitor honra:
+ * o arquivo abria sem timbre nenhum. O par `gain`/`blacklevel` do `v:imagedata`
+ * é o desbotamento oficial do Word e não depende de suporte a transparência.
  */
 export interface MarcaDagua {
   bytes: Uint8Array;
@@ -42,10 +47,17 @@ export interface MarcaDagua {
 
 /** rId do cabeçalho da marca d'água dentro de word/_rels/document.xml.rels. */
 const RID_MARCA = "rId9";
-/** Opacidade do timbre (100000 = opaco). Baixa o bastante para ler o texto por cima. */
-const ALPHA_MARCA = 22000;
+/**
+ * Desbotamento padrão de marca d'água do Word, em unidades fixed-point (`f`).
+ * gain 19661f ≈ 0,3 de contraste e blacklevel 22938f ≈ +0,35 de brilho: é o par
+ * que o Word grava ao marcar "Desbotar", e o que deixa o texto legível por cima.
+ */
+const GAIN_MARCA = "19661f";
+const BLACKLEVEL_MARCA = "22938f";
 /** Lado máximo do timbre, em EMU (1 cm = 360000). Cabe na mancha de um A4 retrato. */
 const LADO_MARCA_EMU = 12 * 360000;
+/** EMU por ponto tipográfico — o VML posiciona em pt, o DrawingML em EMU. */
+const EMU_POR_PT = 12700;
 
 /**
  * Largura e altura em pixels de um PNG ou JPEG.
@@ -85,29 +97,40 @@ function medidasMarca(m: MarcaDagua): { cx: number; cy: number } {
   return { cx: Math.round(dim.w * escala), cy: Math.round(dim.h * escala) };
 }
 
-const NS_WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
-const NS_A = "http://schemas.openxmlformats.org/drawingml/2006/main";
-const NS_PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const NS_V = "urn:schemas-microsoft-com:vml";
+const NS_O = "urn:schemas-microsoft-com:office:office";
 
-/** word/header1.xml: só a logo, ancorada ao centro da PÁGINA e atrás do texto. */
+/**
+ * word/header1.xml: só a logo, centrada na PÁGINA e atrás do texto.
+ *
+ * `mso-position-*-relative:margin` com `margin-left/top:0` e alinhamento central
+ * é a receita do Word: sem ela a figura ancora no parágrafo do cabeçalho e sobe
+ * para o topo da folha em vez de ficar no meio.
+ */
 function headerMarcaXml(m: MarcaDagua): string {
   const { cx, cy } = medidasMarca(m);
+  const wPt = (cx / EMU_POR_PT).toFixed(1);
+  const hPt = (cy / EMU_POR_PT).toFixed(1);
+  const estilo = [
+    "position:absolute", "margin-left:0", "margin-top:0",
+    `width:${wPt}pt`, `height:${hPt}pt`, "z-index:-251658752",
+    "mso-position-horizontal:center", "mso-position-horizontal-relative:margin",
+    "mso-position-vertical:center", "mso-position-vertical-relative:margin",
+  ].join(";");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="${NS_R}" xmlns:wp="${NS_WP}" xmlns:a="${NS_A}" xmlns:pic="${NS_PIC}">
-<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:drawing>
-<wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0" behindDoc="1" locked="0" layoutInCell="1" allowOverlap="1">
-<wp:simplePos x="0" y="0"/>
-<wp:positionH relativeFrom="page"><wp:align>center</wp:align></wp:positionH>
-<wp:positionV relativeFrom="page"><wp:align>center</wp:align></wp:positionV>
-<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>
-<wp:docPr id="1" name="Marca d'agua"/>
-<a:graphic><a:graphicData uri="${NS_PIC}">
-<pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="logo"/><pic:cNvPicPr/></pic:nvPicPr>
-<pic:blipFill><a:blip r:embed="rId1"><a:alphaModFix amt="${ALPHA_MARCA}"/></a:blip><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
-<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
-</pic:pic></a:graphicData></a:graphic>
-</wp:anchor></w:drawing></w:r></w:p>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="${NS_R}" xmlns:v="${NS_V}" xmlns:o="${NS_O}">
+<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:pict>
+<v:shapetype id="_x0000_t75" coordsize="21600,21600" o:spt="75" o:preferrelative="t" path="m@4@5l@4@11@9@11@9@5xe" filled="f" stroked="f">
+<v:stroke joinstyle="miter"/>
+<v:formulas><v:f eqn="if lineDrawn pixelLineWidth 0"/><v:f eqn="sum @0 1 0"/><v:f eqn="sum 0 0 @1"/><v:f eqn="prod @2 1 2"/><v:f eqn="prod @3 21600 pixelWidth"/><v:f eqn="prod @3 21600 pixelHeight"/><v:f eqn="sum @0 0 1"/><v:f eqn="prod @6 1 2"/><v:f eqn="prod @7 21600 pixelWidth"/><v:f eqn="sum @8 21600 0"/><v:f eqn="prod @7 21600 pixelHeight"/><v:f eqn="sum @10 21600 0"/></v:formulas>
+<v:path o:extrusionok="f" gradientshapeok="t" o:connecttype="rect"/>
+<o:lock v:ext="edit" aspectratio="t"/>
+</v:shapetype>
+<v:shape id="MarcaDaguaLogo" o:spid="_x0000_s2049" type="#_x0000_t75" style="${estilo}" o:allowincell="f">
+<v:imagedata r:id="rId1" o:title="logo" gain="${GAIN_MARCA}" blacklevel="${BLACKLEVEL_MARCA}"/>
+</v:shape>
+</w:pict></w:r></w:p>
 </w:hdr>`;
 }
 

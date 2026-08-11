@@ -71,13 +71,18 @@ test("com logo, o pacote traz cabeçalho, mídia, relação e content-type", () 
   assert.equal(files.get("word/media/logo-fundo.png").length, 24);
 });
 
-test("o timbre fica atrás do texto, translúcido e na proporção da logo", () => {
+test("o timbre fica atrás do texto, desbotado e na proporção da logo", () => {
   const hdr = buildDocxSkeleton({ bytes: pngFalso(400, 200), tipo: "png" }).get("word/header1.xml");
-  assert.match(hdr, /behindDoc="1"/);
-  assert.match(hdr, /<a:alphaModFix amt="\d+"\/>/);
-  // 400×200 no lado máximo de 12 cm: 12cm × 6cm em EMU, sem achatar a logo
-  assert.match(hdr, /<wp:extent cx="4320000" cy="2160000"\/>/);
-  assert.match(hdr, /<a:ext cx="4320000" cy="2160000"\/>/);
+  // z-index negativo é o "atrás do texto" do VML
+  assert.match(hdr, /z-index:-\d+/);
+  // gain/blacklevel são o desbotamento nativo do Word — sem eles a logo sai
+  // chapada por baixo do texto e o memorial fica ilegível
+  assert.match(hdr, /gain="19661f" blacklevel="22938f"/);
+  // 400×200 no lado máximo de 12 cm = 340,2 × 170,1 pt, sem achatar a logo
+  assert.match(hdr, /width:340\.2pt;height:170\.1pt/);
+  // centrado na página, não pendurado no parágrafo do cabeçalho
+  assert.match(hdr, /mso-position-horizontal:center/);
+  assert.match(hdr, /mso-position-vertical:center/);
 });
 
 test("o .docx timbrado fecha e reabre com a logo real intacta", async () => {
@@ -93,7 +98,7 @@ test("o .docx timbrado fecha e reabre com a logo real intacta", async () => {
   // a imagem tem de atravessar o zip byte a byte: um deflate mal aplicado aqui
   // vira "imagem corrompida" só na hora de abrir no Word
   assert.deepEqual(await re.file("word/media/logo-fundo.png").async("uint8array"), bytes);
-  assert.match(await re.file("word/header1.xml").async("string"), /r:embed="rId1"/);
+  assert.match(await re.file("word/header1.xml").async("string"), /<v:imagedata r:id="rId1"/);
 });
 
 test("sem logo, o pacote é o de sempre — nada de cabeçalho pendurado", () => {
