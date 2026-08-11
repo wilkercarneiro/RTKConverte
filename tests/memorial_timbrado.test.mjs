@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import JSZip from "jszip";
-import { buildDocumentXml, buildDocxSkeleton, dimensoesImagem } from "../supabase/functions/_shared/docx.ts";
+import { buildDocumentXml, buildDocxSkeleton, dimensoesImagem, extrairTimbre } from "../supabase/functions/_shared/docx.ts";
 
 /** PNG de 400×200 — só o cabeçalho, que é tudo que o leitor de medidas olha. */
 function pngFalso(w, h) {
@@ -87,7 +87,7 @@ test("o timbre fica atrás do texto, desbotado e na proporção da logo", () => 
 
 test("o .docx timbrado fecha e reabre com a logo real intacta", async () => {
   // logo de verdade: a que já vem no modelo de peça versionado no repositório
-  const modelo = await JSZip.loadAsync(readFileSync(new URL("../reference/pecas/1-memorial-descritivo.docx", import.meta.url)));
+  const modelo = await JSZip.loadAsync(readFileSync(new URL("../reference/memorial-template.docx", import.meta.url)));
   const bytes = await modelo.file("word/media/image1.png").async("uint8array");
   assert.ok(dimensoesImagem(bytes, "png").w > 0, "PNG real precisa ser legível");
 
@@ -99,6 +99,31 @@ test("o .docx timbrado fecha e reabre com a logo real intacta", async () => {
   // vira "imagem corrompida" só na hora de abrir no Word
   assert.deepEqual(await re.file("word/media/logo-fundo.png").async("uint8array"), bytes);
   assert.match(await re.file("word/header1.xml").async("string"), /<v:imagedata r:id="rId1"/);
+});
+
+test("com modelo, o memorial herda o timbre das outras peças", async () => {
+  // o modelo real, o mesmo que vai ao Storage
+  const z = await JSZip.loadAsync(readFileSync(new URL("../reference/memorial-template.docx", import.meta.url)));
+  const timbre = extrairTimbre(await z.file("word/document.xml").async("string"));
+  assert.ok(timbre, "o modelo precisa ter cabeçalho e sectPr");
+
+  const doc = buildDocumentXml(dadosMemorial, false, timbre);
+  // a seção é a do modelo: cabeçalho, rodapé e margens vêm de lá
+  assert.match(doc, /<w:headerReference w:type="default"/);
+  assert.match(doc, /<w:footerReference w:type="default"/);
+  assert.match(doc, /w:header="340"/);
+  // e o corpo é o nosso
+  assert.match(doc, /M E M O R I A L/);
+  // a abertura do modelo traz os namespaces que o sectPr usa
+  assert.match(doc, /<w:document[^>]*xmlns:r=/);
+  // com timbre de modelo não se pendura a marca d'água própria: seriam duas
+  assert.doesNotMatch(doc, new RegExp(`r:id="rId9"[^>]*/>\\s*<w:pgSz`));
+});
+
+test("modelo sem cabeçalho não conta como timbre", () => {
+  // é o esqueleto antigo: sectPr sem nenhuma referência
+  assert.equal(extrairTimbre(buildDocumentXml(dadosMemorial)), null);
+  assert.equal(extrairTimbre("<w:body/>"), null);
 });
 
 test("sem logo, o pacote é o de sempre — nada de cabeçalho pendurado", () => {

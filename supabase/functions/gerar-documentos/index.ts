@@ -12,7 +12,8 @@ import JSZip from "jszip";
 import { montarServico, validarConfrontacoes } from "../_shared/servico.ts";
 import type { ServicoInput, VerticeServico } from "../_shared/servico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
-import { buildDocumentXml, buildDocxSkeleton } from "../_shared/docx.ts";
+import { buildDocumentXml, buildDocxSkeleton, extrairTimbre } from "../_shared/docx.ts";
+import type { TimbreModelo } from "../_shared/docx.ts";
 import type { DadosMemorial } from "../_shared/memorial.ts";
 import { patchOdsContent } from "../_shared/ods.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
@@ -254,28 +255,36 @@ Deno.serve(async (req) => {
       segs: calc.segs,
       confrontantesDescritivos: calc.trechosOrdenados.map((t) => t.descritivo).filter((d) => d.trim() !== ""),
     };
-    // O memorial sai TIMBRADO: a logo da empresa entra atrás do texto, em todas
-    // as páginas. Com a logo em mãos o pacote é montado inteiro aqui em vez de
-    // sair do memorial-template.docx do Storage — o timbre exige um cabeçalho,
-    // uma parte de mídia, uma relação e um content-type coerentes entre si, e
-    // costurar isso dentro de um .docx de origem desconhecida quebra ao primeiro
-    // template que alguém trocar. Sem logo, o caminho antigo continua valendo.
+    // O memorial sai TIMBRADO, com o MESMO timbre das outras peças: cabeçalho
+    // com a logo, marca d'água e rodapé de contato saem do
+    // `memorial-template.docx`, que vive no Storage ao lado dos modelos das sete
+    // peças. Aqui só se troca o corpo — a seção do modelo (que aponta para
+    // cabeçalho, rodapé e margens) é preservada. Trocar o timbre da empresa é
+    // trocar aquele arquivo, não mexer neste código.
+    //
+    // Sem o modelo, o memorial ainda sai: monta-se o pacote mínimo com a logo
+    // como marca d'água. É pior — não tem rodapé nem logo no topo — mas é melhor
+    // do que não gerar.
     const logo = await carregarLogoPlanta(supa);
     const zipDocx = new JSZip();
-    const tplDocx = logo ? null : await supa.storage.from("templates").download("memorial-template.docx");
-    if (tplDocx && !tplDocx.error && tplDocx.data) {
+    const tplDocx = await supa.storage.from("templates").download("memorial-template.docx");
+    let timbre: TimbreModelo | null = null;
+    if (!tplDocx.error && tplDocx.data) {
       const tz = await JSZip.loadAsync(await tplDocx.data.arrayBuffer());
       for (const name of Object.keys(tz.files)) {
         if (tz.files[name].dir) continue;
         zipDocx.file(name, await tz.file(name)!.async("uint8array"));
       }
-    } else {
+      timbre = extrairTimbre(await tz.file("word/document.xml")!.async("string"));
+    }
+    if (!timbre) {
       for (const [path, content] of buildDocxSkeleton(logo)) zipDocx.file(path, content);
+      avisosGeracao.push(
+        "Memorial gerado sem o timbre da empresa: templates/memorial-template.docx não está no Storage ou não tem cabeçalho." +
+        (logo ? " Saiu com a logo como marca d'água." : ""),
+      );
     }
-    zipDocx.file("word/document.xml", buildDocumentXml(dadosMemorial, !!logo));
-    if (!logo) {
-      avisosGeracao.push("Memorial gerado sem timbre: a logo da empresa não está no Storage (templates/logo-empresa.png ou .jpg). Envie-a em Configurações.");
-    }
+    zipDocx.file("word/document.xml", buildDocumentXml(dadosMemorial, !timbre && !!logo, timbre));
     const docxBuf = await zipDocx.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 
     // ------------------------- ODS -------------------------

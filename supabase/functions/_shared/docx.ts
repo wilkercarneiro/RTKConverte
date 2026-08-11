@@ -134,7 +134,28 @@ function headerMarcaXml(m: MarcaDagua): string {
 </w:hdr>`;
 }
 
-export function buildDocumentXml(d: DadosMemorial, marcaDagua = false): string {
+/**
+ * Timbre herdado de um modelo .docx: a abertura de `<w:document>` (com todos os
+ * namespaces que o modelo declara) e o `<w:sectPr>` (que aponta para cabeçalho,
+ * rodapé e margens).
+ *
+ * É assim que o Memorial Descritivo GEO ganha o MESMO timbre das outras peças
+ * sem ter a arte da empresa escrita em código: o modelo mora no Storage, ao lado
+ * dos das peças, e aqui só se troca o corpo.
+ */
+export interface TimbreModelo { abertura: string; sectPr: string }
+
+/** Lê o timbre do `word/document.xml` de um modelo. `null` se não der para usar. */
+export function extrairTimbre(documentXml: string): TimbreModelo | null {
+  const abertura = documentXml.match(/<w:document[^>]*>/)?.[0];
+  const sectPr = documentXml.match(/<w:sectPr[\s\S]*?<\/w:sectPr>/)?.[0];
+  // sectPr sem referência de cabeçalho é modelo sem timbre: não vale a pena
+  // herdar, e o esqueleto interno dá um documento melhor
+  if (!abertura || !sectPr || !/<w:(header|footer)Reference/.test(sectPr)) return null;
+  return { abertura, sectPr };
+}
+
+export function buildDocumentXml(d: DadosMemorial, marcaDagua = false, timbre?: TimbreModelo | null): string {
   const partes: string[] = [];
   // 1. Título
   partes.push(par([{ text: "M E M O R I A L   D E S C R I T I V O  (GEO)", bold: true }], { align: "center", spaceAfter: 240 }));
@@ -164,8 +185,15 @@ export function buildDocumentXml(d: DadosMemorial, marcaDagua = false): string {
     partes.push(par([{ text: desc, bold: false }], { spaceAfter: 360 }));
   }
 
-  // A referência ao cabeçalho só entra quando o timbre existe: um headerReference
-  // apontando para uma parte ausente é pacote inválido, e o Word recusa o arquivo.
+  // Com modelo, a seção é a DELE — cabeçalho, rodapé e margens vêm prontos e
+  // idênticos aos das outras peças. Sem modelo, monta-se a seção mínima aqui, e
+  // a referência ao cabeçalho só entra quando há marca d'água: um
+  // headerReference apontando para parte ausente invalida o pacote inteiro.
+  if (timbre) {
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+${timbre.abertura}<w:body>${partes.join("")}
+${timbre.sectPr}</w:body></w:document>`;
+  }
   const hdr = marcaDagua ? `<w:headerReference w:type="default" r:id="${RID_MARCA}"/>` : "";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="${NS_R}">
