@@ -14,6 +14,8 @@ import type { ServicoInput, VerticeServico } from "../_shared/servico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { buildDocumentXml, buildDocxSkeleton, extrairTimbre } from "../_shared/docx.ts";
 import type { TimbreModelo } from "../_shared/docx.ts";
+import { gerarMemorialDescritivoXml } from "../_shared/pecas.ts";
+import { montarDadosPecasDoCalculo } from "../_shared/pecas_dados.ts";
 import type { DadosMemorial } from "../_shared/memorial.ts";
 import { patchOdsContent } from "../_shared/ods.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
@@ -230,9 +232,11 @@ Deno.serve(async (req) => {
       }];
 
     // ------------------------- DOCX -------------------------
-    // Avisos de todo o percurso: o DOCX já tem o seu (timbre ausente) e a planta
+    // Avisos de todo o percurso: o DOCX já tem o seu (modelo ausente) e a planta
     // acrescenta os dela mais abaixo.
     const avisosGeracao = [...conf.avisos];
+    // decide o conjunto de modelos e, mais abaixo, a folha da planta
+    const posse = servico.tipo_imovel === "posse";
     const dadosMemorial: DadosMemorial = {
       imovel: servico.denominacao ?? "",
       proprietario: servico.detentor_nome ?? "",
@@ -267,24 +271,44 @@ Deno.serve(async (req) => {
     // do que não gerar.
     const logo = await carregarLogoPlanta(supa);
     const zipDocx = new JSZip();
-    const tplDocx = await supa.storage.from("templates").download("memorial-template.docx");
-    let timbre: TimbreModelo | null = null;
-    if (!tplDocx.error && tplDocx.data) {
-      const tz = await JSZip.loadAsync(await tplDocx.data.arrayBuffer());
+    // O modelo é o da PEÇA 1 — o mesmo arquivo que as sete peças usam. Não há
+    // "modelo do memorial da geração" e "modelo do memorial das peças": é um só,
+    // e é por isso que os dois saem idênticos.
+    const tplMemorial = await supa.storage.from("templates")
+      .download(`${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx`);
+    let doModelo = false;
+    if (!tplMemorial.error && tplMemorial.data) {
+      const tz = await JSZip.loadAsync(await tplMemorial.data.arrayBuffer());
       for (const name of Object.keys(tz.files)) {
         if (tz.files[name].dir) continue;
         zipDocx.file(name, await tz.file(name)!.async("uint8array"));
       }
-      timbre = extrairTimbre(await tz.file("word/document.xml")!.async("string"));
+      const dadosPecas = montarDadosPecasDoCalculo({ servico, rt, cred, calc, dataStr: dataHojeBR() });
+      zipDocx.file(
+        "word/document.xml",
+        gerarMemorialDescritivoXml(await tz.file("word/document.xml")!.async("string"), dadosPecas, posse),
+      );
+      doModelo = true;
     }
-    if (!timbre) {
-      for (const [path, content] of buildDocxSkeleton(logo)) zipDocx.file(path, content);
+    // Sem o modelo o memorial ainda sai, montado em código: não é o documento da
+    // empresa, mas é melhor do que não gerar — e o aviso diz o que aconteceu.
+    if (!doModelo) {
+      const tplDocx = await supa.storage.from("templates").download("memorial-template.docx");
+      let timbre: TimbreModelo | null = null;
+      if (!tplDocx.error && tplDocx.data) {
+        const tz = await JSZip.loadAsync(await tplDocx.data.arrayBuffer());
+        for (const name of Object.keys(tz.files)) {
+          if (tz.files[name].dir) continue;
+          zipDocx.file(name, await tz.file(name)!.async("uint8array"));
+        }
+        timbre = extrairTimbre(await tz.file("word/document.xml")!.async("string"));
+      }
+      if (!timbre) for (const [path, content] of buildDocxSkeleton(logo)) zipDocx.file(path, content);
+      zipDocx.file("word/document.xml", buildDocumentXml(dadosMemorial, !timbre && !!logo, timbre));
       avisosGeracao.push(
-        "Memorial gerado sem o timbre da empresa: templates/memorial-template.docx não está no Storage ou não tem cabeçalho." +
-        (logo ? " Saiu com a logo como marca d'água." : ""),
+        `Memorial gerado fora do modelo da empresa: templates/${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx não está no Storage.`,
       );
     }
-    zipDocx.file("word/document.xml", buildDocumentXml(dadosMemorial, !timbre && !!logo, timbre));
     const docxBuf = await zipDocx.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 
     // ------------------------- ODS -------------------------
@@ -319,7 +343,6 @@ Deno.serve(async (req) => {
     // desenhada com a geometria que acabou de gerar o memorial e a planilha.
     // Uma falha aqui não derruba o DOCX/ODS: vira aviso e os dois seguem.
     let plantaBuf: Uint8Array | null = null;
-    const posse = servico.tipo_imovel === "posse";
 
     // A conferência circula impressa em mesa, não em prancheta: sai em A3 por
     // padrão, ou na folha que o operador escolheu na tela. Serviço completo não

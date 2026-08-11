@@ -516,6 +516,41 @@ export function removerBlocosSegundoRequerente(xml: string): string {
   return out;
 }
 
+/**
+ * Peça 1 — MEMORIAL DESCRITIVO — a partir do modelo da empresa.
+ *
+ * Separada do resto porque tem DOIS chamadores: as sete peças e a geração de
+ * documentos, onde o Memorial Descritivo é entregue sozinho. Antes o memorial
+ * daquele fluxo era montado parágrafo a parágrafo em código, e o resultado não
+ * era o modelo — era outro documento, com outro cabeçalho de campos e outro
+ * fecho. Sair do mesmo .docx é o que garante que os dois sejam idênticos.
+ *
+ * O corpo (a descrição corrida do perímetro) é reescrito no lugar do parágrafo
+ * que começa com "Inicia-se a descrição"; o resto do documento — tabela de
+ * campos, título da seção, assinaturas — é o do modelo, com os valores trocados.
+ */
+export function gerarMemorialDescritivoXml(tpl1: string, d: DadosPecas, posse = false): string {
+  // A substituição é literal: cada conjunto de modelos traz o SEU caso de
+  // exemplo (matrícula = LARISSA/FAZENDA VIBRAÇÃO, posse = ANTONIO/FAZENDA SÃO
+  // DOMINGOS) e o mapa procura exatamente aquele texto. Passar o mapa errado não
+  // dá erro — devolve o modelo com os dados do exemplo, que é pior.
+  const mapa = posse ? mapaPosse(d) : mapaComum(d);
+  // posse tem um posseiro só: não há bloco de segundo requerente para remover
+  // (idempotente no fluxo de matrícula, onde gerarPecasXml já pode ter removido)
+  let xml = !posse && d.requerentes.length === 1 ? removerBlocosSegundoRequerente(tpl1) : tpl1;
+  const corpo = corpoMemorialSigef(d);
+  xml = xml.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, (par) => {
+    if (!textoDoTrecho(par).includes("Inicia-se a descrição")) return par;
+    let primeiro = true;
+    return par.replace(RE_WT_REESCRITA, (all, abre: string) => {
+      const tag = abre.replace(/ xml:space="preserve"/, "") + ' xml:space="preserve"';
+      if (primeiro) { primeiro = false; return `${tag}>${enc(corpo)}</w:t>`; }
+      return `${tag}></w:t>`;
+    });
+  });
+  return substituirEmParagrafos(xml, mapa);
+}
+
 export function gerarPecasXml(tpl: Record<string, string>, d: DadosPecas): Record<string, string | null> {
   const mapa = mapaComum(d);
   const out: Record<string, string | null> = {};
@@ -524,20 +559,7 @@ export function gerarPecasXml(tpl: Record<string, string>, d: DadosPecas): Recor
   }
 
   // ---- 1. MEMORIAL DESCRITIVO (corpo reescrito com azimutes/distâncias do SIGEF)
-  {
-    let xml = tpl["1"];
-    const corpo = corpoMemorialSigef(d);
-    xml = xml.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, (par) => {
-      if (!textoDoTrecho(par).includes("Inicia-se a descrição")) return par;
-      let primeiro = true;
-      return par.replace(RE_WT_REESCRITA, (all, abre: string) => {
-        const tag = abre.replace(/ xml:space="preserve"/, "") + ' xml:space="preserve"';
-        if (primeiro) { primeiro = false; return `${tag}>${enc(corpo)}</w:t>`; }
-        return `${tag}></w:t>`;
-      });
-    });
-    out["1"] = substituirEmParagrafos(xml, mapa);
-  }
+  out["1"] = gerarMemorialDescritivoXml(tpl["1"], d);
 
   // ---- 2. MEMORIAL TABULAR (tabela completa com confrontações do banco)
   {
@@ -923,20 +945,7 @@ export function gerarPecasPosseXml(tpl: Record<string, string>, d: DadosPecas): 
   const out: Record<string, string | null> = {};
 
   // ---- 1. MEMORIAL DESCRITIVO
-  {
-    let xml = tpl["1"];
-    const corpo = corpoMemorialSigef(d);
-    xml = xml.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, (par) => {
-      if (!textoDoTrecho(par).includes("Inicia-se a descrição")) return par;
-      let primeiro = true;
-      return par.replace(RE_WT_REESCRITA, (all, abre: string) => {
-        const tag = abre.replace(/ xml:space="preserve"/, "") + ' xml:space="preserve"';
-        if (primeiro) { primeiro = false; return `${tag}>${enc(corpo)}</w:t>`; }
-        return `${tag}></w:t>`;
-      });
-    });
-    out["1"] = substituirEmParagrafos(xml, mapa);
-  }
+  out["1"] = gerarMemorialDescritivoXml(tpl["1"], d, true);
 
   // ---- 2. MEMORIAL TABULAR
   {
