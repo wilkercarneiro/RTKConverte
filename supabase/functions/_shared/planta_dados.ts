@@ -182,6 +182,8 @@ export interface ContextoPlanta {
   satelite?: DadosPlanta["satelite"];
   /** Folha de entrega. Ausente = regra histórica (posse → A3, resto → A1). */
   folha?: Folha;
+  /** Prévia de conferência: tira os códigos dos vértices do desenho. */
+  conferencia?: boolean;
   /** Sub-polígonos internos. Ausente/vazio = a planta sai como sempre saiu. */
   glebas?: GlebaPlanta[];
 }
@@ -236,6 +238,7 @@ export function montarDadosPlanta(ctx: ContextoPlanta): DadosPlanta {
     // Repassados só quando existem: `undefined` é o que faz a planta do serviço
     // completo continuar idêntica à de antes destes dois campos existirem.
     folha: ctx.folha,
+    conferencia: ctx.conferencia,
     glebas: ctx.glebas?.length ? ctx.glebas : undefined,
   };
 }

@@ -330,7 +330,7 @@ Deno.serve(async (req) => {
         satelite: satelite_base64
           ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
           : null,
-        folha, glebas,
+        folha, glebas, conferencia,
       });
       if (!dadosPlanta.satelite) {
         avisosGeracao.push("Planta gerada sem imagem de satélite — o quadro PLANTA DE SITUAÇÃO ficou vazio. Envie a imagem e gere os documentos de novo.");

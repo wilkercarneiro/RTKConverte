@@ -74,6 +74,14 @@ export interface DadosPlanta {
   proprietarios: ProprietarioPlanta[];
   tipoImovel?: "matricula" | "posse";  // posse → A3 sem quadro analítico
   folha?: Folha;                    // sobrepõe a folha; ausente = regra de tipoImovel
+  /**
+   * Prévia de conferência de área. Tira os códigos dos vértices do DESENHO: os
+   * números da prévia partem do contador do credenciado sem serem reservados, e
+   * impressos ao lado de cada marco passam por definitivos. Eles continuam no
+   * memorial e nas peças, que dizem por escrito que são prévia. Os nomes dos
+   * confrontantes ficam — é o que o cliente confere na planta.
+   */
+  conferencia?: boolean;
   glebas?: GlebaPlanta[];           // sub-polígonos internos; ausente/vazio = nada muda
   matricula: string;
   cns: string;
@@ -97,15 +105,21 @@ export interface DadosPlanta {
 // constantes de folha
 // ---------------------------------------------------------------------------
 const MM = 2.834645669; // pt por mm
-const W = 841 * MM;     // A1 paisagem
-const H = 594 * MM;
 
-// Folhas de entrega, em mm (paisagem). O desenho é SEMPRE feito em A1; estas
-// medidas só valem na redução final. Ver o fim de gerarPlantaPdf.
+// Tela de desenho, em mm. O desenho é SEMPRE feito no tamanho de um A1 e
+// reduzido no fim — é isso que faz da A3 uma redução e não uma segunda planta.
+// A A4 é a exceção: ela tem OUTRO arranjo (ver LAYOUT SIMPLES), e arranjo
+// retrato precisa de tela retrato, senão o desenho nasce deitado e a redução
+// final o espremeria.
+const TELA_PAISAGEM: [number, number] = [841 * MM, 594 * MM];
+const TELA_RETRATO: [number, number] = [594 * MM, 841 * MM];
+
+// Folhas de entrega, em mm. A4 é a única retrato: é a folha da conferência que
+// circula impressa em mesa, no modelo simplificado.
 const FOLHAS_MM: Record<Folha, [number, number]> = {
   A1: [841, 594],
   A3: [420, 297],
-  A4: [297, 210],
+  A4: [210, 297],
 };
 const AZUL = rgb(0, 0.2, 0.85);
 const VERMELHO = rgb(0.85, 0.05, 0.05);
@@ -456,9 +470,14 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // lugar de 300×124 e o arranjo saía diferente do da A1 — a mesma planta com
   // dois layouts. A regra agora é uma só; a legibilidade vem da redução única do
   // fim, como em qualquer prancha reduzida.
+  // LAYOUT SIMPLES (A4): a conferência de área não é prancha de prancheta — é a
+  // folha que vai à mesa com o cliente. Nela não entram quadro analítico,
+  // planimétrico nem selo de cartório: fica o desenho, as áreas, e embaixo uma
+  // faixa com o carimbo da empresa, a planta de situação e um selo pequeno.
+  // O A3 e o A1 seguem o arranjo do serviço completo, sem uma linha de diferença.
+  const simples = folha === "A4";
+  const [W, H] = simples ? TELA_RETRATO : TELA_PAISAGEM;
   const pdf = await PDFDocument.create();
-  // a folha é sempre desenhada nas medidas A1; p/ posse o conteúdo é reduzido
-  // proporcionalmente no final (scaleContent+setSize), virando um A3
   const page = pdf.addPage([W, H]);
   const f = await pdf.embedFont(StandardFonts.Helvetica);
   const fb = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -469,9 +488,15 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   caixa(c, 20, 20, W - 40, H - 40, 0.8);
 
   // ------------------- área de desenho e barra lateral -------------------
-  const SB_W = 720;
+  // No arranjo simples a barra lateral não existe: o que era coluna à direita
+  // vira faixa no rodapé, e o desenho fica com a folha inteira acima dela.
+  const SB_W = simples ? 0 : 720;
   const sbX = W - 20 - SB_W;
-  const dArea = { x: 60, y: 60, w: sbX - 100, h: H - 120 };
+  const SELO_H = simples ? 156 : 0;    // proprietário/RT/escala/município/folha
+  const FAIXA_H = simples ? 380 : 0;   // carimbo da empresa | planta de situação
+  const dArea = simples
+    ? { x: 46, y: 20 + SELO_H + FAIXA_H + 16, w: W - 92, h: H - 56 - SELO_H - FAIXA_H - 16 }
+    : { x: 60, y: 60, w: sbX - 100, h: H - 120 };
 
   // ------------------- escala e projeção papel -------------------
   const vs = d.vertices;
@@ -495,7 +520,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   const passo = stepCands.find((s) => s >= alvoM) ?? 5000;
   const e0 = Math.ceil((cxE - dArea.w / 2 * mPorPt) / passo) * passo;
   const n0 = Math.ceil((cxN - dArea.h / 2 * mPorPt) / passo) * passo;
-  const GRID_TAM = 11; // discreto, como na planta de referência
+  // Discreto, como na planta de referência. No arranjo simples sobe: a folha
+  // inteira encolhe para um A4, e 11pt na tela viram 3,9pt no papel.
+  const GRID_TAM = simples ? 18 : 11;
   for (let e = e0; X(e) < dArea.x + dArea.w; e += passo) {
     linha(c, X(e), dArea.y, X(e), dArea.y + dArea.h, 0.4, CINZA, [2, 4]);
     const et = `E=${fmtMilhar(e)}`;
@@ -705,7 +732,12 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   }
 
   // ------------------- divisões de confrontação + rótulos -------------------
-  const centroLinhas = [
+  //
+  // No arranjo simples o miolo do polígono leva só a área: matrícula, CNS,
+  // proprietário e CPF já estão no selo do rodapé, e repeti-los dentro de um A4
+  // cobriria o desenho. Com glebas ele some de vez — cada gleba mostra a sua
+  // área e o total fica no canto, como no modelo.
+  const centroLinhas = (simples ? (glebas.length ? [] : [`${d.areaFmt} HA`, `${d.tarefasFmt} TAREFAS`]) : [
     posse ? "(POSSE)" : `(MATR.${d.matricula}/CNS.${d.cns})`,
     d.denominacao,
     ...d.proprietarios.flatMap((p) => {
@@ -719,10 +751,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       return res;
     }),
     `ÁREA:${d.areaFmt} HA/ ${d.tarefasFmt} TAREFAS`,
-  ].map((l) => l.toUpperCase());
+  ]).map((l) => l.toUpperCase());
   // bloco do imóvel no centroide — fonte proporcional ao polígono desenhado,
   // p/ o nome interno acompanhar o tamanho da propriedade sem vazar das bordas
-  {
+  if (centroLinhas.length) {
     // O bloco é ancorado no ponto interior mais afastado das divisas e encolhe
     // até caber INTEIRO dentro do polígono, com margem para não encostar nas
     // bordas. O cálculo anterior usava só o retângulo envolvente e, em imóveis
@@ -960,7 +992,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // quase alinhados (a face norte do MONOINO tem 13) eles já se suprimiam entre
   // si; agora também cedem ao bloco do confrontante. Nada se perde no fluxo de
   // matrícula — o quadro analítico lista TODOS os vértices.
+  //
+  // Na conferência eles não saem: ver DadosPlanta.conferencia.
   for (const cp of codigosPendentes) {
+    if (d.conferencia) break;
     if (ocupado.some((o) => retCruzaRet(cp.ret, o))) { rotulosOcultos++; continue; }
     ocupado.push(cp.ret);
     texto(c, cp.codigo, cp.lx, cp.ly, VERT_TAM, { cor: PRETO });
@@ -1020,6 +1055,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   }
 
   // ============================ BARRA LATERAL ============================
+  // Só existe no arranjo completo (A1/A3). No simples, cada seção abaixo se
+  // desliga e o que sobrevive — carimbo, planta de situação e os campos do selo
+  // — reaparece na FAIXA INFERIOR, logo depois desta seção.
   const sbTop = H - 20, sbBot = 20;
   // posse não leva quadro analítico — as demais seções ganham o espaço dele
   const alturas = posse
@@ -1028,7 +1066,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   let yCursor = sbTop;
 
   // ---- QUADRO ANALÍTICO (tabela com grade, colunas centradas) ----
-  if (!posse) {
+  if (!posse && !simples) {
     const h = (sbTop - sbBot) * alturas.quadro;
     const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "QUADRO ANALÍTICO");
     const heads = ["VÉRTICE", "LADO", "LONGITUDE", "LATITUDE", "AZIMUTE", "DIST.(m)", "ALTIT."];
@@ -1098,7 +1136,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   }
 
   // ---- PLANTA DE SITUAÇÃO (imagem de satélite enviada na geração) ----
-  {
+  if (!simples) {
     const h = (sbTop - sbBot) * alturas.situacao;
     const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "PLANTA DE SITUAÇÃO");
     if (d.satelite) {
@@ -1117,7 +1155,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   }
 
   // ---- CARIMBO DA EMPRESA (logo) ----
-  {
+  if (!simples) {
     const h = (sbTop - sbBot) * alturas.carimbo;
     const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "CARIMBO DA EMPRESA");
     if (d.logo) {
@@ -1136,7 +1174,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   }
 
   // ---- PLANIMÉTRICO ----
-  {
+  if (!simples) {
     const h = (sbTop - sbBot) * alturas.planimetrico;
     const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "PLANIMÉTRICO DO IMÓVEL GEORREFERENCIADO");
     const colEsq = sbX + 14, colDir = sbX + SB_W / 2 + 12;
@@ -1219,7 +1257,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   }
 
   // ---- RODAPÉ (escala/datum/folha) ----
-  {
+  if (!simples) {
     const h = (sbTop - sbBot) * alturas.rodape;
     caixa(c, sbX, yCursor - h, SB_W, h);
     const cw = SB_W / 4;
@@ -1254,6 +1292,66 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     linha(c, sbX, yCursor - h / 2, sbX + SB_W, yCursor - h / 2, 0.5);
   }
 
+  // ==================== FAIXA INFERIOR (arranjo simples) ====================
+  // O que a barra lateral tem de essencial, deitado no rodapé: carimbo e planta
+  // de situação lado a lado, e abaixo um selo com os seis campos que o modelo
+  // pede. Sem quadro analítico, sem planimétrico, sem selo de cartório — quem
+  // precisa desses recebe a folha do serviço completo.
+  if (simples) {
+    const x0 = 20, x1 = W - 20;
+    const meia = (x1 - x0) / 2;
+    const faixaY = 20 + SELO_H;
+
+    for (const [i, [titulo, arte]] of ([
+      ["CARIMBO DA EMPRESA", d.logo],
+      ["PLANTA DE SITUAÇÃO", d.satelite],
+    ] as const).entries()) {
+      const cx = x0 + i * meia;
+      const topoUtil = caixaTitulo(c, cx, faixaY, meia, FAIXA_H, titulo);
+      if (arte) {
+        const img = arte.tipo === "png" ? await pdf.embedPng(arte.bytes) : await pdf.embedJpg(arte.bytes);
+        // a logo respira dentro da célula; o satélite ocupa quase tudo
+        const folga = i === 0 ? 46 : 12;
+        const sc = Math.min((meia - folga * 2) / img.width, (topoUtil - faixaY - folga) / img.height);
+        page.drawImage(img, {
+          x: cx + (meia - img.width * sc) / 2,
+          y: faixaY + (topoUtil - faixaY - img.height * sc) / 2,
+          width: img.width * sc, height: img.height * sc,
+        });
+      } else {
+        texto(c, i === 0 ? "(envie a logo em Configurações)" : "(envie a imagem de satélite ao gerar a planta)",
+          cx + meia / 2, faixaY + FAIXA_H / 2, 20, { cor: CINZA, center: true });
+      }
+    }
+
+    // selo: dois campos por linha, três linhas
+    const campos: [string, string][] = [
+      ["PROPRIETÁRIO", d.proprietarios[0]?.nome || "—"],
+      ["RESPONSÁVEL TÉCNICO", d.rt.nome || "—"],
+      ["MUNICÍPIO", d.municipioUf],
+      ["ESCALA", `1:${fmtMilhar(escala)}`],
+      ["DATA", d.dataStr],
+      ["FOLHA", folha],
+    ];
+    const linhaH = SELO_H / 3;
+    caixa(c, x0, 20, x1 - x0, SELO_H);
+    for (const [i, [rot, val]] of campos.entries()) {
+      const col = i % 2, row = Math.floor(i / 2);
+      const cx = x0 + col * meia;
+      const cy = 20 + SELO_H - (row + 1) * linhaH;
+      if (col > 0) linha(c, cx, cy, cx, cy + linhaH, 0.5);
+      if (row > 0) linha(c, x0, cy + linhaH, x1, cy + linhaH, 0.5);
+      texto(c, `${rot}:`, cx + 10, cy + linhaH - 18, 16, { bold: true, cor: CINZA });
+      textoFit(c, val, cx + 20, cy + 10, 28, meia - 40);
+    }
+
+    // ÁREA TOTAL no canto do desenho, como no modelo
+    const total = ["AREA  TOTAL:", `${d.areaFmt} HECTARES`, `${d.tarefasFmt} TAREFAS`];
+    for (const [i, t] of total.entries()) {
+      texto(c, t, dArea.x + dArea.w - 16 - f.widthOfTextAtSize(t, 26), dArea.y + 76 - i * 32, 26);
+    }
+  }
+
   // ------------------- bloco de identificação de cada gleba -------------------
   //
   // Formato da planta de referência: matrícula/CNS, denominação com o nome da
@@ -1280,7 +1378,12 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       ? { x: anelGl.reduce((s, p) => s + p.x, 0) / anelGl.length, y: anelGl.reduce((s, p) => s + p.y, 0) / anelGl.length }
       : { x: sx / (3 * a2), y: sy / (3 * a2) };
 
-    const linhasId = [...gl.identificacao, `AREA:${gl.areaFmt} HA/ ${gl.tarefasFmt} TAREFAS`];
+    // No arranjo simples fica só a área: o modelo da conferência põe "2,8037 HA
+    // / 6,43 TAREFAS" dentro da gleba e mais nada — numa folha A4 o bloco de
+    // identificação inteiro cobriria o desenho.
+    const linhasId = simples
+      ? [`${gl.areaFmt} HA`, `${gl.tarefasFmt} TAREFAS`]
+      : [...gl.identificacao, `AREA:${gl.areaFmt} HA/ ${gl.tarefasFmt} TAREFAS`];
 
     let posto = false;
     for (const tam of [13, 11.5, 10, 8.5, 7]) {

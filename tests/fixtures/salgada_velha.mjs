@@ -101,7 +101,9 @@ export const MM = 2.834645669;
 export const FOLHAS_PT = {
   A1: [841 * MM, 594 * MM],
   A3: [420 * MM, 297 * MM],
-  A4: [297 * MM, 210 * MM],
+  // A4 é RETRATO: é a folha do arranjo simples da conferência de área, o único
+  // que não é o A1 reduzido. Ver LAYOUT SIMPLES em planta.ts.
+  A4: [210 * MM, 297 * MM],
 };
 
 /**
