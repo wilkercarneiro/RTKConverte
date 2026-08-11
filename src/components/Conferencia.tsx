@@ -293,7 +293,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         servico_id: servico.id, ordem: apos + 1, num_txt: null, rotulo_txt: null,
         e: null, n: null, h: Number(novoV.h.replace(",", ".")) || 0,
         sigma_pos: 0, sigma_h: Number(novoV.sigmaH.replace(",", ".")) || 0,
-        tipo: "V" as const, codigo: novoV.codigo, metodo: "PA1", inserido_manual: true,
+        // código digitado pelo operador: nunca é prévia, nem na conferência
+        tipo: "V" as const, codigo: novoV.codigo, codigo_provisorio: false, metodo: "PA1", inserido_manual: true,
         lat_gms: novoV.lat, lon_gms: novoV.lon,
         // V é ponto intermediário: nunca carrega confrontação
         descritivo: null, tipo_limite: null, eh_via: false,
@@ -741,7 +742,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       return {
         tom: "pronto",
         titulo: "Conferência concluída",
-        detalhe: "memorial e planta de prévia gerados — os códigos são provisórios e a numeração oficial não foi consumida",
+        detalhe: "memorial e planta de prévia gerados — os códigos saem com o prefixo do credenciado, mas a numeração oficial não foi consumida",
       };
     }
     if (!temSigef) {
@@ -1231,12 +1232,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
 
           <div className="grade">
             <label>Folha da planta
-              <select value={servico.folha_conferencia ?? "A4"}
+              <select value={servico.folha_conferencia ?? "A3"}
                 onChange={(e) => campo("folha_conferencia", e.target.value as Servico["folha_conferencia"])}>
-                <option value="A4">A4 (297×210 mm)</option>
                 <option value="A3">A3 (420×297 mm)</option>
+                <option value="A4">A4 (297×210 mm)</option>
               </select>
-              <small className="sub">vale na próxima geração dos documentos</small>
+              <small className="sub">padrão A3 · vale na próxima geração dos documentos</small>
             </label>
           </div>
 

@@ -116,6 +116,11 @@ export interface Vertice {
   sigma_h: number;
   tipo: "M" | "P" | "V";
   codigo: string | null;
+  /**
+   * Código exibido na prévia da conferência: tem o prefixo do credenciado, mas
+   * não foi alocado nos contadores. É refeito ao promover o serviço a completo.
+   */
+  codigo_provisorio?: boolean;
   metodo: string;
   inserido_manual: boolean;
   lat_gms: string;

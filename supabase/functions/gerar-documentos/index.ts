@@ -32,14 +32,22 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
 /**
- * Prefixo dos códigos de uma conferência de área.
+ * Prefixo legado dos códigos de conferência.
  *
- * Precisa ser reconhecível a olho nu no documento: quem receber um memorial com
- * "PROV-M-0001" não confunde com o oficial "DSBN-M-4542". É também o que permite
- * detectar, na promoção a serviço completo, quais códigos têm de ser refeitos.
+ * A conferência já saiu com "PROV-M-0001" no lugar do prefixo do credenciado.
+ * Ficou ilegível para quem recebe a prévia — o cliente quer ler o código real da
+ * peça — então hoje ela usa o prefixo oficial e marca a linha com
+ * `codigo_provisorio`. Este prefixo continua reconhecido para que serviços
+ * gerados antes da mudança ainda sejam realocados ao virar serviço completo.
  */
 const PREFIXO_PROVISORIO = "PROV";
-const ehCodigoProvisorio = (c: string | null) => !!c && c.startsWith(`${PREFIXO_PROVISORIO}-`);
+
+/**
+ * Um código que NÃO vale para protocolar: ou está marcado na coluna, ou carrega
+ * o prefixo legado. Um código provisório num serviço completo vale como ausente.
+ */
+const ehCodigoProvisorio = (v: { codigo: string | null; codigo_provisorio?: boolean | null }) =>
+  !!v.codigo_provisorio || (!!v.codigo && v.codigo.startsWith(`${PREFIXO_PROVISORIO}-`));
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -87,23 +95,33 @@ Deno.serve(async (req) => {
     // Conferência de área é PRÉVIA: não vai ao SIGEF, então não pode queimar a
     // numeração oficial do credenciado. Os contadores do Anexo A só andam para
     // frente — código consumido numa conferência que não fecha é código perdido.
-    // Por isso a conferência aloca com prefixo próprio e contadores locais, sem
-    // encostar na tabela `credenciados`. Ao promover a conferência a serviço
-    // completo, os códigos provisórios são limpos e a alocação oficial roda.
+    //
+    // O que a conferência NÃO pode é sair sem o prefixo do credenciado: a peça
+    // circula com o cliente e o código precisa ser o mesmo que ele vai ler
+    // depois. Então ela numera a partir dos contadores ATUAIS do credenciado
+    // (leitura pura, sem `alocar_contadores`) e marca cada linha em
+    // `codigo_provisorio`. É essa marca — não mais o prefixo — que manda os
+    // códigos serem refeitos quando a conferência vira serviço completo.
     const conferencia = servico.modalidade === "conferencia";
-    const prefixo = conferencia ? PREFIXO_PROVISORIO : cred.prefixo_vertice;
+    const prefixo = cred.prefixo_vertice;
 
     // PROMOÇÃO a serviço completo: uma conferência que virou serviço de verdade
-    // chega aqui com todos os vértices já codificados — em PROV. Sem zerar esses
-    // códigos, `precisaAlocar` daria falso e o memorial oficial sairia numerado
-    // como prévia. Um código provisório num serviço completo vale como ausente.
+    // chega aqui com todos os vértices já codificados, mas com códigos que nunca
+    // foram alocados. Sem zerá-los, `precisaAlocar` daria falso e o memorial
+    // oficial sairia com uma numeração que o credenciado não reservou.
     if (!conferencia) {
-      for (const v of vertRows) if (ehCodigoProvisorio(v.codigo)) v.codigo = null;
+      for (const v of vertRows) if (ehCodigoProvisorio(v)) v.codigo = null;
     }
 
     // alocação de códigos: incrementa contadores apenas quando há vértice sem código
     const precisaAlocar = vertRows.some((v: { codigo: string | null; inserido_manual: boolean }) => !v.codigo && !v.inserido_manual);
     let contadores = { M: 0, P: 0, V: 0 };
+    // Prévia: parte de onde a numeração oficial está hoje, sem movê-la. Duas
+    // conferências abertas ao mesmo tempo mostram os mesmos números — é o preço
+    // de não queimar numeração, e o selo PRÉVIA no documento diz isso.
+    if (conferencia) {
+      contadores = { M: cred.contador_m ?? 0, P: cred.contador_p ?? 0, V: cred.contador_v ?? 0 };
+    }
     if (precisaAlocar && !conferencia) {
       const consumo = { M: 0, P: 0, V: 0 };
       for (const v of vertRows) if (!v.inserido_manual || !v.codigo) consumo[v.tipo as "M" | "P" | "V"]++;
@@ -148,11 +166,23 @@ Deno.serve(async (req) => {
     };
     const calc = montarServico(input, proj4);
 
-    // persiste códigos e coordenadas canônicas
+    // Persiste códigos e a marca de prévia. A marca é gravada SEMPRE que o
+    // serviço passa por aqui — inclusive ao promover a conferência, onde ela
+    // precisa cair para false, senão a próxima geração jogaria fora códigos
+    // oficiais recém-alocados.
+    //
+    // Vértice inserido à mão fica de fora da marca: o código dele foi digitado
+    // pelo operador, não tirado do contador, e apagá-lo na promoção obrigaria a
+    // redigitar o que já estava certo.
+    const manuais = new Set(vertRows.filter((v) => v.inserido_manual).map((v) => v.ordem));
     if (precisaAlocar) {
       for (const v of calc.ring) {
-        await supa.from("vertices").update({ codigo: v.codigo }).eq("servico_id", servico_id).eq("ordem", v.ordem);
+        await supa.from("vertices")
+          .update({ codigo: v.codigo, codigo_provisorio: conferencia && !manuais.has(v.ordem) })
+          .eq("servico_id", servico_id).eq("ordem", v.ordem);
       }
+    } else if (!conferencia) {
+      await supa.from("vertices").update({ codigo_provisorio: false }).eq("servico_id", servico_id);
     }
 
     // ------------------------- glebas -------------------------
@@ -191,6 +221,9 @@ Deno.serve(async (req) => {
       }];
 
     // ------------------------- DOCX -------------------------
+    // Avisos de todo o percurso: o DOCX já tem o seu (timbre ausente) e a planta
+    // acrescenta os dela mais abaixo.
+    const avisosGeracao = [...conf.avisos];
     const dadosMemorial: DadosMemorial = {
       imovel: servico.denominacao ?? "",
       proprietario: servico.detentor_nome ?? "",
@@ -213,18 +246,28 @@ Deno.serve(async (req) => {
       segs: calc.segs,
       confrontantesDescritivos: calc.trechosOrdenados.map((t) => t.descritivo).filter((d) => d.trim() !== ""),
     };
+    // O memorial sai TIMBRADO: a logo da empresa entra atrás do texto, em todas
+    // as páginas. Com a logo em mãos o pacote é montado inteiro aqui em vez de
+    // sair do memorial-template.docx do Storage — o timbre exige um cabeçalho,
+    // uma parte de mídia, uma relação e um content-type coerentes entre si, e
+    // costurar isso dentro de um .docx de origem desconhecida quebra ao primeiro
+    // template que alguém trocar. Sem logo, o caminho antigo continua valendo.
+    const logo = await carregarLogoPlanta(supa);
     const zipDocx = new JSZip();
-    const tplDocx = await supa.storage.from("templates").download("memorial-template.docx");
-    if (!tplDocx.error && tplDocx.data) {
+    const tplDocx = logo ? null : await supa.storage.from("templates").download("memorial-template.docx");
+    if (tplDocx && !tplDocx.error && tplDocx.data) {
       const tz = await JSZip.loadAsync(await tplDocx.data.arrayBuffer());
       for (const name of Object.keys(tz.files)) {
         if (tz.files[name].dir) continue;
         zipDocx.file(name, await tz.file(name)!.async("uint8array"));
       }
     } else {
-      for (const [path, content] of buildDocxSkeleton()) zipDocx.file(path, content);
+      for (const [path, content] of buildDocxSkeleton(logo)) zipDocx.file(path, content);
     }
-    zipDocx.file("word/document.xml", buildDocumentXml(dadosMemorial));
+    zipDocx.file("word/document.xml", buildDocumentXml(dadosMemorial, !!logo));
+    if (!logo) {
+      avisosGeracao.push("Memorial gerado sem timbre: a logo da empresa não está no Storage (templates/logo-empresa.png ou .jpg). Envie-a em Configurações.");
+    }
     const docxBuf = await zipDocx.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 
     // ------------------------- ODS -------------------------
@@ -258,15 +301,14 @@ Deno.serve(async (req) => {
     // Mesmo padrão de folha da planta pós-SIGEF (A1 matrícula / A3 posse), mas
     // desenhada com a geometria que acabou de gerar o memorial e a planilha.
     // Uma falha aqui não derruba o DOCX/ODS: vira aviso e os dois seguem.
-    const avisosGeracao = [...conf.avisos];
     let plantaBuf: Uint8Array | null = null;
     const posse = servico.tipo_imovel === "posse";
 
-    // A conferência circula impressa em mesa, não em prancheta: sai em A4 por
+    // A conferência circula impressa em mesa, não em prancheta: sai em A3 por
     // padrão, ou na folha que o operador escolheu na tela. Serviço completo não
-    // passa `folha` e cai na regra de sempre.
+    // passa `folha` e cai na regra de sempre (posse → A3, matrícula → A1).
     const folha: Folha | undefined = conferencia
-      ? ((["A1", "A3", "A4"].includes(servico.folha_conferencia ?? "") ? servico.folha_conferencia : "A4") as Folha)
+      ? ((["A1", "A3", "A4"].includes(servico.folha_conferencia ?? "") ? servico.folha_conferencia : "A3") as Folha)
       : undefined;
     try {
       const dadosPlanta = montarDadosPlanta({
@@ -276,7 +318,7 @@ Deno.serve(async (req) => {
         fuso: servico.fuso_utm,
         trt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
         dataStr: dataHojeBR(),
-        logo: await carregarLogoPlanta(supa),
+        logo,
         satelite: satelite_base64
           ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
           : null,
@@ -331,8 +373,8 @@ Deno.serve(async (req) => {
     }
     if (conferencia) {
       avisosGeracao.push(
-        `Conferência de área: os vértices saíram com códigos provisórios (${PREFIXO_PROVISORIO}-…) e a numeração oficial do credenciado NÃO foi consumida. ` +
-        "Ao converter em serviço completo, os códigos oficiais são alocados na próxima geração.",
+        `Conferência de área: os vértices saíram com o código do credenciado (${prefixo}-…), mas a numeração oficial NÃO foi consumida — ` +
+        "os números partem do contador atual e valem como prévia. Ao converter em serviço completo, os códigos definitivos são alocados na próxima geração.",
       );
     }
     await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
