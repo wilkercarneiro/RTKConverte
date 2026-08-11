@@ -82,6 +82,16 @@ export interface DadosPlanta {
    * confrontantes ficam — é o que o cliente confere na planta.
    */
   conferencia?: boolean;
+  /**
+   * Campos que a prévia pode omitir. Ausente ou `true` = sai como sempre saiu.
+   *
+   * Uma conferência de área acontece ANTES de o imóvel ter documento: acontece
+   * de não haver matrícula nem posse declarada, de a fazenda ainda não ter nome
+   * e de o TRT não ter sido emitido. Imprimir "Matrícula do Imóvel:" em branco é
+   * pior do que não imprimir — parece dado perdido. Por isso quem decide é o
+   * operador, campo a campo, e não uma regra derivada do cadastro.
+   */
+  exibir?: { matricula?: boolean; denominacao?: boolean; trt?: boolean };
   glebas?: GlebaPlanta[];           // sub-polígonos internos; ausente/vazio = nada muda
   matricula: string;
   cns: string;
@@ -476,6 +486,13 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // faixa com o carimbo da empresa, a planta de situação e um selo pequeno.
   // O A3 e o A1 seguem o arranjo do serviço completo, sem uma linha de diferença.
   const simples = folha === "A4";
+  // Omitir é sempre escolha explícita: campo ausente vale como "mostra", para
+  // que nenhuma planta antiga mude de conteúdo por causa de um campo novo.
+  const exibe = {
+    matricula: d.exibir?.matricula !== false,
+    denominacao: d.exibir?.denominacao !== false,
+    trt: d.exibir?.trt !== false,
+  };
   const [W, H] = simples ? TELA_RETRATO : TELA_PAISAGEM;
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([W, H]);
@@ -738,8 +755,8 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // cobriria o desenho. Com glebas ele some de vez — cada gleba mostra a sua
   // área e o total fica no canto, como no modelo.
   const centroLinhas = (simples ? (glebas.length ? [] : [`${d.areaFmt} HA`, `${d.tarefasFmt} TAREFAS`]) : [
-    posse ? "(POSSE)" : `(MATR.${d.matricula}/CNS.${d.cns})`,
-    d.denominacao,
+    ...(exibe.matricula ? [posse ? "(POSSE)" : `(MATR.${d.matricula}/CNS.${d.cns})`] : []),
+    ...(exibe.denominacao ? [d.denominacao] : []),
     ...d.proprietarios.flatMap((p) => {
       const res = [p.nome, `CPF:${p.cpf}`];
       if (posse && p.rg) res.push(`RG:${p.rg}`);
@@ -1191,14 +1208,24 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       texto(c, rot, x, y, 13, { bold: true, cor: CINZA });
       textoFit(c, val, x, y - 22, 21, colW);
     };
-    campo("Denominação:", d.denominacao.toUpperCase(), colEsq, py);
+    // Cada campo omitido não deixa buraco: some da lista e os de baixo sobem.
+    // A coluna da direita mede a partir do topo fixo, não do cursor da esquerda
+    // — senão esconder a denominação empurraria os campos do imóvel para baixo.
+    const pyTopo = py;
+    if (exibe.denominacao) { campo("Denominação:", d.denominacao.toUpperCase(), colEsq, pyTopo); py -= 50; }
     // coluna direita: TRT + campos do imóvel (na posse não há matrícula nem
     // cartório: o campo indica POSSE e o CNS sai)
-    const camposDir: [string, string][] = posse
-      ? [["TRT:", d.trt], ["Matrícula do Imóvel:", "POSSE"], ["Código INCRA:", d.sncr], ["Município/UF:", d.municipioUf.toUpperCase()]]
-      : [["TRT:", d.trt], ["Matrícula do Imóvel:", d.matricula], ["Código do Cartório (CNS):", d.cns], ["Código INCRA:", d.sncr], ["Município/UF:", d.municipioUf.toUpperCase()]];
-    for (const [i, [rot, val]] of camposDir.entries()) campo(rot, val, colDir, py - i * 50);
-    py -= 50;
+    const camposDir: [string, string][] = [
+      ...(exibe.trt ? [["TRT:", d.trt] as [string, string]] : []),
+      ...(exibe.matricula
+        ? posse
+          ? [["Matrícula do Imóvel:", "POSSE"] as [string, string]]
+          : [["Matrícula do Imóvel:", d.matricula], ["Código do Cartório (CNS):", d.cns]] as [string, string][]
+        : []),
+      ["Código INCRA:", d.sncr],
+      ["Município/UF:", d.municipioUf.toUpperCase()],
+    ];
+    for (const [i, [rot, val]] of camposDir.entries()) campo(rot, val, colDir, pyTopo - i * 50);
     texto(c, posse ? "Posseiro(s):" : "Proprietário(s):", colEsq, py, 13, { bold: true, cor: CINZA });
     let ppy = py - 24;
     for (const p of d.proprietarios) {
@@ -1222,7 +1249,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     textoFit(c, d.rt.nome.toUpperCase(), colEsq, bandTop - 58, 26, rtW, { bold: true });
     textoFit(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, bandTop - 84, 16, rtW);
     textoFit(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}`, colEsq, bandTop - 108, 16, rtW);
-    textoFit(c, `TRT: ${d.trt}`, colEsq, bandTop - 132, 16, rtW);
+    if (exibe.trt) textoFit(c, `TRT: ${d.trt}`, colEsq, bandTop - 132, 16, rtW);
     // quadros de assinatura: cartório (matrícula) ou posseiro (posse),
     // empilhados e centralizados verticalmente na metade direita da faixa
     const assinantes = d.proprietarios.slice(0, 2);
@@ -1459,7 +1486,8 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       texto(c, nome, lx + 46, lyy, 9.5);
       lyy -= 20;
     }
-    texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 9.5);
+    // a abreviatura só se explica se ela aparecer em algum lugar da folha
+    if (exibe.matricula) texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 9.5);
   }
 
   if (diag) {

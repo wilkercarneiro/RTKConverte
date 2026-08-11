@@ -62,6 +62,13 @@ export interface Servico {
    * Não se aplica ao serviço completo, que segue posse → A3 / matrícula → A1.
    */
   folha_conferencia: Folha | null;
+  /**
+   * Campos que a planta da CONFERÊNCIA pode omitir — a prévia acontece antes de
+   * o imóvel ter documento, nome ou TRT. Não têm efeito fora da conferência.
+   */
+  conf_exibir_matricula: boolean;
+  conf_exibir_denominacao: boolean;
+  conf_exibir_trt: boolean;
   cliente_id?: string | null;
   status: "rascunho" | "gerado";
   nome_arquivo_txt: string | null;

@@ -184,6 +184,8 @@ export interface ContextoPlanta {
   folha?: Folha;
   /** Prévia de conferência: tira os códigos dos vértices do desenho. */
   conferencia?: boolean;
+  /** Campos que a prévia pode omitir. Ausente = a planta sai completa. */
+  exibir?: DadosPlanta["exibir"];
   /** Sub-polígonos internos. Ausente/vazio = a planta sai como sempre saiu. */
   glebas?: GlebaPlanta[];
 }
@@ -239,6 +241,7 @@ export function montarDadosPlanta(ctx: ContextoPlanta): DadosPlanta {
     // completo continuar idêntica à de antes destes dois campos existirem.
     folha: ctx.folha,
     conferencia: ctx.conferencia,
+    exibir: ctx.exibir,
     glebas: ctx.glebas?.length ? ctx.glebas : undefined,
   };
 }

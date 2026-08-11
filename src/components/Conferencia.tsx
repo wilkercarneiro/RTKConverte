@@ -1241,6 +1241,26 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             </label>
           </div>
 
+          {/* A prévia acontece antes de o imóvel ter documento: pode não haver
+              matrícula nem posse, a área pode não ter nome e o TRT pode não ter
+              sido emitido. Campo em branco na planta parece dado perdido — aqui
+              o operador diz o que existe. Só vale na conferência. */}
+          <fieldset style={{ border: "1px solid var(--borda)", borderRadius: 8, padding: "10px 14px", marginTop: 12 }}>
+            <legend className="sub" style={{ padding: "0 6px" }}>O que sai na planta</legend>
+            {([
+              ["conf_exibir_matricula", "Matrícula / posse", "o bloco (MATR./CNS.) ou (POSSE) e o campo Matrícula do Imóvel"],
+              ["conf_exibir_denominacao", "Nome da fazenda", "a denominação no desenho e no planimétrico"],
+              ["conf_exibir_trt", "TRT", "o número do termo de responsabilidade técnica"],
+            ] as const).map(([campoNome, rotulo, dica]) => (
+              <label key={campoNome} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 6 }}>
+                <input type="checkbox" checked={servico[campoNome] !== false}
+                  onChange={(e) => campo(campoNome, e.target.checked)} />
+                <b>{rotulo}</b>
+                <small className="sub">— {dica}</small>
+              </label>
+            ))}
+          </fieldset>
+
           <div style={{ marginTop: 12 }}>
             <button onClick={gerarTabular} disabled={!docsProntos || gerandoTabular}>
               {gerandoTabular ? <><span className="spinner" /> Gerando…</> : "📄 Gerar Memorial Tabular"}

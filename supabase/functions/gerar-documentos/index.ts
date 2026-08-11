@@ -331,6 +331,17 @@ Deno.serve(async (req) => {
           ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
           : null,
         folha, glebas, conferencia,
+        // Só a prévia pode esconder campo: num serviço que vai ao SIGEF a
+        // matrícula, a denominação e o TRT são obrigatórios, e deixar as
+        // chaves passarem para lá abriria a porta para uma planta oficial
+        // incompleta sair sem ninguém notar.
+        exibir: conferencia
+          ? {
+            matricula: servico.conf_exibir_matricula !== false,
+            denominacao: servico.conf_exibir_denominacao !== false,
+            trt: servico.conf_exibir_trt !== false,
+          }
+          : undefined,
       });
       if (!dadosPlanta.satelite) {
         avisosGeracao.push("Planta gerada sem imagem de satélite — o quadro PLANTA DE SITUAÇÃO ficou vazio. Envie a imagem e gere os documentos de novo.");

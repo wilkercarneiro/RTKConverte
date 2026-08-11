@@ -89,6 +89,44 @@ test("fora da conferência nada muda: o A1 continua com os códigos no desenho",
   assert.match(semQuadro, /DSBN-/);
 });
 
+test("a prévia pode omitir matrícula, nome da fazenda e TRT", async () => {
+  const g = geo();
+  const completa = await textoDe(await planta(g, { folha: "A3", conferencia: true }));
+  // com tudo à vista, os três aparecem — é o ponto de partida da comparação
+  assert.match(completa, /Matrícula do Imóvel:/);
+  assert.match(completa, /FAZENDA SALGADA VELHA/);
+  assert.match(completa, /TRT:/);
+
+  const enxuta = await textoDe(await planta(g, {
+    folha: "A3", conferencia: true,
+    exibir: { matricula: false, denominacao: false, trt: false },
+  }));
+  assert.doesNotMatch(enxuta, /Matrícula do Imóvel:/);
+  assert.doesNotMatch(enxuta, /Código do Cartório/);
+  assert.doesNotMatch(enxuta, /MATR\. = MATRÍCULA/);
+  assert.doesNotMatch(enxuta, /FAZENDA SALGADA VELHA/);
+  assert.doesNotMatch(enxuta, /TRT:/);
+  // o que não foi desmarcado continua: esconder um campo não pode levar outro
+  assert.match(enxuta, /Código INCRA:/);
+  assert.match(enxuta, /Município\/UF:/);
+  assert.match(enxuta, /RESPONSÁVEL TÉCNICO/);
+});
+
+test("cada campo é independente dos outros", async () => {
+  const g = geo();
+  const soSemTrt = await textoDe(await planta(g, { folha: "A3", conferencia: true, exibir: { trt: false } }));
+  assert.doesNotMatch(soSemTrt, /TRT:/);
+  assert.match(soSemTrt, /Matrícula do Imóvel:/);
+  assert.match(soSemTrt, /FAZENDA SALGADA VELHA/);
+});
+
+test("sem `exibir`, a planta sai completa — inclusive fora da conferência", async () => {
+  const t = await textoDe(await planta(geo(), {}));
+  assert.match(t, /Matrícula do Imóvel:/);
+  assert.match(t, /TRT:/);
+  assert.match(t, /FAZENDA SALGADA VELHA/);
+});
+
 test("com glebas, o A4 mostra a área de cada uma e o total no canto", async () => {
   const g = geo();
   const glebas = [glebaDe(g, [0, 1, 2, 3], "GLEBA 1"), glebaDe(g, [10, 11, 12, 13, 14], "GLEBA 2")];
