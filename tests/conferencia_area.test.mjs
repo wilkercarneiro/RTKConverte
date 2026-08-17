@@ -80,20 +80,59 @@ test("azimute e distância batem com os do memorial descritivo", () => {
   });
 });
 
-test("códigos provisórios não colidem com os oficiais", () => {
-  // A conferência aloca com prefixo PROV e não toca nos contadores do
-  // credenciado; a promoção a serviço completo detecta esses códigos pelo
-  // prefixo e refaz a numeração. Ver PREFIXO_PROVISORIO em gerar-documentos.
-  const prov = montarServico({ ...entrada({ comCodigo: false }), prefixo: "PROV" }, proj4);
+test("a prévia numera P-1, P-2… e nunca com o prefixo do credenciado", () => {
+  // O código da conferência não pode ter cara de oficial: quem recebe a prévia
+  // lia "DSBN-P-14300" e tratava o marco como já registrado. Ver
+  // `codigoConferencia` em geo.ts.
+  const previa = montarServico({ ...entrada({ comCodigo: false }), estiloCodigo: "conferencia" }, proj4);
   const oficial = montarServico({ ...entrada({ comCodigo: false }), prefixo: "DSBN" }, proj4);
 
-  assert.ok(prov.ring.every((v) => v.codigo.startsWith("PROV-")));
+  assert.ok(previa.ring.every((v) => /^[MPV]-\d+$/.test(v.codigo)), "todo código é TIPO-N");
+  assert.ok(previa.ring.every((v) => !v.codigo.includes("DSBN")), "nenhum prefixo de credenciado");
   assert.ok(oficial.ring.every((v) => v.codigo.startsWith("DSBN-")));
   assert.equal(
-    prov.ring.filter((v) => oficial.ring.some((o) => o.codigo === v.codigo)).length,
+    previa.ring.filter((v) => oficial.ring.some((o) => o.codigo === v.codigo)).length,
     0,
-    "nenhum código provisório pode coincidir com um oficial",
+    "nenhum código de prévia pode coincidir com um oficial",
   );
-  // a geometria é a mesma: o prefixo não muda o cálculo
-  assert.equal(prov.areaHa, oficial.areaHa);
+  // a geometria é a mesma: o formato do código não muda o cálculo
+  assert.equal(previa.areaHa, oficial.areaHa);
+  assert.equal(previa.perimetroM, oficial.perimetroM);
+});
+
+test("a numeração da prévia começa em 1 por tipo, na ordem do anel", () => {
+  const previa = montarServico({ ...entrada({ comCodigo: false }), estiloCodigo: "conferencia" }, proj4);
+  const seq = { M: [], P: [], V: [] };
+  for (const v of previa.ring) {
+    const [tipo, n] = v.codigo.split("-");
+    seq[tipo].push(Number(n));
+  }
+  for (const tipo of ["M", "P"]) {
+    assert.deepEqual(
+      seq[tipo],
+      seq[tipo].map((_, i) => i + 1),
+      `${tipo} numerado de 1 a ${seq[tipo].length} sem buracos`,
+    );
+  }
+  assert.equal(previa.ring[0].codigo, `${previa.ring[0].tipo}-1`, "o vértice inicial é o 1 do seu tipo");
+});
+
+test("os contadores do credenciado não vazam para a prévia", () => {
+  // Chamador que passe contadores altos (a leitura dos contadores oficiais, como
+  // o gerar-documentos fazia) não pode mover a numeração da prévia.
+  const comContador = montarServico(
+    { ...entrada({ comCodigo: false, contadores: { M: 4558, P: 14444, V: 758 } }), estiloCodigo: "conferencia" },
+    proj4,
+  );
+  const semContador = montarServico({ ...entrada({ comCodigo: false }), estiloCodigo: "conferencia" }, proj4);
+  assert.deepEqual(comContador.ring.map((v) => v.codigo), semContador.ring.map((v) => v.codigo));
+});
+
+test("o serviço completo continua com o código oficial, intacto", () => {
+  // Lacre: a mudança é EXCLUSIVA da conferência. Sem `estiloCodigo`, nada muda.
+  const base = { M: 4558, P: 14444, V: 758 };
+  const oficial = montarServico({ ...entrada({ comCodigo: false }), contadores: base }, proj4);
+  const t0 = oficial.ring[0].tipo;
+  assert.equal(oficial.ring[0].codigo, `DSBN-${t0}-${base[t0]}`, "continua partindo do contador do credenciado");
+  assert.ok(oficial.ring.every((v) => /^DSBN-[MPV]-\d{4,}$/.test(v.codigo)));
 });

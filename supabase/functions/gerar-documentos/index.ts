@@ -11,6 +11,7 @@ import proj4mod from "proj4";
 import JSZip from "jszip";
 import { montarServico, validarConfrontacoes } from "../_shared/servico.ts";
 import type { ServicoInput, VerticeServico } from "../_shared/servico.ts";
+import { ehCodigoDeConferencia } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { buildDocumentXml, buildDocxSkeleton, extrairTimbre } from "../_shared/docx.ts";
 import type { TimbreModelo } from "../_shared/docx.ts";
@@ -37,20 +38,23 @@ const json = (body: unknown, status = 200) =>
 /**
  * Prefixo legado dos códigos de conferência.
  *
- * A conferência já saiu com "PROV-M-0001" no lugar do prefixo do credenciado.
- * Ficou ilegível para quem recebe a prévia — o cliente quer ler o código real da
- * peça — então hoje ela usa o prefixo oficial e marca a linha com
- * `codigo_provisorio`. Este prefixo continua reconhecido para que serviços
- * gerados antes da mudança ainda sejam realocados ao virar serviço completo.
+ * A conferência já saiu com "PROV-M-0001", depois com o prefixo oficial do
+ * credenciado ("DSBN-P-14300") e a marca `codigo_provisorio`. As duas formas
+ * tinham o mesmo defeito: um código com cara de oficial numa peça que não vale
+ * para protocolar. Hoje a prévia numera `P-1`, `P-2` (ver `codigoConferencia`).
+ * Os formatos antigos continuam reconhecidos aqui para que serviços gerados
+ * antes da mudança sejam renumerados na próxima geração.
  */
 const PREFIXO_PROVISORIO = "PROV";
 
 /**
- * Um código que NÃO vale para protocolar: ou está marcado na coluna, ou carrega
- * o prefixo legado. Um código provisório num serviço completo vale como ausente.
+ * Um código que NÃO vale para protocolar: está marcado na coluna, carrega o
+ * prefixo legado ou é do formato da prévia. Num serviço completo, um código
+ * assim vale como ausente — a alocação oficial o substitui.
  */
 const ehCodigoProvisorio = (v: { codigo: string | null; codigo_provisorio?: boolean | null }) =>
-  !!v.codigo_provisorio || (!!v.codigo && v.codigo.startsWith(`${PREFIXO_PROVISORIO}-`));
+  !!v.codigo_provisorio || ehCodigoDeConferencia(v.codigo) ||
+  (!!v.codigo && v.codigo.startsWith(`${PREFIXO_PROVISORIO}-`));
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -99,12 +103,12 @@ Deno.serve(async (req) => {
     // numeração oficial do credenciado. Os contadores do Anexo A só andam para
     // frente — código consumido numa conferência que não fecha é código perdido.
     //
-    // O que a conferência NÃO pode é sair sem o prefixo do credenciado: a peça
-    // circula com o cliente e o código precisa ser o mesmo que ele vai ler
-    // depois. Então ela numera a partir dos contadores ATUAIS do credenciado
-    // (leitura pura, sem `alocar_contadores`) e marca cada linha em
-    // `codigo_provisorio`. É essa marca — não mais o prefixo — que manda os
-    // códigos serem refeitos quando a conferência vira serviço completo.
+    // Ela numera do zero, no formato da prévia: P-1, P-2, M-1 (`codigoConferencia`).
+    // Sair com o prefixo do credenciado era pior do que não ter código nenhum —
+    // o cliente lia "DSBN-P-14300" numa peça que não vale para protocolar e não
+    // tinha como saber disso. Cada linha continua marcada em `codigo_provisorio`,
+    // e é essa marca que manda os códigos serem refeitos quando a conferência
+    // vira serviço completo.
     const conferencia = servico.modalidade === "conferencia";
     const prefixo = cred.prefixo_vertice;
 
@@ -114,25 +118,22 @@ Deno.serve(async (req) => {
     // oficial sairia com uma numeração que o credenciado não reservou.
     //
     // A conferência faz a sua própria limpeza: uma prévia gerada antes desta
-    // mudança carrega códigos "PROV-…", e como regerar reaproveita o que já tem
-    // código, o prefixo legado ficaria preso ao serviço para sempre. Zerar aqui
-    // faz a próxima geração renumerar com o prefixo do credenciado.
+    // mudança carrega códigos "PROV-…" ou "DSBN-…", e como regerar reaproveita o
+    // que já tem código, o formato antigo ficaria preso ao serviço para sempre.
+    // Zerar aqui faz a próxima geração renumerar no formato da prévia.
     for (const v of vertRows) {
       if (v.inserido_manual) continue;   // código digitado pelo operador, não alocado
-      if (!conferencia ? ehCodigoProvisorio(v) : v.codigo?.startsWith(`${PREFIXO_PROVISORIO}-`)) {
+      if (conferencia ? !ehCodigoDeConferencia(v.codigo) : ehCodigoProvisorio(v)) {
         v.codigo = null;
       }
     }
 
     // alocação de códigos: incrementa contadores apenas quando há vértice sem código
     const precisaAlocar = vertRows.some((v: { codigo: string | null; inserido_manual: boolean }) => !v.codigo && !v.inserido_manual);
+    // Prévia: os contadores do credenciado não entram na conta — `alocarCodigos`
+    // numera do 1 no estilo "conferencia". Duas conferências diferentes mostram
+    // os mesmos números de propósito: o número é a posição no desenho.
     let contadores = { M: 0, P: 0, V: 0 };
-    // Prévia: parte de onde a numeração oficial está hoje, sem movê-la. Duas
-    // conferências abertas ao mesmo tempo mostram os mesmos números — é o preço
-    // de não queimar numeração, e o selo PRÉVIA no documento diz isso.
-    if (conferencia) {
-      contadores = { M: cred.contador_m ?? 0, P: cred.contador_p ?? 0, V: cred.contador_v ?? 0 };
-    }
     if (precisaAlocar && !conferencia) {
       const consumo = { M: 0, P: 0, V: 0 };
       for (const v of vertRows) if (!v.inserido_manual || !v.codigo) consumo[v.tipo as "M" | "P" | "V"]++;
@@ -173,6 +174,7 @@ Deno.serve(async (req) => {
       verticeInicialOrdem: servico.vertice_inicial ?? 0,
       prefixo,
       contadores,
+      estiloCodigo: conferencia ? "conferencia" : "oficial",
       vertices,
     };
     const calc = montarServico(input, proj4);

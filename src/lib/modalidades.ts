@@ -45,7 +45,7 @@ export const SERVICOS: DefinicaoServico[] = [
     chave: "conferencia",
     titulo: "Conferência de área",
     icone: "📐",
-    resumo: "Prévia de área e perímetro, sem passar pelo SIGEF. Os vértices saem com o código do credenciado, mas a numeração oficial não é consumida.",
+    resumo: "Prévia de área e perímetro, sem passar pelo SIGEF. Os pontos saem numerados P-1, P-2…, sem consumir a numeração oficial do credenciado.",
     requisitos: ["TXT do levantamento", "documentos do proprietário", "confrontantes", "imagem de satélite"],
     entrega: ["Memorial Descritivo timbrado", "Memorial Tabular (opcional)", "Planta A3 (ou A4)"],
     cta: "Enviar TXT",
@@ -103,3 +103,40 @@ export const rotuloCurto: Record<ChaveServico, string> = {
  * não exista uma segunda definição de "até onde vai a conferência".
  */
 export const vaiAoSigef = (s: Pick<Servico, "modalidade">): boolean => s.modalidade !== "conferencia";
+
+// ---------------------------------------------------------------------------
+// Situação do imóvel na CONFERÊNCIA: matrícula, posse ou ainda sem documento
+// ---------------------------------------------------------------------------
+//
+// Outro mapeamento tela ↔ colunas, e pelo mesmo motivo do resto deste arquivo:
+// a pergunta é UMA ("o imóvel tem matrícula, é posse, ou ainda não tem nada?"),
+// mas no banco são duas colunas — `tipo_imovel` diz o quê, `conf_exibir_matricula`
+// diz se a planta imprime. Espalhar essa tradução pela tela é o caminho para a
+// planta sair com "(MATR./CNS.)" em imóvel de posse.
+//
+// São três estados, não dois: a prévia costuma acontecer antes de o imóvel ter
+// documento, e "Matrícula do Imóvel:" em branco na planta parece dado perdido.
+
+export type SituacaoImovel = "matricula" | "posse" | "nao_informar";
+
+/** Qual das três o serviço representa hoje. Matrícula é o padrão: é o que a
+ *  planta já assumia com `tipo_imovel` nulo. */
+export function situacaoDoImovel(
+  s: Pick<Servico, "tipo_imovel" | "conf_exibir_matricula">,
+): SituacaoImovel {
+  if (s.conf_exibir_matricula === false) return "nao_informar";
+  return s.tipo_imovel === "posse" ? "posse" : "matricula";
+}
+
+/** As colunas que a escolha grava. `matricula` e `cns` NÃO são apagados aqui:
+ *  trocar por engano e voltar não pode custar a redigitação de dois campos. */
+export function camposDaSituacao(v: SituacaoImovel): Pick<Servico, "tipo_imovel" | "conf_exibir_matricula"> {
+  return {
+    tipo_imovel: v === "posse" ? "posse" : "matricula",
+    conf_exibir_matricula: v !== "nao_informar",
+  };
+}
+
+/** A situação pede matrícula e CNS? Só quem tem matrícula — pedir cartório a um
+ *  posseiro é pedir um dado que não existe. */
+export const pedeMatricula = (v: SituacaoImovel): boolean => v === "matricula";

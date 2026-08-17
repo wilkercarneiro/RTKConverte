@@ -6,7 +6,10 @@
 // aparecer como serviço que vai ao SIGEF. Estes testes lacram as duas direções.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SERVICOS, chaveDoServico, definicaoDe, rotuloCurto, vaiAoSigef } from "../src/lib/modalidades.ts";
+import {
+  SERVICOS, camposDaSituacao, chaveDoServico, definicaoDe, pedeMatricula,
+  rotuloCurto, situacaoDoImovel, vaiAoSigef,
+} from "../src/lib/modalidades.ts";
 import { hashParaRota, rotaParaHash } from "../src/lib/rota.ts";
 
 test("ida e volta: os campos de cada cartão voltam ao mesmo cartão", () => {
@@ -61,4 +64,41 @@ test("hash inválido ou vazio cai no início em vez de tela em branco", () => {
     const r = hashParaRota(h);
     assert.ok(["inicio", "clientes", "servicos"].includes(r.t), `${h} → ${r.t}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Situação do imóvel na conferência: matrícula / posse / ainda sem documento
+// ---------------------------------------------------------------------------
+//
+// Uma pergunta na tela, duas colunas no banco. Estes testes lacram as duas
+// direções — errar aqui faz a planta de um posseiro sair com "(MATR./CNS.)".
+
+test("as três situações fecham o ciclo tela → colunas → tela", () => {
+  for (const v of ["matricula", "posse", "nao_informar"]) {
+    assert.equal(situacaoDoImovel(camposDaSituacao(v)), v, `${v} não fecha o ciclo`);
+  }
+});
+
+test("cada situação grava o par de colunas que a planta lê", () => {
+  assert.deepEqual(camposDaSituacao("matricula"), { tipo_imovel: "matricula", conf_exibir_matricula: true });
+  assert.deepEqual(camposDaSituacao("posse"), { tipo_imovel: "posse", conf_exibir_matricula: true });
+  // sem documento: a planta não imprime nem matrícula nem posse
+  assert.deepEqual(camposDaSituacao("nao_informar"), { tipo_imovel: "matricula", conf_exibir_matricula: false });
+});
+
+test("serviço antigo (tipo_imovel nulo) lê como matrícula, sem mudar a planta", () => {
+  // é o que a planta já assumia com tipo_imovel nulo (ver planta_dados.ts)
+  assert.equal(situacaoDoImovel({ tipo_imovel: null, conf_exibir_matricula: true }), "matricula");
+  assert.equal(situacaoDoImovel({ tipo_imovel: undefined, conf_exibir_matricula: undefined }), "matricula");
+});
+
+test("'não informar' vence tipo_imovel: nada é impresso", () => {
+  assert.equal(situacaoDoImovel({ tipo_imovel: "posse", conf_exibir_matricula: false }), "nao_informar");
+  assert.equal(situacaoDoImovel({ tipo_imovel: "matricula", conf_exibir_matricula: false }), "nao_informar");
+});
+
+test("só matrícula pede matrícula e CNS", () => {
+  assert.equal(pedeMatricula("matricula"), true);
+  assert.equal(pedeMatricula("posse"), false, "posseiro não tem cartório para informar");
+  assert.equal(pedeMatricula("nao_informar"), false);
 });

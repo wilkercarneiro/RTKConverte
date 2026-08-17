@@ -13,7 +13,10 @@ import {
 } from "../lib/domains";
 import { calcularPreviewLocal } from "../lib/preview";
 import { ehViaPorLimite, moverConfrontacao, SEM_CONFRONTACAO, viasDaPlanta } from "../lib/trechos";
-import { chaveDoServico, rotuloCurto, vaiAoSigef } from "../lib/modalidades";
+import {
+  camposDaSituacao, chaveDoServico, pedeMatricula, rotuloCurto, situacaoDoImovel, vaiAoSigef,
+} from "../lib/modalidades";
+import type { SituacaoImovel } from "../lib/modalidades";
 import { areaHaDoAnel, GlebasEditor } from "./GlebasEditor";
 import type { Gleba } from "../lib/types";
 import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux";
@@ -210,8 +213,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   );
 
   const preview = useMemo(
-    () => calcularPreviewLocal(servico.fuso_utm ?? 24, vertices, trechosOrdenados, credenciado),
-    [servico.fuso_utm, vertices, trechosOrdenados, credenciado],
+    () => calcularPreviewLocal(
+      servico.fuso_utm ?? 24, vertices, trechosOrdenados, credenciado,
+      ehConferencia ? "conferencia" : "oficial",
+    ),
+    [servico.fuso_utm, vertices, trechosOrdenados, credenciado, ehConferencia],
   );
   // faixas de domínio: saem da própria planta (trecho marcado como via ou rótulo
   // do confrontante), uma declaração por via — sem campo para digitar
@@ -239,6 +245,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   function campo<K extends keyof Servico>(k: K, v: Servico[K]) {
     setServico((s) => ({ ...s, [k]: v }));
   }
+
+  // Matrícula / posse / ainda sem documento. A tradução para as duas colunas do
+  // banco mora em modalidades.ts, junto dos outros mapeamentos tela ↔ modelo.
+  const situacaoImovel = situacaoDoImovel(servico);
+  const setSituacaoImovel = (v: SituacaoImovel) =>
+    setServico((s) => ({ ...s, ...camposDaSituacao(v) }));
 
   // ------- Bloco 2: trechos -------
   // Editar a confrontação é editar o vértice M: marcar/desmarcar o M é o mesmo ato
@@ -742,7 +754,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       return {
         tom: "pronto",
         titulo: "Conferência concluída",
-        detalhe: "memorial e planta de prévia gerados — os códigos saem com o prefixo do credenciado, mas a numeração oficial não foi consumida",
+        detalhe: "memorial e planta de prévia gerados — os pontos saem numerados P-1, P-2…, sem consumir a numeração oficial do credenciado",
       };
     }
     if (!temSigef) {
@@ -782,11 +794,16 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, as duas plantas e as peças gerados — tudo disponível no histórico abaixo" };
   }, [pendencias, docsProntos, temSigef, temSatelite, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia]);
 
-  // selos das seções recolhidas: dizem o que há dentro sem precisar abrir
-  const seloRegistro = contarPreenchidos([
+  // selos das seções recolhidas: dizem o que há dentro sem precisar abrir.
+  // Na conferência, matrícula e CNS saem daqui: quem manda neles é a escolha
+  // "Matrícula ou posse" do bloco da conferência, e o mesmo campo em dois
+  // lugares da tela é convite a divergência.
+  const camposRegistro = [
     servico.situacao, servico.natureza_area, servico.natureza_servico,
-    servico.tipo_pessoa, servico.codigo_sncr, servico.cns, servico.matricula,
-  ]);
+    servico.tipo_pessoa, servico.codigo_sncr,
+    ...(ehConferencia ? [] : [servico.cns, servico.matricula]),
+  ];
+  const seloRegistro = contarPreenchidos(camposRegistro);
   const seloParcela = contarPreenchidos([servico.denominacao_parcela, servico.parcela_numero, servico.lado]);
 
   return (
@@ -908,21 +925,30 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           </div>
         </Secao>
 
-        <Secao titulo="Registro, cartório e natureza"
-          selo={<span className={`secao-selo ${seloRegistro === 7 ? "completa" : seloRegistro === 0 ? "vazia" : ""}`}>{seloRegistro} de 7</span>}
-          dica="matrícula, CNS, SNCR e classificações do SIGEF">
+        <Secao titulo={ehConferencia ? "Natureza e classificações" : "Registro, cartório e natureza"}
+          selo={<span className={`secao-selo ${seloRegistro === camposRegistro.length ? "completa" : seloRegistro === 0 ? "vazia" : ""}`}>{seloRegistro} de {camposRegistro.length}</span>}
+          dica={ehConferencia ? "SNCR e classificações do SIGEF" : "matrícula, CNS, SNCR e classificações do SIGEF"}>
           <div className="grade">
             <label>Natureza do serviço {sel(servico.natureza_servico, NATUREZAS_SERVICO, (v) => campo("natureza_servico", v))}</label>
             <label>Tipo pessoa {sel(servico.tipo_pessoa, TIPOS_PESSOA, (v) => campo("tipo_pessoa", v))}</label>
             <label>Situação {sel(servico.situacao, SITUACOES, (v) => campo("situacao", v))}</label>
             <label>Natureza da área {sel(servico.natureza_area, NATUREZAS_AREA, (v) => campo("natureza_area", v))}</label>
             <label>Código SNCR <input value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
-            <label>CNS (cartório)
-              <input list="cartorios" value={servico.cns ?? ""} onChange={(e) => campo("cns", e.target.value)} />
-              <datalist id="cartorios">{cartorios.map((c) => <option key={c} value={c} />)}</datalist>
-            </label>
-            <label>Matrícula <input value={servico.matricula ?? ""} onChange={(e) => campo("matricula", e.target.value)} /></label>
+            {!ehConferencia && (
+              <>
+                <label>CNS (cartório)
+                  <input list="cartorios" value={servico.cns ?? ""} onChange={(e) => campo("cns", e.target.value)} />
+                  <datalist id="cartorios">{cartorios.map((c) => <option key={c} value={c} />)}</datalist>
+                </label>
+                <label>Matrícula <input value={servico.matricula ?? ""} onChange={(e) => campo("matricula", e.target.value)} /></label>
+              </>
+            )}
           </div>
+          {ehConferencia && (
+            <p className="sub" style={{ margin: "8px 0 0" }}>
+              Matrícula e CNS ficam no bloco "Conferência de área", junto da escolha entre matrícula e posse.
+            </p>
+          )}
         </Secao>
 
         <Secao titulo="Identificação da parcela"
@@ -1173,6 +1199,109 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         </section>
       )}
 
+      {/* ---------------- Conferência de área ----------------
+          A conferência para aqui. No lugar do SIGEF e das peças, o que ela tem é
+          o documento do imóvel, a folha da planta e o Memorial Tabular.
+
+          Fica ANTES da imagem de satélite e da geração de propósito: tudo aqui
+          decide o que a planta vai imprimir, e configuração depois do resultado
+          é convite a gerar duas vezes. */}
+      {ehConferencia && (
+        <section className="bloco" id="bloco-conferencia">
+          <header>
+            <span className="num-bloco">📐</span>
+            <h3>Conferência de área</h3>
+            <span className="desc">documento do imóvel, folha e entregas da prévia — não vai ao SIGEF e não consome numeração oficial</span>
+          </header>
+
+          <div className="grade">
+            <label>Folha da planta
+              <select value={servico.folha_conferencia ?? "A3"}
+                onChange={(e) => campo("folha_conferencia", e.target.value as Servico["folha_conferencia"])}>
+                <option value="A3">A3 (420×297 mm)</option>
+                <option value="A4">A4 (297×210 mm)</option>
+              </select>
+              <small className="sub">padrão A3 · vale na próxima geração dos documentos</small>
+            </label>
+
+            {/* Matrícula ou posse: é o que decide se a planta imprime
+                "(MATR./CNS.)" ou "(POSSE)". Posse não tem matrícula nem
+                cartório — pedir os dois a um posseiro é pedir um dado que não
+                existe, então os campos só aparecem para quem tem matrícula. E a
+                prévia pode acontecer antes de o imóvel ter qualquer documento:
+                é o terceiro estado, que não imprime nem um nem outro. */}
+            <label>Situação do imóvel
+              <select id="campo-situacao-imovel" value={situacaoImovel}
+                onChange={(e) => setSituacaoImovel(e.target.value as SituacaoImovel)}>
+                <option value="matricula">Matrícula (imóvel registrado)</option>
+                <option value="posse">Posse (imóvel sem matrícula)</option>
+                <option value="nao_informar">Ainda sem documento — não imprimir</option>
+              </select>
+              <small className="sub">
+                {situacaoImovel === "matricula" ? "a planta sai com (MATR./CNS.) e o campo Matrícula do Imóvel"
+                  : situacaoImovel === "posse" ? "a planta sai com (POSSE) no lugar da matrícula"
+                    : "a planta sai sem o bloco de matrícula/posse"}
+              </small>
+            </label>
+
+            {pedeMatricula(situacaoImovel) && (
+              <>
+                <label>Matrícula
+                  <input id="campo-matricula" value={servico.matricula ?? ""} placeholder="1.234"
+                    onChange={(e) => campo("matricula", e.target.value || null)} />
+                </label>
+                <label>CNS (cartório)
+                  <input list="cartorios" value={servico.cns ?? ""} placeholder="00.810-2"
+                    onChange={(e) => campo("cns", e.target.value || null)} />
+                  <datalist id="cartorios">{cartorios.map((c) => <option key={c} value={c} />)}</datalist>
+                </label>
+              </>
+            )}
+          </div>
+
+          {/* A prévia acontece antes de o imóvel ter documento: a área pode não
+              ter nome e o TRT pode não ter sido emitido. Campo em branco na
+              planta parece dado perdido — aqui o operador diz o que existe. Só
+              vale na conferência. Matrícula/posse não está aqui: virou a escolha
+              de três estados acima, que também guarda os dados do documento. */}
+          <fieldset style={{ border: "1px solid var(--borda)", borderRadius: 8, padding: "10px 14px", marginTop: 12 }}>
+            <legend className="sub" style={{ padding: "0 6px" }}>O que sai na planta</legend>
+            {([
+              ["conf_exibir_denominacao", "Nome da fazenda", "a denominação no desenho e no planimétrico"],
+              ["conf_exibir_trt", "TRT", "o número do termo de responsabilidade técnica"],
+            ] as const).map(([campoNome, rotulo, dica]) => (
+              <label key={campoNome} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 6 }}>
+                <input type="checkbox" checked={servico[campoNome] !== false}
+                  onChange={(e) => campo(campoNome, e.target.checked)} />
+                <b>{rotulo}</b>
+                <small className="sub">— {dica}</small>
+              </label>
+            ))}
+          </fieldset>
+
+          <div style={{ marginTop: 12 }}>
+            <button onClick={gerarTabular} disabled={!docsProntos || gerandoTabular}>
+              {gerandoTabular ? <><span className="spinner" /> Gerando…</> : "📄 Gerar Memorial Tabular"}
+            </button>
+            <p className="sub" style={{ marginTop: 6 }}>
+              {docsProntos
+                ? "Sai do cálculo do sistema, com os mesmos azimutes e distâncias do Memorial Descritivo. Não são os valores SGL que o SIGEF devolve após certificar — por isso vale como prévia."
+                : "Gere primeiro o memorial e a planta no botão do rodapé."}
+            </p>
+          </div>
+
+          {tabular && (
+            <div className="downloads" style={{ marginTop: 10 }}>
+              {tabular.map((a) => (
+                <a key={a.url} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
+                  <span className="ext">DOCX</span> {a.titulo}
+                </a>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       {/* ---------------- Imagem de satélite: entra na planta desta etapa e na pós-SIGEF ---------------- */}
       <section className="bloco" id="bloco-satelite">
         <header>
@@ -1216,71 +1345,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <p style={{ color: "var(--texto-2)" }}>
             Vértice inicial {gerado.resumo.verticeInicial} · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
           </p>
-        </section>
-      )}
-
-      {/* ---------------- Conferência de área: entregas opcionais ----------------
-          A conferência para aqui. No lugar do SIGEF e das peças, o que ela
-          oferece é o Memorial Tabular e a escolha da folha da planta. */}
-      {ehConferencia && (
-        <section className="bloco" id="bloco-conferencia">
-          <header>
-            <span className="num-bloco">📐</span>
-            <h3>Entregas da conferência</h3>
-            <span className="desc">prévia de área — não vai ao SIGEF e não consome numeração oficial</span>
-          </header>
-
-          <div className="grade">
-            <label>Folha da planta
-              <select value={servico.folha_conferencia ?? "A3"}
-                onChange={(e) => campo("folha_conferencia", e.target.value as Servico["folha_conferencia"])}>
-                <option value="A3">A3 (420×297 mm)</option>
-                <option value="A4">A4 (297×210 mm)</option>
-              </select>
-              <small className="sub">padrão A3 · vale na próxima geração dos documentos</small>
-            </label>
-          </div>
-
-          {/* A prévia acontece antes de o imóvel ter documento: pode não haver
-              matrícula nem posse, a área pode não ter nome e o TRT pode não ter
-              sido emitido. Campo em branco na planta parece dado perdido — aqui
-              o operador diz o que existe. Só vale na conferência. */}
-          <fieldset style={{ border: "1px solid var(--borda)", borderRadius: 8, padding: "10px 14px", marginTop: 12 }}>
-            <legend className="sub" style={{ padding: "0 6px" }}>O que sai na planta</legend>
-            {([
-              ["conf_exibir_matricula", "Matrícula / posse", "o bloco (MATR./CNS.) ou (POSSE) e o campo Matrícula do Imóvel"],
-              ["conf_exibir_denominacao", "Nome da fazenda", "a denominação no desenho e no planimétrico"],
-              ["conf_exibir_trt", "TRT", "o número do termo de responsabilidade técnica"],
-            ] as const).map(([campoNome, rotulo, dica]) => (
-              <label key={campoNome} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 6 }}>
-                <input type="checkbox" checked={servico[campoNome] !== false}
-                  onChange={(e) => campo(campoNome, e.target.checked)} />
-                <b>{rotulo}</b>
-                <small className="sub">— {dica}</small>
-              </label>
-            ))}
-          </fieldset>
-
-          <div style={{ marginTop: 12 }}>
-            <button onClick={gerarTabular} disabled={!docsProntos || gerandoTabular}>
-              {gerandoTabular ? <><span className="spinner" /> Gerando…</> : "📄 Gerar Memorial Tabular"}
-            </button>
-            <p className="sub" style={{ marginTop: 6 }}>
-              {docsProntos
-                ? "Sai do cálculo do sistema, com os mesmos azimutes e distâncias do Memorial Descritivo. Não são os valores SGL que o SIGEF devolve após certificar — por isso vale como prévia."
-                : "Gere primeiro o memorial e a planta no botão do rodapé."}
-            </p>
-          </div>
-
-          {tabular && (
-            <div className="downloads" style={{ marginTop: 10 }}>
-              {tabular.map((a) => (
-                <a key={a.url} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
-                  <span className="ext">DOCX</span> {a.titulo}
-                </a>
-              ))}
-            </div>
-          )}
         </section>
       )}
 

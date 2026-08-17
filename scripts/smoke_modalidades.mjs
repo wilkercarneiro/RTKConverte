@@ -80,8 +80,15 @@ try {
   console.log("  códigos:", vc.map((v) => v.codigo).join(" "));
   console.log("  contadores:", JSON.stringify(antesC), "->", JSON.stringify(depoisC));
   if (JSON.stringify(antesC) !== JSON.stringify(depoisC)) throw new Error("FALHOU: conferência consumiu numeração oficial");
-  if (rc.folha !== "A4") throw new Error(`FALHOU: conferência deveria sair em A4, veio ${rc.folha}`);
-  if (!vc.every((v) => v.codigo.startsWith("PROV-"))) throw new Error("FALHOU: códigos não são provisórios");
+  if (rc.folha !== "A3") throw new Error(`FALHOU: conferência deveria sair em A3, veio ${rc.folha}`);
+  // prévia numera P-1, P-2… — sem o prefixo do credenciado, que faria a peça
+  // parecer oficial para quem a recebe (ver codigoConferencia em geo.ts)
+  if (!vc.every((v) => /^[MPV]-\d+$/.test(v.codigo ?? ""))) {
+    throw new Error(`FALHOU: códigos da prévia fora do formato TIPO-N: ${vc.map((v) => v.codigo).join(" ")}`);
+  }
+  if (vc.some((v) => (v.codigo ?? "").includes(cred.prefixo_vertice))) {
+    throw new Error("FALHOU: o prefixo do credenciado vazou para a prévia");
+  }
 
   // Não aborta o smoke: um problema aqui não invalida o que vem depois, e o
   // valor de um smoke é reportar TUDO que encontrou, não parar no primeiro.
@@ -101,7 +108,6 @@ try {
   const idComp = await criarServico("completo", false);
   const rk = await fn("gerar-documentos", { servico_id: idComp });
   const depoisK = await lerContadores();
-  esperadoDepois = depoisK;
   const { data: vk } = await supa.from("vertices").select("codigo").eq("servico_id", idComp).order("ordem").limit(2);
   console.log("  folha:", rk.folha, "| provisorio:", rk.provisorio, "| área:", rk.resumo.areaHa.toFixed(4));
   console.log("  códigos:", vk.map((v) => v.codigo).join(" "));
@@ -143,6 +149,12 @@ try {
     console.error("  FALHOU (gleba):", e.message.slice(0, 250));
   }
 
+  // O serviço com gleba TAMBÉM é `completo` e também passa pela RPC: a foto para
+  // a devolução só pode ser tirada aqui, depois do último consumo. Tirada logo
+  // após o serviço completo, ela ficava desatualizada e a devolução se recusava
+  // a acontecer — o smoke queimava a numeração que se propunha a devolver.
+  esperadoDepois = await lerContadores();
+
   if (falhas) {
     console.error(`\n${falhas} verificação(ões) falharam.`);
     process.exitCode = 1;
@@ -163,8 +175,15 @@ try {
   if (esperadoDepois && mexeuSo) {
     await supa.from("credenciados").update(contadoresIniciais).eq("id", cred.id);
     console.log("numeração devolvida:", JSON.stringify(agora), "->", JSON.stringify(contadoresIniciais));
-  } else if (esperadoDepois) {
-    console.warn("ATENÇÃO: contadores mudaram fora do teste — a numeração do smoke NÃO foi devolvida.");
+  } else if (JSON.stringify(agora) !== JSON.stringify(contadoresIniciais)) {
+    // Não mexe por conta própria: pode ter havido geração real no meio. Mas diz
+    // exatamente o que ficou para trás — número do Anexo A queimado em silêncio
+    // é pior do que número queimado com aviso.
+    console.warn("ATENÇÃO: a numeração do smoke NÃO foi devolvida automaticamente.");
+    console.warn("  antes do smoke:", JSON.stringify(contadoresIniciais));
+    console.warn("  agora:         ", JSON.stringify(agora));
+    console.warn(`  para devolver à mão: update credenciados set contador_m=${contadoresIniciais.contador_m}, ` +
+      `contador_p=${contadoresIniciais.contador_p}, contador_v=${contadoresIniciais.contador_v} where id='${cred.id}';`);
   }
   console.log(`limpeza: ${criados.length} serviço(s) de teste removidos`);
 }

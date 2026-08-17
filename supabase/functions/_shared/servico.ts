@@ -6,7 +6,7 @@ import {
   calcularVertices, ehSentidoHorario, fmtGmsPlanilha, ordemMaisAoNorte, parseGmsPlanilha,
   rotacionarRing,
 } from "./geo.ts";
-import type { EntradaVertice, Proj4, Segmento, VerticeCalc } from "./geo.ts";
+import type { EntradaVertice, EstiloCodigo, Proj4, Segmento, VerticeCalc } from "./geo.ts";
 import type { VerticeMemorial } from "./memorial.ts";
 import type { LinhaVertice } from "./ods.ts";
 
@@ -48,6 +48,12 @@ export interface ServicoInput {
   verticeInicialOrdem?: number;
   prefixo: string;
   contadores: { M: number; P: number; V: number };
+  /**
+   * Formato do código alocado. Ausente = "oficial" (`DSBN-P-14300`), o de sempre.
+   * "conferencia" numera a prévia como `P-1`, `P-2` — sem prefixo de credenciado,
+   * porque a prévia não reserva numeração e não pode passar por definitiva.
+   */
+  estiloCodigo?: EstiloCodigo;
   vertices: VerticeServico[];    // em ordem de perímetro; os M carregam a confrontação
 }
 
@@ -122,7 +128,7 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
   const ring0 = rotacionarRing(anel, ordemInicial);
 
   // códigos alocados na ordem do memorial
-  const codigos = alocarCodigos(ring0, inp.prefixo, inp.contadores);
+  const codigos = alocarCodigos(ring0, inp.prefixo, inp.contadores, inp.estiloCodigo ?? "oficial");
   const consumo = { M: 0, P: 0, V: 0 };
   for (const v of ring0) if (!v.codigoManual) consumo[v.tipo]++;
 

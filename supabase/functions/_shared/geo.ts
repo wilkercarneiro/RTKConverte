@@ -413,18 +413,47 @@ export function codigoVertice(prefixo: string, tipo: "M" | "P" | "V", seq: numbe
   return `${prefixo}-${tipo}-${String(seq).padStart(4, "0")}`;
 }
 
+/**
+ * Código de PRÉVIA da conferência de área: "P-1", "P-2", "M-1", "V-1".
+ *
+ * A conferência não vai ao SIGEF e não reserva numeração nenhuma. Enquanto ela
+ * saía com o prefixo do credenciado ("DSBN-P-14300"), quem recebia a prévia lia
+ * um código com cara de oficial e tinha todo motivo para tratá-lo como
+ * definitivo. Sem prefixo e sem zeros à esquerda, o código diz o que de fato é:
+ * a ordem do ponto no desenho desta prévia.
+ */
+export function codigoConferencia(tipo: "M" | "P" | "V", seq: number): string {
+  return `${tipo}-${seq}`;
+}
+
+/** Formato do código alocado: oficial (Anexo A) ou prévia da conferência. */
+export type EstiloCodigo = "oficial" | "conferencia";
+
+/**
+ * O código é do formato da prévia? Um código oficial sempre tem o prefixo do
+ * credenciado antes do tipo, então os dois formatos nunca se confundem.
+ */
+export const ehCodigoDeConferencia = (codigo: string | null | undefined): boolean =>
+  !!codigo && /^[MPV]-\d+$/.test(codigo);
+
 // Aloca códigos na ordem do memorial (a partir do vértice inicial), consumindo
 // contadores por tipo. Vértices inseridos (V) com código digitado mantêm o seu.
 export function alocarCodigos(
   ringOrdenado: { ordem: number; tipo: "M" | "P" | "V"; codigoManual?: string | null }[],
   prefixo: string,
   contadores: { M: number; P: number; V: number },
+  estilo: EstiloCodigo = "oficial",
 ): Map<number, string> {
-  const c = { ...contadores };
+  // A prévia NUNCA continua uma numeração: "P-1" é o primeiro P deste desenho e
+  // nada mais. Ignorar os contadores aqui é o que garante isso em qualquer
+  // chamador, em vez de depender de cada um lembrar de zerá-los.
+  const c = estilo === "conferencia" ? { M: 1, P: 1, V: 1 } : { ...contadores };
   const out = new Map<number, string>();
   for (const v of ringOrdenado) {
     if (v.codigoManual) { out.set(v.ordem, v.codigoManual); continue; }
-    out.set(v.ordem, codigoVertice(prefixo, v.tipo, c[v.tipo]));
+    out.set(v.ordem, estilo === "conferencia"
+      ? codigoConferencia(v.tipo, c[v.tipo])
+      : codigoVertice(prefixo, v.tipo, c[v.tipo]));
     c[v.tipo]++;
   }
   return out;

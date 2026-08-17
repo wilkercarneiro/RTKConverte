@@ -182,7 +182,7 @@ export interface ContextoPlanta {
   satelite?: DadosPlanta["satelite"];
   /** Folha de entrega. Ausente = regra histórica (posse → A3, resto → A1). */
   folha?: Folha;
-  /** Prévia de conferência: tira os códigos dos vértices do desenho. */
+  /** Prévia de conferência: sai sem o quadro analítico. Ver DadosPlanta.conferencia. */
   conferencia?: boolean;
   /** Campos que a prévia pode omitir. Ausente = a planta sai completa. */
   exibir?: DadosPlanta["exibir"];

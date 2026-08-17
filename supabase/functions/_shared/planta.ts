@@ -75,11 +75,14 @@ export interface DadosPlanta {
   tipoImovel?: "matricula" | "posse";  // posse → A3 sem quadro analítico
   folha?: Folha;                    // sobrepõe a folha; ausente = regra de tipoImovel
   /**
-   * Prévia de conferência de área. Tira os códigos dos vértices do DESENHO: os
-   * números da prévia partem do contador do credenciado sem serem reservados, e
-   * impressos ao lado de cada marco passam por definitivos. Eles continuam no
-   * memorial e nas peças, que dizem por escrito que são prévia. Os nomes dos
-   * confrontantes ficam — é o que o cliente confere na planta.
+   * Prévia de conferência de área: sai sem o quadro analítico, que é a tabela
+   * que o SIGEF confere e a prévia ainda não passou por ele.
+   *
+   * Os códigos dos vértices FICAM no desenho. Eles saíam suprimidos enquanto a
+   * prévia numerava com o prefixo do credenciado ("DSBN-P-14300"), que impresso
+   * ao lado do marco passava por definitivo; hoje ela numera "P-1", "P-2"
+   * (`codigoConferencia`), que não se confunde com código oficial e é o que o
+   * cliente usa para achar o ponto na planta.
    */
   conferencia?: boolean;
   /**
@@ -1010,9 +1013,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // si; agora também cedem ao bloco do confrontante. Nada se perde no fluxo de
   // matrícula — o quadro analítico lista TODOS os vértices.
   //
-  // Na conferência eles não saem: ver DadosPlanta.conferencia.
+  // Valem também para a conferência: lá o código é "P-1" (ver
+  // DadosPlanta.conferencia), curto e sem cara de oficial.
   for (const cp of codigosPendentes) {
-    if (d.conferencia) break;
     if (ocupado.some((o) => retCruzaRet(cp.ret, o))) { rotulosOcultos++; continue; }
     ocupado.push(cp.ret);
     texto(c, cp.codigo, cp.lx, cp.ly, VERT_TAM, { cor: PRETO });

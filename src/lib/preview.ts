@@ -4,9 +4,10 @@
 import proj4mod from "proj4";
 import {
   calcularAreaHa, calcularPerimetroM, calcularSegmentos, calcularVertices,
-  fmtBR, fmtGmsMemorial, ordemMaisAoNorte, parseGmsPlanilha, rotacionarRing, codigoVertice,
+  codigoConferencia, codigoVertice, fmtBR, fmtGmsMemorial, ordemMaisAoNorte,
+  parseGmsPlanilha, rotacionarRing,
 } from "../../supabase/functions/_shared/geo.ts";
-import type { Proj4 } from "../../supabase/functions/_shared/geo.ts";
+import type { EstiloCodigo, Proj4 } from "../../supabase/functions/_shared/geo.ts";
 import type { Credenciado, Trecho, Vertice } from "./types";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
@@ -28,6 +29,8 @@ export function calcularPreviewLocal(
   vertices: Vertice[],
   trechos: Trecho[],
   credenciado: Credenciado | null,
+  /** Formato do código sugerido. A conferência numera "P-1"; ver `codigoConferencia`. */
+  estiloCodigo: EstiloCodigo = "oficial",
 ): PreviewCalc {
   try {
     const vs = [...vertices].sort((a, b) => a.ordem - b.ordem);
@@ -53,10 +56,15 @@ export function calcularPreviewLocal(
 
     // código sugerido do vértice inicial (preview — a alocação oficial ocorre na geração)
     const v0 = ring[0];
-    const codigo0 = v0.codigo ?? (credenciado
-      ? codigoVertice(credenciado.prefixo_vertice, ring[0].tipo as "M" | "P" | "V",
-          ring[0].tipo === "M" ? credenciado.contador_m : ring[0].tipo === "P" ? credenciado.contador_p : credenciado.contador_v)
-      : "????-M-0000");
+    const tipo0 = ring[0].tipo as "M" | "P" | "V";
+    // A conferência numera do 1 e sem prefixo: o vértice inicial é sempre o
+    // primeiro do seu tipo no anel, então o preview acerta o código final.
+    const codigo0 = v0.codigo ?? (estiloCodigo === "conferencia"
+      ? codigoConferencia(tipo0, 1)
+      : credenciado
+        ? codigoVertice(credenciado.prefixo_vertice, tipo0,
+            tipo0 === "M" ? credenciado.contador_m : tipo0 === "P" ? credenciado.contador_p : credenciado.contador_v)
+        : "????-M-0000");
     const trechoInicial = trechos.find((t) => t.vertice_inicio_ordem === ring[0].ordem);
     const mcAbs = Math.abs(6 * fuso - 183);
     const desc = trechoInicial?.descritivo || trechoInicial?.apelido_txt || "(defina o trecho do vértice inicial)";
