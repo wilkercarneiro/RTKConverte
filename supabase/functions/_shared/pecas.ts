@@ -8,6 +8,7 @@
 // confrontantes são reconstruídas clonando a primeira linha como protótipo.
 import type { DadosSigef, LinhaSigef } from "./sigef_pdf.ts";
 import { fmtBR } from "./geo.ts";
+import { partesDescritivo } from "./texto.ts";
 
 // ---------------------------------------------------------------------------
 // util XML
@@ -216,7 +217,7 @@ export function artigoVia(rotulo: string): string {
 
 // rótulo da via como sai nas peças: "BA 408", "CORREDOR", "LINHA FÉRREA"
 export function rotuloVia(t: TrechoPecas): string {
-  return (t.imovelLabel || t.descritivo).split("\\")[0].trim();
+  return partesDescritivo(t.imovelLabel || t.descritivo)[0] ?? "";
 }
 
 // vias da planta, na ordem do perímetro e sem repetir a mesma faixa — cada uma
@@ -247,8 +248,18 @@ export function viasDaPlanta(trechos: TrechoPecas[]): TrechoPecas[] {
 // vale mesmo que o rótulo não seja reconhecido pelo texto (ex.: "LINHA FÉRREA
 // DO SUL", "TRECHO DA CONCESSIONÁRIA").
 export function parseDescritivo(descritivo: string, forcarVia = false): { pessoas: PessoaConfrontante[]; imovelLabel: string; posse: boolean; ehVia: boolean } {
-  const partes = descritivo.split("\\").map((p) => p.trim()).filter(Boolean);
-  const m = partes[0]?.match(/^\(([^)]*)\)\s*(.+)$/);
+  // A contrabarra é o separador oficial, mas descritivo colado de editor de
+  // texto chega com quebra de linha de verdade no lugar dela — e sem tratá-la o
+  // confrontante inteiro virava uma pessoa só, com o nome grudado no CPF.
+  const partes = partesDescritivo(descritivo);
+  // A etiqueta "(MATR.x/CNS.y)" costuma abrir a MESMA linha do nome do imóvel,
+  // mas quem cola de um editor de texto deixa cada uma na sua. As duas formas
+  // dizem a mesma coisa; sem juntá-las, a etiqueta entrava na lista como um
+  // confrontante chamado "(MATR.37/CNS.13.662-2)".
+  const soEtiqueta = partes.length > 1 && /^\([^)]*\)$/.test(partes[0]);
+  const cabecalho = soEtiqueta ? `${partes[0]} ${partes[1]}` : partes[0];
+  const apos = partes.slice(soEtiqueta ? 2 : 1);
+  const m = cabecalho?.match(/^\(([^)]*)\)\s*(.+)$/);
   const lerPessoas = (ps: string[]): PessoaConfrontante[] => {
     const pessoas: PessoaConfrontante[] = [];
     for (const p of ps) {
@@ -263,7 +274,7 @@ export function parseDescritivo(descritivo: string, forcarVia = false): { pessoa
   if (m) {
     const tag = m[1].trim();
     const nomeImovel = m[2].trim();
-    return { pessoas: lerPessoas(partes.slice(1)), imovelLabel: `${nomeImovel} (${tag})`, posse: /^POSSE$/i.test(tag), ehVia: forcarVia };
+    return { pessoas: lerPessoas(apos), imovelLabel: `${nomeImovel} (${tag})`, posse: /^POSSE$/i.test(tag), ehVia: forcarVia };
   }
   // sem "(TAG) imóvel": ou é faixa de domínio pública, ou lista de pessoas
   const temCpf = partes.some((p) => /^CPF\s*:/i.test(p));

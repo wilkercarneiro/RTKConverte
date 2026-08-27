@@ -5,6 +5,7 @@
 //   matrícula → folha A1 paisagem, COM quadro analítico e selos de cartório
 //   posse     → folha A3 paisagem, SEM quadro analítico, assinatura do posseiro
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, degrees, rgb } from "pdf-lib";
+import { partesDescritivo, textoWinAnsi } from "./texto.ts";
 
 // ---------------------------------------------------------------------------
 // dados de entrada
@@ -24,6 +25,30 @@ export interface VerticePlanta {
 export interface TrechoPlanta {
   descritivo: string;   // formato "(MATR.x/CNS.y) FAZENDA\ NOME\ CPF:..."
   isEstrada: boolean;
+  /**
+   * Curso d'água (limite LN1): linha dupla AZUL, no lugar da vermelha.
+   *
+   * Vem separado de `isEstrada` porque o rio continua sendo faixa de domínio
+   * para o memorial e para as declarações — o que muda é só a cor do traço.
+   * Rio VENCE estrada: com `isRio`, a dupla vermelha não é desenhada.
+   */
+  isRio?: boolean;
+  /**
+   * Confrontante NUMERADO: no desenho sai só o número, dentro de um disco
+   * branco no meio da divisa, e o texto vai para o quadro CONFRONTANTES no
+   * rodapé da área de desenho.
+   *
+   * Existe porque a largura do bloco de nome é proporcional ao COMPRIMENTO da
+   * divisa (`maxW`): numa divisa curta o bloco fica alto e estreito, e dois
+   * vizinhos assim, lado a lado, acabam empilhados um sobre o outro — o motor
+   * esgota os candidatos e cai em `menosPior`, que desenha por cima. Um dígito
+   * ocupa ~20×20pt e nunca esbarra em nada.
+   *
+   * O NÚMERO em si não vem daqui: é calculado por `numerarConfrontantes` sobre
+   * o anel inteiro, para que os dois fluxos (cálculo do sistema e PDF do SIGEF)
+   * produzam a mesma sequência e para que mover um trecho renumere sozinho.
+   */
+  numerado?: boolean;
   inicioIdx: number;    // índice do vértice inicial no anel
   fimIdx: number;       // índice do vértice inicial do PRÓXIMO trecho
 }
@@ -55,6 +80,8 @@ export interface GlebaPlanta {
   vertices: VerticePlanta[];
   /** Índices do anel cuja aresta de saída é faixa de domínio (linha vermelha). */
   viasIdx?: number[];
+  /** Índices do anel cuja aresta de saída é curso d'água (linha azul, LN1). */
+  riosIdx?: number[];
 }
 
 export interface ProprietarioPlanta {
@@ -135,6 +162,11 @@ const FOLHAS_MM: Record<Folha, [number, number]> = {
   A4: [210, 297],
 };
 const AZUL = rgb(0, 0.2, 0.85);
+// Azul do curso d'água (LN1). Deliberadamente MAIS CLARO que o AZUL da
+// poligonal: as duas linhas correm lado a lado na mesma divisa, e no mesmo tom
+// a dupla do rio pareceria um engrossamento do próprio perímetro. É o azul de
+// água — o mesmo papel que o VERMELHO faz para a estrada.
+const AZUL_RIO = rgb(0.05, 0.6, 0.9);
 const VERMELHO = rgb(0.85, 0.05, 0.05);
 const VERDE = rgb(0.05, 0.65, 0.15);
 const PRETO = rgb(0, 0, 0);
@@ -161,7 +193,12 @@ function fmtMilhar(n: number): string {
 
 interface Ctx { page: PDFPage; f: PDFFont; fb: PDFFont }
 
-function texto(c: Ctx, t: string, x: number, y: number, size: number, opts: { bold?: boolean; cor?: ReturnType<typeof rgb>; rot?: number; center?: boolean } = {}) {
+// Único ponto em que texto vira glifo. A limpeza WinAnsi mora aqui, e não em
+// cada chamador, porque a folha é desenhada numa passada só: um caractere que a
+// fonte padrão não encode derruba a planta INTEIRA, não o campo em que ele está.
+// Ver textoWinAnsi.
+function texto(c: Ctx, bruto: string, x: number, y: number, size: number, opts: { bold?: boolean; cor?: ReturnType<typeof rgb>; rot?: number; center?: boolean } = {}) {
+  const t = textoWinAnsi(bruto);
   const font = opts.bold ? c.fb : c.f;
   const tx = opts.center ? x - font.widthOfTextAtSize(t, size) / 2 : x;
   c.page.drawText(t, { x: tx, y, size, font, color: opts.cor ?? PRETO, rotate: opts.rot ? degrees(opts.rot) : undefined });
@@ -187,7 +224,10 @@ function caixaTitulo(c: Ctx, x: number, y: number, w: number, h: number, titulo:
 }
 
 // texto que encolhe até caber em maxW — garante que nada estoura o campo
-function textoFit(c: Ctx, t: string, x: number, y: number, size: number, maxW: number, opts: { bold?: boolean; cor?: ReturnType<typeof rgb>; center?: boolean } = {}) {
+function textoFit(c: Ctx, bruto: string, x: number, y: number, size: number, maxW: number, opts: { bold?: boolean; cor?: ReturnType<typeof rgb>; center?: boolean } = {}) {
+  // medido sobre o MESMO texto que vai ser desenhado, senão a largura calculada
+  // aqui não seria a largura impressa
+  const t = textoWinAnsi(bruto);
   const font = opts.bold ? c.fb : c.f;
   const tam = Math.min(size, maxW / font.widthOfTextAtSize(t, 1));
   texto(c, t, x, y, tam, opts);
@@ -258,7 +298,9 @@ function poloInterior(poly: Pt[], passos = 48): Pt {
 // quebra linhas longas em várias, respeitando a largura máxima do bloco
 function quebrarLinhas(linhas: string[], maxW: number, tam: number, font: PDFFont): string[] {
   const out: string[] = [];
-  for (const l of linhas) {
+  // limpo ANTES de medir: `widthOfTextAtSize` estoura no mesmo caractere que o
+  // desenho, e era daqui que vinha o "WinAnsi cannot encode" da planta
+  for (const l of linhas.map(textoWinAnsi)) {
     if (font.widthOfTextAtSize(l, tam) <= maxW) { out.push(l); continue; }
     let atual = "";
     for (const p of l.split(" ")) {
@@ -292,7 +334,7 @@ export interface DiagPlanta {
   deslocados: number;
   /** traços verdes de divisão — tem de sair um por vértice M, via ou não */
   marcos?: Seg[];
-  /** as linhas duplas vermelhas, para conferir que caem FORA da poligonal */
+  /** as linhas duplas de faixa (vermelhas e azuis), p/ conferir que caem FORA da poligonal */
   vias?: Seg[];
   /** corpo em que cada rótulo de trecho acabou saindo, na ordem de `rotulos` */
   corpos?: number[];
@@ -448,12 +490,138 @@ function menosPior<T extends { ret: Ret; obb?: Obb }>(
 
 // quebra o descritivo em linhas de rótulo (sempre em MAIÚSCULAS)
 function linhasDescritivo(descritivo: string): string[] {
-  const partes = descritivo.split("\\").map((p) => p.trim()).filter(Boolean);
+  const partes = partesDescritivo(descritivo);
   const out: string[] = [];
   const m = partes[0]?.match(/^(\([^)]*\))\s*(.+)$/);
   if (m) { out.push(m[1]); out.push(m[2]); } else if (partes[0]) out.push(partes[0]);
   for (const p of partes.slice(1)) out.push(p);
   return out.map((l) => l.toUpperCase());
+}
+
+// ---------------------------------------------------------------------------
+// confrontantes numerados
+// ---------------------------------------------------------------------------
+
+/**
+ * Chave de identidade de um confrontante: o descritivo, sem espaços nas pontas
+ * e em maiúsculas.
+ *
+ * Espelhada em src/lib/trechos.ts — as duas precisam andar juntas, senão a
+ * numeração que a tela mostra ao operador não é a que sai no PDF.
+ */
+export const chaveConfrontante = (descritivo: string): string => descritivo.trim().toUpperCase();
+
+export interface ConfrontanteNumerado {
+  numero: number;
+  chave: string;
+  /** descritivo cru, como digitado — o quadro do rodapé imprime a partir dele */
+  descritivo: string;
+}
+
+/**
+ * Quem sai numerado, e com que número.
+ *
+ * REGRAS — as mesmas dos dois lados (tela e PDF):
+ *
+ *   1. só entra quem o operador marcou (`numerado`);
+ *   2. via e rio NUNCA entram: o nome da estrada acompanha o traço dela, não é
+ *      um bloco de vizinho, e não é ele que empilha;
+ *   3. descritivo vazio não entra — não haveria o que imprimir no quadro;
+ *   4. UM número por CONFRONTANTE DISTINTO, não por trecho: o mesmo vizinho em
+ *      duas divisas separadas do anel leva o mesmo número nas duas, porque é o
+ *      mesmo vizinho. Trechos contíguos de mesmo descritivo já viravam um só
+ *      rótulo; os não contíguos passam a compartilhar o número;
+ *   5. a ordem é a do ANEL (por `inicioIdx`), começando em 1 — com um só
+ *      marcado, ele é o "1".
+ *
+ * O número NÃO vem do banco: o banco guarda só o booleano. É isto que faz mover
+ * ou remover uma confrontação renumerar sozinha, e faz os dois fluxos — cálculo
+ * do sistema e PDF do SIGEF — produzirem a mesma sequência.
+ */
+export function numerarConfrontantes(
+  trechos: { descritivo: string; isEstrada?: boolean; isRio?: boolean; numerado?: boolean; inicioIdx: number }[],
+): ConfrontanteNumerado[] {
+  const out: ConfrontanteNumerado[] = [];
+  const vistos = new Set<string>();
+  for (const t of [...trechos].sort((a, b) => a.inicioIdx - b.inicioIdx)) {
+    if (!t.numerado || t.isEstrada || t.isRio) continue;
+    const chave = chaveConfrontante(t.descritivo);
+    if (!chave || vistos.has(chave)) continue;
+    vistos.add(chave);
+    out.push({ numero: out.length + 1, chave, descritivo: t.descritivo });
+  }
+  return out;
+}
+
+/** Uma entrada do quadro, já quebrada nas linhas da coluna em que vai sair. */
+interface EntradaQuadro { numero: number; linhas: string[] }
+interface QuadroNumerados {
+  /** altura reservada no rodapé da área de desenho; 0 quando não há numerados */
+  h: number;
+  tam: number;
+  esp: number;
+  colW: number;
+  /** entradas já distribuídas em colunas */
+  colunas: EntradaQuadro[][];
+}
+
+/**
+ * Mede o quadro CONFRONTANTES ANTES da escala, para descontá-lo da área de
+ * desenho.
+ *
+ * Reservar espaço é o oposto do que os rótulos fazem — eles disputam lugar com
+ * o motor de colisão. Aqui não há disputa: a faixa sai do desenho antes de o
+ * polígono ser projetado, então a escala se ajusta sozinha e nada pode cair em
+ * cima. É o mesmo princípio da legenda (`legendaRet`), levado ao rodapé inteiro.
+ *
+ * O corpo cede antes das colunas: um quadro de 3 colunas em corpo 11 é mais
+ * legível que um de 4 em corpo 7, e a folha é larga.
+ */
+function medirQuadroNumerados(
+  numerados: ConfrontanteNumerado[], f: PDFFont, larguraTotal: number, alturaMax: number,
+): QuadroNumerados {
+  const vazio: QuadroNumerados = { h: 0, tam: 0, esp: 0, colW: 0, colunas: [] };
+  if (numerados.length === 0) return vazio;
+
+  const TIT_H = 24, PAD = 10;
+  const colBase = Math.max(1, Math.min(3, Math.floor(larguraTotal / 430)));
+  const textoDe = (n: ConfrontanteNumerado) =>
+    `${n.numero} - ${linhasDescritivo(n.descritivo).join(" · ")}`;
+
+  // corpo primeiro, colunas depois: só quando nem o menor corpo couber é que o
+  // quadro ganha mais uma coluna
+  const tentativas: [number, number][] = [];
+  for (const tam of [11, 10, 9, 8, 7]) tentativas.push([colBase, tam]);
+  if (colBase < 4) for (const tam of [9, 8, 7, 6.5]) tentativas.push([colBase + 1, tam]);
+
+  let ultima: QuadroNumerados = vazio;
+  for (const [nCols, tam] of tentativas) {
+    const esp = tam * 1.24;
+    const colW = larguraTotal / nCols - 18;
+    const blocos: EntradaQuadro[] = numerados.map((n) => ({
+      numero: n.numero,
+      linhas: quebrarLinhas([textoDe(n)], colW, tam, f),
+    }));
+    // distribuição sequencial equilibrada: a coluna acumula até passar do alvo,
+    // e a entrada NUNCA é partida entre duas colunas — número numa, texto noutra
+    // seria pior que uma coluna mais alta
+    const totalLinhas = blocos.reduce((sum, b) => sum + b.linhas.length, 0);
+    const alvo = Math.ceil(totalLinhas / nCols);
+    const colunas: EntradaQuadro[][] = Array.from({ length: nCols }, () => []);
+    let col = 0, acum = 0;
+    for (const b of blocos) {
+      if (acum > 0 && acum + b.linhas.length > alvo && col < nCols - 1) { col++; acum = 0; }
+      colunas[col].push(b);
+      acum += b.linhas.length;
+    }
+    const maxLinhas = Math.max(...colunas.map((cc) => cc.reduce((sum, b) => sum + b.linhas.length, 0)));
+    ultima = { h: TIT_H + maxLinhas * esp + PAD, tam, esp, colW, colunas };
+    if (ultima.h <= alturaMax) return ultima;
+  }
+  // nem no menor corpo coube: sai assim mesmo. Um quadro alto encolhe o desenho,
+  // mas um quadro cortado esconde de quem é a divisa — que é o dado que o
+  // número no desenho promete.
+  return ultima;
 }
 
 // ---------------------------------------------------------------------------
@@ -514,9 +682,24 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   const sbX = W - 20 - SB_W;
   const SELO_H = simples ? 156 : 0;    // proprietário/RT/escala/município/folha
   const FAIXA_H = simples ? 380 : 0;   // carimbo da empresa | planta de situação
-  const dArea = simples
+  const dAreaCheia = simples
     ? { x: 46, y: 20 + SELO_H + FAIXA_H + 16, w: W - 92, h: H - 56 - SELO_H - FAIXA_H - 16 }
     : { x: 60, y: 60, w: sbX - 100, h: H - 120 };
+
+  // ------------------- quadro dos confrontantes numerados -------------------
+  // Quem o operador marcou sai do desenho como NÚMERO e reaparece por extenso
+  // aqui embaixo. A faixa é medida e descontada ANTES da escala: o polígono é
+  // projetado já no que sobra, e nenhum rótulo pode cair no quadro porque o
+  // quadro não faz parte da área de desenho.
+  //
+  // Sem nenhum marcado, `h = 0` e TUDO abaixo é bit a bit o que era antes de
+  // este bloco existir — é o que mantém idêntica a planta de quem não usa.
+  const numerados = numerarConfrontantes(d.trechos);
+  const numeroDe = new Map(numerados.map((n) => [n.chave, n.numero]));
+  const quadroNum = medirQuadroNumerados(numerados, f, dAreaCheia.w, dAreaCheia.h * 0.28);
+  const dArea = quadroNum.h > 0
+    ? { ...dAreaCheia, y: dAreaCheia.y + quadroNum.h, h: dAreaCheia.h - quadroNum.h }
+    : dAreaCheia;
 
   // ------------------- escala e projeção papel -------------------
   const vs = d.vertices;
@@ -634,13 +817,16 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   };
   for (let i = 0; i < nv; i++) {
     const t = trechoDoIdx(i);
-    if (!t.isEstrada) continue;
+    // Rio (LN1) vence estrada: sai a dupla AZUL e a vermelha não é desenhada.
+    // As duas juntas na mesma divisa diriam que ali há uma estrada E um rio.
+    const cor = t.isRio ? AZUL_RIO : t.isEstrada ? VERMELHO : null;
+    if (!cor) continue;
     const a = vs[i], b = vs[(i + 1) % nv];
     // a linha dupla é SEMPRE por fora: a normal vem do sentido do anel
     const { x: nx, y: ny } = normalAresta(i);
     for (const off of [5, 11]) {
       const seg = { x1: X(a.e) + nx * off, y1: Y(a.n) + ny * off, x2: X(b.e) + nx * off, y2: Y(b.n) + ny * off };
-      linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, VERMELHO);
+      linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, cor);
       obstaculos.push(seg);
       vias.push(seg);
     }
@@ -667,6 +853,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   for (const gl of glebas) {
     const gv = gl.vertices;
     const viasGl = new Set(gl.viasIdx ?? []);
+    const riosGl = new Set(gl.riosIdx ?? []);
 
     // "fora" da gleba pelo sentido do PRÓPRIO anel dela, como no perímetro:
     // é o que joga a linha dupla da estrada para o lado certo mesmo em gleba
@@ -684,14 +871,17 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
 
       // A estrada que separa uma gleba da outra encosta nas DUAS, e cada uma
       // leva a sua dupla vermelha por fora. Desenhar a via só no perímetro era
-      // o que deixava a estrada do meio "encavalada".
-      if (viasGl.has(i)) {
+      // o que deixava a estrada do meio "encavalada". Vale igual para o rio,
+      // que também pode ser o que separa uma gleba da outra — e, como no
+      // perímetro, rio vence estrada.
+      const corGl = riosGl.has(i) ? AZUL_RIO : viasGl.has(i) ? VERMELHO : null;
+      if (corGl) {
         const dx = q.x - p.x, dy = q.y - p.y;
         const len = Math.hypot(dx, dy) || 1;
         const nx = sg * dy / len, nyy = -sg * dx / len;
         for (const off of [5, 11]) {
           const seg = { x1: p.x + nx * off, y1: p.y + nyy * off, x2: q.x + nx * off, y2: q.y + nyy * off };
-          linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, VERMELHO);
+          linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, corGl);
           obstaculos.push(seg);
           vias.push(seg);
         }
@@ -716,9 +906,14 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // esquerdo da área de desenho — ou seja, apaga qualquer rótulo que tenha caído
   // ali. O espaço dela é reservado agora, antes de posicionar nome nenhum: da
   // parte do rótulo não adianta não invadir se depois vem a legenda por cima.
+  // RIO só entra na legenda quando existe rio no desenho, e aí a caixa cresce
+  // uma linha. Listar um traço que não está na folha é pior que não listar: o
+  // cliente procura na planta o que a legenda promete. (ESTRADA é herança da
+  // planta de referência e continua fixa.)
+  const temRio = d.trechos.some((t) => t.isRio) || glebas.some((g) => (g.riosIdx?.length ?? 0) > 0);
   const legendaRet: Ret = {
     x1: dArea.x + 6, y1: dArea.y + 2,
-    x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124,
+    x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124 + (temRio ? 20 : 0),
   };
   ocupado.push(legendaRet);
   // Os nomes das glebas já estão na folha: reservá-los agora impede que um
@@ -881,9 +1076,11 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // e o bloco do vizinho ia parar em cima da área do imóvel
     const { x: nx, y: ny } = normalAresta(idxMeio);
 
-    if (t.isEstrada) {
+    if (t.isEstrada || t.isRio) {
       // Nome da via rotacionado ao longo do segmento, empurrado para fora até não
-      // cobrir a linha dupla vermelha nem o polígono.
+      // cobrir a linha dupla vermelha nem o polígono. O rio usa o mesmo rótulo:
+      // "RIO ITAPICURU" acompanha o curso d'água como "BA 408" acompanha a
+      // estrada — é um traço de faixa, não um vizinho com bloco de nome e CPF.
       const nome = linhasDescritivo(t.descritivo)[0] ?? "";
       const rot = angSeg > 90 || angSeg < -90 ? angSeg + 180 : angSeg;
       // o texto é desenhado a partir da origem; recuar meia largura NA DIREÇÃO DA
@@ -916,6 +1113,46 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       rotulosTrecho.push(esc.ret);
       corposTrecho.push(esc.tam);
       obbsTrecho.push(esc.obb);
+      continue;
+    }
+    // ---- confrontante NUMERADO: só o número, no lugar do bloco de nome ----
+    // Mesma âncora e mesma regra de posição do bloco de texto — meio da divisa,
+    // para fora, à distância proporcional. O que muda é o tamanho do que se
+    // posiciona: um disco de 24pt no lugar de um bloco de 310×90, e aí a busca
+    // acha lugar livre onde o bloco não achava. O texto do vizinho não some:
+    // está inteiro no quadro CONFRONTANTES do rodapé, com este mesmo número.
+    const numero = numeroDe.get(chaveConfrontante(t.descritivo));
+    if (numero !== undefined) {
+      const NUM_TAM = 17, R = 12;
+      const rotulo = String(numero);
+      const AFASTS_N = [1, 1.2, 1.45, 1.75, 2.1, 2.5];
+      const DESLS_N = [0, 0.2, -0.2, 0.4, -0.4];
+      const AFAST_N = Math.max(22, 0.052 * diagPoly);
+      const dirN = { x: Math.cos(angSeg * Math.PI / 180), y: Math.sin(angSeg * Math.PI / 180) };
+      const compN = segLens.reduce((sum, l) => sum + l, 0);
+      const candsN = DESLS_N.flatMap((desl, di) => AFASTS_N.map((fa, ai) => {
+        const passo = desl * Math.min(4 * R, 0.4 * compN);
+        let cxN = mx + nx * AFAST_N * fa + dirN.x * passo;
+        let cyN = my + ny * AFAST_N * fa + dirN.y * passo;
+        cxN = Math.max(dArea.x + R + 2, Math.min(cxN, dArea.x + dArea.w - R - 2));
+        cyN = Math.max(dArea.y + R + 2, Math.min(cyN, dArea.y + dArea.h - R - 2));
+        return {
+          cx: cxN, cy: cyN,
+          // mesmo espírito do bloco: sair do meio da divisa custa mais que
+          // afastar-se dela, porque um número fora do vão aponta divisa errada
+          custo: 2000 * Math.ceil(di / 2) + 100 * ai,
+          ret: { x1: cxN - R, y1: cyN - R, x2: cxN + R, y2: cyN + R },
+        };
+      }));
+      const escN = melhorLivre(candsN, obstaculos, ocupado, FOLGA) ?? menosPior(candsN, obstaculos, ocupado, FOLGA);
+      // disco branco OPACO: o número cai sobre a malha de coordenadas tanto
+      // quanto o bloco caía, e um dígito sobre linha tracejada não se lê
+      page.drawCircle({ x: escN.cx, y: escN.cy, size: R, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 1.4 });
+      texto(c, rotulo, escN.cx, escN.cy - NUM_TAM * 0.35, NUM_TAM, { bold: true, center: true });
+      ocupado.push(escN.ret);
+      rotulosTrecho.push(escN.ret);
+      corposTrecho.push(NUM_TAM);
+      obbsTrecho.push(undefined);
       continue;
     }
     // o traço verde de divisão já foi desenhado acima, um por M
@@ -1478,7 +1715,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     const lyTop = legendaRet.y2;
     texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 17, 11, { bold: true });
     const itens: [ReturnType<typeof rgb>, string][] = [
-      [VERMELHO, "ESTRADA"], [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
+      [VERMELHO, "ESTRADA"],
+      ...(temRio ? [[AZUL_RIO, "RIO / CURSO D'ÁGUA"] as [ReturnType<typeof rgb>, string]] : []),
+      [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
     ];
     // Gleba NÃO ganha entrada na legenda: ela sai como POLIGONAL DO TERRENO,
     // que já está listada. Foi assim que a planta de referência resolveu, e é
@@ -1491,6 +1730,35 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     }
     // a abreviatura só se explica se ela aparecer em algum lugar da folha
     if (exibe.matricula) texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 9.5);
+  }
+
+  // ---- QUADRO CONFRONTANTES (faixa reservada no rodapé do desenho) ----
+  // O outro lado do número: quem no desenho é "3" está aqui por extenso, com
+  // matrícula, CNS, nome e CPF — a mesma informação que sairia no bloco, só que
+  // num lugar onde o comprimento da divisa não manda na largura do texto.
+  //
+  // A faixa já foi descontada da área de desenho lá em cima, então este bloco
+  // não disputa espaço com nada: escreve onde ninguém pôde desenhar.
+  if (quadroNum.h > 0) {
+    const qx = dAreaCheia.x, qy = dAreaCheia.y, qw = dAreaCheia.w, qh = quadroNum.h;
+    page.drawRectangle({ x: qx, y: qy, width: qw, height: qh, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 0.8 });
+    texto(c, "CONFRONTANTES", qx + 8, qy + qh - 16, 12, { bold: true });
+    linha(c, qx, qy + qh - 24, qx + qw, qy + qh - 24, 0.5);
+    const nCols = quadroNum.colunas.length;
+    const larguraCol = qw / nCols;
+    for (const [ci, coluna] of quadroNum.colunas.entries()) {
+      // fio separando as colunas, como no rodapé da barra lateral
+      if (ci > 0) linha(c, qx + ci * larguraCol, qy + 4, qx + ci * larguraCol, qy + qh - 24, 0.4, CINZA);
+      let cy = qy + qh - 24 - quadroNum.tam - 4;
+      for (const entrada of coluna) {
+        for (const [li, lt] of entrada.linhas.entries()) {
+          // a primeira linha carrega o número e sai em negrito: é ela que o
+          // leitor procura depois de achar o "3" no desenho
+          texto(c, lt, qx + ci * larguraCol + 8 + (li === 0 ? 0 : 10), cy, quadroNum.tam, { bold: li === 0 });
+          cy -= quadroNum.esp;
+        }
+      }
+    }
   }
 
   if (diag) {

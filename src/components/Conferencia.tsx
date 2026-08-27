@@ -12,7 +12,7 @@ import {
   rotuloRT, SITUACOES, TIPOS_LIMITE, TIPOS_PESSOA, UFS,
 } from "../lib/domains";
 import { calcularPreviewLocal } from "../lib/preview";
-import { ehViaPorLimite, moverConfrontacao, SEM_CONFRONTACAO, viasDaPlanta } from "../lib/trechos";
+import { ehRioPorLimite, ehViaPorLimite, moverConfrontacao, numerarConfrontantes, SEM_CONFRONTACAO, viasDaPlanta } from "../lib/trechos";
 import {
   camposDaSituacao, chaveDoServico, pedeMatricula, rotuloCurto, situacaoDoImovel, vaiAoSigef,
 } from "../lib/modalidades";
@@ -93,6 +93,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [sigefNome, setSigefNome] = useState<string | null>(null);
   const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
   const [ufSugerida, setUfSugerida] = useState(false);
+  // Modo de numeração dos confrontantes: só revela os checkboxes. O que fica
+  // gravado é a marca por confrontante (`numerado`), não o modo — ligar e
+  // desligar o botão não muda nada do que sai na planta.
+  const [modoNumeracao, setModoNumeracao] = useState(false);
 
   // correção de sobreposição SIGEF (CSVs das parcelas certificadas sobrepostas)
   const [sobreCsvs, setSobreCsvs] = useState<{ nome: string; conteudo: string }[]>([]);
@@ -208,9 +212,14 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         eh_via: v.eh_via || ehViaPorLimite(v.tipo_limite),
         cns: v.cns,
         matricula: v.matricula,
+        numerado: !!v.numerado,
       })),
     [vertices],
   );
+
+  // Números como sairão no PDF: mesma função do desenho, para a tela não
+  // prometer um "3" que a planta imprime como "2". Chave por vértice inicial.
+  const numeracao = useMemo(() => numerarConfrontantes(trechosOrdenados), [trechosOrdenados]);
 
   const preview = useMemo(
     () => calcularPreviewLocal(
@@ -261,7 +270,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   }
   function addTrecho(ordem: number) {
     setVertices((vs) => vs.map((v) => (v.ordem === ordem && v.tipo !== "M"
-      ? { ...v, tipo: "M", descritivo: "", tipo_limite: "LA1", eh_via: false, apelido_txt: v.apelido_txt ?? "" }
+      ? { ...v, tipo: "M", descritivo: "", tipo_limite: "LA1", eh_via: false, numerado: false, apelido_txt: v.apelido_txt ?? "" }
       : v)));
   }
   function removeTrecho(t: Trecho) {
@@ -309,7 +318,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         tipo: "V" as const, codigo: novoV.codigo, codigo_provisorio: false, metodo: "PA1", inserido_manual: true,
         lat_gms: novoV.lat, lon_gms: novoV.lon,
         // V é ponto intermediário: nunca carrega confrontação
-        descritivo: null, tipo_limite: null, eh_via: false,
+        descritivo: null, tipo_limite: null, eh_via: false, numerado: false,
         cns: null, matricula: null, apelido_txt: null,
       }].sort((a, b) => a.ordem - b.ordem);
     });
@@ -683,6 +692,27 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   );
   const nomePonto = (v: Vertice) => v.num_txt ?? v.codigo ?? `V(${v.ordem})`;
   const corDoTrecho = (t: Trecho) => CORES[trechosOrdenados.indexOf(t) % CORES.length];
+  // Via e rio ficam de fora da numeração: o nome da estrada acompanha o traço
+  // dela e nunca foi o que empilhava. Mesma regra de numerarConfrontantes.
+  const ehNumeravel = (t: Trecho) =>
+    !t.eh_via && !ehViaPorLimite(t.tipo_limite) && !ehRioPorLimite(t.tipo_limite);
+  const chaveDoTrecho = (t: { descritivo?: string | null; apelido_txt?: string | null }) =>
+    (t.descritivo || t.apelido_txt || "").trim().toUpperCase();
+
+  /**
+   * Marcar a numeração é um ato sobre o CONFRONTANTE, não sobre o trecho: o
+   * mesmo vizinho pode ocupar duas divisas separadas do perímetro, e ele é um
+   * só. A marca vai para todas as divisas dele de uma vez — é assim que a tela,
+   * o banco e o desenho concordam sobre quem tem número (o desenho procura pelo
+   * descritivo, não pelo trecho). Ver numerarConfrontantes.
+   */
+  function marcarNumeracao(t: Trecho, valor: boolean) {
+    const chave = chaveDoTrecho(t);
+    if (!chave) return;
+    setVertices((vs) => vs.map((v) => (
+      v.tipo === "M" && chaveDoTrecho(v) === chave ? { ...v, numerado: valor } : v
+    )));
+  }
 
   // ------- estado do processo: trilha de etapas e próxima ação -------
   const confrontantesPreenchidos = trechosOrdenados.filter((t) => t.descritivo || t.apelido_txt).length;
@@ -985,9 +1015,29 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <span className="num-bloco">2</span>
           <h3>Confrontantes</h3>
           <span className="desc">
-            {trechosOrdenados.length} trecho(s) · {confrontantesPreenchidos} descrito(s) — as cores correspondem ao mapa
+            {trechosOrdenados.length} trecho(s) · {confrontantesPreenchidos} descrito(s)
+            {numeracao.size > 0 ? ` · ${numeracao.size} numerado(s)` : ""} — as cores correspondem ao mapa
           </span>
+          <span style={{ flex: 1 }} />
+          {/* Divisa curta não comporta o bloco de nome do vizinho: o texto quebra
+              em muitas linhas e acaba empilhado no do vizinho de baixo. Marcado
+              aqui, o confrontante sai da planta como número e reaparece por
+              extenso no quadro CONFRONTANTES do rodapé. */}
+          <button
+            className={modoNumeracao ? "principal" : ""}
+            title="Escolher quais confrontantes saem NUMERADOS na planta: no desenho fica só o número e o texto vai para o quadro do rodapé"
+            onClick={() => setModoNumeracao((v) => !v)}>
+            {modoNumeracao ? "✓ Concluir numeração" : "🔢 Adicionar numeração"}
+          </button>
         </header>
+        {modoNumeracao && (
+          <p className="desc" style={{ margin: "0 0 10px" }}>
+            Marque os confrontantes cujo espaço na planta é curto demais para o nome.
+            Cada marcado recebe um número, na ordem do perímetro, e os dados dele
+            saem no quadro <b>CONFRONTANTES</b> embaixo do desenho. Faixa de domínio
+            e curso d'água não entram: o nome deles acompanha o próprio traço.
+          </p>
+        )}
         <div className="confrontantes">
           <div className="trechos">
             {trechosOrdenados.map((t) => {
@@ -996,6 +1046,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                 <div className="trecho" key={`t-${t.vertice_inicio_ordem}`}
                   style={{ ["--cor-trecho" as string]: corDoTrecho(t) }}>
                   <div className="linha">
+                    {numeracao.get(t.vertice_inicio_ordem) !== undefined && (
+                      <span className="badge-num" title="Sai numerado na planta; os dados vão ao quadro CONFRONTANTES do rodapé">
+                        {numeracao.get(t.vertice_inicio_ordem)}
+                      </span>
+                    )}
                     {/* Trocar o ponto aqui move a confrontação inteira — o descritivo,
                         o apelido, o CNS e a matrícula vão junto. */}
                     <label title="Vértice M onde esta confrontação começa; ela vai até o próximo M. Trocar move a confrontação para o outro ponto, sem redigitar nada.">
@@ -1023,14 +1078,31 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                         {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
                       </select>
                     </label>
-                    <label title={ehViaPorLimite(t.tipo_limite)
-                      ? "LA3 é limite de faixa de domínio: sempre via"
-                      : "Estrada, rodovia, corredor, linha férrea, rio — desenhada na planta como linha dupla vermelha"}>
+                    <label title={ehRioPorLimite(t.tipo_limite)
+                      ? "LN1 é limite natural de curso d'água: sai na planta como linha dupla AZUL, no lugar da vermelha"
+                      : ehViaPorLimite(t.tipo_limite)
+                        ? "LA3 é limite de faixa de domínio: sempre via"
+                        : "Estrada, rodovia, corredor, linha férrea — desenhada na planta como linha dupla vermelha"}>
                       <input type="checkbox" checked={t.eh_via || ehViaPorLimite(t.tipo_limite)}
                         disabled={ehViaPorLimite(t.tipo_limite)}
                         onChange={(e) => setTrecho(t, { eh_via: e.target.checked })} />
                       {" "}faixa de domínio pública{ehViaPorLimite(t.tipo_limite) ? " (LA3)" : ""}
+                      {/* LN1 não é escolha de checkbox, é o tipo de limite — do
+                          mesmo jeito que LA3. Aqui só se avisa a cor que sai. */}
+                      {ehRioPorLimite(t.tipo_limite) && <span className="marca-rio"> ≈ rio (LN1, azul)</span>}
                     </label>
+                    {modoNumeracao && (
+                      <label title={!ehNumeravel(t)
+                        ? "Faixa de domínio e curso d'água não são numerados: o nome acompanha o traço da via"
+                        : !chaveDoTrecho(t)
+                          ? "Preencha o descritivo ou o apelido: é o texto que sairia no quadro do rodapé"
+                          : "Na planta sai só o número; nome, matrícula e CPF vão para o quadro CONFRONTANTES do rodapé"}>
+                        <input type="checkbox" checked={!!t.numerado && ehNumeravel(t)}
+                          disabled={!ehNumeravel(t) || !chaveDoTrecho(t)}
+                          onChange={(e) => marcarNumeracao(t, e.target.checked)} />
+                        {" "}numerar
+                      </label>
+                    )}
                     <label>CNS <input style={{ width: 110 }} value={t.cns ?? ""} onChange={(e) => setTrecho(t, { cns: e.target.value || null })} /></label>
                     <label>Matrícula <input style={{ width: 100 }} value={t.matricula ?? ""} onChange={(e) => setTrecho(t, { matricula: e.target.value || null })} /></label>
                     <span style={{ flex: 1 }} />
@@ -1062,14 +1134,21 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               {trechosOrdenados.map((t) => (
                 <span className="item" key={`leg-${t.vertice_inicio_ordem}`}>
                   <span className="ponto-cor" style={{ background: corDoTrecho(t) }} />
+                  {numeracao.get(t.vertice_inicio_ordem) !== undefined && (
+                    <span className="badge-num pequeno">{numeracao.get(t.vertice_inicio_ordem)}</span>
+                  )}
                   {t.apelido_txt || `pt ${nomePonto(vertices.find((v) => v.ordem === t.vertice_inicio_ordem) ?? vertices[0])}`}
-                  {t.eh_via && <span className="marca-via" title="Faixa de domínio pública: sai na planta como linha dupla vermelha"> ═ via</span>}
+                  {ehRioPorLimite(t.tipo_limite)
+                    ? <span className="marca-rio" title="Curso d'água (LN1): sai na planta como linha dupla azul"> ≈ rio</span>
+                    : t.eh_via && <span className="marca-via" title="Faixa de domínio pública: sai na planta como linha dupla vermelha"> ═ via</span>}
                 </span>
               ))}
             </div>
             <p className="desc" style={{ marginTop: 6 }}>
               A linha dupla vermelha é o que sairá na planta como estrada. Se ela aparecer
               onde não há estrada, desmarque "faixa de domínio pública" naquele trecho.
+              A linha dupla azul é o curso d'água: sai em todo trecho com tipo de limite
+              LN1. Se ali não houver rio, troque o tipo de limite.
             </p>
           </div>
         </div>

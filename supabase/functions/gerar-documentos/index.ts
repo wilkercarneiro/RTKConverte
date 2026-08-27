@@ -167,6 +167,9 @@ Deno.serve(async (req) => {
       ehVia: v.eh_via,
       cns: v.cns,
       matricula: v.matricula,
+      // confrontante que o operador mandou sair numerado no desenho: na planta
+      // fica só o número, e o texto vai ao quadro CONFRONTANTES do rodapé
+      numerado: v.numerado,
     }));
 
     const input: ServicoInput = {

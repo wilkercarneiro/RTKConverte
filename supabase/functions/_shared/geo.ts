@@ -128,14 +128,37 @@ export function gmsToDeg(g: GMS): number {
   return g.neg ? -abs : abs;
 }
 
+/**
+ * Lê uma coordenada GMS gravada em `vertices.lat_gms` / `lon_gms`.
+ *
+ * O formato canônico é o da planilha SIGEF — `11 24 30,375 S` —, que é o que
+ * `fmtGmsPlanilha` grava. Mas o mesmo campo já recebeu o formato do PDF do
+ * SIGEF (`-10°55'12,815"`, gravado pela reconciliação) e o do memorial
+ * (`-11°23'44,344" S`), e o operador digita à mão a coordenada de um vértice V
+ * inserido. Recusar essas três formas não protegia nada: quebrava a prévia da
+ * tela inteira com "Coordenada GMS inválida" por causa da formatação de um
+ * número que estava certo.
+ *
+ * O sinal pode vir do hemisfério, do "-" ou dos dois; discordância entre eles
+ * (`-11 24 30,375 N`) é ambígua de verdade e continua sendo erro.
+ */
 export function parseGmsPlanilha(s: string): GMS {
-  // "11 24 30,375 S" ou "39 4 47,198 W"
-  const m = s.trim().match(/^(\d+)\s+(\d+)\s+(\d+(?:,\d+)?)\s*([NSEWO])$/i);
+  const t = s.trim();
+  // Graus, minutos e segundos separados por espaço OU pelo símbolo da unidade —
+  // é a única diferença entre as três formas.
+  const m = t.match(/^(-)?(\d+)\s*(?:°\s*|\s)(\d+)\s*(?:'\s*|\s)(\d+(?:[.,]\d+)?)\s*"?\s*([NSEWO])?$/i);
   if (!m) throw new Error(`Coordenada GMS inválida: "${s}"`);
-  const hemi = m[4].toUpperCase();
-  const neg = hemi === "S" || hemi === "W" || hemi === "O";
-  const sec = Number(m[3].replace(",", "."));
-  return { neg, d: parseInt(m[1], 10), m: parseInt(m[2], 10), sMil: Math.round(sec * 1000) };
+  const hemi = (m[5] ?? "").toUpperCase();
+  const hemiNeg = hemi === "S" || hemi === "W" || hemi === "O";
+  const sinalNeg = m[1] === "-";
+  if (hemi && sinalNeg && !hemiNeg) throw new Error(`Coordenada GMS ambígua (sinal e hemisfério discordam): "${s}"`);
+  const sec = Number(m[4].replace(",", "."));
+  return {
+    neg: hemiNeg || sinalNeg,
+    d: parseInt(m[2], 10),
+    m: parseInt(m[3], 10),
+    sMil: Math.round(sec * 1000),
+  };
 }
 
 function pad2(n: number): string { return String(n).padStart(2, "0"); }

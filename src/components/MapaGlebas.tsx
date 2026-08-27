@@ -38,8 +38,8 @@ import {
   trechoDoPerimetro,
 } from "../lib/glebas";
 import type { PontoAnel } from "../lib/glebas";
-import { trechoDoVertice } from "../lib/trechos";
-import { CORES } from "./MapaSVG";
+import { ehRioPorLimite, trechoDoVertice } from "../lib/trechos";
+import { COR_RIO, COR_VIA, CORES } from "./MapaSVG";
 
 const W = 560, H = 460, PAD = 30;
 /** Raio (em px de tela) para uma alça arrastada grudar num vértice do perímetro. */
@@ -200,11 +200,13 @@ export function MapaGlebas({ vertices, trechos, glebas, ativa, onChange, onSnaps
           fill="#f3f6f4" stroke="#1f4fd8" strokeWidth={2}
         />
 
-        {/* faixas de domínio, como saem na planta: sem elas o mapa não é
-            reconhecível como a planta e o operador não confia no que está vendo */}
+        {/* faixas de domínio e cursos d'água, como saem na planta: sem elas o mapa
+            não é reconhecível como a planta e o operador não confia no que está
+            vendo. Vermelho = estrada; azul = rio (LN1), que vence a estrada */}
         {vs.map((p, i) => {
           const t = trechoDoVertice([...trechos].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem), p.v.ordem);
-          if (!t?.eh_via) return null;
+          const cor = ehRioPorLimite(t?.tipo_limite) ? COR_RIO : t?.eh_via ? COR_VIA : null;
+          if (!cor) return null;
           const q = vs[(i + 1) % vs.length];
           const ax = px(p.x), ay = py(p.y), bx = px(q.x), by = py(q.y);
           const len = Math.hypot(bx - ax, by - ay) || 1;
@@ -217,7 +219,7 @@ export function MapaGlebas({ vertices, trechos, glebas, ativa, onChange, onSnaps
             <g key={`via${i}`} pointerEvents="none">
               {[3, 6].map((off) => (
                 <line key={off} x1={ax + nx * off} y1={ay + nyy * off} x2={bx + nx * off} y2={by + nyy * off}
-                  stroke="#d40000" strokeWidth={1.4} />
+                  stroke={cor} strokeWidth={1.4} />
               ))}
             </g>
           );

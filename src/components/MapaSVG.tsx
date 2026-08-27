@@ -2,9 +2,13 @@
 // Gerado client-side a partir das coordenadas E/N — sem lib de mapa.
 import { useMemo } from "react";
 import type { Trecho, Vertice } from "../lib/types";
-import { trechoDoVertice } from "../lib/trechos";
+import { ehRioPorLimite, trechoDoVertice } from "../lib/trechos";
 
 export const CORES = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#01796f", "#9a6324", "#800000", "#808000", "#000075"];
+
+// as mesmas duas cores de faixa da planta (VERMELHO e AZUL_RIO em planta.ts)
+export const COR_VIA = "#d40000";
+export const COR_RIO = "#0d99e6";
 
 interface Props {
   vertices: Vertice[];
@@ -44,11 +48,14 @@ export function MapaSVG({ vertices, trechos, verticeInicial }: Props) {
   const { pts, px, py, W, H, corDoVertice, trechoDe, cx, cy } = dados;
   if (pts.length < 3) return null;
 
-  // Mesma construção da planta (planta.ts): duas paralelas vermelhas deslocadas na
-  // normal que aponta para fora do polígono. O que aparecer aqui é o que sai no PDF.
+  // Mesma construção da planta (planta.ts): duas paralelas deslocadas na normal
+  // que aponta para fora do polígono. O que aparecer aqui é o que sai no PDF —
+  // vermelhas para a faixa de domínio, AZUIS para o curso d'água (LN1), e rio
+  // vence estrada, como lá.
   const viaDoSegmento = (i: number) => {
     const t = trechoDe(pts[i].v.ordem);
-    if (!t?.eh_via) return null;
+    const cor = ehRioPorLimite(t?.tipo_limite) ? COR_RIO : t?.eh_via ? COR_VIA : null;
+    if (!cor) return null;
     const a = pts[i], b = pts[(i + 1) % pts.length];
     const ax = px(a.x), ay = py(a.y), bx = px(b.x), by = py(b.y);
     const dx = bx - ax, dy = by - ay;
@@ -58,7 +65,7 @@ export function MapaSVG({ vertices, trechos, verticeInicial }: Props) {
     if ((mx + nx * 5 - cx) ** 2 + (my + ny * 5 - cy) ** 2 < (mx - nx * 5 - cx) ** 2 + (my - ny * 5 - cy) ** 2) {
       nx = -nx; ny = -ny;
     }
-    return { ax, ay, bx, by, nx, ny };
+    return { ax, ay, bx, by, nx, ny, cor };
   };
 
   return (
@@ -70,7 +77,7 @@ export function MapaSVG({ vertices, trechos, verticeInicial }: Props) {
             stroke={corDoVertice(p.v.ordem)} strokeWidth={2} />
         );
       })}
-      {/* faixas de domínio: linha dupla vermelha por fora, como sai na planta */}
+      {/* faixas: dupla vermelha (estrada) ou azul (rio, LN1), como sai na planta */}
       {pts.map((_, i) => {
         const via = viaDoSegmento(i);
         if (!via) return null;
@@ -80,7 +87,7 @@ export function MapaSVG({ vertices, trechos, verticeInicial }: Props) {
               <line key={off}
                 x1={via.ax + via.nx * off} y1={via.ay + via.ny * off}
                 x2={via.bx + via.nx * off} y2={via.by + via.ny * off}
-                stroke="#d40000" strokeWidth={1.4} />
+                stroke={via.cor} strokeWidth={1.4} />
             ))}
           </g>
         );

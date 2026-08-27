@@ -141,6 +141,12 @@ export interface Vertice {
   cns: string | null;
   matricula: string | null;
   apelido_txt: string | null;
+  /**
+   * Sai NUMERADO na planta: no desenho fica só o número, e o texto do vizinho
+   * vai para o quadro CONFRONTANTES do rodapé. Para divisa curta demais para o
+   * bloco de nome. Ver PLANO-CONFRONTANTES-NUMERADOS.md.
+   */
+  numerado: boolean;
 }
 
 /**
@@ -160,6 +166,8 @@ export interface Trecho {
   eh_via: boolean;
   cns: string | null;
   matricula: string | null;
+  /** Sai numerado na planta. Ver Vertice.numerado. */
+  numerado: boolean;
 }
 
 export interface Credenciado {

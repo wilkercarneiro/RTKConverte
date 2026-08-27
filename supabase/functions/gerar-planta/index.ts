@@ -13,6 +13,7 @@ import type { Proj4 } from "../_shared/geo.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
 import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef } from "../_shared/reconciliacao.ts";
+import type { VerticeReconciliado } from "../_shared/reconciliacao.ts";
 import {
   bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, montarDadosPlanta,
 } from "../_shared/planta_dados.ts";
@@ -55,6 +56,8 @@ Deno.serve(async (req) => {
 
     let vertices: VerticePlanta[] = [];
     let trechosPlanta: TrechoPlanta[] = [];
+    // vértices oficializados pelo SIGEF, gravados só depois que o PDF sai
+    let persistirReconciliados: VerticeReconciliado[] = [];
     // TRT preenchido no sistema manda: campo do serviço, depois o TRT padrão do
     // RT cadastrado; o PDF do SIGEF (fluxo 'pecas', abaixo) é o último recurso.
     const trtSistema = ((servico.trt ?? "").trim() || (rt?.trt ?? "").trim());
@@ -81,11 +84,13 @@ Deno.serve(async (req) => {
         proj4
       );
 
-      // Atualiza o banco de dados com a lista reconciliada e oficializada pelo SIGEF
-      if (verticesReconciliados.length > 0) {
-        await supa.from("vertices").delete().eq("servico_id", servico_id);
-        await supa.from("vertices").insert(verticesReconciliados);
-      }
+      // A gravação da lista reconciliada fica para DEPOIS do PDF (ver
+      // `persistirReconciliados`, no fim do fluxo). Gravar aqui trocava os 50
+      // vértices do serviço por um perímetro no formato do PDF e, se o desenho
+      // estourasse logo em seguida, o banco ficava migrado pela metade: o
+      // operador via o serviço mudar sem receber planta nenhuma. Foi exatamente
+      // o que aconteceu na FAZENDA RIACHO DA CRUZ.
+      persistirReconciliados = verticesReconciliados;
 
       vertices = sigef.linhas.map((l, i) => {
         const vr = verticesReconciliados[i];
@@ -102,7 +107,9 @@ Deno.serve(async (req) => {
       const starts = montarTrechosDoSigef(trechoRows ?? [], verticesReconciliados, sigef.linhas);
       trechosPlanta = starts.map((s, k) => ({
         descritivo: s.descritivo,
-        isEstrada: s.ehVia,
+        // rio vence estrada: LN1 sai azul, e a dupla vermelha não é desenhada
+        isEstrada: s.ehVia && !s.ehRio,
+        isRio: s.ehRio,
         inicioIdx: s.idx,
         fimIdx: starts[(k + 1) % starts.length].idx,
       }));
@@ -127,6 +134,8 @@ Deno.serve(async (req) => {
           tipo: v.tipo, metodo: v.metodo, codigoManual: v.codigo, inserido: v.inserido_manual,
           descritivo: v.descritivo || v.apelido_txt || "", tipoLimite: v.tipo_limite,
           ehVia: v.eh_via, cns: v.cns, matricula: v.matricula,
+          // confrontante que o operador mandou sair numerado no desenho
+          numerado: v.numerado,
         })),
       };
       const g = geometriaDoCalculo(montarServico(input, proj4));
@@ -151,6 +160,13 @@ Deno.serve(async (req) => {
     });
 
     const pdfBytes = await gerarPlantaPdf(dados);
+
+    // O PDF saiu: agora o serviço pode assumir o perímetro do SIGEF.
+    if (persistirReconciliados.length > 0) {
+      await supa.from("vertices").delete().eq("servico_id", servico_id);
+      await supa.from("vertices").insert(persistirReconciliados);
+    }
+
     const { data: vmax } = await supa.from("documentos_gerados").select("versao")
       .eq("servico_id", servico_id).order("versao", { ascending: false }).limit(1);
     const versao = ((vmax?.[0]?.versao as number | undefined) ?? 0) + 1;

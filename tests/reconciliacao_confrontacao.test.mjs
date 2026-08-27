@@ -84,7 +84,7 @@ test("fluxo pecas: trechos_confrontantes por codigo_inicio tem precedência", ()
     [{ codigo_inicio: "DSBN-P-13806", vertice_inicio_ordem: 0, descritivo: "CORREDOR", eh_via: true }],
     reconciliados, sigefLinhas,
   );
-  assert.deepEqual(trechos, [{ idx: 1, descritivo: "CORREDOR", ehVia: true }]);
+  assert.deepEqual(trechos, [{ idx: 1, descritivo: "CORREDOR", ehVia: true, ehRio: false, numerado: false }]);
 });
 
 test("sem trecho e sem confrontação nos vértices, cai no texto do SIGEF sem marcar via", () => {

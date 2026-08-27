@@ -31,6 +31,8 @@ export interface VerticeServico {
   ehVia?: boolean | null;        // faixa de domínio pública (estrada, rio, corredor)
   cns?: string | null;
   matricula?: string | null;
+  /** Sai numerado na planta (ver TrechoServico.numerado). */
+  numerado?: boolean | null;
 }
 
 export interface TrechoServico {
@@ -38,6 +40,15 @@ export interface TrechoServico {
   descritivo: string;
   tipoLimite: string;
   ehVia: boolean;
+  /** LN1: curso d'água — linha dupla AZUL na planta, no lugar da vermelha. */
+  ehRio: boolean;
+  /**
+   * Confrontante NUMERADO: na planta sai só o número no meio da divisa, e o
+   * texto vai ao quadro CONFRONTANTES do rodapé. É a saída para divisa curta,
+   * onde o bloco de nome não cabe no vão do vizinho e acaba empilhado sobre o
+   * do vizinho seguinte. Ver PLANO-CONFRONTANTES-NUMERADOS.md.
+   */
+  numerado: boolean;
   cns?: string | null;
   matricula?: string | null;
 }
@@ -144,13 +155,19 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
       // LA3 é o limite artificial de faixa de domínio: vale como via sozinho,
       // sem depender da marca nem do rótulo. Mesma regra das peças (pecas.ts).
       ehVia: (v.conf.ehVia ?? false) || ehViaPorLimite(v.conf.tipoLimite),
+      // LN1 é o limite natural de curso d'água: vale como rio sozinho, do mesmo
+      // jeito. Não mexe em ehVia — o memorial e as declarações continuam
+      // tratando o rio como faixa de domínio pública; o que muda é a COR do
+      // traço na planta (ver ehRioPorLimite).
+      ehRio: ehRioPorLimite(v.conf.tipoLimite),
+      numerado: v.conf.numerado ?? false,
       cns: v.conf.cns ?? null,
       matricula: v.conf.matricula ?? null,
     }));
   // Confrontantes são opcionais: sem nenhum M, todo o perímetro pertence a um
   // trecho sintético vazio (LA1, sem descritivo).
   if (trechosOrdenados.length === 0) {
-    trechosOrdenados = [{ verticeInicioOrdem: ordemInicial, descritivo: "", tipoLimite: "LA1", ehVia: false }];
+    trechosOrdenados = [{ verticeInicioOrdem: ordemInicial, descritivo: "", tipoLimite: "LA1", ehVia: false, ehRio: false, numerado: false }];
   }
 
   const inicioPorOrdem = new Map<number, TrechoServico>(trechosOrdenados.map((t) => [t.verticeInicioOrdem, t]));
@@ -241,6 +258,23 @@ export function validarConfrontacoes(
 /** LA3 = limite artificial de faixa de domínio: é sempre via. */
 export const ehViaPorLimite = (tipoLimite?: string | null): boolean =>
   /^LA3\b/i.test((tipoLimite ?? "").trim());
+
+/**
+ * LN1 = limite natural de curso d'água: é sempre RIO.
+ *
+ * Espelho exato do LA3. Assim como todo trecho LA3 sai na planta com a linha
+ * dupla VERMELHA da faixa de domínio — tenha o rótulo que tiver —, todo trecho
+ * LN1 sai com a linha dupla AZUL do curso d'água, tenha ele o nome que tiver
+ * ("RIO ITAPICURU", "CÓRREGO SECO", o nome da bacia ou nada disso). Vale
+ * sozinho, sem depender da marca de faixa de domínio nem do texto.
+ *
+ * Rio VENCE estrada: um trecho LN1 nunca sai vermelho, mesmo que o rótulo
+ * ("RIO ...") case com RE_VIA ou que o operador tenha marcado o checkbox de
+ * faixa de domínio. As duas linhas juntas na mesma divisa diriam que ali há
+ * uma estrada E um rio.
+ */
+export const ehRioPorLimite = (tipoLimite?: string | null): boolean =>
+  /^LN1\b/i.test((tipoLimite ?? "").trim());
 
 const RE_VIA_APELIDO =
   /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|LINHA\s+F[ÉE]RREA|FERROVIA|FERROVI[ÁA]RI[AO]|LEITO\s+FERROVI[ÁA]RIO|RIO|RIACHO|C[ÓO]RREGO|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;

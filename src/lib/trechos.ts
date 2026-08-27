@@ -26,11 +26,13 @@ export interface Confrontacao {
   cns: string | null;
   matricula: string | null;
   apelido_txt: string | null;
+  /** Sai numerado na planta. Ver numerarConfrontantes. */
+  numerado: boolean;
 }
 
 export const SEM_CONFRONTACAO: Confrontacao = {
   descritivo: null, tipo_limite: null, eh_via: false,
-  cns: null, matricula: null, apelido_txt: null,
+  cns: null, matricula: null, apelido_txt: null, numerado: false,
 };
 
 // Faixa de domínio pública reconhecida pelo rótulo do trecho. Espelha RE_VIA de
@@ -42,6 +44,18 @@ const RE_VIA =
 /** LA3 = limite artificial de faixa de domínio: é sempre via. */
 export const ehViaPorLimite = (tipoLimite?: string | null): boolean =>
   /^LA3\b/i.test((tipoLimite ?? "").trim());
+
+/**
+ * LN1 = limite natural de curso d'água: é sempre RIO.
+ *
+ * Espelha `ehRioPorLimite` de supabase/functions/_shared/servico.ts — as duas
+ * precisam andar juntas, senão a prévia da tela mostra em azul um trecho que a
+ * planta desenha em vermelho. Assim como LA3 vale como faixa de domínio por si
+ * só, LN1 vale como curso d'água por si só, e rio VENCE estrada: um trecho LN1
+ * nunca sai com a dupla vermelha, mesmo marcado como faixa de domínio.
+ */
+export const ehRioPorLimite = (tipoLimite?: string | null): boolean =>
+  /^LN1\b/i.test((tipoLimite ?? "").trim());
 
 /**
  * Faixas de domínio da planta: trecho com limite LA3, marcado como via, ou cujo
@@ -91,6 +105,7 @@ export function moverConfrontacao<
   const conf: Confrontacao = {
     descritivo: origem.descritivo, tipo_limite: origem.tipo_limite, eh_via: origem.eh_via,
     cns: origem.cns, matricula: origem.matricula, apelido_txt: origem.apelido_txt,
+    numerado: origem.numerado,
   };
   return vertices.map((v) => {
     if (v.ordem === deOrdem) return { ...v, tipo: v.inserido_manual ? "V" as const : "P" as const, ...SEM_CONFRONTACAO };
@@ -106,11 +121,67 @@ export function moverConfrontacao<
  */
 export function segmentosDeVia(
   verticesOrdenados: { ordem: number }[],
-  trechosOrdenados: { vertice_inicio_ordem: number; eh_via: boolean }[],
+  trechosOrdenados: { vertice_inicio_ordem: number; eh_via: boolean; tipo_limite?: string | null }[],
 ): number[] {
   const out: number[] = [];
   verticesOrdenados.forEach((v, i) => {
-    if (trechoDoVertice(trechosOrdenados, v.ordem)?.eh_via) out.push(i);
+    const t = trechoDoVertice(trechosOrdenados, v.ordem);
+    // rio vence estrada: o trecho LN1 sai na lista das duplas AZUIS, não aqui
+    if (t?.eh_via && !ehRioPorLimite(t.tipo_limite)) out.push(i);
   });
+  return out;
+}
+
+/**
+ * Índices dos segmentos que saem como CURSO D'ÁGUA — linha dupla azul na
+ * planta. Mesma construção de `segmentosDeVia`, trocando o critério: o que
+ * define rio é o limite LN1 do trecho do vértice inicial.
+ */
+export function segmentosDeRio(
+  verticesOrdenados: { ordem: number }[],
+  trechosOrdenados: { vertice_inicio_ordem: number; tipo_limite?: string | null }[],
+): number[] {
+  const out: number[] = [];
+  verticesOrdenados.forEach((v, i) => {
+    if (ehRioPorLimite(trechoDoVertice(trechosOrdenados, v.ordem)?.tipo_limite)) out.push(i);
+  });
+  return out;
+}
+
+/**
+ * Quem sai NUMERADO na planta, e com que número.
+ *
+ * Espelha `numerarConfrontantes` de supabase/functions/_shared/planta.ts — as
+ * duas precisam andar juntas, senão o número que a tela mostra ao operador não
+ * é o que sai impresso. Mesmas regras: só quem foi marcado; via e rio nunca;
+ * rótulo vazio nunca; UM número por confrontante distinto (o mesmo vizinho em
+ * duas divisas separadas leva o mesmo número); ordem do anel, começando em 1.
+ *
+ * O rótulo é `descritivo || apelido_txt`, que é exatamente o que as duas Edge
+ * Functions mandam para o desenho — sem isso, um confrontante descrito só pelo
+ * apelido receberia número na tela e nenhum no PDF.
+ */
+export function numerarConfrontantes(
+  trechos: {
+    vertice_inicio_ordem: number;
+    descritivo?: string | null;
+    apelido_txt?: string | null;
+    tipo_limite?: string | null;
+    eh_via?: boolean | null;
+    numerado?: boolean | null;
+  }[],
+): Map<number, number> {
+  const out = new Map<number, number>();
+  const vistos = new Map<string, number>();
+  for (const t of [...trechos].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem)) {
+    if (!t.numerado) continue;
+    if (t.eh_via || ehViaPorLimite(t.tipo_limite) || ehRioPorLimite(t.tipo_limite)) continue;
+    const chave = (t.descritivo || t.apelido_txt || "").trim().toUpperCase();
+    if (!chave) continue;
+    const jaVisto = vistos.get(chave);
+    const numero = jaVisto ?? vistos.size + 1;
+    if (jaVisto === undefined) vistos.set(chave, numero);
+    out.set(t.vertice_inicio_ordem, numero);
+  }
   return out;
 }

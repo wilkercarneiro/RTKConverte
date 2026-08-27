@@ -386,6 +386,20 @@ label > input, label > select { font-weight: 400; color: var(--texto); }
 .legenda .item { display: inline-flex; gap: 6px; align-items: center; }
 .ponto-cor { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 .marca-via { color: #d40000; font-weight: 700; letter-spacing: -1px; }
+/* curso d'água (LN1): mesmo azul da dupla que sai na planta e no mapa */
+.marca-rio { color: #0d99e6; font-weight: 700; letter-spacing: -1px; }
+
+/* Confrontante numerado: o mesmo disco que sai no desenho da planta, para o
+   operador reconhecer na folha impressa o que marcou na tela. */
+.badge-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 24px; height: 24px; padding: 0 5px;
+  border: 1.5px solid var(--texto); border-radius: 50%;
+  background: #fff; color: var(--texto);
+  font-weight: 800; font-size: 13px; line-height: 1;
+  flex: none; align-self: center;
+}
+.badge-num.pequeno { min-width: 17px; height: 17px; font-size: 10.5px; border-width: 1px; }
 
 /* Vértices */
 .acoes-vertices { display: grid; gap: 12px; margin-bottom: 14px; }

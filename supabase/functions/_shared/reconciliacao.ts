@@ -4,12 +4,12 @@
 // preservando a sequência exata do perímetro oficial do SIGEF.
 
 import type { LinhaSigef } from "./sigef_pdf.ts";
-import { GEO_DEF, utmDef } from "./geo.ts";
+import { GEO_DEF, degToGmsCanonical, fmtGmsPlanilha, utmDef } from "./geo.ts";
 import type { Proj4 } from "./geo.ts";
 // Mesma regra de faixa de domínio do fluxo 'geo' (montarServico): LA3 é via
 // sozinho. Importada, não copiada — foi justamente uma cópia a menos aqui que
 // deixava a planta do SIGEF sem a linha vermelha que a do sistema desenhava.
-import { ehViaPorLimite } from "./servico.ts";
+import { ehRioPorLimite, ehViaPorLimite } from "./servico.ts";
 
 export interface VerticeBanco {
   id?: string;
@@ -37,6 +37,7 @@ export interface VerticeBanco {
   cns?: string | null;
   matricula?: string | null;
   apelido_txt?: string | null;
+  numerado?: boolean | null;
 }
 
 export interface VerticeReconciliado {
@@ -61,12 +62,16 @@ export interface VerticeReconciliado {
   cns: string | null;
   matricula: string | null;
   apelido_txt: string | null;
+  numerado: boolean;
 }
 
 export interface TrechoSigef {
   idx: number;        // posição na sequência de linhas do SIGEF
   descritivo: string;
   ehVia: boolean;     // faixa de domínio: linha dupla vermelha na planta
+  ehRio: boolean;     // curso d'água (LN1): linha dupla azul, no lugar da vermelha
+  /** Sai numerado no desenho, com o texto no quadro do rodapé. */
+  numerado: boolean;
 }
 
 export interface TrechoBanco {
@@ -76,6 +81,7 @@ export interface TrechoBanco {
   apelido_txt?: string | null;
   eh_via?: boolean | null;
   tipo_limite?: string | null;
+  numerado?: boolean | null;
 }
 
 /**
@@ -110,6 +116,8 @@ export function montarTrechosDoSigef(
           idx: idxDe.get(cod)!,
           descritivo: t.descritivo || t.apelido_txt || "",
           ehVia: !!t.eh_via || ehViaPorLimite(t.tipo_limite),
+          ehRio: ehRioPorLimite(t.tipo_limite),
+          numerado: !!t.numerado,
         }
         : null;
     })
@@ -122,6 +130,8 @@ export function montarTrechosDoSigef(
         idx: idxDe.get(v.codigo)!,
         descritivo: v.descritivo || v.apelido_txt || "",
         ehVia: !!v.eh_via || ehViaPorLimite(v.tipo_limite),
+        ehRio: ehRioPorLimite(v.tipo_limite),
+        numerado: !!v.numerado,
       }));
   }
 
@@ -130,7 +140,9 @@ export function montarTrechosDoSigef(
     sigefLinhas.forEach((l, i) => {
       if (l.confrontacao !== ultima) {
         ultima = l.confrontacao;
-        starts.push({ idx: i, descritivo: l.confrontacao.replace(/\.{3}$/, ""), ehVia: false });
+        // O texto do PDF não diz o que é faixa de domínio nem o que o operador
+        // quis numerar: sem fonte, nada sai numerado.
+        starts.push({ idx: i, descritivo: l.confrontacao.replace(/\.{3}$/, ""), ehVia: false, ehRio: false, numerado: false });
       }
     });
   }
@@ -222,14 +234,15 @@ export function reconciliarVerticesBancoComSigef(
         tipo: temConfrontacao ? "M" : tipoDoCodigo(l.codigo),
         metodo: correspondente.metodo || "PG6",
         inserido_manual: correspondente.inserido_manual,
-        lat_gms: l.lat,
-        lon_gms: l.lon,
+        lat_gms: fmtGmsPlanilha(degToGmsCanonical(latDeg), "lat"),
+        lon_gms: fmtGmsPlanilha(degToGmsCanonical(lonDeg), "lon"),
         descritivo: correspondente.descritivo ?? null,
         tipo_limite: correspondente.tipo_limite ?? null,
         eh_via: !!correspondente.eh_via,
         cns: correspondente.cns ?? null,
         matricula: correspondente.matricula ?? null,
         apelido_txt: correspondente.apelido_txt ?? null,
+        numerado: !!correspondente.numerado,
       };
     } else {
       // Ponto novo / sobreposto de outro profissional vindo do SIGEF
@@ -247,8 +260,8 @@ export function reconciliarVerticesBancoComSigef(
         tipo: tipoDoCodigo(l.codigo),
         metodo: "PG6",
         inserido_manual: false,
-        lat_gms: l.lat,
-        lon_gms: l.lon,
+        lat_gms: fmtGmsPlanilha(degToGmsCanonical(latDeg), "lat"),
+        lon_gms: fmtGmsPlanilha(degToGmsCanonical(lonDeg), "lon"),
         // ponto de terceiro: não é confrontação nossa
         descritivo: null,
         tipo_limite: null,
@@ -256,6 +269,7 @@ export function reconciliarVerticesBancoComSigef(
         cns: null,
         matricula: null,
         apelido_txt: null,
+        numerado: false,
       };
     }
   });

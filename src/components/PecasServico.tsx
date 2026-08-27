@@ -8,12 +8,20 @@ import { useEffect, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
 import { rotuloRT, TIPOS_LIMITE, UFS } from "../lib/domains";
 import { contarPreenchidos, useAutosave, useAvisos } from "../lib/ux";
-import { ehViaPorLimite, viasDaPlanta } from "../lib/trechos";
+import { ehRioPorLimite, ehViaPorLimite, numerarConfrontantes, viasDaPlanta } from "../lib/trechos";
 import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { Avisos, Passos, ProximaAcao, Secao, StatusSalvamento, irPara, type Acao, type Passo } from "./ui";
 
-interface TrechoPdf { id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string; eh_via: boolean }
+interface TrechoPdf {
+  id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string; eh_via: boolean;
+  /**
+   * Sai NUMERADO na planta: no desenho fica só o número e o texto vai ao quadro
+   * CONFRONTANTES do rodapé — a saída para divisa curta demais para o bloco de
+   * nome. Ver PLANO-CONFRONTANTES-NUMERADOS.md.
+   */
+  numerado?: boolean;
+}
 interface Analise {
   cabecalho: Record<string, string | null>;
   trechos: { codigo: string; confrontacao: string; segmentos: number }[];
@@ -41,6 +49,8 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   const [pdfNome, setPdfNome] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  // só revela os checkboxes; o que fica gravado é a marca por confrontante
+  const [modoNumeracao, setModoNumeracao] = useState(false);
   const [pecas, setPecas] = useState<PecasGeradas | null>(null);
   const [plantaUrl, setPlantaUrl] = useState<string | null>(null);
   const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
@@ -126,7 +136,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       }));
       await supabase.from("trechos_confrontantes").insert(linhas);
       setServico(novo as Servico);
-      setTrechos(linhas.map((l) => ({ codigo_inicio: l.codigo_inicio, descritivo: l.descritivo, tipo_limite: l.tipo_limite, eh_via: l.eh_via })));
+      setTrechos(linhas.map((l) => ({ codigo_inicio: l.codigo_inicio, descritivo: l.descritivo, tipo_limite: l.tipo_limite, eh_via: l.eh_via, numerado: false })));
       avisar("ok", `PDF lido: ${a.vertices} vértices e ${a.trechos.length} confrontantes detectados. Complete os dados e revise os descritivos.`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
@@ -145,6 +155,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     const { error: e3 } = await supabase.from("trechos_confrontantes").insert(trechos.map((t, i) => ({
       servico_id: id, vertice_inicio_ordem: i, codigo_inicio: t.codigo_inicio,
       descritivo: t.descritivo, tipo_limite: t.tipo_limite, eh_via: t.eh_via,
+      numerado: !!t.numerado,
     })));
     if (e3) throw e3;
     if (servico.rt_id) await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
@@ -248,6 +259,20 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   if (!servico.rt_id) pendencias.push({ msg: "selecione o Responsável Técnico", alvo: "pc-rt" });
 
   const semDescritivo = trechos.filter((t) => !t.descritivo.trim()).length;
+  // Mesma função do desenho: a tela não pode prometer um número que a planta
+  // imprime diferente. `vertice_inicio_ordem` é o índice, que é o que salvar()
+  // grava — a ordem da lista é a ordem do perímetro.
+  const numeracao = numerarConfrontantes(trechos.map((t, i) => ({ ...t, vertice_inicio_ordem: i })));
+  const ehNumeravel = (t: TrechoPdf) =>
+    !t.eh_via && !ehViaPorLimite(t.tipo_limite) && !ehRioPorLimite(t.tipo_limite);
+  // A marca é sobre o CONFRONTANTE, não sobre o trecho: o mesmo vizinho em duas
+  // divisas separadas é um só, e o desenho procura pelo descritivo. Ver
+  // marcarNumeracao em Conferencia.tsx e numerarConfrontantes em trechos.ts.
+  const marcarNumeracao = (i: number, valor: boolean) => setTrechos((ts) => {
+    const chave = ts[i].descritivo.trim().toUpperCase();
+    if (!chave) return ts;
+    return ts.map((x) => (x.descritivo.trim().toUpperCase() === chave ? { ...x, numerado: valor } : x));
+  });
   // faixas de domínio: identificadas na planta (marca do trecho ou rótulo do
   // confrontante), uma declaração por via — não há campo para digitar
   const vias = viasDaPlanta(trechos);
@@ -421,11 +446,33 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       <section className="bloco">
         <header><span className="num-bloco">2</span><h3>Confrontantes</h3>
           <span className="desc">
-            {trechos.length} trecho(s){semDescritivo > 0 ? ` · ${semDescritivo} sem descritivo formal` : " · todos descritos"} — o PDF traz o texto truncado
-          </span></header>
+            {trechos.length} trecho(s){semDescritivo > 0 ? ` · ${semDescritivo} sem descritivo formal` : " · todos descritos"}
+            {numeracao.size > 0 ? ` · ${numeracao.size} numerado(s)` : ""} — o PDF traz o texto truncado
+          </span>
+          <span style={{ flex: 1 }} />
+          <button
+            className={modoNumeracao ? "principal" : ""}
+            title="Escolher quais confrontantes saem NUMERADOS na planta: no desenho fica só o número e o texto vai para o quadro do rodapé"
+            onClick={() => setModoNumeracao((v) => !v)}>
+            {modoNumeracao ? "✓ Concluir numeração" : "🔢 Adicionar numeração"}
+          </button>
+        </header>
+        {modoNumeracao && (
+          <p className="desc" style={{ margin: "0 0 10px" }}>
+            Marque os confrontantes cujo espaço na planta é curto demais para o nome.
+            Cada marcado recebe um número, na ordem do perímetro, e os dados dele saem
+            no quadro <b>CONFRONTANTES</b> embaixo do desenho. Faixa de domínio e curso
+            d'água não entram: o nome deles acompanha o próprio traço.
+          </p>
+        )}
         {trechos.map((t, i) => (
           <div className="trecho" key={i} style={{ ["--cor-trecho" as string]: t.descritivo.trim() ? "#12b76a" : "#b54708" }}>
             <div className="linha">
+              {numeracao.get(i) !== undefined && (
+                <span className="badge-num" title="Sai numerado na planta; os dados vão ao quadro CONFRONTANTES do rodapé">
+                  {numeracao.get(i)}
+                </span>
+              )}
               <label>Início no vértice <input className="mono" style={{ width: 140 }} value={t.codigo_inicio}
                 onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, codigo_inicio: e.target.value } : x)))} /></label>
               <label>Tipo limite
@@ -433,14 +480,29 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                   {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
                 </select>
               </label>
-              <label title={ehViaPorLimite(t.tipo_limite)
-                ? "LA3 é limite de faixa de domínio: sempre via"
-                : "Estrada, rodovia, corredor, linha férrea, rio — desenhada na planta como linha dupla vermelha"}>
+              <label title={ehRioPorLimite(t.tipo_limite)
+                ? "LN1 é limite natural de curso d'água: sai na planta como linha dupla AZUL, no lugar da vermelha"
+                : ehViaPorLimite(t.tipo_limite)
+                  ? "LA3 é limite de faixa de domínio: sempre via"
+                  : "Estrada, rodovia, corredor, linha férrea — desenhada na planta como linha dupla vermelha"}>
                 <input type="checkbox" checked={t.eh_via || ehViaPorLimite(t.tipo_limite)}
                   disabled={ehViaPorLimite(t.tipo_limite)}
                   onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, eh_via: e.target.checked } : x)))} />
                 {" "}faixa de domínio pública{ehViaPorLimite(t.tipo_limite) ? " (LA3)" : ""}
+                {ehRioPorLimite(t.tipo_limite) && <span className="marca-rio"> ≈ rio (LN1, azul)</span>}
               </label>
+              {modoNumeracao && (
+                <label title={!ehNumeravel(t)
+                  ? "Faixa de domínio e curso d'água não são numerados: o nome acompanha o traço da via"
+                  : !t.descritivo.trim()
+                    ? "Preencha o descritivo: é o texto que sairia no quadro do rodapé"
+                    : "Na planta sai só o número; nome, matrícula e CPF vão para o quadro CONFRONTANTES do rodapé"}>
+                  <input type="checkbox" checked={!!t.numerado && ehNumeravel(t)}
+                    disabled={!ehNumeravel(t) || !t.descritivo.trim()}
+                    onChange={(e) => marcarNumeracao(i, e.target.checked)} />
+                  {" "}numerar
+                </label>
+              )}
               <span style={{ flex: 1 }} />
               <button className="remover" title="Remover trecho" onClick={() => setTrechos((ts) => ts.filter((_, j) => j !== i))}>✕</button>
             </div>

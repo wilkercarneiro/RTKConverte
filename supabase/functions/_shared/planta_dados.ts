@@ -69,7 +69,9 @@ export function glebasParaPlanta(
       // Aresta de faixa de domínio: a que SAI de um vértice cujo trecho é via.
       // A estrada que separa duas glebas encosta nas duas, e cada uma leva a sua
       // linha dupla — é o que faltava quando a via só era desenhada no perímetro.
-      const viasIdx = casados.flatMap((p, i) => (p.v?.trecho.ehVia ? [i] : []));
+      // O rio (LN1) sai por fora dessa lista: ele tem a sua, em azul.
+      const riosIdx = casados.flatMap((p, i) => (p.v?.trecho.ehRio ? [i] : []));
+      const viasIdx = casados.flatMap((p, i) => (p.v?.trecho.ehVia && !p.v.trecho.ehRio ? [i] : []));
 
       return {
         nome,
@@ -79,6 +81,7 @@ export function glebasParaPlanta(
         identificacao: identificacaoDaGleba(servico, nome),
         vertices,
         viasIdx,
+        riosIdx,
       };
     });
 }
@@ -125,7 +128,10 @@ export function geometriaDoCalculo(calc: ServicoCalculado): GeometriaPlanta {
   }));
   const trechos: TrechoPlanta[] = calc.trechosOrdenados.map((t, k) => ({
     descritivo: t.descritivo,
-    isEstrada: t.ehVia,
+    // rio vence estrada: LN1 sai azul, e a dupla vermelha não é desenhada
+    isEstrada: t.ehVia && !t.ehRio,
+    isRio: t.ehRio,
+    numerado: t.numerado,
     inicioIdx: posDe.get(t.verticeInicioOrdem) ?? 0,
     fimIdx: posDe.get(calc.trechosOrdenados[(k + 1) % calc.trechosOrdenados.length].verticeInicioOrdem) ?? 0,
   }));
