@@ -54,6 +54,10 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   const [pecas, setPecas] = useState<PecasGeradas | null>(null);
   const [plantaUrl, setPlantaUrl] = useState<string | null>(null);
   const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
+  // Folha da planta (A1/A3): escolha do operador antes de gerar; sem escolha vale
+  // a regra histórica (posse → A3, matrícula → A1). Não é gravada no serviço.
+  const [folhaPlanta, setFolhaPlanta] = useState<"A1" | "A3" | null>(null);
+  const folhaEfetiva: "A1" | "A3" = folhaPlanta ?? (servico?.tipo_imovel === "posse" ? "A3" : "A1");
   const { avisos, avisar, fechar } = useAvisos();
 
   useEffect(() => {
@@ -203,16 +207,17 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     if (!servico) return;
     if (!pdfB64) { setErro("Envie o PDF do SIGEF para gerar a planta"); return; }
     if (!satelite) { setErro("Envie a imagem de satélite para gerar a planta"); return; }
-    setOcupado(`Gerando a Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"}…`);
+    setOcupado(`Gerando a Planta ${folhaEfetiva}…`);
     setErro(null);
     try {
       await salvar();
       const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", {
         servico_id: servico.id, pdf_base64: pdfB64,
         satelite_base64: satelite.b64, satelite_tipo: satelite.tipo,
+        folha: folhaEfetiva,
       });
       setPlantaUrl(r.planta_pdf);
-      avisar("ok", `Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} gerada.`);
+      avisar("ok", `Planta ${folhaEfetiva} gerada.`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -304,7 +309,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       : !plantaUrl
         ? {
           tom: "neutro",
-          titulo: `Gere a Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"}`,
+          titulo: `Gere a Planta ${folhaEfetiva}`,
           detalhe: satelite ? `imagem ${satelite.nome} carregada` : "requer a imagem de satélite",
           rotuloBotao: "Ir para a planta",
           onClick: () => irPara("pc-gerar"),
@@ -542,13 +547,20 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
             <input type="file" accept="image/png,image/jpeg" hidden
               onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
           </label>
+          <label>Folha
+            <select value={folhaEfetiva} onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
+              <option value="A1">A1 (841×594 mm)</option>
+              <option value="A3">A3 (420×297 mm)</option>
+            </select>
+            <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
+          </label>
           <button disabled={!!ocupado || !satelite} onClick={gerarPlanta}
             title={!satelite ? "Envie a imagem de satélite primeiro" : undefined}>
-            🗺 Gerar Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"} (PDF)
+            🗺 Gerar Planta {folhaEfetiva} (PDF)
           </button>
           {plantaUrl && (
             <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
-              <span className="ext">PDF</span> Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"}
+              <span className="ext">PDF</span> Planta {folhaEfetiva}
             </a>
           )}
         </div>

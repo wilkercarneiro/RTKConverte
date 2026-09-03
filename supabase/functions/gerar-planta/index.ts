@@ -11,7 +11,7 @@ import { montarServico } from "../_shared/servico.ts";
 import type { ServicoInput } from "../_shared/servico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
-import type { TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
+import type { Folha, TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
 import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef } from "../_shared/reconciliacao.ts";
 import type { VerticeReconciliado } from "../_shared/reconciliacao.ts";
 import {
@@ -38,7 +38,9 @@ function gmsPdfParaDeg(s: string): number {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { servico_id, pdf_base64, satelite_base64, satelite_tipo } = await req.json();
+    // `folha` (A1/A3) é escolha do operador na tela; ausente = regra histórica
+    // (posse → A3, matrícula → A1)
+    const { servico_id, pdf_base64, satelite_base64, satelite_tipo, folha } = await req.json();
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -147,11 +149,13 @@ Deno.serve(async (req) => {
     }
 
     const posse = servico.tipo_imovel === "posse";
+    const folhaSaida: Folha = folha === "A1" || folha === "A3" ? folha : (posse ? "A3" : "A1");
     const dados = montarDadosPlanta({
       servico, rt, cred,
       desenhista: cfgDes?.value ?? "",
       geometria: { vertices, trechos: trechosPlanta, areaFmt, perimetroFmt, latMediaDeg: latMedia },
       fuso, trt,
+      folha: folhaSaida,
       dataStr: dataHojeBR(),
       logo: await carregarLogoPlanta(supa),
       satelite: satelite_base64
@@ -175,14 +179,14 @@ Deno.serve(async (req) => {
     if (up.error) throw up.error;
     // "SIGEF" no título/nome do arquivo: esta é a planta oficial, para não se
     // confundir com a que sai junto do memorial (gerar-documentos, tipo planta_pdf_sistema)
-    await supa.from("documentos_gerados").insert([{ servico_id, versao, tipo: "planta_pdf", titulo: `Planta ${posse ? "A3" : "A1"} (PDF · SIGEF)`, path }]);
+    await supa.from("documentos_gerados").insert([{ servico_id, versao, tipo: "planta_pdf", titulo: `Planta ${folhaSaida} (PDF · SIGEF)`, path }]);
     const nomeBase = servico.denominacao.replace(/[\\/:*?"<>|]/g, "-").trim();
     const s = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `Planta SIGEF - ${nomeBase}.pdf` });
 
     return json({
       ok: true,
       planta_pdf: s.data?.signedUrl,
-      resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!dados.logo, folha: posse ? "A3" : "A1" },
+      resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!dados.logo, folha: folhaSaida },
     });
   } catch (err) {
     return json({ erro: err instanceof Error ? err.message : String(err) }, 400);

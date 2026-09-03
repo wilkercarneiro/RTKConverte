@@ -61,7 +61,9 @@ Deno.serve(async (req) => {
   try {
     // a imagem de satélite é opcional aqui: sem ela a planta sai com o quadro
     // PLANTA DE SITUAÇÃO vazio e um aviso pedindo o reenvio
-    const { servico_id, satelite_base64, satelite_tipo } = await req.json();
+    // `folha` (A1/A3) é a escolha do operador para a planta do serviço completo;
+    // ausente = regra histórica (posse → A3, matrícula → A1)
+    const { servico_id, satelite_base64, satelite_tipo, folha: folhaPedida } = await req.json();
     if (!servico_id) return json({ erro: "servico_id ausente" }, 400);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -350,11 +352,12 @@ Deno.serve(async (req) => {
     let plantaBuf: Uint8Array | null = null;
 
     // A conferência circula impressa em mesa, não em prancheta: sai em A3 por
-    // padrão, ou na folha que o operador escolheu na tela. Serviço completo não
-    // passa `folha` e cai na regra de sempre (posse → A3, matrícula → A1).
+    // padrão, ou na folha que o operador escolheu na tela. Serviço completo usa a
+    // folha pedida na chamada (A1/A3); sem ela cai na regra de sempre
+    // (posse → A3, matrícula → A1).
     const folha: Folha | undefined = conferencia
       ? ((["A1", "A3", "A4"].includes(servico.folha_conferencia ?? "") ? servico.folha_conferencia : "A3") as Folha)
-      : undefined;
+      : (folhaPedida === "A1" || folhaPedida === "A3" ? (folhaPedida as Folha) : undefined);
     try {
       const dadosPlanta = montarDadosPlanta({
         servico, rt, cred,

@@ -50,10 +50,14 @@ interface RelatorioSobreposicao {
   mantidos?: number;
   removidos: string[];
   novos: string[];
+  /** Vértices certificados do vizinho que passaram a descrever a divisa (códigos). */
+  compartilhados?: string[];
+  /** Quantos vértices nossos foram igualados a um certificado (subconjunto). */
+  igualados?: number;
 }
 
 const STATUS_PARCELA: Record<RelatorioSobreposicao["parcelas"][number]["status"], { rotulo: string; cor: string }> = {
-  corrigida: { rotulo: "corrigida (afastada)", cor: "#3cb44b" },
+  corrigida: { rotulo: "corrigida", cor: "#3cb44b" },
   sem_sobreposicao: { rotulo: "sem sobreposição", cor: "#888" },
   mesma_gleba: { rotulo: "mesma gleba já certificada — exige retificação no SIGEF", cor: "#e6194b" },
   interna: { rotulo: "parcela interna — exigiria anel interno", cor: "#f58231" },
@@ -89,6 +93,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [erroPecas, setErroPecas] = useState<string | null>(null);
   const [plantaUrl, setPlantaUrl] = useState<string | null>(null);
   const [gerandoPlanta, setGerandoPlanta] = useState(false);
+  // Folha da planta (A1/A3): escolha do operador antes de gerar. Sem escolha vale
+  // a regra histórica (posse → A3, matrícula → A1). Não é gravada no serviço.
+  const [folhaPlanta, setFolhaPlanta] = useState<"A1" | "A3" | null>(null);
+  const folhaEfetiva: "A1" | "A3" = folhaPlanta ?? (servico.tipo_imovel === "posse" ? "A3" : "A1");
   const [sigefB64, setSigefB64] = useState<string | null>(null);
   const [sigefNome, setSigefNome] = useState<string | null>(null);
   const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
@@ -101,6 +109,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // correção de sobreposição SIGEF (CSVs das parcelas certificadas sobrepostas)
   const [sobreCsvs, setSobreCsvs] = useState<{ nome: string; conteudo: string }[]>([]);
   const [afastamento, setAfastamento] = useState("0,50");
+  // Divisa descrita pelos vértices certificados do vizinho (mesmo código e
+  // coordenadas do CSV) em vez de pontos virtuais afastados. Ver
+  // PLANO-VERTICES-CERTIFICADOS.md.
+  const [usarCertificados, setUsarCertificados] = useState(true);
+  const [tolIgualar, setTolIgualar] = useState("0,50");
   const [corrigindo, setCorrigindo] = useState(false);
   const [relatorioSobre, setRelatorioSobre] = useState<RelatorioSobreposicao | null>(null);
 
@@ -530,7 +543,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       await salvar(); // estado atual da tela vai ao banco antes da correção
       const r = await chamarFuncao<{ ok: boolean; corrigido: boolean; relatorio: RelatorioSobreposicao }>(
         "corrigir-sobreposicao",
-        { servico_id: servico.id, afastamento: Number(afastamento.replace(",", ".")) || 0.5, csvs: sobreCsvs },
+        {
+          servico_id: servico.id,
+          afastamento: Number(afastamento.replace(",", ".")) || 0.5,
+          usar_vertices_certificados: usarCertificados,
+          tolerancia_igualar: Number(tolIgualar.replace(",", ".")) || 0.5,
+          csvs: sobreCsvs,
+        },
       );
       setRelatorioSobre(r.relatorio);
       if (r.corrigido) {
@@ -540,6 +559,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         const g = await chamarFuncao<Gerado>("gerar-documentos", {
           servico_id: servico.id,
           satelite_base64: satelite?.b64, satelite_tipo: satelite?.tipo,
+          folha: folhaEfetiva,
         });
         setGerado(g);
         const { data: vs } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
@@ -586,9 +606,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", {
         servico_id: servico.id, pdf_base64: pdf,
         satelite_base64: sat.b64, satelite_tipo: sat.tipo,
+        folha: folhaEfetiva,
       });
       setPlantaUrl(r.planta_pdf);
-      avisar("ok", `Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} gerada.`);
+      avisar("ok", `Planta ${folhaEfetiva} gerada.`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -657,6 +678,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       const r = await chamarFuncao<Gerado>("gerar-documentos", {
         servico_id: servico.id,
         satelite_base64: sat.b64, satelite_tipo: sat.tipo,
+        folha: folhaEfetiva,
       });
       setGerado(r);
       for (const a of r.avisos ?? []) avisar("alerta", a);
@@ -808,7 +830,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     if (!plantaUrl) {
       return {
         tom: "neutro",
-        titulo: `Gere a Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} do SIGEF`,
+        titulo: `Gere a Planta ${folhaEfetiva} do SIGEF`,
         rotuloBotao: "Ir para a planta",
         onClick: () => irPara("bloco-planta"),
       };
@@ -1220,7 +1242,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                   <td>{v.num_txt ?? "—"}{v.rotulo_txt ? ` · ${v.rotulo_txt}` : ""}{v.ordem === verticeInicial ? " ★" : ""}</td>
                   <td className="mono">{v.codigo ?? <span style={{ color: "var(--texto-2)" }}>na geração</span>}</td>
                   <td>
-                    {v.inserido_manual ? <span className="chip V">V</span> : (
+                    {v.inserido_manual ? (
+                      // V inserido à mão, ou vértice certificado do vizinho (código dele; um M
+                      // nosso igualado a ele continua M — a confrontação mora aí)
+                      <span className="chip V" title={/-[MPV]-/.test(v.codigo ?? "") && !/PA1/.test(v.metodo) ? "vértice certificado de parcela vizinha" : "vértice inserido"}>{v.tipo}</span>
+                    ) : (
                       <select value={v.tipo} onChange={(e) => setVertice(v.ordem, { tipo: e.target.value as Vertice["tipo"] })}>
                         <option>M</option><option>P</option><option>V</option>
                       </select>
@@ -1477,10 +1503,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             abrirEm={sobreCsvs.length > 0 || relatorioSobre !== null}>
             <p style={{ color: "var(--texto-2)", marginTop: 0 }}>
               Quando há sobreposição, o SIGEF não gera o PDF e libera o CSV de cada parcela certificada
-              que conflita. Envie <b>todos</b> esses CSVs aqui: o sistema recorta as invasões com o
-              afastamento escolhido (vértices medidos fora do conflito não são alterados), substitui os
-              vértices atingidos por vértices calculados (tipo V · método PA1) e regera a planilha ODS
-              para reenvio ao SIGEF.
+              que conflita. Envie <b>todos</b> esses CSVs aqui. Com a opção abaixo ligada, a divisa com o
+              vizinho passa a ser descrita pelos <b>vértices já certificados dele</b> (mesmo código, mesmas
+              coordenadas do CSV): vértices nossos a menos da tolerância de um vértice certificado são
+              igualados a ele, e os vértices medidos dentro da parcela alheia saem. Onde ainda sobrar
+              conflito, o sistema recorta com o afastamento escolhido e insere vértices calculados
+              (tipo V · método PA1). Ao final regera a planilha ODS para reenvio ao SIGEF.
             </p>
             <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
               <label className="dropzone" style={{ padding: "14px 18px", flex: "1 1 280px" }}
@@ -1491,9 +1519,18 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                 <input type="file" accept=".csv" multiple hidden
                   onChange={(e) => { if (e.target.files?.length) carregarCsvsSobreposicao(e.target.files); e.target.value = ""; }} />
               </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={usarCertificados} onChange={(e) => setUsarCertificados(e.target.checked)} />
+                <span>Usar os vértices certificados do vizinho
+                  <small className="sub" style={{ display: "block" }}>divisa pelos pontos do CSV, sem pontos virtuais</small></span>
+              </label>
+              <label>Tolerância p/ igualar (m)
+                <input style={{ width: 80 }} value={tolIgualar} disabled={!usarCertificados} onChange={(e) => setTolIgualar(e.target.value)} />
+                <small className="sub">vértice nosso até esta distância vira o certificado</small>
+              </label>
               <label>Afastamento (m)
                 <input style={{ width: 80 }} value={afastamento} onChange={(e) => setAfastamento(e.target.value)} />
-                <small className="sub">recuo aplicado à divisa</small>
+                <small className="sub">{usarCertificados ? "recuo onde ainda sobrar conflito" : "recuo aplicado à divisa"}</small>
               </label>
               <button className="principal" disabled={corrigindo || sobreCsvs.length === 0} onClick={corrigirSobreposicao}>
                 {corrigindo ? "Corrigindo e regerando…" : "🛠 Corrigir sobreposição e regerar planilha"}
@@ -1524,13 +1561,22 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                     ))}
                   </tbody>
                 </table>
-                {relatorioSobre.removidos.length > 0 && (
+                {(relatorioSobre.removidos.length > 0 || (relatorioSobre.compartilhados?.length ?? 0) > 0) && (
                   <p style={{ color: "var(--texto-2)", margin: "8px 0 0" }}>
                     Área {relatorioSobre.areaAntesHa.toLocaleString("pt-BR", { minimumFractionDigits: 4 })} ha →{" "}
                     {relatorioSobre.areaDepoisHa.toLocaleString("pt-BR", { minimumFractionDigits: 4 })} ha ·{" "}
-                    {relatorioSobre.mantidos} vértices mantidos · {relatorioSobre.novos.length} novos (
-                    {relatorioSobre.novos[0]}…{relatorioSobre.novos[relatorioSobre.novos.length - 1]}) ·{" "}
-                    {relatorioSobre.removidos.length} removidos: <span className="mono">{relatorioSobre.removidos.join(", ")}</span>
+                    {relatorioSobre.mantidos} vértices mantidos
+                    {(relatorioSobre.compartilhados?.length ?? 0) > 0 && (
+                      <> · {relatorioSobre.compartilhados!.length} certificados do vizinho
+                        {(relatorioSobre.igualados ?? 0) > 0 ? ` (${relatorioSobre.igualados} igualados)` : ""}:{" "}
+                        <span className="mono">{relatorioSobre.compartilhados!.join(", ")}</span></>
+                    )}
+                    {relatorioSobre.novos.length > 0 && (
+                      <> · {relatorioSobre.novos.length} virtuais ({relatorioSobre.novos[0]}…{relatorioSobre.novos[relatorioSobre.novos.length - 1]})</>
+                    )}
+                    {relatorioSobre.removidos.length > 0 && (
+                      <> · {relatorioSobre.removidos.length} removidos: <span className="mono">{relatorioSobre.removidos.join(", ")}</span></>
+                    )}
                   </p>
                 )}
                 {relatorioSobre.avisos.map((a, i) => (
@@ -1550,10 +1596,17 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         <section className="bloco" id="bloco-planta">
           <header>
             <span className="num-bloco">5</span>
-            <h3>Planta {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"} do SIGEF</h3>
+            <h3>Planta {folhaEfetiva} {servico.tipo_imovel === "posse" ? "(posse)" : "(matrícula)"} do SIGEF</h3>
             <span className="desc">mesmo padrão da planta gerada com o memorial, mas desenhada a partir do PDF certificado do SIGEF · escala automática · carimbo e desenhista vêm das Configurações</span>
           </header>
           <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+            <label>Folha
+              <select value={folhaEfetiva} onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
+                <option value="A1">A1 (841×594 mm)</option>
+                <option value="A3">A3 (420×297 mm)</option>
+              </select>
+              <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
+            </label>
             <label className="dropzone" style={{ padding: "14px 18px", flex: "1 1 280px" }}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
@@ -1565,11 +1618,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             </label>
             <button className="principal" disabled={gerandoPlanta || !satelite} onClick={gerarPlanta}
               title={!satelite ? "Envie a imagem de satélite primeiro" : undefined}>
-              {gerandoPlanta ? "Gerando planta…" : `🗺 Gerar Planta ${servico.tipo_imovel === "posse" ? "A3" : "A1"} do SIGEF (PDF)`}
+              {gerandoPlanta ? "Gerando planta…" : `🗺 Gerar Planta ${folhaEfetiva} do SIGEF (PDF)`}
             </button>
             {plantaUrl && (
               <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
-                <span className="ext">PDF</span> Planta {servico.tipo_imovel === "posse" ? "A3" : "A1"} (SIGEF)
+                <span className="ext">PDF</span> Planta {folhaEfetiva} (SIGEF)
               </a>
             )}
           </div>
@@ -1699,6 +1752,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <span className="stat"><span className="rotulo">M / P / V</span><span className="valor">{preview.qtdM} / {preview.qtdP} / {preview.qtdV}</span></span>
           <span className="acoes">
             <button disabled={ocupado} onClick={apenasSalvar}>Salvar rascunho</button>
+            {!ehConferencia && (
+              <select value={folhaEfetiva} title="Folha da planta que sai junto com o memorial e a planilha"
+                onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
+                <option value="A1">Planta A1</option>
+                <option value="A3">Planta A3</option>
+              </select>
+            )}
             <button disabled={ocupado} className="principal" onClick={gerar}
               title={pendencias.length
                 ? `Pendências: ${pendencias.map((p) => p.msg).join("; ")}`
