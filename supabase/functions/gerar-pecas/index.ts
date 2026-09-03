@@ -7,9 +7,9 @@ import proj4mod from "proj4";
 import { extractText, getDocumentProxy } from "unpdf";
 import { parseSigefTexto } from "../_shared/sigef_pdf.ts";
 import type { DadosSigef } from "../_shared/sigef_pdf.ts";
-import { gerarPecasPosseXml, gerarPecasXml, montarTrechosPecas, rotuloVia, viasDaPlanta } from "../_shared/pecas.ts";
+import { cartasDe, gerarPecasPosseXml, gerarPecasXml, montarTrechosPecas, rotuloVia, viasDaPlanta } from "../_shared/pecas.ts";
 import type { DadosPecas, Requerente } from "../_shared/pecas.ts";
-import { montarServico } from "../_shared/servico.ts";
+import { ehViaPorLimite, montarServico } from "../_shared/servico.ts";
 import { geometriaDoCalculo, sigefDoCalculo } from "../_shared/planta_dados.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 
@@ -162,16 +162,32 @@ Deno.serve(async (req) => {
     // serviço 'pecas': o trecho guarda o código direto (codigo_inicio);
     // serviço 'geo': resolve pelo vértice na ordem indicada.
     const inicios = iniciosDoCalculo ?? new Map<string, { descritivo: string; tipoLimite: string; ehVia?: boolean }>();
-    for (const t of iniciosDoCalculo ? [] : (trechoRows ?? [])) {
-      const codigo = t.codigo_inicio || (vertices ?? []).find((x) => x.ordem === t.vertice_inicio_ordem)?.codigo;
-      if (codigo) {
-        inicios.set(codigo, {
-          descritivo: t.descritivo || t.apelido_txt || "",
-          tipoLimite: t.tipo_limite,
-          // faixa de domínio marcada na planta manda; sem marca, o rótulo do
-          // trecho ainda é reconhecido pelo texto (ESTRADA, CORREDOR, BA 408…)
-          ehVia: !!t.eh_via,
-        });
+    // A confrontação escrita pelo usuário mora em DOIS lugares, conforme o fluxo:
+    // `trechos_confrontantes` (serviço 'pecas', ancorado por codigo_inicio) e o
+    // próprio vértice M (serviço 'geo' — aquela tabela fica VAZIA para ele). Do
+    // PDF do SIGEF só se aproveitam área, perímetro e a tabela de coordenadas:
+    // o texto de confrontação dele vem truncado ("...") e cortava o CPF do
+    // vizinho nas peças de todo serviço 'geo'.
+    interface FonteConf { codigo: string | null; descritivo: string; tipoLimite: string; ehVia: boolean }
+    const fontes: FonteConf[] = iniciosDoCalculo ? [] : [
+      ...(trechoRows ?? []).map((t) => ({
+        codigo: (t.codigo_inicio || (vertices ?? []).find((x) => x.ordem === t.vertice_inicio_ordem)?.codigo || null) as string | null,
+        descritivo: String(t.descritivo || t.apelido_txt || ""),
+        tipoLimite: String(t.tipo_limite ?? "LA1"),
+        // faixa de domínio marcada na planta manda; sem marca, o rótulo do
+        // trecho ainda é reconhecido pelo texto (ESTRADA, CORREDOR, BA 408…)
+        ehVia: !!t.eh_via,
+      })),
+      ...(vertices ?? []).filter((v) => v.tipo === "M").map((v) => ({
+        codigo: (v.codigo ?? null) as string | null,
+        descritivo: String(v.descritivo || v.apelido_txt || ""),
+        tipoLimite: String(v.tipo_limite ?? "LA1"),
+        ehVia: !!v.eh_via || ehViaPorLimite(v.tipo_limite),
+      })),
+    ];
+    for (const f of fontes) {
+      if (f.codigo && !inicios.has(f.codigo)) {
+        inicios.set(f.codigo, { descritivo: f.descritivo, tipoLimite: f.tipoLimite, ehVia: f.ehVia });
       }
     }
     // fallback: PDF de outra geração (códigos diferentes) → detecta trechos pela
@@ -180,15 +196,16 @@ Deno.serve(async (req) => {
     if (!iniciosDoCalculo && !sigef.linhas.some((l) => inicios.has(l.codigo))) {
       inicios.clear();
       let ultima = "";
+      const comTexto = fontes.filter((f) => f.descritivo.trim());
       for (const l of sigef.linhas) {
         if (l.confrontacao !== ultima) {
           ultima = l.confrontacao;
           const alvo = norm(l.confrontacao.replace(/\.{3}$/, ""));
-          const match = (trechoRows ?? []).find((t) => norm(t.descritivo ?? "").startsWith(alvo.slice(0, 15)) || alvo.startsWith(norm(t.descritivo ?? "").slice(0, 15)));
+          const match = comTexto.find((f) => norm(f.descritivo).startsWith(alvo.slice(0, 15)) || alvo.startsWith(norm(f.descritivo).slice(0, 15)));
           inicios.set(l.codigo, {
             descritivo: match?.descritivo || l.confrontacao.replace(/\.{3}$/, ""),
-            tipoLimite: match?.tipo_limite ?? "LA1",
-            ehVia: !!match?.eh_via,
+            tipoLimite: match?.tipoLimite ?? "LA1",
+            ehVia: !!match?.ehVia,
           });
         }
       }
@@ -293,7 +310,7 @@ Deno.serve(async (req) => {
         perimetro: sigef.cabecalho.perimetroM,
         trt: dados.trt,
         vertices: sigef.linhas.length,
-        cartas: trechos.filter((t) => !t.ehVia && t.pessoas.length > 0).length,
+        cartas: cartasDe(dados).length,
         via: viasDaPlanta(trechos).map(rotuloVia).join(", ") || null,
       },
     });

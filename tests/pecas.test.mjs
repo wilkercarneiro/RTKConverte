@@ -197,10 +197,17 @@ test("peças: substituições aplicadas e dados de exemplo removidos", () => {
   // 2: tabela completa com descritivo cheio do banco
   assert.ok(textos[2].includes("DSBN-V-0758"), "tabular sem o V");
   assert.ok(textos[2].includes("CPF:397.521.865-72"), "tabular sem descritivo completo");
-  // 3: uma carta por confrontante-pessoa (4 trechos com pessoas)
+  // 3: uma carta por confrontante-PESSOA (4 vizinhos, 5 pessoas: TERRA NOVA tem dois donos)
   const nCartas = (textos[3].match(/CARTA DE ANUÊNCIA/g) ?? []).length;
-  assert.equal(nCartas, 4, `cartas: ${nCartas}`);
+  assert.equal(nCartas, 5, `cartas: ${nCartas}`);
   assert.ok(textos[3].includes("VALDETE DOS SANTOS"), "carta da PAU D'ÁGUA");
+  assert.ok(textos[3].includes("CARLOS MATOS DE LIMA") && textos[3].includes("DIVALDO JOSE MATOS DE LIMA"), "cada dono da TERRA NOVA tem a sua carta");
+  assert.ok(!textos[3].includes("CARLOS MATOS DE LIMA, CPF nº:397.521.865-72, e Eu, Confrontante DIVALDO"), "os dois donos não podem dividir uma carta");
+  // matrícula do serviço em TODAS as peças (nos modelos 1 e 2 ela é uma célula própria)
+  for (const i of [1, 2, 3, 4, 5, 6, 7]) {
+    assert.ok(!textos[i].includes("4.490") && !textos[i].includes("4490"), `peça ${i} ainda tem a matrícula de exemplo`);
+  }
+  for (const i of [1, 2, 5, 6]) assert.ok(textos[i].includes("9.999"), `peça ${i} sem a matrícula do serviço`);
   assert.ok(textos[3].includes("FAZENDA PAU D'ÁGUA (POSSE)"), "imóvel da carta");
   // 4/5: tabela de confrontantes reconstruída
   assert.ok(textos[4].includes("RUDSON PINTO FERREIRA") && textos[5].includes("RUDSON PINTO FERREIRA"));
@@ -272,7 +279,10 @@ test("vizinho repetido no anel gera uma única carta com todos os vértices", as
   const xmls = gerarPecasXml(tpl, { ...dados, trechos: ts, confrontacaoDe: cd });
   const t3 = dec(xmls["3"].replace(/<[^>]+>/g, ""));
   const nCartas = (t3.match(/CARTA DE ANUÊNCIA/g) ?? []).length;
-  assert.equal(nCartas, grupos.length, `cartas: ${nCartas} para ${grupos.length} vizinhos`);
+  const nPessoas = grupos.reduce((s, g) => s + g.pessoas.length, 0);
+  assert.equal(nCartas, nPessoas, `cartas: ${nCartas} para ${nPessoas} confrontantes-pessoa`);
+  // o vizinho repetido não gera carta repetida: CARLOS aparece como confrontante uma vez só
+  assert.equal((t3.match(/Confrontante CARLOS MATOS DE LIMA/g) ?? []).length, 1, "carta duplicada do vizinho repetido");
   for (const p of [...partes[0].linhas, ...partes[1].linhas]) {
     assert.ok(t3.includes(p.codigo), `vértice ${p.codigo} fora da carta do vizinho`);
   }

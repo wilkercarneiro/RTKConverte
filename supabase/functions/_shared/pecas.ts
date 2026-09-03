@@ -450,6 +450,11 @@ export function mapaComum(d: DadosPecas): [string, string][] {
     [`MATR.${EX.matricula}`, `MATR.${d.matricula}`],
     [`nº ${EX.matricula}`, `nº ${d.matricula}`],
     [`: ${EX.matricula}`, `: ${d.matricula}`],
+    // Nos modelos 1 e 2 a matrícula é uma CÉLULA própria ("Matrícula:" | "4.490"):
+    // nenhuma das formas acima a alcança, e o memorial saía com a matrícula de
+    // exemplo em todo serviço. O valor isolado entra por último, depois das
+    // formas compostas, para não reescrever o que elas já trocaram.
+    [EX.matricula, d.matricula],
     [EX.matriculaNum, d.matricula.replace(/\./g, "")],
     [EX.cns, d.cns],
     ["39° WGr", `${d.mcAbs}° WGr`],
@@ -800,6 +805,26 @@ export function agruparTrechosPorConfrontante(trechos: TrechoPecas[]): TrechoPec
 const confrontantesDe = (d: DadosPecas): TrechoPecas[] =>
   agruparTrechosPorConfrontante(d.trechos.filter((t) => !t.ehVia && t.pessoas.length > 0));
 
+/**
+ * Uma carta por confrontante-PESSOA. O imóvel vizinho continua sendo a unidade
+ * de agrupamento (a divisa e os vértices são dele), mas cada pessoa que o
+ * detém assina a SUA carta: com dois ou mais donos — ou vários vizinhos
+ * digitados no mesmo trecho — todos saíam numa carta só (pedido de 2026-09-03).
+ */
+export function cartasDe(d: DadosPecas): { pessoa: PessoaConfrontante; trecho: TrechoPecas }[] {
+  const out: { pessoa: PessoaConfrontante; trecho: TrechoPecas }[] = [];
+  for (const t of confrontantesDe(d)) {
+    const vistos = new Set<string>();
+    for (const p of t.pessoas) {
+      const id = (p.cpf ?? "").replace(/\D/g, "") || chaveTexto(p.nome);
+      if (!id || vistos.has(id)) continue;
+      vistos.add(id);
+      out.push({ pessoa: p, trecho: t });
+    }
+  }
+  return out;
+}
+
 function gerarCartas(xml: string, d: DadosPecas, mapa: [string, string][]): string {
   // delimita o corpo e divide em blocos por título "CARTA DE ANUÊNCIA"
   const bodyM = xml.match(/<w:body>([\s\S]*?)(<w:sectPr[\s\S]*?<\/w:sectPr>)?<\/w:body>/);
@@ -817,25 +842,23 @@ function gerarCartas(xml: string, d: DadosPecas, mapa: [string, string][]): stri
   const prot1 = blocos.find((b) => !b.join("").includes("DIVALDO"));
 
   const cartas: string[] = [];
-  for (const t of confrontantesDe(d)) {
-    const duas = t.pessoas.length >= 2;
-    const prot = (duas ? prot2 : prot1) ?? prot1 ?? prot2;
-    if (!prot) continue;
+  // Sempre o protótipo de UMA pessoa: cada confrontante assina a sua carta. O de
+  // duas pessoas só entra se o modelo não tiver o de uma (aí o 2º nome vira o
+  // mesmo confrontante, para não sobrar exemplo).
+  const prot = prot1 ?? prot2;
+  for (const { pessoa, trecho: t } of cartasDe(d)) {
+    if (!prot) break;
     let bloco = prot.join("");
-    const ex = duas ? CARTA_EX.p2 : CARTA_EX.p1;
+    const ex = prot === prot1 ? CARTA_EX.p1 : CARTA_EX.p2;
     const pares: [string, string][] = [
-      [ex.imovel, t.imovelLabel || t.pessoas.map((p) => p.nome).join(" e ")],
-      [ex.nome1, t.pessoas[0].nome],
-      [ex.cpf1, t.pessoas[0].cpf ?? "—"],
+      [ex.imovel, t.imovelLabel || pessoa.nome],
+      [ex.nome1, pessoa.nome],
+      [ex.cpf1, pessoa.cpf ?? "—"],
     ];
-    if (duas) {
-      const resto = t.pessoas.slice(1);
-      pares.push(
-        [CARTA_EX.p2.nome2, resto.map((p) => p.nome).join(" e ")],
-        [CARTA_EX.p2.cpf2, resto.map((p) => p.cpf ?? "—").join(" e ")],
-      );
+    if (prot !== prot1) {
+      pares.push([CARTA_EX.p2.nome2, pessoa.nome], [CARTA_EX.p2.cpf2, pessoa.cpf ?? "—"]);
     }
-    // tabela da carta: segmentos do trecho
+    // tabela da carta: segmentos da divisa com o imóvel do confrontante
     bloco = mapearTabelas(bloco, EH_TBL_VERTICES, (tbl) =>
       reconstruirTabela(tbl, EH_LINHA_VERTICE, t.linhas.map(linhaVertice7)));
     bloco = substituirEmParagrafos(bloco, [...pares, ...mapa]);
@@ -933,13 +956,14 @@ function gerarCartasPosse(xml: string, d: DadosPecas, mapa: [string, string][]):
   const prot = paras.slice(inicios[0], inicios.length > 1 ? inicios[1] : paras.length);
 
   const cartas: string[] = [];
-  for (const t of confrontantesDe(d)) {
+  // uma carta por confrontante-pessoa (mesma regra do fluxo de matrícula)
+  for (const { pessoa, trecho: t } of cartasDe(d)) {
     let bloco = prot.join("");
     bloco = mapearTabelas(bloco, EH_TBL_VERTICES, (tbl) =>
       reconstruirTabela(tbl, EH_LINHA_VERTICE, t.linhas.map(linhaVertice7)));
     bloco = substituirEmParagrafos(bloco, [
-      [EXP.carta.nome, t.pessoas.map((p) => p.nome).join(" e ")],
-      [EXP.carta.cpf, t.pessoas.map((p) => p.cpf ?? "—").join(" e ")],
+      [EXP.carta.nome, pessoa.nome],
+      [EXP.carta.cpf, pessoa.cpf ?? "—"],
       ...mapa,
     ]);
     cartas.push(bloco);
