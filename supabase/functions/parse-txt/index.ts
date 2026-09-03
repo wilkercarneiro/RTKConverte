@@ -6,18 +6,19 @@
 // `certificados` — um por CSV de exportação do SIGEF do vizinho, com o CSV
 // bruto e os códigos dos vértices que o operador escolheu na planta. O CSV é
 // reparseado aqui (fonte da verdade é o arquivo, não a tela) e os vértices
-// escolhidos são unidos ao levantamento antes de gravar: ponto nosso a menos da
-// tolerância de um certificado vira ele; os demais entram no lado mais próximo.
-// Ver _shared/certificados.ts.
+// escolhidos são unidos ao levantamento antes de gravar. Ver _shared/certificados.ts.
+//
+// Fuso: `fuso` explícito (tela) > candidato mais perto dos vértices certificados
+// > UF > prioridade histórica. O TXT sozinho é ambíguo perto de E = 500 km.
 import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import {
-  GEO_DEF, calcularAreaHa, calcularSegmentos, calcularPerimetroM, calcularVertices,
-  detectZoneCandidates, escolherZona, fmtGmsPlanilha, parseGmsPlanilha, parseTxt, utmDef,
+  GEO_DEF, ZONAS_BR, calcularAreaHa, calcularSegmentos, calcularPerimetroM, calcularVertices,
+  detectZoneCandidates, epsgForZone, escolherZona, fmtGmsPlanilha, parseGmsPlanilha, parseTxt, utmDef,
 } from "../_shared/geo.ts";
-import type { EntradaVertice, Proj4 } from "../_shared/geo.ts";
+import type { CandidatoZona, EntradaVertice, Proj4 } from "../_shared/geo.ts";
 import { sugerirTrechos } from "../_shared/servico.ts";
-import { montarVerticesUnidos, parseCsvSigef, unirCertificados } from "../_shared/certificados.ts";
+import { fusoPelosCertificados, montarVerticesUnidos, parseCsvSigef, unirCertificados } from "../_shared/certificados.ts";
 import type { GrupoCertificado } from "../_shared/certificados.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
@@ -30,11 +31,12 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
 interface CertificadoEntrada { nome?: unknown; conteudo?: unknown; selecionados?: unknown }
+type OrigemFuso = "informado" | "certificados" | "uf" | "automatico";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { nome_arquivo, conteudo, uf, certificados, tolerancia_certificados } = await req.json();
+    const { nome_arquivo, conteudo, uf, fuso, certificados, tolerancia_certificados, tolerancia_linha } = await req.json();
     if (typeof conteudo !== "string" || !conteudo.trim()) return json({ erro: "Conteúdo do TXT ausente" }, 400);
     const nomeArquivo = typeof nome_arquivo === "string" && nome_arquivo ? nome_arquivo : "pontos.txt";
 
@@ -49,17 +51,40 @@ Deno.serve(async (req) => {
         const sel = new Set(Array.isArray(c.selecionados) ? c.selecionados.map(String) : []);
         const vertices = parsed.vertices.filter((v) => sel.has(v.codigo));
         if (vertices.length === 0) return json({ erro: `${nome}: nenhum vértice certificado selecionado` }, 400);
-        grupos.push({ nome, vertices });
+        grupos.push({ nome, vertices, totalNoCsv: parsed.vertices.length });
         csvsBrutos.push({ nome, conteudo: c.conteudo });
       }
     }
     const tolNum = Number(tolerancia_certificados);
     const toleranciaM = Number.isFinite(tolNum) && tolNum >= 0 ? tolNum : 0.5;
+    const tolLinhaNum = Number(tolerancia_linha);
+    const toleranciaLinhaM = Number.isFinite(tolLinhaNum) && tolLinhaNum >= 0 ? tolLinhaNum : undefined;
 
     const pontos = parseTxt(conteudo);
     const candidatos = detectZoneCandidates(pontos, proj4);
-    const { escolhido, ambiguo, foraDaUf } = escolherZona(candidatos, uf ?? null);
-    if (!escolhido) return json({ erro: "Nenhum fuso UTM brasileiro compatível com as coordenadas" }, 422);
+    if (!candidatos.length) return json({ erro: "Nenhum fuso UTM brasileiro compatível com as coordenadas" }, 422);
+
+    // ---- fuso ----
+    let escolhido: CandidatoZona, ambiguo = false, foraDaUf = false, origemFuso: OrigemFuso;
+    const avisosFuso: string[] = [];
+    const fusoPedido = Number(fuso);
+    if (ZONAS_BR.includes(fusoPedido)) {
+      const c = candidatos.find((x) => x.zone === fusoPedido);
+      if (!c) {
+        return json({ erro: `Fuso ${fusoPedido}S não é compatível com as coordenadas do TXT (candidatos: ${candidatos.map((x) => `${x.zone}S`).join(", ")})` }, 422);
+      }
+      escolhido = c; origemFuso = "informado";
+    } else {
+      const porCert = grupos.length ? fusoPelosCertificados(candidatos, grupos) : null;
+      if (porCert && candidatos.length > 1) {
+        escolhido = porCert.escolhido; origemFuso = "certificados";
+        if (porCert.distanciaGraus > 0.5) avisosFuso.push(`Os vértices certificados ficam a ~${Math.round(porCert.distanciaGraus * 111)} km do levantamento — confira o fuso e os CSVs.`);
+      } else {
+        const r = escolherZona(candidatos, uf ?? null);
+        escolhido = r.escolhido!; ambiguo = r.ambiguo; foraDaUf = r.foraDaUf;
+        origemFuso = uf ? "uf" : "automatico";
+      }
+    }
     const ud = utmDef(escolhido.zone);
     const geoParaUtm = (lon: number, lat: number): [number, number] => proj4(GEO_DEF, ud, [lon, lat]);
 
@@ -69,7 +94,10 @@ Deno.serve(async (req) => {
       escolhido.zone, proj4,
     );
     const trechosSug = sugerirTrechos(pontos);
-    const uniao = unirCertificados(pontos, grupos, geoParaUtm, toleranciaM);
+    const uniao = unirCertificados(pontos, grupos, geoParaUtm, {
+      toleranciaM, toleranciaLinhaM: toleranciaLinhaM,
+      inicios: new Set(trechosSug.map((t) => t.verticeInicioOrdem)),
+    });
     const linhas = montarVerticesUnidos(
       pontos, trechosSug, uniao, grupos,
       (i) => ({ lat: fmtGmsPlanilha(calcTxt[i].latGms, "lat"), lon: fmtGmsPlanilha(calcTxt[i].lonGms, "lon") }),
@@ -77,8 +105,7 @@ Deno.serve(async (req) => {
     );
     // o vértice inicial sugerido continua sendo o 1º início de trecho do TXT — na
     // sua NOVA posição, já que os certificados inseridos deslocam as ordens
-    const primeiroInicio = trechosSug.length > 0 ? trechosSug[0].verticeInicioOrdem : null;
-    const verticeInicial = primeiroInicio === null ? 0 : (linhas.find((l) => l.txt_idx === primeiroInicio)?.ordem ?? 0);
+    const verticeInicial = linhas.find((l) => l.tipo === "M")?.ordem ?? 0;
 
     // anel unido no motor geodésico: os certificados entram pelo GMS gravado, como
     // gerar-documentos fará depois — o preview mostra o que vai ser publicado
@@ -104,9 +131,9 @@ Deno.serve(async (req) => {
       .upload(`${servico.id}/${nomeArquivo}`, new Blob([conteudo], { type: "text/plain" }), { upsert: true });
     if (up.error) throw up.error;
     // os CSVs dos vizinhos ficam ao lado do TXT: são a origem dos códigos
-    // publicados e servem à correção de sobreposição, se o SIGEF acusar. Com
-    // prefixo numérico: o SIGEF baixa todos como "exportacao.csv", e dois vizinhos
-    // com o mesmo nome não podem se sobrescrever.
+    // publicados, alimentam a reunião quando o fuso muda e servem à correção de
+    // sobreposição. Com prefixo numérico: o SIGEF baixa todos como
+    // "exportacao.csv", e dois vizinhos com o mesmo nome não podem se sobrescrever.
     for (const [i, c] of csvsBrutos.entries()) {
       const upCsv = await supa.storage.from("uploads-txt")
         .upload(`${servico.id}/certificados/${i + 1}-${c.nome}`, new Blob([c.conteudo], { type: "text/csv" }), { upsert: true });
@@ -126,9 +153,10 @@ Deno.serve(async (req) => {
     const segs = calcularSegmentos(calc);
     const preview = {
       fuso: escolhido.zone,
-      epsg: escolhido.epsg,
+      epsg: epsgForZone(escolhido.zone),
       candidatos: candidatos.map((c) => c.zone),
       fusoAmbiguo: ambiguo,
+      fusoOrigem: origemFuso,
       foraDaUf,
       areaHa: calcularAreaHa(calc),
       perimetroM: calcularPerimetroM(segs),
@@ -141,7 +169,8 @@ Deno.serve(async (req) => {
           total: grupos.reduce((s, g) => s + g.vertices.length, 0),
           igualados: uniao.igualados,
           inseridos: uniao.inseridos,
-          avisos: uniao.avisos,
+          removidos: uniao.removidos.map((i) => pontos[i].num),
+          avisos: [...avisosFuso, ...uniao.avisos],
           tolerancia: toleranciaM,
         },
       } : {}),

@@ -15,7 +15,7 @@
 set -euo pipefail
 
 PROJECT_REF=utxqkbgfgpbczqjtieyu
-FUNCTIONS=(gerar-planta gerar-documentos gerar-pecas parse-txt corrigir-sobreposicao admin-setup)
+FUNCTIONS=(gerar-planta gerar-documentos gerar-pecas parse-txt reunir-certificados corrigir-sobreposicao admin-setup)
 
 cd "$(dirname "$0")/.."
 

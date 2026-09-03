@@ -1,0 +1,43 @@
+{
+  "_origem": "serviço 30e303d9 (2026-09-03): TXT ADELSON TESTE.txt (E/N do TXT, fuso 24S) + vértices escolhidos de 2 CSVs (DJ9 e ONDE), GMS do CSV",
+  "txt": [
+    { "num": 1, "rotulo": "bahia/ba", "e": 539798.337, "n": 8605903.782, "h": 4.911, "sigmaPos": 0.0177, "sigmaH": 0.03 },
+    { "num": 2, "rotulo": null, "e": 539795.674, "n": 8605896.218, "h": 4.049, "sigmaPos": 0.0047, "sigmaH": 0.03 },
+    { "num": 3, "rotulo": null, "e": 539853.882, "n": 8605804.569, "h": 0.344, "sigmaPos": 0.0041, "sigmaH": 0.03 },
+    { "num": 4, "rotulo": null, "e": 539862.898, "n": 8605775.683, "h": -0.668, "sigmaPos": 0.0058, "sigmaH": 0.03 },
+    { "num": 5, "rotulo": null, "e": 539904.415, "n": 8605693.223, "h": -5.086, "sigmaPos": 0.0036, "sigmaH": 0.03 },
+    { "num": 6, "rotulo": "ba/vizinho", "e": 539949.293, "n": 8605607.065, "h": -11.259, "sigmaPos": 0.0088, "sigmaH": 0.03 },
+    { "num": 7, "rotulo": null, "e": 539972.972, "n": 8605623.943, "h": -12.382, "sigmaPos": 0.0057, "sigmaH": 0.03 },
+    { "num": 8, "rotulo": null, "e": 540032.266, "n": 8605634.248, "h": -11.915, "sigmaPos": 0.0092, "sigmaH": 0.03 },
+    { "num": 9, "rotulo": null, "e": 540081.835, "n": 8605658.142, "h": -12.027, "sigmaPos": 0.0078, "sigmaH": 0.03 },
+    { "num": 10, "rotulo": null, "e": 540122.223, "n": 8605666.573, "h": -12.05, "sigmaPos": 0.0111, "sigmaH": 0.03 },
+    { "num": 11, "rotulo": null, "e": 540119.673, "n": 8605575.108, "h": -11.992, "sigmaPos": 0.0071, "sigmaH": 0.03 },
+    { "num": 12, "rotulo": null, "e": 540132.361, "n": 8605563.113, "h": -12.167, "sigmaPos": 0.008, "sigmaH": 0.03 },
+    { "num": 13, "rotulo": null, "e": 540196.292, "n": 8605590.316, "h": -12.222, "sigmaPos": 0.0114, "sigmaH": 0.03 },
+    { "num": 14, "rotulo": null, "e": 540231.989, "n": 8605640.339, "h": -11.869, "sigmaPos": 0.013, "sigmaH": 0.03 },
+    { "num": 15, "rotulo": null, "e": 540284.394, "n": 8605712.326, "h": -11.407, "sigmaPos": 0.0116, "sigmaH": 0.03 },
+    { "num": 16, "rotulo": "obs", "e": 540301.661, "n": 8605726.668, "h": -11.201, "sigmaPos": 0.0078, "sigmaH": 0.03 },
+    { "num": 17, "rotulo": null, "e": 540311.183, "n": 8605748.958, "h": -11.19, "sigmaPos": 0.0375, "sigmaH": 0.03 },
+    { "num": 18, "rotulo": null, "e": 540331.944, "n": 8605782.387, "h": -11.083, "sigmaPos": 0.0066, "sigmaH": 0.03 },
+    { "num": 19, "rotulo": null, "e": 540331.169, "n": 8605791.942, "h": -11.113, "sigmaPos": 0.0143, "sigmaH": 0.03 },
+    { "num": 20, "rotulo": null, "e": 540340.583, "n": 8605800.307, "h": -11.009, "sigmaPos": 0.0123, "sigmaH": 0.03 },
+    { "num": 21, "rotulo": null, "e": 540348.677, "n": 8605801.104, "h": -11.081, "sigmaPos": 0.0278, "sigmaH": 0.03 }
+  ],
+  "grupos": [
+    { "nome": "1-exportacao (15).csv", "vertices": [
+      { "codigo": "DJ9-M-2490", "tipo": "M", "metodo": "PG2", "sigmaX": 0.219, "sigmaY": 0.195, "sigmaZ": 0.509, "h": 23.11, "latGms": "12 36 17,973 S", "lonGms": "38 37 29,644 W", "indice": 6 },
+      { "codigo": "DJ9-M-2491", "tipo": "M", "metodo": "PG2", "sigmaX": 0.107, "sigmaY": 0.088, "sigmaZ": 0.286, "h": 1.05, "latGms": "12 36 14,174 S", "lonGms": "38 37 37,440 W", "indice": 7 },
+      { "codigo": "DJ9-M-2492", "tipo": "M", "metodo": "PG2", "sigmaX": 0.194, "sigmaY": 0.17, "sigmaZ": 0.505, "h": -4.59, "latGms": "12 36 28,791 S", "lonGms": "38 37 45,884 W", "indice": 8 },
+      { "codigo": "DJ9-M-2493", "tipo": "M", "metodo": "PG2", "sigmaX": 0.22, "sigmaY": 0.184, "sigmaZ": 0.488, "h": -2.67, "latGms": "12 36 27,490 S", "lonGms": "38 37 49,740 W", "indice": 9 },
+      { "codigo": "DJ9-M-2494", "tipo": "M", "metodo": "PG2", "sigmaX": 0.198, "sigmaY": 0.19, "sigmaZ": 0.461, "h": -2.44, "latGms": "12 36 27,373 S", "lonGms": "38 37 50,747 W", "indice": 10 },
+      { "codigo": "DJ9-M-2495", "tipo": "M", "metodo": "PG2", "sigmaX": 0.221, "sigmaY": 0.192, "sigmaZ": 0.503, "h": -3.589, "latGms": "12 36 27,743 S", "lonGms": "38 37 53,549 W", "indice": 11 },
+      { "codigo": "DJ9-M-2455", "tipo": "M", "metodo": "PG2", "sigmaX": 0.258, "sigmaY": 0.209, "sigmaZ": 0.514, "h": 13.02, "latGms": "12 36 37,149 S", "lonGms": "38 38 00,250 W", "indice": 12 }
+    ] },
+    { "nome": "2-exportacao (15).csv", "vertices": [
+      { "codigo": "ONDE-M-25932", "tipo": "M", "metodo": "PG2", "sigmaX": 0.02, "sigmaY": 0.02, "sigmaZ": 0.05, "h": -9.3, "latGms": "12 36 43,713 S", "lonGms": "38 37 44,127 W", "indice": 1 },
+      { "codigo": "ONDE-P-33448", "tipo": "P", "metodo": "PG2", "sigmaX": 0.01, "sigmaY": 0.01, "sigmaZ": 0.05, "h": -9.18, "latGms": "12 36 41,538 S", "lonGms": "38 37 43,121 W", "indice": 2 },
+      { "codigo": "ONDE-P-33447", "tipo": "P", "metodo": "PG2", "sigmaX": 0.02, "sigmaY": 0.02, "sigmaZ": 0.05, "h": -9.13, "latGms": "12 36 41,304 S", "lonGms": "38 37 42,573 W", "indice": 3 },
+      { "codigo": "ONDE-P-33446", "tipo": "P", "metodo": "PG2", "sigmaX": 0.01, "sigmaY": 0.01, "sigmaZ": 0.05, "h": -6.74, "latGms": "12 36 32,004 S", "lonGms": "38 37 37,040 W", "indice": 4 }
+    ] }
+  ]
+}

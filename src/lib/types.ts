@@ -207,5 +207,7 @@ export interface PreviewParse {
    * entrada do serviço (só quando o operador respondeu que confronta com área
    * certificada). Ver certificados.ts.
    */
-  certificados?: { parcelas: number; total: number; igualados: number; inseridos: number; avisos: string[]; tolerancia: number };
+  certificados?: { parcelas: number; total: number; igualados: number; inseridos: number; removidos: number[]; avisos: string[]; tolerancia: number };
+  /** De onde saiu o fuso: informado na tela, pelos CSVs dos vizinhos, pela UF ou pela prioridade histórica. */
+  fusoOrigem?: "informado" | "certificados" | "uf" | "automatico";
 }

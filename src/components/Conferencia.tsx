@@ -578,6 +578,40 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     avisar("ok", "PDF do SIGEF carregado — agora gere a Planta e as peças técnicas.");
   }
 
+  // ------- vizinhos certificados: refazer a união (fuso) -------
+  //
+  // Serviço que nasceu unido a vértices certificados: a ORDEM dos pontos depende
+  // de TXT e CSV projetados no mesmo fuso. Trocar o fuso aqui, portanto, não é
+  // só trocar um número — a função reunir-certificados refaz a união a partir do
+  // TXT e dos CSVs guardados no Storage, preservando confrontação, códigos e V
+  // digitados. Depois disso os documentos precisam ser gerados de novo.
+  const temCertificados = vertices.some((v) => v.inserido_manual && !!v.codigo && v.metodo !== "PA1" && v.num_txt === null);
+  const [reunindo, setReunindo] = useState(false);
+  async function reunirCertificados(fuso: number) {
+    setReunindo(true);
+    setErro(null);
+    try {
+      await salvar(); // confrontação e edições da tela vão ao banco antes de refazer
+      const r = await chamarFuncao<{ ok: boolean; vertices: Vertice[]; resumo: { fuso: number; igualados: number; inseridos: number; removidos: number[]; avisos: string[] } }>(
+        "reunir-certificados", { servico_id: servico.id, fuso },
+      );
+      setVertices(r.vertices);
+      const { data: sv } = await supabase.from("servicos").select().eq("id", servico.id).single();
+      if (sv) setServico(sv as Servico);
+      setGerado(null);
+      avisar("ok", `União refeita no fuso ${r.resumo.fuso}S: ${r.resumo.igualados} igualado(s), ${r.resumo.inseridos} inserido(s)${r.resumo.removidos.length ? `, pontos ${r.resumo.removidos.join(", ")} do TXT descartados por estarem sobre a divisa certificada` : ""}. Gere os documentos novamente.`);
+      for (const a of r.resumo.avisos) avisar("alerta", a);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReunindo(false);
+    }
+  }
+  function trocarFuso(z: number) {
+    campo("fuso_utm", z);
+    if (temCertificados && z !== servico.fuso_utm) void reunirCertificados(z);
+  }
+
   // ------- correção de sobreposição SIGEF -------
   async function carregarCsvsSobreposicao(files: FileList | File[]) {
     const lista = [...files].filter((f) => /\.csv$/i.test(f.name));
@@ -933,7 +967,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <span className="alerta" style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
             fuso ambíguo — confirme:
             {inicial.preview.candidatos.map((z) => (
-              <button key={z} onClick={() => campo("fuso_utm", z)}
+              <button key={z} onClick={() => trocarFuso(z)}
                 style={{ padding: "0 8px", height: 24, fontSize: 12, fontWeight: 700 }}
                 aria-pressed={servico.fuso_utm === z}>{z}S</button>
             ))}
@@ -944,15 +978,23 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <em className="alerta" title={inicial.preview.certificados.avisos.join("\n") || undefined}>
             {inicial.preview.certificados.total} vértice(s) certificado(s) de {inicial.preview.certificados.parcelas} parcela(s) vizinha(s) unidos ·{" "}
             {inicial.preview.certificados.igualados} igualado(s), {inicial.preview.certificados.inseridos} inserido(s)
+            {inicial.preview.certificados.removidos.length > 0 && <> · pontos {inicial.preview.certificados.removidos.join(", ")} do TXT descartados (sobre a divisa certificada)</>}
+            {inicial.preview.fusoOrigem === "certificados" && <> · fuso {inicial.preview.fuso}S definido pelos CSVs</>}
           </em>
         )}
         <label>Fuso UTM
-          <select value={servico.fuso_utm ?? 24} onChange={(e) => campo("fuso_utm", Number(e.target.value))}>
+          <select value={servico.fuso_utm ?? 24} disabled={reunindo} onChange={(e) => trocarFuso(Number(e.target.value))}>
             {[18, 19, 20, 21, 22, 23, 24, 25].map((z) => (
               <option key={z} value={z}>{z}S{inicial.preview.candidatos.includes(z) ? " •" : ""}</option>
             ))}
           </select>
         </label>
+        {temCertificados && (
+          <button className="fantasma" disabled={reunindo} onClick={() => reunirCertificados(servico.fuso_utm ?? 24)}
+            title="Refaz a união entre o TXT e os vértices certificados dos vizinhos no fuso atual">
+            {reunindo ? "reunindo…" : "refazer união"}
+          </button>
+        )}
         <Passos passos={passos} onClick={(_, i) => setEtapa(etapas[i].chave)} />
       </header>
 

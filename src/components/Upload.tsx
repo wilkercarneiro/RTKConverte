@@ -55,6 +55,10 @@ export function Upload({ definicao, onParsed, onVoltar }: {
   // um escritório trabalha quase sempre na mesma UF: a última escolhida já vem
   // marcada, o que na prática resolve o fuso antes de o operador pensar nele
   const [uf, setUf] = useState(() => lembrar("uf") ?? "");
+  // Fuso UTM: "" = automático (pelo TXT e, se houver, pelos CSVs dos vizinhos).
+  // Perto de E = 500 km o TXT sozinho é ambíguo e a UF não decide (a Bahia
+  // atravessa 23S e 24S) — por isso o operador pode fixar aqui, antes de tudo.
+  const [fuso, setFuso] = useState(() => lembrar("fuso") ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const gruposValidos = grupos.filter((g) => g.selecionados.size > 0);
@@ -109,6 +113,7 @@ export function Upload({ definicao, onParsed, onVoltar }: {
       const conteudo = await file.text();
       const r = await chamarFuncao<ResultadoParse>("parse-txt", {
         nome_arquivo: file.name, conteudo, uf: uf || undefined,
+        fuso: fuso ? Number(fuso) : undefined,
         ...(usaCertificados ? {
           certificados: gruposValidos.map((g) => ({ nome: g.nome, conteudo: g.conteudo, selecionados: [...g.selecionados] })),
           tolerancia_certificados: Number(tolerancia.replace(",", ".")) || 0.5,
@@ -269,14 +274,26 @@ export function Upload({ definicao, onParsed, onVoltar }: {
         <p className="sub">Envie o TXT gerado pela máquina de topografia. O sistema detecta o fuso,
           converte as coordenadas e sugere os trechos de confrontantes pelos rótulos.
           {usaCertificados && " Na próxima tela o perímetro já aparece com os vértices do vizinho encaixados."}</p>
-        <label style={{ display: "grid", gap: 6, width: 200 }}>
-          <span>UF do imóvel <span className="sub" style={{ fontSize: 12.5 }}>opcional · resolve o fuso UTM</span></span>
-          <select value={uf} onChange={(e) => { setUf(e.target.value); guardar("uf", e.target.value); }}>
-            <option value="">—</option>
-            {UFS.map((u) => <option key={u}>{u}</option>)}
-          </select>
-          {uf && lembrar("uf") === uf && <small className="sub" style={{ fontSize: 12 }}>última UF usada</small>}
-        </label>
+        <div className="acoes-linha" style={{ alignItems: "start", gap: 24 }}>
+          <label style={{ display: "grid", gap: 6, width: 200 }}>
+            <span>UF do imóvel <span className="sub" style={{ fontSize: 12.5 }}>opcional</span></span>
+            <select value={uf} onChange={(e) => { setUf(e.target.value); guardar("uf", e.target.value); }}>
+              <option value="">—</option>
+              {UFS.map((u) => <option key={u}>{u}</option>)}
+            </select>
+            {uf && lembrar("uf") === uf && <small className="sub" style={{ fontSize: 12 }}>última UF usada</small>}
+          </label>
+          <label style={{ display: "grid", gap: 6, width: 260 }}>
+            <span>Fuso UTM <span className="sub" style={{ fontSize: 12.5 }}>define a projeção do serviço</span></span>
+            <select value={fuso} onChange={(e) => { setFuso(e.target.value); guardar("fuso", e.target.value); }}>
+              <option value="">automático{usaCertificados ? " (pelos CSVs dos vizinhos)" : " (pelo TXT)"}</option>
+              {[18, 19, 20, 21, 22, 23, 24, 25].map((z) => <option key={z} value={z}>{z}S · MC {6 * z - 183}°</option>)}
+            </select>
+            <small className="sub" style={{ fontSize: 12 }}>
+              {fuso ? (lembrar("fuso") === fuso ? "último fuso usado — confira para este imóvel" : "fuso fixado para este serviço") : "pode ser ajustado na conferência"}
+            </small>
+          </label>
+        </div>
         {/* role/tabIndex/onKeyDown: a zona de arraste era um div com onClick,
             inalcançável por teclado. */}
         <div
