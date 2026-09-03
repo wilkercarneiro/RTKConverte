@@ -760,3 +760,11 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .resumo-cert .fantasma { padding: 0; height: auto; color: var(--floresta); text-decoration: underline; }
 .upload-card .rodape-cert { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .upload-card .rodape-cert .esticar { flex: 1; }
+
+/* ===== Glebas: dividir pela seleção na planta ===== */
+.dividir-gleba { border: 1px solid var(--borda); border-radius: 12px; padding: 14px 16px; display: grid; gap: 12px; background: #fff; }
+.dividir-gleba > header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dividir-gleba > header b { font-size: 15px; }
+.dividir-gleba .rodape-cert { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.dividir-gleba .rodape-cert .esticar { flex: 1; }
+.gleba-painel > label > small { font-size: 12px; }

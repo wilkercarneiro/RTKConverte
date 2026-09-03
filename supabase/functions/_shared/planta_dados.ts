@@ -8,16 +8,43 @@
 // onde vêm vértices, trechos, área e perímetro. Este módulo existe para que esse
 // "mesmo padrão" seja o mesmo código, e não duas cópias que divergem com o tempo.
 import { areaAssinadaM2, calcularPerimetroM, calcularSegmentos, fmtBR, fmtGmsPlanilha } from "./geo.ts";
-import type { ServicoCalculado } from "./servico.ts";
+import type { ServicoCalculado, VerticeMontado } from "./servico.ts";
 import type { DadosPlanta, Folha, GlebaPlanta, TrechoPlanta, VerticePlanta } from "./planta.ts";
 import type { DadosSigef } from "./sigef_pdf.ts";
+import type { LinhaVertice } from "./ods.ts";
 
 /** Linha da tabela `glebas` como vem do banco. */
 export interface GlebaRow {
   nome?: string | null;
   ordem?: number | null;
   anel?: [number, number][] | null;
+  /** Descritivo das divisas internas; nulo = automático (gleba vizinha, mesmo dono). */
+  confrontante_interno?: string | null;
 }
+
+/**
+ * Até onde um ponto do anel da gleba "é" um vértice do levantamento.
+ *
+ * O anel da gleba é gravado com o E/N BRUTO do vértice (é o que a tela tem), e o
+ * anel do cálculo está no plano re-projetado a partir do GMS arredondado a
+ * 0,001" — os dois diferem em até ~2 cm. Casar ao milímetro, como se fazia,
+ * nunca casava: toda gleba saía sem código na planta e sem linha na planilha.
+ * Dois vértices reais nunca ficam a 10 cm um do outro, então o raio é seguro.
+ */
+export const RAIO_CASAMENTO_M = 0.1;
+
+/** Vértice do cálculo mais próximo de (e, n), dentro do raio; null = ponto livre. */
+export function casarNoRing(ring: VerticeMontado[], e: number, n: number, raio = RAIO_CASAMENTO_M): VerticeMontado | null {
+  let melhor: VerticeMontado | null = null, dm = raio;
+  for (const v of ring) {
+    const d = Math.hypot(v.eProj - e, v.nProj - n);
+    if (d < dm) { dm = d; melhor = v; }
+  }
+  return melhor;
+}
+
+const glebasValidas = (rows: GlebaRow[]) =>
+  rows.filter((g) => (g.anel?.length ?? 0) >= 3).sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
 
 /**
  * Glebas do banco no formato do desenho.
@@ -38,16 +65,10 @@ export function glebasParaPlanta(
   calc: ServicoCalculado,
   servico: ServicoRow,
 ): GlebaPlanta[] {
-  // índice por coordenada arredondada ao milímetro
-  const chave = (e: number, n: number) => `${e.toFixed(3)}|${n.toFixed(3)}`;
-  const porCoord = new Map(calc.ring.map((v) => [chave(v.eProj, v.nProj), v]));
-
-  return rows
-    .filter((g) => (g.anel?.length ?? 0) >= 3)
-    .sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0))
+  return glebasValidas(rows)
     .map((g, gi) => {
       const nome = (g.nome ?? "").trim() || `GLEBA ${gi + 1}`;
-      const casados = g.anel!.map(([e, n]) => ({ e, n, v: porCoord.get(chave(e, n)) ?? null }));
+      const casados = g.anel!.map(([e, n]) => ({ e, n, v: casarNoRing(calc.ring, e, n) }));
 
       // segmentos do anel da gleba, no mesmo plano re-projetado do perímetro
       const anelCalc = casados.map((p, i) => ({ ordem: i, eProj: p.e, nProj: p.n }));
@@ -102,6 +123,77 @@ function identificacaoDaGleba(s: ServicoRow, nomeGleba: string): string[] {
     if (s.inventariante_cpf) linhas.push(`CPF:${s.inventariante_cpf}`);
   }
   return linhas;
+}
+
+/** Uma aba `perimetro_N` da planilha SIGEF: a gleba com as linhas de vértice dela. */
+export interface PerimetroGlebaOds {
+  nome: string;
+  linhas: LinhaVertice[];
+  /** Pontos do anel que não casaram com vértice nenhum (ficam fora da planilha). */
+  semCodigo: number;
+}
+
+/**
+ * As linhas da planilha SIGEF de cada gleba — uma aba por gleba, como na
+ * FAZ COIXO.ODS de referência (perimetro_1 = Parte 1, perimetro_2 = Parte 2…).
+ *
+ * Cada vértice leva o descritivo do confrontante do lado que SAI dele:
+ * - lado que acompanha o perímetro (os dois vértices são vizinhos no anel do
+ *   imóvel, em qualquer sentido): herda o confrontante do imóvel, como já está
+ *   na linha do perímetro;
+ * - lado que fecha a gleba por dentro (vértices não vizinhos no perímetro, ou
+ *   ponto livre): confronta com a gleba vizinha — texto do operador
+ *   (`confrontante_interno`) ou o automático "(MATR./CNS.) IMÓVEL - GLEBA X\
+ *   PROPRIETÁRIO\ CPF", que é o mesmo formato dos demais confrontantes.
+ */
+export function perimetrosOdsDasGlebas(
+  rows: GlebaRow[],
+  calc: ServicoCalculado,
+  servico: ServicoRow,
+  linhasOds: LinhaVertice[] = calc.linhasOds,
+): PerimetroGlebaOds[] {
+  const glebas = glebasValidas(rows);
+  const n = calc.ring.length;
+  const posNoRing = new Map(calc.ring.map((v, i) => [v.ordem, i]));
+  const linhaPorCodigo = new Map(linhasOds.map((l) => [l.codigo, l]));
+  const casadas = glebas.map((g) => g.anel!.map(([e, n0]) => casarNoRing(calc.ring, e, n0)));
+  const nomeDe = (gi: number) => (glebas[gi].nome ?? "").trim() || `GLEBA ${gi + 1}`;
+  const vizinhos = (a: VerticeMontado, b: VerticeMontado) => {
+    const pa = posNoRing.get(a.ordem)!, pb = posNoRing.get(b.ordem)!;
+    return ((pa - pb + n) % n === 1) || ((pb - pa + n) % n === 1);
+  };
+  // gleba que também contém os DOIS vértices de uma divisa interna: é a vizinha
+  const outraCom = (gi: number, a: VerticeMontado, b: VerticeMontado | null): number | null => {
+    for (let k = 0; k < glebas.length; k++) {
+      if (k === gi) continue;
+      const tem = (v: VerticeMontado) => casadas[k].some((x) => x?.ordem === v.ordem);
+      if (tem(a) && (!b || tem(b))) return k;
+    }
+    return null;
+  };
+  const textoAuto = (nomeVizinha: string) => {
+    const l = identificacaoDaGleba(servico, nomeVizinha);
+    return `${l[0]} ${l[1]}` + l.slice(2).map((x) => `\\ ${x}`).join("");
+  };
+
+  return glebas.map((g, gi) => {
+    const vs = casadas[gi];
+    const linhas: LinhaVertice[] = [];
+    let semCodigo = 0;
+    vs.forEach((v, k) => {
+      if (!v) { semCodigo++; return; }
+      const base = linhaPorCodigo.get(v.codigo);
+      if (!base) { semCodigo++; return; }
+      const prox = vs[(k + 1) % vs.length];
+      const interno = !prox || !vizinhos(v, prox);
+      if (!interno) { linhas.push({ ...base }); return; }
+      const proprio = (g.confrontante_interno ?? "").trim();
+      const viz = outraCom(gi, v, prox);
+      const descritivo = proprio || textoAuto(viz !== null ? nomeDe(viz) : "GLEBA VIZINHA");
+      linhas.push({ ...base, descritivo, tipoLimite: "LA1", cns: null, matricula: null });
+    });
+    return { nome: nomeDe(gi), linhas, semCodigo };
+  });
 }
 
 export interface GeometriaPlanta {

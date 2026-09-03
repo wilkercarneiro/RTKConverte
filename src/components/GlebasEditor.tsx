@@ -1,21 +1,30 @@
 // Editor das glebas: sub-polígonos desenhados DENTRO do perímetro.
 //
-// O contorno é montado NO DESENHO (ver MapaGlebas), não numa fileira de chips:
-// montar uma gleba que acompanha 12 vértices dava 12 cliques em botões que não
-// diziam onde cada um ficava. A lista de pontos continua aqui ao lado, como
-// conferência e como saída de emergência — quem tem a coordenada exata digita —
-// mas o caminho normal é apontar na figura.
-import { useEffect, useState } from "react";
+// O caminho normal é o mesmo da escolha de confrontantes certificados: marcar
+// na planta (ou na lista) os vértices do perímetro que formam a gleba e apertar
+// "Dividir gleba". A gleba é o polígono desses vértices percorridos na ordem do
+// perímetro, fechado pela reta entre o último e o primeiro — a divisa interna.
+// Repete-se para a próxima gleba; vértices podem pertencer a mais de uma (os da
+// divisa interna pertencem às duas).
+//
+// O mapa de ajuste fino (arrastar alça, ponto livre por coordenada, alt+clique)
+// continua disponível, recolhido, para o caso que a seleção não resolve.
+import { useEffect, useMemo, useState } from "react";
 import type { Gleba, Trecho, Vertice } from "../lib/types";
-import { areaHaDoAnel } from "../lib/glebas";
+import { anelDaSelecao, areaHaDoAnel, mesmoPonto } from "../lib/glebas";
+import { trechoDoVertice } from "../lib/trechos";
 import { CORES } from "./MapaSVG";
 import { MapaGlebas } from "./MapaGlebas";
+import { PlantaSelecao } from "./PlantaSelecao";
+import type { PoligonoSelecao, PontoSelecao } from "./PlantaSelecao";
 import { Secao } from "./ui";
 
 export { areaHaDoAnel };
 
 const fmt = (n: number, casas = 4) =>
   n.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
+
+const COLUNAS = ["Nº", "Código", "Tipo", "Confrontação", "Gleba(s)"];
 
 interface Props {
   glebas: Gleba[];
@@ -31,11 +40,11 @@ interface Props {
 export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId, onChange }: Props) {
   const [sel, setSel] = useState(0);
   const [ponto, setPonto] = useState({ e: "", n: "" });
+  // vértices marcados para a PRÓXIMA gleba (chave = ordem do vértice)
+  const [marcados, setMarcados] = useState<Set<string>>(() => new Set());
 
   // Pilha de desfazer sobre a lista INTEIRA de glebas, não sobre o contorno da
   // ativa: assim Ctrl+Z também desfaz criar e excluir gleba, e não só cliques.
-  // Errar um ponto e ter de apagar o contorno todo para consertar era o pior
-  // defeito do editor.
   const [historico, setHistorico] = useState<Gleba[][]>([]);
   const guardar = () => setHistorico((h) => [...h.slice(-49), glebas]);
   const aplicar = (novo: Gleba[]) => { guardar(); onChange(novo); };
@@ -48,7 +57,6 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z") return;
-      // não sequestra o desfazer de quem está digitando num campo
       const alvo = e.target as HTMLElement | null;
       if (alvo && /^(INPUT|TEXTAREA|SELECT)$/.test(alvo.tagName)) return;
       e.preventDefault();
@@ -61,23 +69,74 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
   const ativa = Math.min(sel, Math.max(0, glebas.length - 1));
   const atual = glebas[ativa] ?? null;
   const somaHa = glebas.reduce((s, g) => s + areaHaDoAnel(g.anel), 0);
+  const restanteHa = Math.max(0, areaTotalHa - somaHa);
+
+  // ---- perímetro como pontos de seleção ----
+  const perimetroVs = useMemo(
+    () => vertices.filter((v) => v.e !== null && v.n !== null).sort((a, b) => a.ordem - b.ordem),
+    [vertices],
+  );
+  const perimetro = useMemo(() => perimetroVs.map((v) => [Number(v.e), Number(v.n)] as [number, number]), [perimetroVs]);
+  const trechosOrd = useMemo(() => [...trechos].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem), [trechos]);
+  const glebasDoPonto = (p: [number, number]) => glebas.flatMap((g, i) => (g.anel.some((q) => mesmoPonto(q, p)) ? [i] : []));
+
+  const pontos = useMemo<PontoSelecao[]>(() => perimetroVs.map((v, i) => {
+    const p = perimetro[i];
+    const t = trechoDoVertice(trechosOrd, v.ordem);
+    const donas = glebasDoPonto(p);
+    return {
+      id: String(v.ordem), x: p[0], y: p[1],
+      rotulo: String(v.num_txt ?? v.codigo ?? v.ordem), tipo: v.tipo,
+      titulo: `${v.codigo ?? `ponto ${v.num_txt ?? v.ordem}`}${t?.apelido_txt || t?.descritivo ? ` · ${t.descritivo || t.apelido_txt}` : ""}`,
+      corFundo: donas.length ? CORES[donas[0] % CORES.length] : undefined,
+      celulas: [
+        String(v.num_txt ?? "—"),
+        v.codigo ?? <span className="sub">na geração</span>,
+        <span className={`chip ${v.tipo}`}>{v.tipo}</span>,
+        t ? (t.descritivo?.split("\\")[0] || t.apelido_txt || "") : "",
+        donas.length ? donas.map((i) => glebas[i].nome || `Gleba ${i + 1}`).join(", ") : <span className="sub">—</span>,
+      ],
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [perimetroVs, perimetro, trechosOrd, glebas]);
+
+  const indicesMarcados = useMemo(() => {
+    const porOrdem = new Map(perimetroVs.map((v, i) => [String(v.ordem), i]));
+    return [...marcados].map((id) => porOrdem.get(id)).filter((i): i is number => i !== undefined);
+  }, [marcados, perimetroVs]);
+  const previa = indicesMarcados.length >= 3 ? anelDaSelecao(perimetro, indicesMarcados) : undefined;
+  const areaPrevia = previa ? areaHaDoAnel(previa) : 0;
+
+  const poligonos: PoligonoSelecao[] = glebas
+    .filter((g) => g.anel.length >= 2)
+    .map((g, i) => ({ pontos: g.anel, cor: CORES[glebas.indexOf(g) % CORES.length], nome: g.nome || `GLEBA ${i + 1}`, tracejado: glebas.indexOf(g) !== ativa }));
 
   /** Muda sem registrar: o mapa já registrou pelo `onSnapshot` antes de mexer. */
   function editar(i: number, patch: Partial<Gleba>) {
     onChange(glebas.map((g, k) => (k === i ? { ...g, ...patch } : g)));
   }
-  /** Muda registrando — para as ações que partem daqui, e não do mapa. */
   function editarComDesfazer(i: number, patch: Partial<Gleba>) {
     aplicar(glebas.map((g, k) => (k === i ? { ...g, ...patch } : g)));
   }
-  function nova() {
+  function dividir() {
+    if (!previa) return;
     aplicar([...glebas, {
       id: crypto.randomUUID(),
       servico_id: servicoId,
       ordem: glebas.length,
       nome: `GLEBA ${glebas.length + 1}`,
-      anel: [],
+      anel: previa,
+      confrontante_interno: null,
     }]);
+    setSel(glebas.length);
+    setMarcados(new Set());
+  }
+  /** Marca o que ainda não pertence a gleba nenhuma — o "resto" do imóvel. */
+  function marcarRestante() {
+    setMarcados(new Set(perimetroVs.filter((_, i) => glebasDoPonto(perimetro[i]).length === 0).map((v) => String(v.ordem))));
+  }
+  function nova() {
+    aplicar([...glebas, { id: crypto.randomUUID(), servico_id: servicoId, ordem: glebas.length, nome: `GLEBA ${glebas.length + 1}`, anel: [], confrontante_interno: null }]);
     setSel(glebas.length);
   }
   function remover(i: number) {
@@ -87,6 +146,36 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
 
   return (
     <div className="glebas-editor">
+      {/* ------- dividir: seleção na planta ------- */}
+      <section className="dividir-gleba">
+        <header>
+          <b>Dividir gleba</b>
+          <span className="sub">
+            marque os vértices do perímetro que formam a gleba — a divisa interna é a reta entre o último e o primeiro marcado
+          </span>
+        </header>
+        <PlantaSelecao
+          pontos={pontos} colunas={COLUNAS} selecionados={marcados} onChange={setMarcados}
+          poligonos={poligonos} previa={previa} ligarSelecionados={false}
+          ariaLabel="Planta do imóvel — marque os vértices da gleba"
+          acoes={<button type="button" className="fantasma" onClick={marcarRestante} disabled={!glebas.length}>Marcar o restante</button>}
+          dica={<>Clique nos vértices, no desenho ou na lista; <b>Shift + clique</b> marca a sequência entre dois vértices. Vértices da divisa interna entram nas duas glebas — pode marcar de novo.</>}
+        />
+        <div className="rodape-cert">
+          <span className="sub">
+            {previa
+              ? <>Seleção: <b>{indicesMarcados.length} vértices · {fmt(areaPrevia)} ha</b></>
+              : <>marque ao menos 3 vértices</>}
+            {glebas.length > 0 && <> · glebas: {fmt(somaHa)} ha de {fmt(areaTotalHa)} ha · restante {fmt(restanteHa)} ha</>}
+          </span>
+          <span className="esticar" />
+          <button className="principal" disabled={!previa} onClick={dividir}>
+            Dividir gleba{previa ? ` (GLEBA ${glebas.length + 1} · ${fmt(areaPrevia)} ha)` : ""}
+          </button>
+        </div>
+      </section>
+
+      {/* ------- glebas já feitas ------- */}
       <div className="glebas-lista">
         {glebas.map((g, i) => {
           const ha = areaHaDoAnel(g.anel);
@@ -101,61 +190,69 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
             </button>
           );
         })}
-        <button className="gleba-item novo" onClick={nova}>+ Nova gleba</button>
+        <button className="gleba-item novo" onClick={nova} title="gleba vazia, para montar no ajuste fino">+ Gleba vazia</button>
       </div>
 
-      {glebas.length > 0 && (
+      {glebas.length > 0 && somaHa > areaTotalHa * 1.001 && (
         <p className="sub" style={{ margin: "8px 0" }}>
-          Soma das glebas: <b>{fmt(somaHa)} ha</b> de {fmt(areaTotalHa)} ha do imóvel
-          {somaHa > areaTotalHa * 1.001 && (
-            <em className="alerta"> — a soma passou da área total; confira os contornos</em>
-          )}
+          <em className="alerta">a soma das glebas ({fmt(somaHa)} ha) passou da área total ({fmt(areaTotalHa)} ha); confira os contornos</em>
         </p>
       )}
 
-      {!atual ? (
-        <p className="sub">Crie a primeira gleba para começar a desenhar.</p>
-      ) : (
-        <div className="gleba-trabalho">
-          <MapaGlebas
-            vertices={vertices}
-            trechos={trechos}
-            glebas={glebas}
-            ativa={ativa}
-            onChange={(anel) => editar(ativa, { anel })}
-            onSnapshot={guardar}
-          />
+      {atual && (
+        <div className="gleba-painel" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
+          <label>Nome da gleba
+            <input value={atual.nome} onChange={(e) => editar(ativa, { nome: e.target.value })} placeholder="GLEBA 1" />
+            <small className="sub">é a denominação da aba desta gleba na planilha SIGEF</small>
+          </label>
+          <label>Área calculada
+            <input readOnly value={`${fmt(areaHaDoAnel(atual.anel))} ha`} className="mono" />
+            <small className="sub">sai do contorno; não se digita</small>
+          </label>
+          <label>Confrontante da divisa interna
+            <input value={atual.confrontante_interno ?? ""} placeholder="automático: a gleba vizinha, mesmo proprietário"
+              onChange={(e) => editar(ativa, { confrontante_interno: e.target.value || null })} />
+            <small className="sub">
+              descritivo do lado que fecha a gleba por dentro; em branco sai "(MATR./CNS.) IMÓVEL - GLEBA VIZINHA\ PROPRIETÁRIO\ CPF"
+            </small>
+          </label>
+          <div style={{ alignSelf: "end" }}>
+            <button className="perigo-btn" onClick={() => remover(ativa)}>Excluir esta gleba</button>
+          </div>
+        </div>
+      )}
 
-          <div className="gleba-painel">
-            <label>Nome da gleba
-              <input value={atual.nome} onChange={(e) => editar(ativa, { nome: e.target.value })} placeholder="GLEBA 1" />
-            </label>
-            <label>Área calculada
-              <input readOnly value={`${fmt(areaHaDoAnel(atual.anel))} ha`} className="mono" />
-              <small className="sub">sai do contorno; não se digita</small>
-            </label>
-
-            <div className="gleba-acoes">
-              <button className="fantasma" disabled={!atual.anel.length}
-                onClick={() => editarComDesfazer(ativa, { anel: atual.anel.slice(0, -1) })}>
-                Desfazer último ponto
-              </button>
-              <button className="fantasma" disabled={!atual.anel.length}
-                onClick={() => editarComDesfazer(ativa, { anel: [] })}>
-                Limpar contorno
-              </button>
-              <button className="fantasma" disabled={atual.anel.length < 3}
-                onClick={() => editarComDesfazer(ativa, { anel: [...atual.anel].reverse() })}
-                title="inverte o sentido do contorno — não muda a área, só a ordem dos pontos">
-                Inverter sentido
-              </button>
-            </div>
-
-            <Secao titulo="Pontos do contorno"
-              selo={<span className={`secao-selo ${atual.anel.length >= 3 ? "completa" : "vazia"}`}>{atual.anel.length}</span>}
-              dica="conferência da lista e entrada por coordenada">
+      {atual && (
+        <Secao titulo={`Ajuste fino do contorno — ${atual.nome || `Gleba ${ativa + 1}`}`}
+          selo={<span className={`secao-selo ${atual.anel.length >= 3 ? "completa" : "vazia"}`}>{atual.anel.length} pontos</span>}
+          dica="arrastar alças, ligar em reta, ponto livre por coordenada">
+          <div className="gleba-trabalho">
+            <MapaGlebas
+              vertices={vertices}
+              trechos={trechos}
+              glebas={glebas}
+              ativa={ativa}
+              onChange={(anel) => editar(ativa, { anel })}
+              onSnapshot={guardar}
+            />
+            <div className="gleba-painel">
+              <div className="gleba-acoes">
+                <button className="fantasma" disabled={!atual.anel.length}
+                  onClick={() => editarComDesfazer(ativa, { anel: atual.anel.slice(0, -1) })}>
+                  Desfazer último ponto
+                </button>
+                <button className="fantasma" disabled={!atual.anel.length}
+                  onClick={() => editarComDesfazer(ativa, { anel: [] })}>
+                  Limpar contorno
+                </button>
+                <button className="fantasma" disabled={atual.anel.length < 3}
+                  onClick={() => editarComDesfazer(ativa, { anel: [...atual.anel].reverse() })}
+                  title="inverte o sentido do contorno — não muda a área, só a ordem dos pontos">
+                  Inverter sentido
+                </button>
+              </div>
               {atual.anel.length === 0
-                ? <p className="sub">Nenhum ponto — clique nos vértices do mapa ao lado.</p>
+                ? <p className="sub">Nenhum ponto — use "Dividir gleba" acima ou clique nos vértices do mapa ao lado.</p>
                 : (
                   <ol className="lista-pontos">
                     {atual.anel.map(([e, n], k) => (
@@ -167,7 +264,6 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
                     ))}
                   </ol>
                 )}
-
               <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                 <input placeholder="E" value={ponto.e} className="mono" style={{ width: 110 }}
                   onChange={(e) => setPonto((p) => ({ ...p, e: e.target.value }))} />
@@ -183,13 +279,9 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
                     }
                   }}>+ por coordenada</button>
               </div>
-            </Secao>
-
-            <div style={{ marginTop: 12 }}>
-              <button className="perigo-btn" onClick={() => remover(ativa)}>Excluir esta gleba</button>
             </div>
           </div>
-        </div>
+        </Secao>
       )}
     </div>
   );

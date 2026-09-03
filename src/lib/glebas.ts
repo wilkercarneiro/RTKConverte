@@ -106,3 +106,31 @@ export function grudarNoPerimetro(
   }
   return achado;
 }
+
+/**
+ * Ordena índices do perímetro como uma SEQUÊNCIA CONTÍGUA do anel: por índice,
+ * começando depois do maior salto. Assim uma escolha que dá a volta pelo 0
+ * (28, 29, 30, 31, 0, 1, 2) continua contígua em vez de virar 0, 1, 2, 28…
+ *
+ * É a regra do botão "Dividir gleba": o operador marca os vértices na planta em
+ * qualquer ordem, e a gleba é o polígono desses vértices percorridos como o
+ * perímetro os percorre, fechado pela reta entre o último e o primeiro — a
+ * divisa interna.
+ */
+export function ordenarNoAnel(indices: number[], total: number): number[] {
+  const l = [...new Set(indices)].filter((i) => i >= 0 && i < total).sort((a, b) => a - b);
+  if (l.length < 2 || total <= 0) return l;
+  let maior = -1, corte = 0;
+  for (let i = 0; i + 1 < l.length; i++) {
+    const gap = l[i + 1] - l[i];
+    if (gap > maior) { maior = gap; corte = i + 1; }
+  }
+  const volta = l[0] + total - l[l.length - 1];
+  if (volta >= maior) return l;
+  return [...l.slice(corte), ...l.slice(0, corte)];
+}
+
+/** O anel da gleba a partir dos índices escolhidos no perímetro. */
+export function anelDaSelecao(perimetro: PontoAnel[], indices: number[]): PontoAnel[] {
+  return ordenarNoAnel(indices, perimetro.length).map((i) => perimetro[i]);
+}

@@ -47,6 +47,11 @@ export interface Gleba {
   ordem: number;
   nome: string;
   anel: [number, number][];
+  /**
+   * Descritivo do confrontante nas divisas INTERNAS da gleba (o lado que fecha
+   * por dentro). Nulo = automático: a gleba vizinha do mesmo imóvel/proprietário.
+   */
+  confrontante_interno?: string | null;
 }
 
 export interface Servico {

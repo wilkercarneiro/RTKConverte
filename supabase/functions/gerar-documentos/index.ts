@@ -22,7 +22,7 @@ import { patchOdsContent } from "../_shared/ods.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { Folha } from "../_shared/planta.ts";
 import {
-  bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta,
+  bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta, perimetrosOdsDasGlebas,
 } from "../_shared/planta_dados.ts";
 import type { GlebaRow } from "../_shared/planta_dados.ts";
 
@@ -206,28 +206,28 @@ Deno.serve(async (req) => {
     // ------------------------- glebas -------------------------
     // Carregadas antes do DOCX/ODS porque a PLANILHA também depende delas: com
     // glebas o arquivo sai com uma aba de perímetro por gleba.
-    const glebas = servico.tem_glebas
-      ? glebasParaPlanta(
-        ((await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")).data ?? []) as GlebaRow[],
-        calc,
-        servico,
-      )
-      : undefined;
+    const glebaRows = servico.tem_glebas
+      ? ((await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")).data ?? []) as GlebaRow[]
+      : [];
+    const glebas = servico.tem_glebas ? glebasParaPlanta(glebaRows, calc, servico) : undefined;
 
-    // Uma aba `perimetro_N` por gleba, na ordem em que foram montadas. Sem
-    // glebas, um perímetro só — exatamente o que a planilha sempre teve.
-    const porCodigo = new Map(calc.linhasOds.map((l) => [l.codigo, l]));
+    // Uma aba `perimetro_N` por gleba, na ordem em que foram montadas, cada
+    // vértice com o confrontante do lado que sai dele (a divisa interna confronta
+    // com a gleba vizinha). Sem glebas, um perímetro só — exatamente o que a
+    // planilha sempre teve. Ver perimetrosOdsDasGlebas.
     const hemisferio = calc.ring[0].latDeg < 0 ? "Sul" : "Norte";
-    const perimetrosOds = glebas?.length
-      ? glebas.map((g, i) => ({
+    const abasGlebas = glebas?.length ? perimetrosOdsDasGlebas(glebaRows, calc, servico) : [];
+    const avisosGlebas = abasGlebas
+      .filter((g) => g.semCodigo > 0)
+      .map((g) => `${g.nome}: ${g.semCodigo} ponto(s) do contorno não são vértices do levantamento e ficaram fora da planilha.`);
+    const perimetrosOds = abasGlebas.length
+      ? abasGlebas.map((g, i) => ({
         denominacaoParcela: g.nome,
         parcelaNumero: String(i + 1).padStart(3, "0"),
         lado: servico.lado ?? "Externo",
         mcAbs: calc.mcAbs,
         hemisferio,
-        // vértice sem código é ponto livre digitado na tela: não tem linha na
-        // planilha, e sair de fora é o sinal de que falta levantá-lo
-        linhas: g.vertices.map((v) => porCodigo.get(v.codigo)).filter((l): l is NonNullable<typeof l> => !!l),
+        linhas: g.linhas,
       }))
       : [{
         denominacaoParcela: servico.denominacao_parcela ?? "Parte 1",
@@ -241,7 +241,7 @@ Deno.serve(async (req) => {
     // ------------------------- DOCX -------------------------
     // Avisos de todo o percurso: o DOCX já tem o seu (modelo ausente) e a planta
     // acrescenta os dela mais abaixo.
-    const avisosGeracao = [...conf.avisos];
+    const avisosGeracao = [...conf.avisos, ...avisosGlebas];
     // decide o conjunto de modelos e, mais abaixo, a folha da planta
     const posse = servico.tipo_imovel === "posse";
     const dadosMemorial: DadosMemorial = {

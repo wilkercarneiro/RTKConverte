@@ -430,6 +430,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         ordem: i,
         nome: g.nome,
         anel: g.anel,
+        confrontante_interno: g.confrontante_interno ?? null,
       }));
       const ids = linhas.map((l) => `"${l.id}"`).join(",");
       const del = supabase.from("glebas").delete().eq("servico_id", id);

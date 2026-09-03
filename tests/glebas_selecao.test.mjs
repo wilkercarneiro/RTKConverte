@@ -121,3 +121,24 @@ test("trecho longo de perímetro entra de uma vez só", () => {
   assert.equal(idx.length, 12);
   assert.deepEqual(idx, [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
 });
+
+// ---- Dividir gleba: a seleção vira sequência contígua do anel ----
+import { anelDaSelecao, ordenarNoAnel } from "../src/lib/glebas.ts";
+
+test("ordenarNoAnel: escolha simples sai por índice", () => {
+  assert.deepEqual(ordenarNoAnel([5, 3, 4], 10), [3, 4, 5]);
+});
+
+test("ordenarNoAnel: escolha que passa pelo 0 continua contígua", () => {
+  assert.deepEqual(ordenarNoAnel([0, 1, 9, 8], 10), [8, 9, 0, 1]);
+  assert.deepEqual(ordenarNoAnel([0, 1, 2, 7, 8, 9], 10), [7, 8, 9, 0, 1, 2]);
+});
+
+test("ordenarNoAnel: dois pontos salteados ficam na ordem do anel; repetidos e fora do anel somem", () => {
+  assert.deepEqual(ordenarNoAnel([5, 2, 5, 12, -1], 10), [2, 5]);
+});
+
+test("anelDaSelecao devolve as coordenadas na ordem do perímetro", () => {
+  const per = Array.from({ length: 6 }, (_, i) => [i * 10, i]);
+  assert.deepEqual(anelDaSelecao(per, [5, 0, 4]), [[40, 4], [50, 5], [0, 0]]);
+});
