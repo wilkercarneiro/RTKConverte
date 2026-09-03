@@ -52,7 +52,7 @@ const numBR = (s: string | undefined): number => {
 export function parseCsvSigef(
   nome: string,
   conteudo: string,
-): { nome: string; pontos: [number, number][]; vertices: VerticeSigef[] } {
+): { nome: string; pontos: [number, number][]; vertices: VerticeSigef[]; parcela: string | null } {
   const linhas = conteudo.replace(/^﻿/, "").split(/\r?\n/);
   const header = linhas[0]?.toUpperCase() ?? "";
   if (!header.includes("GEOMETRIA_WKT") || !header.includes("INDICE")) {
@@ -64,11 +64,16 @@ export function parseCsvSigef(
   const iCod = col("CODIGO"), iMet = col("METODO_POSICIONAMENTO"), iTipo = col("TIPO_VERTICE");
   const iSx = col("SIGMA_X"), iSy = col("SIGMA_Y"), iSz = col("SIGMA_Z");
   const iX = col("X"), iY = col("Y"), iZ = col("Z");
+  const iQr = col("QRCODE");
+  // identidade da parcela: o SIGEF baixa todo CSV como "exportacao.csv", então o
+  // nome do arquivo não distingue dois vizinhos — o QRCODE (id da parcela) sim
+  let parcela: string | null = null;
   const pts: { idx: number; v: VerticeSigef }[] = [];
   for (const linha of linhas.slice(1)) {
     if (!linha.trim()) continue;
     const partes = linha.split(";");
     if (partes.length <= iWkt) continue;
+    if (parcela === null && iQr >= 0 && partes[iQr].trim()) parcela = partes[iQr].trim();
     if (iLado >= 0 && partes[iLado].trim().toUpperCase() !== "EXTERNO") continue;
     const m = partes[iWkt].match(/POINT\s*\(\s*(-?[\d.]+)\s+(-?[\d.]+)\s*\)/i);
     if (!m) continue;
@@ -95,7 +100,7 @@ export function parseCsvSigef(
   }
   if (pts.length < 3) throw new Error(`${nome}: menos de 3 vértices EXTERNO no CSV`);
   pts.sort((a, b) => a.idx - b.idx);
-  return { nome, pontos: pts.map((p) => [p.v.lon, p.v.lat]), vertices: pts.map((p) => p.v) };
+  return { nome, pontos: pts.map((p) => [p.v.lon, p.v.lat]), vertices: pts.map((p) => p.v), parcela };
 }
 
 function ehGmsValido(s: string): boolean {

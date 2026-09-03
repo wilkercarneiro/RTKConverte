@@ -21,6 +21,10 @@ export interface ResultadoParse {
 
 /** Um CSV de exportação do SIGEF já lido, com os vértices escolhidos pelo operador. */
 interface GrupoCsv {
+  /** identidade na tela — NÃO é o nome do arquivo: o SIGEF baixa todos como "exportacao.csv" */
+  id: string;
+  /** QRCODE do CSV (id da parcela no SIGEF); é o que diz se dois arquivos são o mesmo vizinho */
+  parcela: string | null;
   nome: string;
   conteudo: string;
   vertices: VerticeSigef[];
@@ -65,26 +69,37 @@ export function Upload({ definicao, onParsed, onVoltar }: {
     for (const f of lista) {
       const conteudo = await f.text();
       try {
-        const { vertices } = parseCsvSigef(f.name, conteudo);
-        lidos.push({ nome: f.name, conteudo, vertices, selecionados: new Set() });
+        const { vertices, parcela } = parseCsvSigef(f.name, conteudo);
+        lidos.push({ id: crypto.randomUUID(), parcela, nome: f.name, conteudo, vertices, selecionados: new Set() });
       } catch (e) {
         erros.push(e instanceof Error ? e.message : String(e));
       }
     }
-    setErroCsv(erros.length ? erros.join("\n") : null);
     if (lidos.length) {
+      // Todo CSV novo é ACRESCENTADO. A única substituição é a mesma parcela
+      // enviada de novo (mesmo QRCODE) — e aí a escolha de vértices é preservada.
       setGrupos((prev) => {
-        const mapa = new Map(prev.map((g) => [g.nome, g]));
-        for (const g of lidos) mapa.set(g.nome, g);   // mesmo nome = substitui
-        return [...mapa.values()];
+        const out = [...prev];
+        for (const g of lidos) {
+          const i = g.parcela ? out.findIndex((x) => x.parcela === g.parcela) : -1;
+          if (i >= 0) {
+            const codigos = new Set(g.vertices.map((v) => v.codigo));
+            out[i] = { ...g, id: out[i].id, selecionados: new Set([...out[i].selecionados].filter((c) => codigos.has(c))) };
+            erros.push(`${g.nome}: a parcela ${g.parcela!.slice(0, 8)}… já estava na lista — arquivo substituído, seleção mantida.`);
+          } else {
+            out.push(g);
+          }
+        }
+        return out;
       });
     }
+    setErroCsv(erros.length ? erros.join("\n") : null);
   }
-  function setSelecao(nome: string, sel: Set<string>) {
-    setGrupos((gs) => gs.map((g) => (g.nome === nome ? { ...g, selecionados: sel } : g)));
+  function setSelecao(id: string, sel: Set<string>) {
+    setGrupos((gs) => gs.map((g) => (g.id === id ? { ...g, selecionados: sel } : g)));
   }
-  function removerGrupo(nome: string) {
-    setGrupos((gs) => gs.filter((g) => g.nome !== nome));
+  function removerGrupo(id: string) {
+    setGrupos((gs) => gs.filter((g) => g.id !== id));
   }
 
   async function processar(file: File) {
@@ -185,24 +200,27 @@ export function Upload({ definicao, onParsed, onVoltar }: {
             onClick={() => inputCsvRef.current?.click()}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inputCsvRef.current?.click(); } }}
           >
-            <b>{grupos.length ? "Adicionar outro CSV" : "Arraste o CSV do SIGEF aqui"}</b>
-            <span>exportacao (n).csv — pode selecionar vários de uma vez</span>
-            <input ref={inputCsvRef} type="file" accept=".csv" multiple hidden
+            <b>{grupos.length ? `Adicionar outro confrontante (${grupos.length} na lista)` : "Arraste o CSV do SIGEF aqui"}</b>
+            <span>exportacao (n).csv — pode selecionar vários de uma vez; cada arquivo é um vizinho e todos ficam na lista</span>
+            <input ref={inputCsvRef} type="file" accept=".csv" multiple hidden onClick={(e) => e.stopPropagation()}
               onChange={(e) => { if (e.target.files?.length) carregarCsvs(e.target.files); e.target.value = ""; }} />
           </div>
           {erroCsv && <div className="erro">{erroCsv}</div>}
 
-          {grupos.map((g) => (
-            <section className="cert-grupo" key={g.nome}>
+          {grupos.map((g, i) => (
+            <section className="cert-grupo" key={g.id}>
               <header>
-                <span className="nome">{g.nome}</span>
+                <span className="nome">Confrontante {i + 1} · {g.nome}</span>
                 <span className="sub" style={{ fontSize: 13 }}>
-                  {g.vertices.length} vértices no CSV · {g.vertices[0]?.codigo.split("-")[0]} · {g.selecionados.size} escolhido(s)
+                  {g.vertices[0]?.codigo.split("-")[0]}{g.parcela ? ` · parcela ${g.parcela.slice(0, 8)}…` : ""} · {g.vertices.length} vértices no CSV ·{" "}
+                  {g.selecionados.size > 0
+                    ? `${g.selecionados.size} escolhido(s)`
+                    : <em className="alerta">nenhum vértice escolhido — esta parcela não entra no serviço</em>}
                 </span>
                 <span className="esticar" />
-                <button type="button" className="remover" onClick={() => removerGrupo(g.nome)}>remover parcela</button>
+                <button type="button" className="remover" onClick={() => removerGrupo(g.id)}>remover parcela</button>
               </header>
-              <PlantaCertificada vertices={g.vertices} selecionados={g.selecionados} onChange={(s) => setSelecao(g.nome, s)} />
+              <PlantaCertificada vertices={g.vertices} selecionados={g.selecionados} onChange={(s) => setSelecao(g.id, s)} />
             </section>
           ))}
 

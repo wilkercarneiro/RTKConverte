@@ -20,10 +20,12 @@ const ud = utmDef(fuso);
 const proj4 = (f, t, c) => proj4lib(f, t, c);
 const geoParaUtm = (lon, lat) => proj4(GEO_DEF, ud, [lon, lat]);
 
-const { vertices: viz } = parseCsvSigef("exportacao (15).csv", csv);
+const { vertices: viz, parcela } = parseCsvSigef("exportacao (15).csv", csv);
 const utmViz = viz.map((v) => geoParaUtm(...lonLatDoVerticeSigef(v)));
 
 test("parser: CSV com X/Y em UTM → 36 vértices EXTERNO, GMS canônico derivado do WKT", () => {
+  // identidade da parcela = QRCODE (o nome do arquivo é sempre "exportacao.csv" no SIGEF)
+  assert.equal(parcela, "520f84c2-c29e-4d53-9b31-528caf444462");
   assert.equal(viz.length, 36);
   assert.equal(viz[0].codigo, "DJ9-M-2473");
   assert.equal(viz[0].tipo, "M");

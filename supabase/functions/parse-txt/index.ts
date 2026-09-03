@@ -104,10 +104,12 @@ Deno.serve(async (req) => {
       .upload(`${servico.id}/${nomeArquivo}`, new Blob([conteudo], { type: "text/plain" }), { upsert: true });
     if (up.error) throw up.error;
     // os CSVs dos vizinhos ficam ao lado do TXT: são a origem dos códigos
-    // publicados e servem à correção de sobreposição, se o SIGEF acusar
-    for (const c of csvsBrutos) {
+    // publicados e servem à correção de sobreposição, se o SIGEF acusar. Com
+    // prefixo numérico: o SIGEF baixa todos como "exportacao.csv", e dois vizinhos
+    // com o mesmo nome não podem se sobrescrever.
+    for (const [i, c] of csvsBrutos.entries()) {
       const upCsv = await supa.storage.from("uploads-txt")
-        .upload(`${servico.id}/certificados/${c.nome}`, new Blob([c.conteudo], { type: "text/csv" }), { upsert: true });
+        .upload(`${servico.id}/certificados/${i + 1}-${c.nome}`, new Blob([c.conteudo], { type: "text/csv" }), { upsert: true });
       if (upCsv.error) throw upCsv.error;
     }
 
