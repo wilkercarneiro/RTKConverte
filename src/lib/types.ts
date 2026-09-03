@@ -202,4 +202,10 @@ export interface PreviewParse {
   qtdM: number;
   qtdP: number;
   qtdV: number;
+  /**
+   * Vértices certificados de parcelas vizinhas unidos ao levantamento na
+   * entrada do serviço (só quando o operador respondeu que confronta com área
+   * certificada). Ver certificados.ts.
+   */
+  certificados?: { parcelas: number; total: number; igualados: number; inseridos: number; avisos: string[]; tolerancia: number };
 }

@@ -37,6 +37,13 @@
 // origem local para os produtos caberem na precisão de double) via clipper-lib.
 import ClipperLib from "clipper-lib";
 import { degToGmsCanonical, fmtGmsPlanilha, gmsToDeg, parseGmsPlanilha } from "./geo.ts";
+// O parser do CSV e o tipo do vértice certificado moram em certificados.ts (o
+// frontend e o parse-txt os usam sem carregar o clipper). Reexportados aqui para
+// os chamadores e testes existentes.
+import { lonLatDoVerticeSigef, parseCsvSigef } from "./certificados.ts";
+import type { VerticeSigef } from "./certificados.ts";
+export { lonLatDoVerticeSigef, parseCsvSigef };
+export type { VerticeSigef };
 
 const ESCALA = 10000;              // 1 unidade = 0,1 mm
 const EPS_M2 = 1e-4;               // 1 cm²: sobreposição residual tolerada no modelo
@@ -55,23 +62,6 @@ const EPS_TRIANGULO_M2 = 1e-3;
 type Pt = { X: number; Y: number };
 type Path = Pt[];
 type Paths = Path[];
-
-/** Um vértice do CSV de exportação do SIGEF, com tudo o que a planilha precisa. */
-export interface VerticeSigef {
-  codigo: string;
-  tipo: "M" | "P" | "V";
-  metodo: string;
-  sigmaX: number;
-  sigmaY: number;
-  sigmaZ: number;
-  h: number;
-  /** Coordenadas GMS como o SIGEF as publica (colunas X/Y): "12 10 30,687 S". */
-  latGms: string;
-  lonGms: string;
-  /** Graus decimais do WKT (o mesmo valor, em outra forma). */
-  lon: number;
-  lat: number;
-}
 
 export interface ParcelaSigef {
   nome: string;
@@ -120,82 +110,6 @@ export interface OpcoesCorrecao {
   usarVerticesCertificados?: boolean;
   /** Distância até a qual um vértice/lado nosso é igualado ao vértice certificado. */
   toleranciaIgualarM?: number;
-}
-
-// ---------------------------------------------------------------------------
-// Parse do CSV de exportação do SIGEF
-// ---------------------------------------------------------------------------
-
-const numBR = (s: string | undefined): number => {
-  const v = parseFloat((s ?? "").trim().replace(",", "."));
-  return Number.isFinite(v) ? v : NaN;
-};
-
-// Cabeçalho esperado: QRCODE;CODIGO;METODO_...;TIPO_VERTICE;SIGMA_X;SIGMA_Y;SIGMA_Z;LADO;INDICE;X;Y;Z;GEOMETRIA_WKT;
-export function parseCsvSigef(
-  nome: string,
-  conteudo: string,
-): { nome: string; pontos: [number, number][]; vertices: VerticeSigef[] } {
-  const linhas = conteudo.replace(/^﻿/, "").split(/\r?\n/);
-  const header = linhas[0]?.toUpperCase() ?? "";
-  if (!header.includes("GEOMETRIA_WKT") || !header.includes("INDICE")) {
-    throw new Error(`${nome}: não parece um CSV de exportação do SIGEF (cabeçalho sem GEOMETRIA_WKT/INDICE)`);
-  }
-  const cols = header.split(";").map((c) => c.trim());
-  const col = (n: string) => cols.indexOf(n);
-  const iLado = col("LADO"), iIdx = col("INDICE"), iWkt = col("GEOMETRIA_WKT");
-  const iCod = col("CODIGO"), iMet = col("METODO_POSICIONAMENTO"), iTipo = col("TIPO_VERTICE");
-  const iSx = col("SIGMA_X"), iSy = col("SIGMA_Y"), iSz = col("SIGMA_Z");
-  const iX = col("X"), iY = col("Y"), iZ = col("Z");
-  const pts: { idx: number; v: VerticeSigef }[] = [];
-  for (const linha of linhas.slice(1)) {
-    if (!linha.trim()) continue;
-    const partes = linha.split(";");
-    if (partes.length <= iWkt) continue;
-    if (iLado >= 0 && partes[iLado].trim().toUpperCase() !== "EXTERNO") continue;
-    const m = partes[iWkt].match(/POINT\s*\(\s*(-?[\d.]+)\s+(-?[\d.]+)\s*\)/i);
-    if (!m) continue;
-    const lon = parseFloat(m[1]), lat = parseFloat(m[2]);
-    const codigo = iCod >= 0 ? partes[iCod].trim() : "";
-    const letra = (iTipo >= 0 ? partes[iTipo].trim().toUpperCase() : "") || (codigo.match(/-([MPV])-/)?.[1] ?? "P");
-    const tipo: "M" | "P" | "V" = letra === "M" || letra === "V" ? letra : "P";
-    // GMS das colunas X/Y é o que o SIGEF publica; se faltar, deriva do WKT no
-    // formato canônico da planilha (mesmo arredondamento de 0,001").
-    const lonGmsCsv = iX >= 0 ? partes[iX].trim() : "";
-    const latGmsCsv = iY >= 0 ? partes[iY].trim() : "";
-    const lonGms = ehGmsValido(lonGmsCsv) ? lonGmsCsv : gmsCanonicoStr(lon, "lon");
-    const latGms = ehGmsValido(latGmsCsv) ? latGmsCsv : gmsCanonicoStr(lat, "lat");
-    const sx = numBR(partes[iSx]), sy = numBR(partes[iSy]), sz = numBR(partes[iSz]);
-    pts.push({
-      idx: parseInt(partes[iIdx], 10) || 0,
-      v: {
-        codigo, tipo,
-        metodo: (iMet >= 0 ? partes[iMet].trim() : "") || "PG2",
-        sigmaX: Number.isFinite(sx) ? sx : 0, sigmaY: Number.isFinite(sy) ? sy : 0, sigmaZ: Number.isFinite(sz) ? sz : 0,
-        h: Number.isFinite(numBR(partes[iZ])) ? numBR(partes[iZ]) : 0,
-        latGms, lonGms, lon, lat,
-      },
-    });
-  }
-  if (pts.length < 3) throw new Error(`${nome}: menos de 3 vértices EXTERNO no CSV`);
-  pts.sort((a, b) => a.idx - b.idx);
-  return { nome, pontos: pts.map((p) => [p.v.lon, p.v.lat]), vertices: pts.map((p) => p.v) };
-}
-
-function ehGmsValido(s: string): boolean {
-  if (!s) return false;
-  try { parseGmsPlanilha(s); return true; } catch { return false; }
-}
-
-const gmsCanonicoStr = (deg: number, kind: "lat" | "lon"): string => fmtGmsPlanilha(degToGmsCanonical(deg), kind);
-
-/** Graus decimais do vértice certificado, a partir do GMS publicado (fonte da verdade). */
-export function lonLatDoVerticeSigef(v: VerticeSigef): [number, number] {
-  try {
-    return [gmsToDeg(parseGmsPlanilha(v.lonGms)), gmsToDeg(parseGmsPlanilha(v.latGms))];
-  } catch {
-    return [v.lon, v.lat];
-  }
 }
 
 // ---------------------------------------------------------------------------

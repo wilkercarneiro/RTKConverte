@@ -734,3 +734,29 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
   .grade { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
   .confrontantes { grid-template-columns: minmax(0, 1.4fr) minmax(420px, 1fr); }
 }
+
+/* ===== Confrontantes com área certificada (entrada do serviço) ===== */
+.pergunta-cert { display: grid; gap: 12px; padding: 18px 20px; border: 1px solid var(--borda); border-radius: 12px; background: #F6FAF8; }
+.pergunta-cert b { font-size: 16px; }
+.cert-grupo { border: 1px solid var(--borda); border-radius: 12px; padding: 14px 16px; display: grid; gap: 12px; background: #fff; }
+.cert-grupo > header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.cert-grupo > header .nome { font-weight: 700; }
+.cert-grupo > header .esticar { flex: 1; }
+.cert-grupo > header .remover { color: var(--perigo); background: transparent; border: 0; cursor: pointer; font: inherit; font-size: 13px; padding: 0; height: auto; }
+.planta-cert { display: grid; grid-template-columns: minmax(280px, 520px) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1000px) { .planta-cert { grid-template-columns: 1fr; } }
+.planta-cert svg { width: 100%; height: auto; border: 1px solid var(--borda); border-radius: 10px; background: #F6FAF8; display: block; }
+.planta-cert .ponto { cursor: pointer; }
+.planta-cert .ponto:focus { outline: none; }
+.planta-cert .ponto:focus circle { stroke: var(--primaria); stroke-width: 3; }
+.planta-cert .lado { display: grid; gap: 8px; min-width: 0; }
+.planta-cert .tabela-wrap { max-height: 420px; }
+.planta-cert .tabela-vertices td, .planta-cert .tabela-vertices th { padding: 6px 10px; font-size: 12.5px; white-space: nowrap; }
+.planta-cert .tabela-vertices tbody tr { cursor: pointer; }
+.planta-cert tr.sel td { background: var(--primaria-clara); }
+.planta-cert .dica { font-size: 12.5px; color: var(--texto-3); margin: 0; }
+.planta-cert .acoes-linha button { height: 30px; padding: 0 12px; font-size: 12.5px; }
+.resumo-cert { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: 9px; background: var(--primaria-clara); color: var(--floresta); font-size: 13.5px; }
+.resumo-cert .fantasma { padding: 0; height: auto; color: var(--floresta); text-decoration: underline; }
+.upload-card .rodape-cert { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.upload-card .rodape-cert .esticar { flex: 1; }

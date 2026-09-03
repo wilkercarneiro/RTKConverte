@@ -12,7 +12,11 @@ confrontantes, vértices) e gera o **Memorial Descritivo GEO (DOCX)** e a
 - **Backend**: Supabase — Postgres + RLS, Storage (`uploads-txt`, `templates`,
   `gerados`, todos privados) e Edge Functions (Deno):
   - `parse-txt` — valida o TXT, detecta fuso, converte coordenadas (proj4),
-    sugere trechos/tipos e cria o serviço em rascunho.
+    sugere trechos/tipos e cria o serviço em rascunho. Quando o serviço
+    confronta com área certificada, recebe também os CSVs de exportação do
+    SIGEF dos vizinhos com os vértices escolhidos e os une ao levantamento
+    (`_shared/certificados.ts`: igualar a ≤ tolerância, inserir no lado mais
+    próximo; o vértice sai com código/GMS/método/σ/Z do vizinho).
   - `gerar-documentos` — monta o serviço a partir do banco (fonte da verdade),
     aloca códigos de vértice (contadores transacionais via RPC
     `alocar_contadores`), gera DOCX + ODS e grava no bucket `gerados`

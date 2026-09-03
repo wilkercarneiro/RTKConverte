@@ -160,6 +160,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [gerandoTabular, setGerandoTabular] = useState(false);
 
   const { avisos, avisar, fechar } = useAvisos();
+  // Serviço que nasceu unido a vértices certificados de vizinhos: os avisos da
+  // união (código repetido, vértice longe do perímetro) aparecem uma vez, ao abrir.
+  useEffect(() => {
+    for (const a of inicial.preview.certificados?.avisos ?? []) avisar("alerta", a);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     supabase.from("credenciados").select().then(({ data }) => setCredenciados(data ?? []));
@@ -934,6 +940,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           </span>
         )}
         {inicial.preview.foraDaUf && <em className="alerta">coordenadas fora da UF informada!</em>}
+        {inicial.preview.certificados && (
+          <em className="alerta" title={inicial.preview.certificados.avisos.join("\n") || undefined}>
+            {inicial.preview.certificados.total} vértice(s) certificado(s) de {inicial.preview.certificados.parcelas} parcela(s) vizinha(s) unidos ·{" "}
+            {inicial.preview.certificados.igualados} igualado(s), {inicial.preview.certificados.inseridos} inserido(s)
+          </em>
+        )}
         <label>Fuso UTM
           <select value={servico.fuso_utm ?? 24} onChange={(e) => campo("fuso_utm", Number(e.target.value))}>
             {[18, 19, 20, 21, 22, 23, 24, 25].map((z) => (
