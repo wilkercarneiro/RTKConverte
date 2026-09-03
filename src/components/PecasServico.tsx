@@ -665,8 +665,8 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                 </label>
                 <label>Folha
                   <select value={folhaEfetiva} onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
-                    <option value="A1">A1 (841×594 mm)</option>
-                    <option value="A3">A3 (420×297 mm)</option>
+                    <option value="A1">A1 — modelo com quadro analítico</option>
+                    <option value="A3">A3 — modelo sem quadro analítico</option>
                   </select>
                   <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
                 </label>

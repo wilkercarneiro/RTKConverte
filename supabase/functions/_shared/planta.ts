@@ -1417,13 +1417,16 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // desliga e o que sobrevive — carimbo, planta de situação e os campos do selo
   // — reaparece na FAIXA INFERIOR, logo depois desta seção.
   const sbTop = H - 20, sbBot = 20;
-  // posse não leva quadro analítico — as demais seções ganham o espaço dele
-  // A conferência em A3 segue a MESMA organização da planta de posse: sem quadro
-  // analítico, com a Planta de Situação grande no topo. É a folha de prévia — o
+  // A1 e A3 são dois MODELOS, não só dois tamanhos (pedido de 2026-09-03): o A1
+  // leva o quadro analítico; o A3 não — as demais seções ganham o espaço dele,
+  // com a Planta de Situação grande no topo. Quem decide é a folha escolhida,
+  // não o tipo do imóvel: posse continua caindo em A3 por padrão (regra de
+  // `folha` acima), mas posse em A1 ganha o quadro, e matrícula em A3 sai sem.
+  // A conferência segue o modelo sem quadro em qualquer folha: é a prévia — o
   // quadro é a tabela que o SIGEF confere, e a prévia ainda não passou por ele.
   // Sem o quadro, os blocos que ficam herdam o espaço dele, e a ordem resultante
   // (situação · carimbo · planimétrico · RT · rodapé) é a do modelo.
-  const semQuadro = posse || !!d.conferencia;
+  const semQuadro = folha !== "A1" || !!d.conferencia;
   const alturas = semQuadro
     ? { quadro: 0, situacao: 0.30, carimbo: 0.12, planimetrico: 0.42, rodape: 0.16 }
     : { quadro: 0.38, situacao: 0.12, carimbo: 0.08, planimetrico: 0.31, rodape: 0.11 };

@@ -287,5 +287,65 @@ test("vizinho repetido no anel gera uma única carta com todos os vértices", as
     assert.ok(t3.includes(p.codigo), `vértice ${p.codigo} fora da carta do vizinho`);
   }
   const t4 = dec(xmls["4"].replace(/<[^>]+>/g, ""));
-  assert.equal((t4.match(/FAZENDA TERRA NOVA/g) ?? []).length, 1, "declaração não repete o vizinho");
+  // uma linha por confrontante-pessoa: os dois donos da TERRA NOVA, cada um com o imóvel
+  assert.equal((t4.match(/FAZENDA TERRA NOVA/g) ?? []).length, 2, "declaração: uma linha por pessoa");
+});
+
+// ---------- mesmo rótulo de imóvel em vizinhos diferentes: cada um com os seus pontos ----------
+test("vizinhos com o mesmo rótulo de imóvel não se misturam: carta e declaração por pessoa", async () => {
+  const mesmo = new Map(Object.entries({
+    ...DESCS,
+    "DSBN-M-3607": { descritivo: "(MATR.4.403/CNS.00.803-7) FAZENDA TERRA NOVA\\ RUDSON PINTO FERREIRA\\ CPF:791.234.145-53", tipoLimite: "LA1" },
+  }));
+  const { trechos: ts, confrontacaoDe: cd } = montarTrechosPecas(sigef.linhas, mesmo);
+  const grupos = agruparTrechosPorConfrontante(ts.filter((t) => !t.ehVia && t.pessoas.length > 0));
+  const terraNova = grupos.filter((g) => g.imovelLabel.startsWith("FAZENDA TERRA NOVA"));
+  assert.equal(terraNova.length, 2, "mesmo imóvel, pessoas diferentes = dois confrontantes");
+  const tpl = {};
+  for (let i = 1; i <= 7; i++) {
+    const zip = await JSZip.loadAsync(readFileSync(new URL(`../reference/pecas/${NOMES[i - 1]}.docx`, import.meta.url)));
+    tpl[String(i)] = await zip.file("word/document.xml").async("string");
+  }
+  const xmls = gerarPecasXml(tpl, { ...dados, trechos: ts, confrontacaoDe: cd });
+  // cada carta leva só os vértices da divisa do seu confrontante
+  const cartas = dec(xmls["3"].replace(/<[^>]+>/g, "")).split("CARTA DE ANUÊNCIA").slice(1);
+  const deRudson = cartas.find((c) => c.includes("RUDSON PINTO FERREIRA") && c.includes("TERRA NOVA"));
+  const deCarlos = cartas.find((c) => c.includes("Confrontante CARLOS MATOS DE LIMA"));
+  assert.ok(deRudson && deCarlos, "cartas dos dois confrontantes");
+  const tRudson = ts.find((t) => t.pessoas[0]?.nome === "RUDSON PINTO FERREIRA" && t.imovelLabel.startsWith("FAZENDA TERRA NOVA"));
+  const tCarlos = ts.find((t) => t.pessoas[0]?.nome === "CARLOS MATOS DE LIMA");
+  for (const l of tRudson.linhas) assert.ok(deRudson.includes(l.codigo), `carta do RUDSON sem ${l.codigo}`);
+  for (const l of tCarlos.linhas) {
+    if (tRudson.linhas.some((x) => x.codigo === l.codigo)) continue;
+    assert.ok(!deRudson.includes(l.codigo), `carta do RUDSON com vértice alheio ${l.codigo}`);
+  }
+  // declarações 4 e 5: uma linha por pessoa, imóvel repetido em cada linha
+  for (const n of ["4", "5"]) {
+    const t = dec(xmls[n].replace(/<[^>]+>/g, ""));
+    assert.equal((t.match(/FAZENDA TERRA NOVA \(MATR/g) ?? []).length, 3, `declaração ${n}: 3 pessoas da TERRA NOVA em 3 linhas`);
+  }
+});
+
+// ---------- declaração de faixa de domínio: só os nomes em negrito ----------
+test("faixa de domínio: negrito fica só no nome do requerente", async () => {
+  const tpl = {};
+  for (let i = 1; i <= 7; i++) {
+    const zip = await JSZip.loadAsync(readFileSync(new URL(`../reference/pecas/${NOMES[i - 1]}.docx`, import.meta.url)));
+    tpl[String(i)] = await zip.file("word/document.xml").async("string");
+  }
+  const negrito = (run) => /<w:b\/>|<w:b w:val="(?:true|1)"\/>/.test(run);
+  const runsDe = (xml) => [...xml.matchAll(/<w:r[ >][\s\S]*?<\/w:r>/g)].map((m) => ({
+    bold: negrito(m[0]),
+    texto: dec((m[0].match(/<w:t[^>]*>([^<]*)<\/w:t>/g) ?? []).map((s) => s.replace(/<[^>]+>/g, "")).join("")),
+  }));
+  for (const [rotulo, dd] of [["dois requerentes", dados], ["um requerente", { ...dados, requerentes: [dados.requerentes[0]] }]]) {
+    const runs = runsDe(gerarPecasXml(tpl, dd)["7"]);
+    const doNome = runs.filter((r) => r.texto.includes("MARIA DE TESTE SILVA"));
+    assert.ok(doNome.length > 0 && doNome.every((r) => r.bold), `${rotulo}: nome do requerente em negrito`);
+    for (const r of runs) {
+      if (/maior, capaz|inscrit|111\.222\.333-44|residente/.test(r.texto)) {
+        assert.ok(!r.bold, `${rotulo}: "${r.texto.slice(0, 40)}" não pode sair em negrito`);
+      }
+    }
+  }
 });
