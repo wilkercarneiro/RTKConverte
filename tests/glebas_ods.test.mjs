@@ -105,3 +105,41 @@ test("posse: o automático sai com (POSSE) em vez de matrícula/CNS", () => {
   const [a1] = perimetrosOdsDasGlebas(rows, calc, { ...SERVICO, tipo_imovel: "posse" });
   assert.equal(a1.linhas.find((l) => l.codigo === cod(14)).descritivo, "(POSSE) FAZENDA SALGADA VELHA - GLEBA 2\\ FULANO DE TAL\\ CPF:000.000.000-00");
 });
+
+// ---- calcularGleba: a gleba como anel próprio (memorial, tabular, planta A3, aba) ----
+import { calcularGleba } from "../supabase/functions/_shared/planta_dados.ts";
+
+test("calcularGleba: mesmos códigos do imóvel, trecho interno vira M com a gleba vizinha, área da gleba", () => {
+  // corte 0–7: a reta 7→0 passa POR DENTRO do imóvel (o corte 0–14 dos testes
+  // acima serve para as linhas, mas cruza a reentrância e as áreas não somam)
+  const rows = [
+    { nome: "GLEBA 1", ordem: 0, anel: pontos(seq(0, 7)) },
+    { nome: "GLEBA 2", ordem: 1, anel: pontos([...seq(7, 31), 0]) },
+  ];
+  const g1 = calcularGleba(rows[0], rows, calc, SERVICO, { fusoUtm: 24, prefixo: "DSBN" }, proj4);
+  assert.equal(g1.nome, "GLEBA 1");
+  assert.equal(g1.semCodigo, 0);
+  assert.equal(g1.calc.ring.length, 8);
+  // códigos são os do imóvel — nenhum realocado
+  const codsImovel = new Set(calc.ring.map((v) => v.codigo));
+  assert.ok(g1.calc.ring.every((v) => codsImovel.has(v.codigo)));
+  // a linha do vértice 7 na aba da gleba confronta com a GLEBA 2 (divisa interna)
+  const l14 = g1.calc.linhasOds.find((l) => l.codigo === cod(7));
+  assert.match(l14.descritivo, /FAZENDA SALGADA VELHA - GLEBA 2/);
+  assert.equal(g1.calc.ring.find((v) => v.codigo === cod(7)).tipo, "M", "a divisa interna nasce num M");
+  // e o vértice 3 (ESTRADA VICINAL, LA3) continua igual ao do imóvel
+  const l3 = g1.calc.linhasOds.find((l) => l.codigo === cod(3));
+  assert.equal(l3.descritivo, "ESTRADA VICINAL");
+  assert.equal(l3.tipoLimite, "LA3");
+  // a aba da gleba pelo anel próprio bate com a montagem antiga, linha a linha
+  const antiga = perimetrosOdsDasGlebas(rows, calc, SERVICO)[0];
+  for (const l of g1.calc.linhasOds) {
+    const a = antiga.linhas.find((x) => x.codigo === l.codigo);
+    assert.deepEqual([l.descritivo, l.tipoLimite], [a.descritivo, a.tipoLimite], l.codigo);
+  }
+  // área e perímetro próprios, memorial da gleba com o seu anel
+  assert.ok(g1.calc.areaHa > 0 && g1.calc.areaHa < calc.areaHa, `área ${g1.calc.areaHa} de ${calc.areaHa}`);
+  assert.equal(g1.calc.memorialRing.length, 8);
+  const g2 = calcularGleba(rows[1], rows, calc, SERVICO, { fusoUtm: 24, prefixo: "DSBN" }, proj4);
+  assert.ok(Math.abs(g1.calc.areaHa + g2.calc.areaHa - calc.areaHa) < 1e-4, "as duas glebas somam o imóvel");
+});

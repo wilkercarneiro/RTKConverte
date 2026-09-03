@@ -11,7 +11,7 @@
 // continua disponível, recolhido, para o caso que a seleção não resolve.
 import { useEffect, useMemo, useState } from "react";
 import type { Gleba, Trecho, Vertice } from "../lib/types";
-import { anelDaSelecao, areaHaDoAnel, mesmoPonto } from "../lib/glebas";
+import { anelDaSelecao, areaHaDoAnel, mesmoPonto, ordenarNoAnel } from "../lib/glebas";
 import { trechoDoVertice } from "../lib/trechos";
 import { CORES } from "./MapaSVG";
 import { MapaGlebas } from "./MapaGlebas";
@@ -42,6 +42,10 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
   const [ponto, setPonto] = useState({ e: "", n: "" });
   // vértices marcados para a PRÓXIMA gleba (chave = ordem do vértice)
   const [marcados, setMarcados] = useState<Set<string>>(() => new Set());
+  // Intervalo por número do TXT: o técnico levanta gleba por gleba, cada uma
+  // começando onde a anterior terminou (1–29, 29–121, 121–230). "de" já vem
+  // com o fim da gleba anterior; basta digitar "até".
+  const [intervalo, setIntervalo] = useState({ de: "", ate: "" });
 
   // Pilha de desfazer sobre a lista INTEIRA de glebas, não sobre o contorno da
   // ativa: assim Ctrl+Z também desfaz criar e excluir gleba, e não só cliques.
@@ -107,6 +111,25 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
   const previa = indicesMarcados.length >= 3 ? anelDaSelecao(perimetro, indicesMarcados) : undefined;
   const areaPrevia = previa ? areaHaDoAnel(previa) : 0;
 
+  /** Índices do perímetro entre dois números do TXT (inclusive), andando para a frente no anel. */
+  function indicesDoIntervalo(de: string, ate: string): number[] | null {
+    const nDe = Number(de.replace(",", ".")), nAte = Number(ate.replace(",", "."));
+    const iDe = perimetroVs.findIndex((v) => v.num_txt === nDe);
+    const iAte = perimetroVs.findIndex((v) => v.num_txt === nAte);
+    if (iDe < 0 || iAte < 0) return null;
+    const total = perimetroVs.length;
+    const out: number[] = [];
+    for (let k = iDe; ; k = (k + 1) % total) { out.push(k); if (k === iAte || out.length > total) break; }
+    return out;
+  }
+  const intervaloIdx = intervalo.de && intervalo.ate ? indicesDoIntervalo(intervalo.de, intervalo.ate) : null;
+  /** Marca o intervalo digitado (substitui a seleção): a prévia e o botão "Dividir" fazem o resto. */
+  function marcarIntervalo() {
+    if (!intervaloIdx) return;
+    setMarcados(new Set(intervaloIdx.map((i) => String(perimetroVs[i].ordem))));
+  }
+  const ultimoNum = (idxs: number[]) => perimetroVs[idxs[idxs.length - 1]]?.num_txt;
+
   const poligonos: PoligonoSelecao[] = glebas
     .filter((g) => g.anel.length >= 2)
     .map((g, i) => ({ pontos: g.anel, cor: CORES[glebas.indexOf(g) % CORES.length], nome: g.nome || `GLEBA ${i + 1}`, tracejado: glebas.indexOf(g) !== ativa }));
@@ -130,6 +153,9 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
     }]);
     setSel(glebas.length);
     setMarcados(new Set());
+    // a próxima gleba começa onde esta terminou (o ponto final é compartilhado)
+    const fim = ultimoNum(ordenarNoAnel(indicesMarcados, perimetro.length));
+    setIntervalo({ de: fim !== undefined && fim !== null ? String(fim) : "", ate: "" });
   }
   /** Marca o que ainda não pertence a gleba nenhuma — o "resto" do imóvel. */
   function marcarRestante() {
@@ -154,6 +180,20 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
             marque os vértices do perímetro que formam a gleba — a divisa interna é a reta entre o último e o primeiro marcado
           </span>
         </header>
+        <div className="acoes-linha intervalo-gleba">
+          <b style={{ fontSize: 13 }}>Por intervalo do TXT</b>
+          <label>de <input className="mono" style={{ width: 70 }} value={intervalo.de} placeholder={String(perimetroVs[0]?.num_txt ?? "")}
+            onChange={(e) => setIntervalo((i) => ({ ...i, de: e.target.value }))} /></label>
+          <label>até <input className="mono" style={{ width: 70 }} value={intervalo.ate} placeholder="29"
+            onChange={(e) => setIntervalo((i) => ({ ...i, ate: e.target.value }))}
+            onKeyDown={(e) => { if (e.key === "Enter") marcarIntervalo(); }} /></label>
+          <button type="button" disabled={!intervaloIdx} onClick={marcarIntervalo}>Marcar intervalo</button>
+          <span className="sub" style={{ fontSize: 12.5 }}>
+            {intervalo.de && intervalo.ate
+              ? (intervaloIdx ? `${intervaloIdx.length} vértices, fechando por dentro de ${intervalo.ate} a ${intervalo.de}` : "número não encontrado no TXT")
+              : "a próxima gleba começa onde a anterior terminou; digite só o \"até\" e confira a prévia"}
+          </span>
+        </div>
         <PlantaSelecao
           pontos={pontos} colunas={COLUNAS} selecionados={marcados} onChange={setMarcados}
           poligonos={poligonos} previa={previa} ligarSelecionados={false}

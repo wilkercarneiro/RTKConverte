@@ -15,14 +15,15 @@ import { ehCodigoDeConferencia } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { buildDocumentXml, buildDocxSkeleton, extrairTimbre } from "../_shared/docx.ts";
 import type { TimbreModelo } from "../_shared/docx.ts";
-import { gerarMemorialDescritivoXml } from "../_shared/pecas.ts";
+import { gerarMemorialDescritivoXml, gerarPecasPosseXml, gerarPecasXml } from "../_shared/pecas.ts";
 import { montarDadosPecasDoCalculo } from "../_shared/pecas_dados.ts";
+import type { ServicoCalculado } from "../_shared/servico.ts";
 import type { DadosMemorial } from "../_shared/memorial.ts";
 import { patchOdsContent } from "../_shared/ods.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { Folha } from "../_shared/planta.ts";
 import {
-  bytesDeBase64, carregarLogoPlanta, dadosDasPartes, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta, perimetrosOdsDasGlebas,
+  bytesDeBase64, calcularGleba, carregarLogoPlanta, dadosDasPartes, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta,
 } from "../_shared/planta_dados.ts";
 import type { GlebaRow } from "../_shared/planta_dados.ts";
 
@@ -46,6 +47,10 @@ const json = (body: unknown, status = 200) =>
  * antes da mudança sejam renumerados na próxima geração.
  */
 const PREFIXO_PROVISORIO = "PROV";
+
+/** Nome do imóvel seguro para nome de arquivo. */
+const nomeBaseDe = (servico: { denominacao?: string | null }) =>
+  (servico.denominacao ?? "documento").replace(/[\\/:*?"<>|]/g, "-").trim();
 
 /**
  * Um código que NÃO vale para protocolar: está marcado na coluna, carrega o
@@ -251,18 +256,33 @@ Deno.serve(async (req) => {
     const dp = calcPartes ? dadosDasPartes(calcPartes.partes, servico) : null;
     const glebas = dp ? dp.glebas : (servico.tem_glebas ? glebasParaPlanta(glebaRows, calc, servico) : undefined);
 
+    // UNIDADES: cada parte, ou cada gleba, calculada como o anel que é. Delas
+    // saem a aba da planilha, o memorial, o tabular e a planta A3 de cada uma;
+    // a planta A1 e o memorial acima são os do imóvel inteiro.
+    const avisosGlebas: string[] = [];
+    const unidades: { nome: string; calc: ServicoCalculado }[] = calcPartes ? calcPartes.partes : [];
+    if (!calcPartes && servico.tem_glebas) {
+      for (const g of glebaRows.filter((x) => (x.anel?.length ?? 0) >= 3)) {
+        try {
+          const u = calcularGleba(g, glebaRows, calc, servico, {
+            fusoUtm: servico.fuso_utm, prefixo, estiloCodigo: conferencia ? "conferencia" : "oficial",
+          }, proj4);
+          unidades.push({ nome: u.nome, calc: u.calc });
+          if (u.semCodigo > 0) avisosGlebas.push(`${u.nome}: ${u.semCodigo} ponto(s) do contorno não são vértices do levantamento e ficaram fora dos documentos da gleba.`);
+        } catch (e) {
+          avisosGlebas.push(`${(g.nome ?? "").trim() || "Gleba"}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+
     // Uma aba `perimetro_N` por gleba, na ordem em que foram montadas, cada
     // vértice com o confrontante do lado que sai dele (a divisa interna confronta
     // com a gleba vizinha). Sem glebas, um perímetro só — exatamente o que a
     // planilha sempre teve. Ver perimetrosOdsDasGlebas.
     const hemisferio = calc.ring[0].latDeg < 0 ? "Sul" : "Norte";
-    // Partes: cada aba é o anel da parte, calculado por si (trechos fecham dentro dela)
-    const abasGlebas = calcPartes
-      ? calcPartes.partes.map((pt) => ({ nome: pt.nome, linhas: pt.calc.linhasOds, semCodigo: 0 }))
-      : (glebas?.length ? perimetrosOdsDasGlebas(glebaRows, calc, servico) : []);
-    const avisosGlebas = abasGlebas
-      .filter((g) => g.semCodigo > 0)
-      .map((g) => `${g.nome}: ${g.semCodigo} ponto(s) do contorno não são vértices do levantamento e ficaram fora da planilha.`);
+    // cada aba é o anel da unidade (parte ou gleba), calculado por si: os
+    // trechos fecham dentro dela e a divisa interna confronta com a gleba vizinha
+    const abasGlebas = unidades.map((u) => ({ nome: u.nome, linhas: u.calc.linhasOds }));
     const perimetrosOds = abasGlebas.length
       ? abasGlebas.map((g, i) => ({
         denominacaoParcela: g.nome,
@@ -284,7 +304,7 @@ Deno.serve(async (req) => {
     // ------------------------- DOCX -------------------------
     // Avisos de todo o percurso: o DOCX já tem o seu (modelo ausente) e a planta
     // acrescenta os dela mais abaixo.
-    const avisosGeracao = [...conf.avisos, ...avisosGlebas];
+    const avisosGeracao = [...conf.avisos];
     // decide o conjunto de modelos e, mais abaixo, a folha da planta
     const posse = servico.tipo_imovel === "posse";
     const dadosMemorial: DadosMemorial = {
@@ -485,6 +505,84 @@ Deno.serve(async (req) => {
         });
       }
     }
+    // ------------------------- por gleba / por parte -------------------------
+    // Memorial descritivo e tabular (modelos das peças 1 e 2) e planta A3 de CADA
+    // unidade — a planta A1 acima é a geral, com todas. Os modelos são baixados
+    // uma vez; gerarPecasXml lê o conjunto inteiro, então o conjunto inteiro desce.
+    const saidasUnidades: { nome: string; memorial_docx: string | null; tabular_docx: string | null; planta_pdf: string | null; areaHa: number }[] = [];
+    if (unidades.length) {
+      const pastaPecas = posse ? "pecas-posse" : "pecas";
+      const TPLS: [string, string][] = posse
+        ? [["1", "1-memorial-descritivo"], ["2", "2-memorial-tabular"], ["3", "3-cartas-anuencia"], ["7", "4-declaracao-faixa-dominio"]]
+        : [["1", "1-memorial-descritivo"], ["2", "2-memorial-tabular"], ["3", "3-cartas-anuencia"], ["4", "4-declaracao-tecnico"], ["5", "5-declaracao-proprietario"], ["6", "6-requerimento"], ["7", "7-declaracao-faixa-dominio"]];
+      const tplBytes: Record<string, Uint8Array> = {};
+      const tplXml: Record<string, string> = {};
+      let modelosOk = true;
+      for (const [num, arquivo] of TPLS) {
+        const dl = await supa.storage.from("templates").download(`${pastaPecas}/${arquivo}.docx`);
+        if (dl.error || !dl.data) { modelosOk = false; avisosGeracao.push(`Modelo ${pastaPecas}/${arquivo}.docx não está no Storage: memorial e tabular por gleba não saíram.`); break; }
+        tplBytes[num] = new Uint8Array(await dl.data.arrayBuffer());
+        tplXml[num] = await (await JSZip.loadAsync(tplBytes[num])).file("word/document.xml")!.async("string");
+      }
+      const slug = (s: string) => s.replace(/[\\/:*?"<>|]/g, "-").trim();
+      for (const [k, u] of unidades.entries()) {
+        const pastaU = `${servico_id}/v${versao}/glebas/${k + 1}-${slug(u.nome)}`;
+        const servicoU = { ...servico, denominacao: `${servico.denominacao} - ${u.nome}` };
+        const saida = { nome: u.nome, memorial_docx: null as string | null, tabular_docx: null as string | null, planta_pdf: null as string | null, areaHa: u.calc.areaHa };
+        if (modelosOk) {
+          try {
+            const dadosU = montarDadosPecasDoCalculo({ servico: servicoU, rt, cred, calc: u.calc, dataStr: dataHojeBR() });
+            const xmlsU = posse ? gerarPecasPosseXml(tplXml, dadosU) : gerarPecasXml(tplXml, dadosU);
+            for (const [num, arquivo, rotulo] of [["1", "memorial", "Memorial Descritivo"], ["2", "tabular", "Memorial Tabular"]] as const) {
+              const xml = xmlsU[num];
+              if (!xml) continue;
+              const zip = await JSZip.loadAsync(tplBytes[num]);
+              zip.file("word/document.xml", xml);
+              const buf = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+              const path = `${pastaU}/${arquivo}.docx`;
+              const up = await supa.storage.from("gerados").upload(path, buf, {
+                upsert: true, contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              });
+              if (up.error) throw up.error;
+              docs.push({ servico_id, versao, tipo: `gleba_${arquivo}`, titulo: `${rotulo} · ${u.nome}${selo}`, path });
+              const sg = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `${rotulo} - ${nomeBaseDe(servico)} - ${u.nome}.docx` });
+              if (arquivo === "memorial") saida.memorial_docx = sg.data?.signedUrl ?? null; else saida.tabular_docx = sg.data?.signedUrl ?? null;
+            }
+          } catch (e) {
+            avisosGeracao.push(`${u.nome}: memorial/tabular falharam: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        // planta A3 da unidade: o modelo da gleba é a folha A3, com o anel dela e os confrontantes dela
+        try {
+          const dadosPlantaU = montarDadosPlanta({
+            servico: servicoU, rt, cred,
+            desenhista: cfgDes?.value ?? "",
+            geometria: geometriaDoCalculo(u.calc),
+            fuso: servico.fuso_utm,
+            trt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
+            dataStr: dataHojeBR(),
+            logo,
+            satelite: satelite_base64 ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" } : null,
+            folha: "A3", conferencia,
+            exibir: conferencia
+              ? { matricula: servico.conf_exibir_matricula !== false, denominacao: servico.conf_exibir_denominacao !== false, trt: servico.conf_exibir_trt !== false }
+              : undefined,
+          });
+          const pdfU = await gerarPlantaPdf(dadosPlantaU);
+          const path = `${pastaU}/planta-A3.pdf`;
+          const up = await supa.storage.from("gerados").upload(path, pdfU, { upsert: true, contentType: "application/pdf" });
+          if (up.error) throw up.error;
+          docs.push({ servico_id, versao, tipo: "gleba_planta_pdf", titulo: `Planta A3 · ${u.nome}${selo}`, path });
+          const sg = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `Planta A3 - ${nomeBaseDe(servico)} - ${u.nome}.pdf` });
+          saida.planta_pdf = sg.data?.signedUrl ?? null;
+        } catch (e) {
+          avisosGeracao.push(`${u.nome}: planta A3 falhou: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        saidasUnidades.push(saida);
+      }
+    }
+    avisosGeracao.push(...avisosGlebas);
+
     if (conferencia) {
       avisosGeracao.push(
         `Conferência de área: os vértices saíram com o código do credenciado (${prefixo}-…), mas a numeração oficial NÃO foi consumida — ` +
@@ -495,7 +593,7 @@ Deno.serve(async (req) => {
     await supa.from("documentos_gerados").insert(docs);
 
     // URLs assinadas com download direto (Content-Disposition: attachment)
-    const nomeBase = (servico.denominacao ?? "documento").replace(/[\\/:*?"<>|]/g, "-").trim();
+    const nomeBase = nomeBaseDe(servico);
     const s1 = await supa.storage.from("gerados").createSignedUrl(pDocx, 3600, { download: `Memorial - ${nomeBase}.docx` });
     const s2 = await supa.storage.from("gerados").createSignedUrl(pOds, 3600, { download: `Planilha SIGEF - ${nomeBase}.ods` });
     const s3 = plantaBuf
@@ -503,6 +601,8 @@ Deno.serve(async (req) => {
       : null;
     return json({
       ok: true,
+      // memorial, tabular e planta A3 de cada gleba/parte (vazio sem glebas)
+      glebas: saidasUnidades,
       avisos: avisosGeracao,
       memorial_docx: s1.data?.signedUrl,
       planilha_ods: s2.data?.signedUrl,

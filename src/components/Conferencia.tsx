@@ -49,6 +49,8 @@ interface Gerado {
   planta_pdf?: string | null;
   folha?: string;
   avisos?: string[];
+  /** memorial, tabular e planta A3 de cada gleba/parte (serviço com glebas) */
+  glebas?: { nome: string; memorial_docx: string | null; tabular_docx: string | null; planta_pdf: string | null; areaHa: number }[];
   resumo: { areaHa: number; perimetroM: number; qtdM: number; qtdP: number; qtdV: number; verticeInicial: string };
 }
 
@@ -1839,10 +1841,24 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                   </a>
                   {gerado.planta_pdf && (
                     <a className="botao-download" href={gerado.planta_pdf} target="_blank" rel="noreferrer">
-                      <span className="ext">PDF</span> Planta {gerado.folha ?? "A1"} (dados do sistema)
+                      <span className="ext">PDF</span> Planta {gerado.folha ?? "A1"} {gerado.glebas?.length ? "geral, com todas as glebas" : "(dados do sistema)"}
                     </a>
                   )}
                 </div>
+                {!!gerado.glebas?.length && (
+                  <div className="downloads-glebas">
+                    {gerado.glebas.map((g) => (
+                      <div className="downloads-gleba" key={g.nome}>
+                        <b>{g.nome}</b> <span className="sub">{g.areaHa.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} ha</span>
+                        <div className="downloads">
+                          {g.memorial_docx && <a className="botao-download" href={g.memorial_docx} target="_blank" rel="noreferrer"><span className="ext">DOCX</span> Memorial Descritivo</a>}
+                          {g.tabular_docx && <a className="botao-download" href={g.tabular_docx} target="_blank" rel="noreferrer"><span className="ext">DOCX</span> Memorial Tabular</a>}
+                          {g.planta_pdf && <a className="botao-download" href={g.planta_pdf} target="_blank" rel="noreferrer"><span className="ext">PDF</span> Planta A3</a>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <p className="sub" style={{ margin: 0 }}>
                   Vértice inicial <span className="mono">{gerado.resumo.verticeInicial}</span> · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
                 </p>

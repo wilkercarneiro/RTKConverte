@@ -8,7 +8,9 @@
 // onde vêm vértices, trechos, área e perímetro. Este módulo existe para que esse
 // "mesmo padrão" seja o mesmo código, e não duas cópias que divergem com o tempo.
 import { areaAssinadaM2, calcularPerimetroM, calcularSegmentos, fmtBR, fmtGmsPlanilha } from "./geo.ts";
-import type { ServicoCalculado, VerticeMontado } from "./servico.ts";
+import type { EstiloCodigo, Proj4 } from "./geo.ts";
+import { montarServico } from "./servico.ts";
+import type { ServicoCalculado, VerticeMontado, VerticeServico } from "./servico.ts";
 import type { DadosPlanta, Folha, GlebaPlanta, ParteDaPlanta, TrechoPlanta, VerticePlanta } from "./planta.ts";
 import type { DadosSigef } from "./sigef_pdf.ts";
 import type { LinhaVertice } from "./ods.ts";
@@ -194,6 +196,80 @@ export function perimetrosOdsDasGlebas(
     });
     return { nome: nomeDe(gi), linhas, semCodigo };
   });
+}
+
+/**
+ * Uma GLEBA calculada como o anel que é — para o memorial, o tabular, a planta
+ * A3 e a aba da planilha DELA.
+ *
+ * O anel da gleba é o subconjunto dos vértices do imóvel (casados por
+ * proximidade), na ordem do contorno. Cada lado leva o confrontante do lado que
+ * sai do vértice: lado que acompanha o perímetro herda o trecho do imóvel; lado
+ * que fecha por dentro confronta com a gleba vizinha (texto do operador ou o
+ * automático). Onde o confrontante muda nasce um M — é a mesma invariante
+ * "de M a M" de `montarServico`, então tudo o que sai de um serviço sai daqui
+ * igual: memorial, tabular, ODS e planta. Os códigos são os do imóvel (nenhum
+ * é realocado): o vértice tem o mesmo nome na planta geral e na da gleba.
+ */
+export function calcularGleba(
+  row: GlebaRow,
+  rows: GlebaRow[],
+  calc: ServicoCalculado,
+  servico: ServicoRow,
+  base: { fusoUtm: number; prefixo: string; estiloCodigo?: EstiloCodigo },
+  proj4: Proj4,
+): { nome: string; calc: ServicoCalculado; semCodigo: number } {
+  const glebas = glebasValidas(rows);
+  const gi = glebas.indexOf(row);
+  const nome = (row.nome ?? "").trim() || `GLEBA ${gi + 1}`;
+  const n = calc.ring.length;
+  const posNoRing = new Map(calc.ring.map((v, i) => [v.ordem, i]));
+  const casadas = glebas.map((g) => g.anel!.map(([e, n0]) => casarNoRing(calc.ring, e, n0)));
+  const vs = (casadas[gi] ?? row.anel!.map(([e, n0]) => casarNoRing(calc.ring, e, n0))).filter((v): v is VerticeMontado => !!v);
+  const semCodigo = row.anel!.length - vs.length;
+  if (vs.length < 3) throw new Error(`${nome}: menos de 3 vértices casados com o levantamento`);
+  const vizinhos = (a: VerticeMontado, b: VerticeMontado) => {
+    const pa = posNoRing.get(a.ordem)!, pb = posNoRing.get(b.ordem)!;
+    return ((pa - pb + n) % n === 1) || ((pb - pa + n) % n === 1);
+  };
+  const outraCom = (a: VerticeMontado, b: VerticeMontado): string | null => {
+    for (let k = 0; k < glebas.length; k++) {
+      if (k === gi) continue;
+      const tem = (v: VerticeMontado) => casadas[k].some((x) => x?.ordem === v.ordem);
+      if (tem(a) && tem(b)) return (glebas[k].nome ?? "").trim() || `GLEBA ${k + 1}`;
+    }
+    return null;
+  };
+  const textoAuto = (nomeVizinha: string) => {
+    const l = identificacaoDaGleba(servico, nomeVizinha);
+    return `${l[0]} ${l[1]}` + l.slice(2).map((x) => `\\ ${x}`).join("");
+  };
+  const proprio = (row.confrontante_interno ?? "").trim();
+  // confrontante do lado que SAI de cada vértice
+  const lados = vs.map((v, k) => {
+    const prox = vs[(k + 1) % vs.length];
+    if (vizinhos(v, prox)) {
+      const t = v.trecho;
+      return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado };
+    }
+    return { descritivo: proprio || textoAuto(outraCom(v, prox) ?? "GLEBA VIZINHA"), tipoLimite: "LA1", ehVia: false, cns: null, matricula: null, numerado: false };
+  });
+  const mesmoLado = (a: typeof lados[number], b: typeof lados[number]) => a.descritivo === b.descritivo && a.tipoLimite === b.tipoLimite && a.ehVia === b.ehVia;
+  const todosIguais = lados.every((l) => mesmoLado(l, lados[0]));
+  const vertices: VerticeServico[] = vs.map((v, k) => {
+    const lado = lados[k], ant = lados[(k - 1 + lados.length) % lados.length];
+    const iniciaTrecho = todosIguais ? k === 0 : !mesmoLado(lado, ant);
+    return {
+      ordem: k, numTxt: v.numTxt,
+      latGmsStr: fmtGmsPlanilha(v.latGms, "lat"), lonGmsStr: fmtGmsPlanilha(v.lonGms, "lon"),
+      h: v.h, sigmaPos: v.sigmaPos, sigmaH: v.sigmaH,
+      tipo: iniciaTrecho ? "M" : (v.tipo === "M" ? "P" : v.tipo),
+      metodo: v.metodo, codigoManual: v.codigo, inserido: v.inserido,
+      ...(iniciaTrecho ? lado : {}),
+    };
+  });
+  const calcGleba = montarServico({ fusoUtm: base.fusoUtm, prefixo: base.prefixo, contadores: { M: 0, P: 0, V: 0 }, estiloCodigo: base.estiloCodigo, vertices }, proj4);
+  return { nome, calc: calcGleba, semCodigo };
 }
 
 export interface GeometriaPlanta {
