@@ -1,10 +1,11 @@
 // Primitivas de interface compartilhadas pelas telas.
 //
-// Divulgação progressiva (Secao), o cartão de próxima ação (ProximaAcao), a
-// trilha de etapas navegável (Passos), avisos flutuantes (Avisos), indicador de
+// Divulgação progressiva (Secao), a faixa de próxima ação (ProximaAcao), as
+// abas de etapa (Passos), avisos flutuantes (Avisos), indicador de
 // autossalvamento (StatusSalvamento) e confirmação inline (BotaoPerigo).
 import { useEffect, useState, type ReactNode } from "react";
 import type { AvisoItem, EstadoSalvamento } from "../lib/ux";
+import { Icone, ICONE } from "./Icone";
 
 // ---------------------------------------------------------------------------
 // Secao — grupo de campos recolhível
@@ -19,6 +20,9 @@ import type { AvisoItem, EstadoSalvamento } from "../lib/ux";
  * sempre visível, para que a lista de pendências consiga apontar para algo que
  * o operador vê. `abrirEm` cobre o resto: se algo dentro precisa de atenção,
  * a seção já nasce aberta.
+ *
+ * Várias seções seguidas devem ir dentro de `<div className="secoes">`: viram
+ * linhas de uma lista, como no protótipo.
  */
 export function Secao({ titulo, dica, selo, abrirEm, children }: {
   titulo: string;
@@ -38,7 +42,7 @@ export function Secao({ titulo, dica, selo, abrirEm, children }: {
     <details className="secao" open={aberta}
       onToggle={(e) => setAberta((e.currentTarget as HTMLDetailsElement).open)}>
       <summary>
-        <span className="secao-seta" aria-hidden="true">▸</span>
+        <span className="secao-seta" aria-hidden="true"><Icone d={ICONE.seta} size={14} traco={2.4} /></span>
         <span className="secao-titulo">{titulo}</span>
         {selo != null && <span className="secao-selo">{selo}</span>}
         {dica && <span className="secao-dica">{dica}</span>}
@@ -49,7 +53,7 @@ export function Secao({ titulo, dica, selo, abrirEm, children }: {
 }
 
 // ---------------------------------------------------------------------------
-// ProximaAcao — o que fazer agora
+// ProximaAcao — o que fazer agora (faixa escura)
 // ---------------------------------------------------------------------------
 
 export interface Acao {
@@ -61,12 +65,13 @@ export interface Acao {
 }
 
 /**
- * Uma tela longa não deve exigir que o operador descubra sozinho em que ponto
- * do processo está. Este cartão responde "e agora?" em uma frase.
+ * Um serviço com várias etapas não deve exigir que o operador descubra sozinho
+ * em que ponto do processo está. Esta faixa responde "e agora?" em uma frase.
  */
 export function ProximaAcao({ acao }: { acao: Acao }) {
   return (
     <div className={`proxima-acao ${acao.tom ?? "neutro"}`}>
+      <Icone d={ICONE.relogio} size={18} traco={2} className="pa-icone" />
       <div className="pa-texto">
         <b>{acao.titulo}</b>
         {acao.detalhe && <span className="pa-detalhe">{acao.detalhe}</span>}
@@ -79,27 +84,34 @@ export function ProximaAcao({ acao }: { acao: Acao }) {
 }
 
 // ---------------------------------------------------------------------------
-// Passos — trilha de etapas navegável
+// Passos — abas de etapa
 // ---------------------------------------------------------------------------
 
 export interface Passo {
   rotulo: string;
   estado: "feita" | "ativa" | "futura";
-  /** id do elemento a rolar até; ausente = passo não navegável */
+  /** id do elemento a rolar até (quando não há `onClick`); ausente = passo não navegável */
   alvo?: string;
 }
 
-export function Passos({ passos }: { passos: Passo[] }) {
+/**
+ * Com `onClick`, cada passo é uma aba que troca a etapa exibida (uma etapa por
+ * vez). Sem ele, o passo rola até o `alvo` — o comportamento das telas que
+ * ainda mostram tudo numa rolagem só.
+ */
+export function Passos({ passos, onClick }: { passos: Passo[]; onClick?: (passo: Passo, indice: number) => void }) {
   return (
     <nav className="stepper" aria-label="Etapas do serviço">
       {passos.map((p, i) => {
         const classe = `step ${p.estado === "feita" ? "feita" : p.estado === "ativa" ? "ativa" : ""}`;
         const num = p.estado === "feita" ? "✓" : String(i + 1);
+        const navegavel = onClick ? true : !!p.alvo;
         return (
           <span key={p.rotulo} style={{ display: "inline-flex", alignItems: "center" }}>
             {i > 0 && <span className="step-seta" aria-hidden="true">→</span>}
-            {p.alvo ? (
-              <button className={`${classe} step-botao`} onClick={() => irPara(p.alvo!)}
+            {navegavel ? (
+              <button className={`${classe} step-botao`}
+                onClick={() => (onClick ? onClick(p, i) : irPara(p.alvo!))}
                 aria-current={p.estado === "ativa" ? "step" : undefined}>
                 <span className="num">{num}</span> {p.rotulo}
               </button>
@@ -143,7 +155,7 @@ export function Avisos({ avisos, onFechar }: { avisos: AvisoItem[]; onFechar: (i
     <div className="avisos" role="status" aria-live="polite">
       {avisos.map((a) => (
         <div key={a.id} className={`aviso ${a.tom}`}>
-          <span aria-hidden="true">{a.tom === "ok" ? "✓" : a.tom === "erro" ? "✕" : "⚠"}</span>
+          <span aria-hidden="true">{a.tom === "ok" ? "✓" : a.tom === "erro" ? "✕" : "!"}</span>
           <span className="aviso-texto">{a.texto}</span>
           <button className="aviso-fechar" onClick={() => onFechar(a.id)} aria-label="Fechar aviso">✕</button>
         </div>
@@ -160,7 +172,7 @@ export function StatusSalvamento({ estado, horaSalvo }: { estado: EstadoSalvamen
   const texto = estado === "salvando" ? "salvando…"
     : estado === "erro" ? "não salvo — use Salvar rascunho"
     : estado === "salvo" ? `salvo ${horaSalvo}`
-    : "alterações salvas automaticamente";
+    : "salva automaticamente";
   return (
     <span className={`status-salvo ${estado}`} aria-live="polite">
       <span className="ponto-salvo" aria-hidden="true" />{texto}
@@ -177,16 +189,17 @@ export function StatusSalvamento({ estado, horaSalvo }: { estado: EstadoSalvamen
  * clica em OK por reflexo. Aqui a confirmação exige um segundo clique num botão
  * que diz exatamente o que vai acontecer.
  */
-export function BotaoPerigo({ titulo, confirmacao, onConfirmar, children }: {
+export function BotaoPerigo({ titulo, confirmacao, onConfirmar, children, className }: {
   titulo: string;
   confirmacao: string;
   onConfirmar: () => void;
   children: ReactNode;
+  className?: string;
 }) {
   const [armado, setArmado] = useState(false);
   if (!armado) {
     return (
-      <button className="remover" title={titulo}
+      <button className={className ?? "remover"} title={titulo}
         onClick={(e) => { e.stopPropagation(); setArmado(true); }}>{children}</button>
     );
   }

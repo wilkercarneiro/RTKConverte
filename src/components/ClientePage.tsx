@@ -8,6 +8,8 @@ import { Avisos, BotaoPerigo, Secao, StatusSalvamento } from "./ui";
 import { SERVICOS, chaveDoServico, rotuloCurto } from "../lib/modalidades";
 import type { ChaveServico } from "../lib/modalidades";
 import type { Cliente, Servico } from "../lib/types";
+import { Icone } from "./Icone";
+import { iniciais } from "./Clientes";
 
 interface Props {
   clienteId: string;
@@ -55,7 +57,7 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
   }
 
   // Os serviços do cliente NÃO são apagados junto: a FK é 'on delete set null',
-  // eles voltam para o dashboard sem cliente vinculado.
+  // eles voltam para a lista sem cliente vinculado.
   async function excluirCliente() {
     const { error } = await supabase.from("clientes").delete().eq("id", clienteId);
     if (error) { avisar("erro", `Não foi possível excluir o cliente: ${error.message}`); return; }
@@ -65,27 +67,38 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
   const dataFmt = (iso?: string) => (iso ? new Date(iso).toLocaleDateString("pt-BR") : "—");
 
   return (
-    <div className="conferencia" style={{ paddingBottom: 40 }}>
+    <div className="pagina fade">
       <Avisos avisos={avisos} onFechar={fechar} />
-      <header className="topo">
-        <button className="fantasma" onClick={onVoltar}>← Clientes</button>
-        <span className="arquivo">👤 {cliente.nome}</span>
-        <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
-        <span className="esticar" />
+      <div className="pagina-cabeca">
+        <div>
+          <button className="fantasma voltar" onClick={onVoltar}>← Clientes</button>
+          <div className="celula-nome">
+            <span className="avatar-cliente" aria-hidden="true">{iniciais(cliente.nome)}</span>
+            <h1 className="titulo-cliente" style={{ margin: 0 }}>{cliente.nome}</h1>
+          </div>
+          <p className="sub" style={{ marginTop: 6, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            {cliente.cpf_cnpj && <span className="mono">{cliente.cpf_cnpj}</span>}
+            <span>{servicos.length} {servicos.length === 1 ? "serviço" : "serviços"}</span>
+            <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
+          </p>
+        </div>
         {/* Um botão por modalidade, direto de SERVICOS: acrescentar uma
             modalidade não exige mais tocar nesta tela. */}
-        {SERVICOS.map((d) => (
-          <button key={d.chave} onClick={() => onNovoServico(d.chave)} title={d.resumo}>
-            + {d.icone} {d.titulo}
-          </button>
-        ))}
-      </header>
+        <div className="acoes">
+          {SERVICOS.map((d) => (
+            <button key={d.chave} onClick={() => onNovoServico(d.chave)} title={d.resumo}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <Icone d={d.icone} size={16} /> {d.titulo}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <section className="bloco">
-        <header><span className="num-bloco">👤</span><h3>Dados do cliente</h3></header>
+        <header><h3>Dados do cliente</h3><span className="desc">origem do detentor em todos os serviços deste cliente</span></header>
         <div className="grade">
           <label>Nome <input value={cliente.nome} onChange={(e) => campo("nome", e.target.value)} /></label>
-          <label>CPF/CNPJ <input value={cliente.cpf_cnpj ?? ""} onChange={(e) => campo("cpf_cnpj", e.target.value || null)} /></label>
+          <label>CPF/CNPJ <input className="mono" value={cliente.cpf_cnpj ?? ""} onChange={(e) => campo("cpf_cnpj", e.target.value || null)} /></label>
           <label>Gênero
             <select value={cliente.genero} onChange={(e) => campo("genero", e.target.value as "M" | "F")}>
               <option value="M">Masculino</option><option value="F">Feminino</option>
@@ -97,49 +110,52 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
           <label style={{ gridColumn: "span 2" }}>Observações <input value={cliente.observacoes ?? ""} onChange={(e) => campo("observacoes", e.target.value || null)} /></label>
         </div>
 
-        <Secao titulo="Espólio e inventariante"
-          selo={<span className={`secao-selo ${cliente.is_espolio ? "completa" : ""}`}>{cliente.is_espolio ? "é espólio" : "não"}</span>}
-          abrirEm={!!cliente.is_espolio}
-          dica="preenche automaticamente todo serviço criado para este cliente">
-          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 10 }}>
-            <input type="checkbox" checked={!!cliente.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
-            <b>É Espólio? (possuidor/proprietário falecido com inventariante)</b>
-          </label>
-          {cliente.is_espolio && (
-            <div className="grade">
-              <label>Nome do Inventariante <input value={cliente.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome completo do inventariante" /></label>
-              <label>CPF do Inventariante <input value={cliente.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
-              <label>RG do Inventariante (opcional) <input value={cliente.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
-            </div>
-          )}
-        </Secao>
+        <div className="secoes" style={{ marginTop: 22 }}>
+          <Secao titulo="Espólio e inventariante"
+            selo={<span className={`secao-selo ${cliente.is_espolio ? "completa" : ""}`}>{cliente.is_espolio ? "é espólio" : "não"}</span>}
+            abrirEm={!!cliente.is_espolio}
+            dica="preenche automaticamente todo serviço criado para este cliente">
+            <label className="linha-check">
+              <input type="checkbox" checked={!!cliente.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
+              É espólio (possuidor/proprietário falecido com inventariante)
+            </label>
+            {cliente.is_espolio && (
+              <div className="grade">
+                <label>Nome do inventariante <input value={cliente.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome completo do inventariante" /></label>
+                <label>CPF do inventariante <input className="mono" value={cliente.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
+                <label>RG do inventariante (opcional) <input value={cliente.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
+              </div>
+            )}
+          </Secao>
+        </div>
 
-        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="rodape-bloco">
           <button className="principal" onClick={salvar}>Salvar cliente</button>
-          <span className="esticar" style={{ flex: 1 }} />
-          <span style={{ color: "var(--texto-2)", fontSize: 12 }}>
+          <span className="esticar" />
+          <span className="sub" style={{ fontSize: 12.5 }}>
             {servicos.length > 0
               ? `excluir mantém os ${servicos.length} serviço(s), sem cliente vinculado`
               : "este cliente não tem serviços"}
           </span>
           <BotaoPerigo titulo={`Excluir cliente "${cliente.nome}"`}
             confirmacao={servicos.length > 0 ? `excluir e desvincular ${servicos.length} serviço(s)` : "excluir mesmo"}
-            onConfirmar={excluirCliente}>🗑 Excluir cliente</BotaoPerigo>
+            onConfirmar={excluirCliente}>Excluir cliente</BotaoPerigo>
         </div>
       </section>
 
-      <section className="bloco">
+      <section className="bloco lista">
         <header><h3>Serviços deste cliente</h3><span className="desc">{servicos.length} serviço(s)</span></header>
-        {servicos.length === 0 ? <p style={{ color: "var(--texto-2)" }}>Nenhum serviço ainda — crie pelos botões acima.</p> : (
+        {servicos.length === 0 ? <p className="vazio">Nenhum serviço ainda — crie pelos botões acima.</p> : (
           <table className="tabela-vertices dash-lista">
             <thead><tr><th>Modalidade</th><th>Imóvel</th><th>Status</th><th>Criado em</th></tr></thead>
             <tbody>
               {servicos.map((s) => (
-                <tr key={s.id} className="linha-servico" onClick={() => onAbrirServico(s)}>
+                <tr key={s.id} className="linha-servico" tabIndex={0} role="button" onClick={() => onAbrirServico(s)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onAbrirServico(s); } }}>
                   <td><span className={`chip mod-${chaveDoServico(s)}`}>{rotuloCurto[chaveDoServico(s)]}</span></td>
-                  <td><b>{s.denominacao ?? "(sem denominação)"}</b> {s.municipio ? `· ${s.municipio}-${s.uf}` : ""}</td>
+                  <td><b>{s.denominacao ?? "(sem denominação)"}</b> <span className="sub">{s.municipio ? `· ${s.municipio}-${s.uf}` : ""}</span></td>
                   <td>{s.status === "gerado" ? <span className="chip ok-chip">gerado</span> : <span className="chip P">rascunho</span>}</td>
-                  <td style={{ color: "var(--texto-2)" }}>{dataFmt(s.created_at)}</td>
+                  <td className="sub">{dataFmt(s.created_at)}</td>
                 </tr>
               ))}
             </tbody>
@@ -148,11 +164,12 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
       </section>
 
       <section className="bloco">
-        <header><h3>📁 Histórico de documentos</h3>
+        <header><h3>Histórico de documentos</h3>
           <span className="desc">todas as versões geradas, com download a qualquer momento</span></header>
-        {servicos.length === 0 ? <p style={{ color: "var(--texto-2)" }}>—</p> : servicos.map((s) => (
+        {servicos.length === 0 ? <p className="sub" style={{ margin: 0 }}>—</p> : servicos.map((s) => (
           <div key={s.id} style={{ marginBottom: 14 }}>
-            <b style={{ fontSize: 13 }}>{s.tipo === "pecas" ? "📑" : "🛰️"} {s.denominacao ?? s.id.slice(0, 8)}</b>
+            <b style={{ fontSize: 13 }}>{s.denominacao ?? s.id.slice(0, 8)}</b>
+            <span className={`chip mod-${chaveDoServico(s)}`} style={{ marginLeft: 8 }}>{rotuloCurto[chaveDoServico(s)]}</span>
             <HistoricoDocs servicoId={s.id} compacto />
           </div>
         ))}

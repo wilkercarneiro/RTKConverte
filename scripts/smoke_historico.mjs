@@ -5,7 +5,7 @@ const URL_BASE = process.env.SUPABASE_URL;
 const ANON = process.env.SUPABASE_ANON_KEY;
 const SID = "5ff8beed-24c8-432a-99d6-0f3f9718fd40";
 const supa = createClient(URL_BASE, ANON);
-const { data: auth } = await supa.auth.signInWithPassword({ email: "e2e@rtkconverte.local", password: "E2e-teste-123!" });
+const { data: auth } = await supa.auth.signInWithPassword({ email: process.env.E2E_EMAIL, password: process.env.E2E_PASSWORD });
 
 async function fn(nome, body) {
   const r = await fetch(`${URL_BASE}/functions/v1/${nome}`, {

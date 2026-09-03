@@ -6,10 +6,21 @@ import { supabase } from "../lib/supabase";
 import { Cadastros } from "./Cadastros";
 import { useAvisos } from "../lib/ux";
 import { Avisos } from "./ui";
+import { rotuloRT } from "../lib/domains";
+import type { Credenciado, RT } from "../lib/types";
 
-export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
+/** Chaves gravadas em config_empresa (key/value). `desenhista` é lida pela planta;
+ *  `rt_padrao` e `credenciado_padrao` pré-preenchem serviços novos. */
+const CHAVES = ["razao_social", "cnpj", "desenhista", "rt_padrao", "credenciado_padrao"] as const;
+type Chave = typeof CHAVES[number];
+type Config = Record<Chave, string>;
+const VAZIA: Config = { razao_social: "", cnpj: "", desenhista: "", rt_padrao: "", credenciado_padrao: "" };
+
+export function Configuracoes() {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
-  const [desenhista, setDesenhista] = useState("");
+  const [config, setConfig] = useState<Config>(VAZIA);
+  const [rts, setRts] = useState<RT[]>([]);
+  const [credenciados, setCredenciados] = useState<Credenciado[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const { avisos, avisar, fechar } = useAvisos();
@@ -23,9 +34,17 @@ export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
 
   useEffect(() => {
     carregarLogo();
-    supabase.from("config_empresa").select("value").eq("key", "desenhista").maybeSingle()
-      .then(({ data }) => setDesenhista(data?.value ?? ""));
+    supabase.from("config_empresa").select("key, value").in("key", [...CHAVES])
+      .then(({ data }) => {
+        const c = { ...VAZIA };
+        for (const l of (data ?? []) as { key: Chave; value: string }[]) c[l.key] = l.value ?? "";
+        setConfig(c);
+      });
+    supabase.from("responsaveis_tecnicos").select().order("nome").then(({ data }) => setRts((data as RT[]) ?? []));
+    supabase.from("credenciados").select().order("nome").then(({ data }) => setCredenciados((data as Credenciado[]) ?? []));
   }, []);
+
+  const campo = (k: Chave, v: string) => setConfig((c) => ({ ...c, [k]: v }));
 
   async function enviarLogo(file: File) {
     setOcupado(true);
@@ -50,37 +69,39 @@ export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
     }
   }
 
-  async function salvarDesenhista() {
+  async function salvarConfig() {
     setErro(null);
-    const { error } = await supabase.from("config_empresa").upsert({ key: "desenhista", value: desenhista });
+    const linhas = CHAVES.map((key) => ({ key, value: config[key] ?? "" }));
+    const { error } = await supabase.from("config_empresa").upsert(linhas, { onConflict: "key" });
     if (error) setErro(error.message);
     else avisar("ok", "Configurações salvas.");
   }
 
   return (
-    <div className="conferencia">
+    <div className="pagina fade">
       <Avisos avisos={avisos} onFechar={fechar} />
-      <header className="topo">
-        <button className="fantasma" onClick={onVoltar}>← Dashboard</button>
-        <span className="arquivo">⚙ Configurações</span>
-      </header>
+      <div className="pagina-cabeca">
+        <div>
+          <h1>Configurações</h1>
+          <p className="sub">Empresa, responsáveis técnicos e credenciados</p>
+        </div>
+      </div>
 
       <section className="bloco">
         <header>
-          <span className="num-bloco">🏢</span>
           <h3>Empresa</h3>
           <span className="desc">identidade usada nos documentos gerados</span>
         </header>
 
         <div>
-          <b>Carimbo da empresa (logo)</b>
-          <p className="sub" style={{ margin: "2px 0 8px" }}>aparece no quadro "Carimbo da Empresa" de todas as plantas geradas (PNG ou JPG, fundo claro)</p>
+          <div className="titulo-campo">Carimbo da empresa (logo)</div>
+          <p className="sub" style={{ margin: "2px 0 10px" }}>aparece no quadro "Carimbo da Empresa" de todas as plantas geradas (PNG ou JPG, fundo claro)</p>
           {logoUrl && (
-            <div style={{ border: "1px solid var(--borda)", borderRadius: 10, padding: 14, marginBottom: 10, textAlign: "center", background: "#fff" }}>
-              <img src={logoUrl} alt="logo da empresa" style={{ maxHeight: 90, maxWidth: "80%" }} />
+            <div className="config-logo">
+              <img src={logoUrl} alt="logo da empresa" />
             </div>
           )}
-          <label className="dropzone" style={{ padding: "22px 16px" }}
+          <label className="dropzone linha"
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && !ocupado) enviarLogo(f); }}>
             {ocupado ? <><span className="spinner" /> Enviando…</> : <b>{logoUrl ? "Trocar logo" : "Enviar logo"} — arraste ou clique</b>}
@@ -89,12 +110,34 @@ export function Configuracoes({ onVoltar }: { onVoltar: () => void }) {
           </label>
         </div>
 
-        <div className="grade" style={{ marginTop: 14 }}>
+        <div className="grade" style={{ marginTop: 18 }}>
+          <label>Razão social
+            <input value={config.razao_social} onChange={(e) => campo("razao_social", e.target.value)} placeholder="ex.: GEO TOPOGRAFIA LTDA" />
+          </label>
+          <label>CNPJ
+            <input className="mono" value={config.cnpj} onChange={(e) => campo("cnpj", e.target.value)} placeholder="00.000.000/0001-00" />
+          </label>
           <label>Desenhista (rodapé da planta)
-            <input value={desenhista} onChange={(e) => setDesenhista(e.target.value)} placeholder="ex.: JANETE OLIVEIRA" />
+            <input value={config.desenhista} onChange={(e) => campo("desenhista", e.target.value)} placeholder="ex.: JANETE OLIVEIRA" />
+          </label>
+          <label>Responsável técnico padrão
+            <select value={config.rt_padrao} onChange={(e) => campo("rt_padrao", e.target.value)}>
+              <option value="">—</option>
+              {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
+            </select>
+            <small className="sub">já vem selecionado em todo serviço novo</small>
+          </label>
+          <label>Credenciado padrão
+            <select value={config.credenciado_padrao} onChange={(e) => campo("credenciado_padrao", e.target.value)}>
+              <option value="">—</option>
+              {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
+            </select>
+            <small className="sub">já vem selecionado em todo serviço novo</small>
           </label>
         </div>
-        <button className="principal" style={{ marginTop: 12 }} onClick={salvarDesenhista}>Salvar</button>
+        <div className="rodape-bloco">
+          <button className="principal" onClick={salvarConfig}>Salvar</button>
+        </div>
         {erro && <div className="erro">{erro}</div>}
       </section>
 

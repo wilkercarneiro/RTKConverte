@@ -1,22 +1,22 @@
-// Lista de serviços — antes era a segunda aba do dashboard.
+// Lista de serviços — destino próprio da barra lateral.
 //
-// A coluna "Falta" e a barra de progresso mudam com a modalidade: a conferência
-// de área termina na etapa 1, então dizer que "falta gerar as peças" a ela seria
-// mentira. Quem decide isso é `vaiAoSigef` (src/lib/modalidades.ts), a mesma
-// função que a tela do serviço usa para esconder os blocos do SIGEF.
+// A coluna "Falta" e os pontos de progresso mudam com a modalidade: a
+// conferência de área termina na etapa 1, então dizer que "falta gerar as
+// peças" a ela seria mentira. Quem decide isso é `progressoDe`
+// (src/lib/progresso.ts), a mesma função que o Início usa.
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import type { Servico } from "../lib/types";
-import { chaveDoServico, rotuloCurto, vaiAoSigef } from "../lib/modalidades";
+import { chaveDoServico, rotuloCurto } from "../lib/modalidades";
+import { indexarDocumentos, progressoDe } from "../lib/progresso";
+import type { DocsDoServico } from "../lib/progresso";
 import { Avisos, BotaoPerigo } from "./ui";
 import { useAvisos } from "../lib/ux";
-
-interface Progresso { docs: boolean; planta: boolean; pecas: boolean }
-const TIPOS_ETAPA1 = new Set(["memorial_docx", "planilha_ods", "planta_pdf_sistema"]);
+import { Icone, ICONE } from "./Icone";
 
 export function Servicos({ onAbrir, onNovo }: { onAbrir: (s: Servico) => void; onNovo: () => void }) {
   const [servicos, setServicos] = useState<Servico[]>([]);
-  const [progressos, setProgressos] = useState<Record<string, Progresso>>({});
+  const [docs, setDocs] = useState<Record<string, DocsDoServico>>({});
   const [carregando, setCarregando] = useState(true);
   const [filtro, setFiltro] = useState("");
   const { avisos, avisar, fechar } = useAvisos();
@@ -28,18 +28,12 @@ export function Servicos({ onAbrir, onNovo }: { onAbrir: (s: Servico) => void; o
       supabase.from("documentos_gerados").select("servico_id, tipo"),
     ]);
     setServicos((ss as Servico[]) ?? []);
-    const mapa: Record<string, Progresso> = {};
-    for (const d of (ds ?? []) as { servico_id: string; tipo: string }[]) {
-      if (!mapa[d.servico_id]) mapa[d.servico_id] = { docs: false, planta: false, pecas: false };
-      const p = mapa[d.servico_id];
-      if (TIPOS_ETAPA1.has(d.tipo)) p.docs = true;
-      else if (d.tipo === "planta_pdf") p.planta = true;
-      else p.pecas = true;
-    }
-    setProgressos(mapa);
+    setDocs(indexarDocumentos((ds as { servico_id: string; tipo: string }[]) ?? []));
     setCarregando(false);
   }
   useEffect(() => { carregar(); }, []);
+
+  const nome = (s: Servico) => s.denominacao ?? s.nome_arquivo_txt ?? s.id.slice(0, 8);
 
   async function excluir(s: Servico) {
     const { error } = await supabase.from("servicos").delete().eq("id", s.id);
@@ -48,86 +42,76 @@ export function Servicos({ onAbrir, onNovo }: { onAbrir: (s: Servico) => void; o
     carregar();
   }
 
-  const nome = (s: Servico) => s.denominacao ?? s.nome_arquivo_txt ?? s.id.slice(0, 8);
-
   const filtrados = useMemo(() => servicos.filter((s) => {
     const alvo = `${s.denominacao ?? ""} ${s.detentor_nome ?? ""} ${s.nome_arquivo_txt ?? ""} ${s.municipio ?? ""}`.toLowerCase();
     return alvo.includes(filtro.toLowerCase());
   }), [servicos, filtro]);
 
-  /** O que falta neste serviço, em uma frase curta. */
-  function faltando(s: Servico): string {
-    const p = progressos[s.id];
-    if (!p?.docs) return "gerar memorial e planilha";
-    // a conferência de área não vai ao SIGEF: com os documentos, acabou
-    if (!vaiAoSigef(s)) return "concluído";
-    if (!p.planta) return "gerar a planta do SIGEF";
-    if (!p.pecas) return "gerar as peças técnicas";
-    return "concluído";
-  }
+  const emAndamento = useMemo(() => servicos.filter((s) => !progressoDe(s, docs[s.id]).concluido).length, [servicos, docs]);
 
   const dataFmt = (iso?: string) => {
-    const d = new Date((iso as unknown as string) ?? "");
+    const d = new Date(iso ?? "");
     return isNaN(d.getTime()) ? "—" : `${d.toLocaleDateString("pt-BR")} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
   };
 
   return (
-    <div className="pagina">
+    <div className="pagina fade">
       <Avisos avisos={avisos} onFechar={fechar} />
-      <section className="bloco">
-        <header style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <h3>📋 Serviços</h3>
-          <span className="desc">{servicos.length} no total</span>
-          <span className="esticar" style={{ flex: 1 }} />
-          <input placeholder="🔎 buscar…" style={{ width: 240 }} aria-label="Buscar serviço"
+      <div className="pagina-cabeca">
+        <div>
+          <h1>Serviços</h1>
+          <p className="sub">{servicos.length} no total · {emAndamento} em andamento</p>
+        </div>
+        <div className="busca">
+          <Icone d={ICONE.busca} size={16} traco={2} />
+          <input placeholder="Imóvel, cliente ou município" aria-label="Buscar serviço"
             value={filtro} onChange={(e) => setFiltro(e.target.value)} />
-          <button className="principal" onClick={onNovo}>+ Novo serviço</button>
-        </header>
+        </div>
+        <button className="principal" onClick={onNovo}>+ Novo serviço</button>
+      </div>
 
-        {carregando ? <p style={{ color: "var(--texto-2)" }}><span className="spinner" /> Carregando…</p>
+      <div className="tabela-wrap">
+        {carregando ? <p className="vazio"><span className="spinner" /> Carregando…</p>
           : filtrados.length === 0 ? (
-            <p style={{ color: "var(--texto-2)" }}>Nenhum serviço {filtro ? "encontrado para a busca" : "ainda — comece pelo Início"}.</p>
+            <p className="vazio">Nenhum serviço {filtro ? "encontrado para a busca" : "ainda — comece pelo Início"}.</p>
           ) : (
-            <div className="tabela-wrap" style={{ maxHeight: 560 }}>
-              <table className="tabela-vertices dash-lista">
-                <thead>
-                  <tr><th>Modalidade</th><th>Imóvel / arquivo</th><th>Cliente</th><th>Município</th><th>Progresso</th><th>Falta</th><th>Criado em</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {filtrados.map((s) => {
-                    const chave = chaveDoServico(s);
-                    const p = progressos[s.id] ?? { docs: false, planta: false, pecas: false };
-                    const etapas = vaiAoSigef(s) ? [p.docs, p.planta, p.pecas] : [p.docs];
-                    return (
-                      <tr key={s.id} className="linha-servico" tabIndex={0} role="button"
-                        onClick={() => onAbrir(s)}
-                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onAbrir(s); } }}>
-                        <td><span className={`chip mod-${chave}`}>{rotuloCurto[chave]}</span></td>
-                        <td>
-                          <b>{s.denominacao ?? "(sem denominação)"}</b>
-                          {s.nome_arquivo_txt ? <span className="mono" style={{ color: "var(--texto-2)" }}> · {s.nome_arquivo_txt}</span> : null}
-                        </td>
-                        <td>{s.detentor_nome ?? "—"}</td>
-                        <td>{s.municipio ? `${s.municipio}-${s.uf ?? ""}` : "—"}</td>
-                        <td>
-                          <span className="progresso-servico" title={`${etapas.filter(Boolean).length} de ${etapas.length} etapas`}>
-                            {etapas.map((feito, i) => <i key={i} className={feito ? "feito" : ""} />)}
-                          </span>
-                        </td>
-                        <td style={{ color: "var(--texto-2)", fontSize: 12 }}>{faltando(s)}</td>
-                        <td style={{ color: "var(--texto-2)" }}>{dataFmt((s as unknown as { created_at: string }).created_at)}</td>
-                        <td>
-                          <BotaoPerigo titulo={`Excluir "${nome(s)}"`} confirmacao="excluir mesmo"
-                            onConfirmar={() => excluir(s)}>✕</BotaoPerigo>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <table className="tabela-vertices dash-lista">
+              <thead>
+                <tr><th>Imóvel</th><th>Cliente</th><th>Município</th><th>Modalidade</th><th>Progresso</th><th>Falta</th><th></th></tr>
+              </thead>
+              <tbody>
+                {filtrados.map((s) => {
+                  const chave = chaveDoServico(s);
+                  const p = progressoDe(s, docs[s.id]);
+                  return (
+                    <tr key={s.id} className="linha-servico" tabIndex={0} role="button"
+                      title={`criado em ${dataFmt(s.created_at)}`}
+                      onClick={() => onAbrir(s)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onAbrir(s); } }}>
+                      <td>
+                        <b>{s.denominacao ?? "(sem denominação)"}</b>
+                        {s.nome_arquivo_txt ? <span className="mono" style={{ color: "var(--texto-3)" }}> · {s.nome_arquivo_txt}</span> : null}
+                      </td>
+                      <td className="sub">{s.detentor_nome ?? "—"}</td>
+                      <td className="sub">{s.municipio ? `${s.municipio}-${s.uf ?? ""}` : "—"}</td>
+                      <td><span className={`chip mod-${chave}`}>{rotuloCurto[chave]}</span></td>
+                      <td>
+                        <span className="progresso-servico" title={`${p.etapas.filter(Boolean).length} de ${p.etapas.length} etapas`}>
+                          {p.etapas.map((feito, i) => <i key={i} className={feito ? "feito" : i === p.atual ? "atual" : ""} />)}
+                        </span>
+                      </td>
+                      <td style={{ color: "var(--texto-3)", fontSize: 13 }}>{p.falta}</td>
+                      <td className="acao">
+                        <BotaoPerigo titulo={`Excluir "${nome(s)}"`} confirmacao="excluir mesmo"
+                          onConfirmar={() => excluir(s)}>✕</BotaoPerigo>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
-      </section>
+      </div>
     </div>
   );
 }

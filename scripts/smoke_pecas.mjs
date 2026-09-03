@@ -9,7 +9,7 @@ const SID = "5ff8beed-24c8-432a-99d6-0f3f9718fd40"; // serviço FAZENDA TESTE (E
 
 const supa = createClient(URL_BASE, ANON);
 const { data: auth, error: eAuth } = await supa.auth.signInWithPassword({
-  email: "e2e@rtkconverte.local", password: "E2e-teste-123!",
+  email: process.env.E2E_EMAIL, password: process.env.E2E_PASSWORD,
 });
 if (eAuth) { console.error(eAuth.message); process.exit(1); }
 

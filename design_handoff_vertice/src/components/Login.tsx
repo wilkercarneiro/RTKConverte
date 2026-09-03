@@ -6,31 +6,16 @@ export function Login({ onOk }: { onOk: () => void }) {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState<string | null>(null);
-  const [aviso, setAviso] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
 
   async function entrar(e: React.FormEvent) {
     e.preventDefault();
     setCarregando(true);
     setErro(null);
-    setAviso(null);
     const { error } = await supabase.auth.signInWithPassword({ email, password: senha });
     setCarregando(false);
     if (error) setErro(error.message);
     else onOk();
-  }
-
-  // Redefinição pelo próprio Supabase: manda o link para o e-mail digitado.
-  // Sem e-mail não há para onde mandar — o aviso pede o campo em vez de errar.
-  async function esqueci(e: React.MouseEvent) {
-    e.preventDefault();
-    setErro(null);
-    if (!email.trim()) { setAviso("Digite o e-mail acima e clique de novo em \"Esqueci a senha\"."); return; }
-    setCarregando(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: location.origin });
-    setCarregando(false);
-    if (error) setErro(error.message);
-    else setAviso(`Enviamos um link de redefinição para ${email.trim()}.`);
   }
 
   return (
@@ -51,9 +36,7 @@ export function Login({ onOk }: { onOk: () => void }) {
             <label>E-mail<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="username" /></label>
             <label>Senha<input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} required autoComplete="current-password" /></label>
             <button type="submit" className="principal" disabled={carregando}>{carregando ? "Entrando..." : "Entrar"}</button>
-            <a href="#" className="esqueci" onClick={esqueci}>Esqueci a senha</a>
-            {aviso && <div className="ok" style={{ margin: 0 }}>{aviso}</div>}
-            {erro && <div className="erro" style={{ margin: 0 }}>{erro}</div>}
+            {erro && <div className="erro">{erro}</div>}
           </form>
         </div>
       </div>

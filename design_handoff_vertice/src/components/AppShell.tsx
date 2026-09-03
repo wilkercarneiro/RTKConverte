@@ -23,9 +23,6 @@ export function AppShell({ rota, ir, children, usuario }: {
   /** nome exibido no rodapé da barra (ex.: e-mail ou nome do RT) */
   usuario?: { nome: string; papel?: string };
 }) {
-  // A página de um cliente pertence a "Clientes", e a de um serviço a
-  // "Serviços": sem isso a barra não marcaria nada enquanto o operador está
-  // justamente dentro do trabalho.
   const ativa: Rota["t"] =
     rota.t === "cliente" ? "clientes"
       : rota.t === "servico" || rota.t === "novo" ? "servicos"
@@ -51,9 +48,6 @@ export function AppShell({ rota, ir, children, usuario }: {
             </button>
           ))}
         </nav>
-        <button className={rota.t === "marca" ? "guia-marca ativo" : "guia-marca"} onClick={() => ir({ t: "marca" })}>
-          Guia da marca
-        </button>
         <div className="barra-rodape">
           <div className="avatar" aria-hidden="true">{iniciais}</div>
           <div className="nome">{nome}{usuario?.papel && <div className="papel">{usuario.papel}</div>}</div>

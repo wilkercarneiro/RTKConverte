@@ -20,8 +20,8 @@ const ANON = process.env.SUPABASE_ANON_KEY ?? env.VITE_SUPABASE_ANON_KEY;
 
 const supa = createClient(URL_BASE, ANON);
 const { data: auth, error: eAuth } = await supa.auth.signInWithPassword({
-  email: process.env.SMOKE_EMAIL ?? "e2e@rtkconverte.local",
-  password: process.env.SMOKE_SENHA ?? "E2e-teste-123!",
+  email: process.env.SMOKE_EMAIL ?? process.env.E2E_EMAIL,
+  password: process.env.SMOKE_SENHA ?? process.env.E2E_PASSWORD,
 });
 if (eAuth) { console.error("login falhou:", eAuth.message); process.exit(1); }
 

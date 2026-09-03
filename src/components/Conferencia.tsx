@@ -12,7 +12,7 @@ import {
   rotuloRT, SITUACOES, TIPOS_LIMITE, TIPOS_PESSOA, UFS,
 } from "../lib/domains";
 import { calcularPreviewLocal } from "../lib/preview";
-import { ehRioPorLimite, ehViaPorLimite, moverConfrontacao, numerarConfrontantes, SEM_CONFRONTACAO, viasDaPlanta } from "../lib/trechos";
+import { ehRioPorLimite, ehViaPorLimite, moverConfrontacao, numerarConfrontantes, SEM_CONFRONTACAO, trechoDoVertice, viasDaPlanta } from "../lib/trechos";
 import {
   camposDaSituacao, chaveDoServico, pedeMatricula, rotuloCurto, situacaoDoImovel, vaiAoSigef,
 } from "../lib/modalidades";
@@ -24,7 +24,20 @@ import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/
 import type { ResultadoParse } from "./Upload";
 import { CORES, MapaSVG } from "./MapaSVG";
 import { HistoricoDocs } from "./HistoricoDocs";
-import { Avisos, BotaoPerigo, Passos, ProximaAcao, Secao, StatusSalvamento, irPara, type Acao, type Passo } from "./ui";
+import { Avisos, BotaoPerigo, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+
+/** Etapas do serviço: uma por vez, como abas dentro do cabeçalho. */
+type Etapa = "dados" | "confrontantes" | "glebas" | "vertices" | "documentos";
+
+/** Em que etapa mora um elemento — para as pendências e a próxima ação levarem
+ *  o operador até o campo certo mesmo quando ele está em outra aba. */
+function etapaDoAlvo(id: string): Etapa {
+  if (id.startsWith("campo-") || id === "bloco-dados") return "dados";
+  if (id === "bloco-confrontantes") return "confrontantes";
+  if (id === "bloco-vertices") return "vertices";
+  if (id === "bloco-glebas") return "glebas";
+  return "documentos";
+}
 
 interface Gerado {
   memorial_docx: string;
@@ -106,6 +119,27 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // desligar o botão não muda nada do que sai na planta.
   const [modoNumeracao, setModoNumeracao] = useState(false);
 
+  // Uma etapa por vez. As pendências e a próxima ação apontam para ids de
+  // elementos; como só a etapa ativa está montada, trocar de etapa vem antes
+  // de rolar — e a rolagem espera o React montar o alvo.
+  const [etapa, setEtapa] = useState<Etapa>("dados");
+  const [alvoPendente, setAlvoPendente] = useState<{ id: string; piscar: boolean } | null>(null);
+  useEffect(() => {
+    if (!alvoPendente) return;
+    const t = requestAnimationFrame(() => { rolarAte(alvoPendente.id, alvoPendente.piscar); setAlvoPendente(null); });
+    return () => cancelAnimationFrame(t);
+  }, [alvoPendente, etapa]);
+  function irParaCampo(id: string, piscar = false) {
+    setEtapa(etapaDoAlvo(id));
+    setAlvoPendente({ id, piscar });
+  }
+  // CNS e matrícula do confrontante ficam resumidos numa linha; "editar campos"
+  // abre os inputs do trecho (chave: ordem do vértice inicial).
+  const [camposAbertos, setCamposAbertos] = useState<Set<number>>(() => new Set());
+  const [mostrarInserirV, setMostrarInserirV] = useState(false);
+  const [previaAberta, setPreviaAberta] = useState(false);
+  const [sobreAberto, setSobreAberto] = useState(false);
+
   // correção de sobreposição SIGEF (CSVs das parcelas certificadas sobrepostas)
   const [sobreCsvs, setSobreCsvs] = useState<{ nome: string; conteudo: string }[]>([]);
   const [afastamento, setAfastamento] = useState("0,50");
@@ -143,6 +177,23 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         setDetentores([...ds.entries()].map(([nome, cpf]) => ({ nome, cpf })));
         setCartorios([...cs]);
         setAcervo(((data ?? []) as { municipio: string | null; uf: string | null }[]).map((s) => ({ municipio: s.municipio, uf: s.uf })));
+      });
+  }, [inicial.servico.id]);
+
+  // Padrões das Configurações: um serviço novo já nasce com o RT e o
+  // credenciado da empresa. Só preenche o que está vazio — nunca sobrescreve.
+  useEffect(() => {
+    if (inicial.servico.status !== "rascunho") return;
+    if (inicial.servico.rt_id && inicial.servico.credenciado_id) return;
+    supabase.from("config_empresa").select("key, value").in("key", ["rt_padrao", "credenciado_padrao"])
+      .then(({ data }) => {
+        const cfg = Object.fromEntries(((data ?? []) as { key: string; value: string }[]).map((l) => [l.key, l.value]));
+        if (!cfg.rt_padrao && !cfg.credenciado_padrao) return;
+        setServico((s) => ({
+          ...s,
+          rt_id: s.rt_id ?? (cfg.rt_padrao || null),
+          credenciado_id: s.credenciado_id ?? (cfg.credenciado_padrao || null),
+        }));
       });
   }, [inicial.servico.id]);
 
@@ -659,7 +710,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     if (pendencias.length > 0) {
       setTentouGerar(true);
       setErro(`Para gerar, resolva:\n• ${pendencias.map((p) => p.msg).join("\n• ")}`);
-      irPara(pendencias[0].alvo, true);
+      irParaCampo(pendencias[0].alvo, true);
       return;
     }
     setOcupado(true);
@@ -671,7 +722,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       if (!sat) {
         setOcupado(false);
         setErro("Envie a imagem de satélite: ela entra no quadro PLANTA DE SITUAÇÃO da planta.");
-        irPara("bloco-satelite", true);
+        irParaCampo("bloco-satelite", true);
         return;
       }
       await salvar();
@@ -685,7 +736,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       avisar("ok", r.planta_pdf ? "Memorial, planilha e planta gerados com sucesso." : "Memorial e planilha gerados com sucesso.");
       const { data } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
       if (data) setVertices(data as Vertice[]);
-      requestAnimationFrame(() => document.querySelector(".gerados")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+      irParaCampo("bloco-gerados");
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -740,35 +791,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const confrontantesPreenchidos = trechosOrdenados.filter((t) => t.descritivo || t.apelido_txt).length;
   const pecasProntas = pecas !== null;
 
-  // A trilha da conferência tem 3 etapas e termina nos documentos; a do serviço
-  // completo segue até as peças. É a mesma lista, cortada — não duas listas.
-  const passos: Passo[] = [
-    { rotulo: "Dados", estado: pendencias.length === 0 ? "feita" : "ativa", alvo: "bloco-dados" },
-    {
-      rotulo: "Confrontantes",
-      estado: confrontantesPreenchidos > 0 ? "feita" : pendencias.length === 0 ? "ativa" : "futura",
-      alvo: "bloco-confrontantes",
-    },
-    ...(temGlebas ? [{
-      rotulo: "Glebas",
-      estado: (glebas.some((g) => g.anel.length >= 3) ? "feita" : "ativa") as Passo["estado"],
-      alvo: "bloco-glebas",
-    }] : []),
-    {
-      rotulo: ehConferencia ? "Memorial & planta" : "Memorial, planilha & planta",
-      estado: docsProntos ? "feita" : "futura",
-      alvo: docsProntos ? "bloco-gerados" : undefined,
-    },
-    ...(ehConferencia ? [] : [
-      { rotulo: "PDF do SIGEF", estado: (temSigef ? "feita" : docsProntos ? "ativa" : "futura") as Passo["estado"], alvo: docsProntos ? "bloco-sigef" : undefined },
-      {
-        rotulo: "Planta do SIGEF & Peças",
-        estado: (plantaUrl && pecasProntas ? "feita" : temSigef ? "ativa" : "futura") as Passo["estado"],
-        alvo: sigefB64 ? "bloco-planta" : undefined,
-      },
-    ]),
-  ];
-
   // Interface preditiva: a tela é longa e o processo tem 5 estágios — este
   // cartão elimina a pergunta "e agora?" respondendo com a ação seguinte.
   const proxima = useMemo<Acao>(() => {
@@ -778,7 +800,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         titulo: `Faltam ${pendencias.length} ${pendencias.length === 1 ? "campo obrigatório" : "campos obrigatórios"}`,
         detalhe: pendencias.map((p) => p.msg).join(" · "),
         rotuloBotao: "Ir para o primeiro",
-        onClick: () => irPara(pendencias[0].alvo, true),
+        onClick: () => irParaCampo(pendencias[0].alvo, true),
       };
     }
     // a imagem de satélite agora é pedida ANTES da geração: a planta sai junto
@@ -789,7 +811,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         titulo: "Envie a imagem de satélite da área",
         detalhe: "entra no quadro PLANTA DE SITUAÇÃO — a mesma imagem serve à planta desta etapa e à planta do SIGEF",
         rotuloBotao: "Enviar imagem",
-        onClick: () => irPara("bloco-satelite"),
+        onClick: () => irParaCampo("bloco-satelite"),
       };
     }
     if (!docsProntos) {
@@ -815,7 +837,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         titulo: "Certifique a planilha no SIGEF e envie o PDF de volta",
         detalhe: "o PDF de prévia/certificação libera a planta oficial e as 7 peças técnicas",
         rotuloBotao: "Enviar PDF",
-        onClick: () => irPara("bloco-sigef"),
+        onClick: () => irParaCampo("bloco-sigef"),
       };
     }
     if (!temSatelite) {
@@ -824,7 +846,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         titulo: "Envie a imagem de satélite da área",
         detalhe: "obrigatória para o quadro PLANTA DE SITUAÇÃO da planta do SIGEF",
         rotuloBotao: "Enviar imagem",
-        onClick: () => irPara("bloco-satelite"),
+        onClick: () => irParaCampo("bloco-satelite"),
       };
     }
     if (!plantaUrl) {
@@ -832,7 +854,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         tom: "neutro",
         titulo: `Gere a Planta ${folhaEfetiva} do SIGEF`,
         rotuloBotao: "Ir para a planta",
-        onClick: () => irPara("bloco-planta"),
+        onClick: () => irParaCampo("bloco-planta"),
       };
     }
     if (!pecasProntas) {
@@ -840,7 +862,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         tom: "neutro",
         titulo: "Gere as 7 peças técnicas",
         rotuloBotao: "Ir para as peças",
-        onClick: () => irPara("bloco-pecas"),
+        onClick: () => irParaCampo("bloco-pecas"),
       };
     }
     return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, as duas plantas e as peças gerados — tudo disponível no histórico abaixo" };
@@ -858,902 +880,993 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const seloRegistro = contarPreenchidos(camposRegistro);
   const seloParcela = contarPreenchidos([servico.denominacao_parcela, servico.parcela_numero, servico.lado]);
 
+  // ------- abas de etapa: uma por vez -------
+  const etapas: { chave: Etapa; rotulo: string; feita: boolean }[] = [
+    { chave: "dados", rotulo: "Dados", feita: pendencias.length === 0 },
+    { chave: "confrontantes", rotulo: "Confrontantes", feita: confrontantesPreenchidos > 0 },
+    ...(temGlebas ? [{ chave: "glebas" as Etapa, rotulo: "Glebas", feita: glebas.some((g) => g.anel.length >= 3) }] : []),
+    { chave: "vertices", rotulo: "Vértices", feita: docsProntos },
+    { chave: "documentos", rotulo: "Documentos", feita: ehConferencia ? docsProntos : !!plantaUrl && pecasProntas },
+  ];
+  const passos: Passo[] = etapas.map((e) => ({
+    rotulo: e.rotulo,
+    estado: e.chave === etapa ? "ativa" : e.feita ? "feita" : "futura",
+  }));
+  const indiceEtapa = etapas.findIndex((e) => e.chave === etapa);
+  const etapaAnterior = etapas[indiceEtapa - 1] ?? null;
+  const etapaSeguinte = etapas[indiceEtapa + 1] ?? null;
+  const navEtapa = (
+    <div className="etapa-nav">
+      {etapaAnterior && <button onClick={() => setEtapa(etapaAnterior.chave)}>← {etapaAnterior.rotulo}</button>}
+      {etapaSeguinte && <button className="escuro direita" onClick={() => setEtapa(etapaSeguinte.chave)}>{etapaSeguinte.rotulo} →</button>}
+    </div>
+  );
+
+  const chave = chaveDoServico(servico);
+  const verticeInicialNome = (() => {
+    const v = vertices.find((x) => x.ordem === verticeInicial);
+    return v ? nomePonto(v) : "—";
+  })();
+  const proximoTipo = (t: Vertice["tipo"]): Vertice["tipo"] => (t === "M" ? "P" : t === "P" ? "V" : "M");
+
   return (
     <div className="conferencia">
       <Avisos avisos={avisos} onFechar={fechar} />
-      <Passos passos={passos} />
 
       <header className="topo">
-        <button className="fantasma" onClick={onVoltar}>← Serviços</button>
-        <span className={`chip mod-${chaveDoServico(servico)}`}>{rotuloCurto[chaveDoServico(servico)]}</span>
-        <span className="arquivo">📄 {servico.nome_arquivo_txt}</span>
+        <button className="fantasma voltar" onClick={onVoltar}>← Serviços</button>
+        <span className="sep" aria-hidden="true">/</span>
+        <h1 className="titulo">{servico.denominacao || servico.nome_arquivo_txt || "Serviço"}</h1>
+        <span className={`chip mod-${chave}`}>{rotuloCurto[chave]}</span>
+        {servico.nome_arquivo_txt && <span className="arquivo">{servico.nome_arquivo_txt}</span>}
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
         <span className="esticar" />
-        <label>Fuso UTM{" "}
+        {/* Fuso ambíguo era só um alerta em texto: os candidatos viram botões,
+            porque a decisão é entre dois valores concretos. */}
+        {inicial.preview.fusoAmbiguo && (
+          <span className="alerta" style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+            fuso ambíguo — confirme:
+            {inicial.preview.candidatos.map((z) => (
+              <button key={z} onClick={() => campo("fuso_utm", z)}
+                style={{ padding: "0 8px", height: 24, fontSize: 12, fontWeight: 700 }}
+                aria-pressed={servico.fuso_utm === z}>{z}S</button>
+            ))}
+          </span>
+        )}
+        {inicial.preview.foraDaUf && <em className="alerta">coordenadas fora da UF informada!</em>}
+        <label>Fuso UTM
           <select value={servico.fuso_utm ?? 24} onChange={(e) => campo("fuso_utm", Number(e.target.value))}>
             {[18, 19, 20, 21, 22, 23, 24, 25].map((z) => (
               <option key={z} value={z}>{z}S{inicial.preview.candidatos.includes(z) ? " •" : ""}</option>
             ))}
           </select>
         </label>
-        {/* Fuso ambíguo era só um alerta em texto: agora os candidatos viram
-            botões, porque a decisão é entre dois valores concretos. */}
-        {inicial.preview.fusoAmbiguo && (
-          <span className="alerta" style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-            fuso ambíguo — confirme:
-            {inicial.preview.candidatos.map((z) => (
-              <button key={z} onClick={() => campo("fuso_utm", z)}
-                style={{ padding: "2px 8px", fontSize: 12, fontWeight: 700 }}
-                aria-pressed={servico.fuso_utm === z}>{z}S</button>
-            ))}
-          </span>
-        )}
-        {inicial.preview.foraDaUf && <em className="alerta">coordenadas fora da UF informada!</em>}
+        <Passos passos={passos} onClick={(_, i) => setEtapa(etapas[i].chave)} />
       </header>
 
-      <ProximaAcao acao={proxima} />
+      <div className="conferencia-corpo fade" key={etapa}>
+        <ProximaAcao acao={proxima} />
 
-      {/* ---------------- Bloco 1: dados do serviço ---------------- */}
-      <section className="bloco" id="bloco-dados">
-        <header>
-          <span className="num-bloco">1</span>
-          <h3>Dados do serviço</h3>
-          <span className="desc">o essencial fica à vista; o resto abre quando precisar</span>
-        </header>
+        {/* ================= Etapa · Dados ================= */}
+        {etapa === "dados" && (
+          <>
+            <section className="bloco" id="bloco-dados">
+              <header>
+                <h3>Dados do serviço</h3>
+                <span className="desc">o essencial fica à vista; o resto abre quando precisar</span>
+              </header>
 
-        {/* Sempre visível: exatamente o que bloqueia a geração. Nenhum campo
-            obrigatório pode morar numa seção recolhida — a lista de pendências
-            precisa apontar para algo que o operador vê. */}
-        <div className="grade">
-          <label>Cliente
-            <select value={servico.cliente_id ?? ""} onChange={(e) => {
-              const cli = clientes.find((c) => c.id === e.target.value) ?? null;
-              setServico((s) => ({
-                ...s,
-                cliente_id: cli?.id ?? null,
-                ...(cli ? {
-                  detentor_nome: cli.nome, detentor_cpf: cli.cpf_cnpj,
-                  detentor_genero: cli.genero, endereco_detentor: cli.endereco,
-                  is_espolio: cli.is_espolio ?? false,
-                  inventariante_nome: cli.inventariante_nome ?? null,
-                  inventariante_cpf: cli.inventariante_cpf ?? null,
-                  inventariante_rg: cli.inventariante_rg ?? null,
-                } : {}),
-              }));
-            }}>
-              <option value="">— (sem vínculo)</option>
-              {clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
-            <small className="sub">preenche detentor, endereço e espólio de uma vez</small>
-          </label>
-          <label>Credenciado *
-            <select id="campo-credenciado" className={obg(servico.credenciado_id)}
-              value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
-              <option value="">—</option>
-              {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
-            </select>
-          </label>
-          <label>Detentor *
-            <input id="campo-detentor" className={obg(servico.detentor_nome)} list="detentores" value={servico.detentor_nome ?? ""} onChange={(e) => {
-              campo("detentor_nome", e.target.value);
-              const d = detentores.find((x) => x.nome === e.target.value);
-              if (d?.cpf) campo("detentor_cpf", d.cpf);
-            }} />
-            <datalist id="detentores">{detentores.map((d) => <option key={d.nome} value={d.nome} />)}</datalist>
-          </label>
-          <label>CPF/CNPJ <input value={servico.detentor_cpf ?? ""} onChange={(e) => campo("detentor_cpf", e.target.value)} /></label>
-          <label>Denominação * <input id="campo-denominacao" className={obg(servico.denominacao)} value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} /></label>
-          <label>Município * <input id="campo-municipio" className={obg(servico.municipio)} value={servico.municipio ?? ""} onChange={(e) => campo("municipio", e.target.value)} /></label>
-          <label>UF *
-            <select id="campo-uf" className={obg(servico.uf)} value={servico.uf ?? ""}
-              onChange={(e) => { campo("uf", e.target.value); setUfSugerida(false); }}>
-              <option value="">—</option>
-              {UFS.map((u) => <option key={u}>{u}</option>)}
-            </select>
-            {ufSugerida && <small className="sub">sugerida pelo histórico de {servico.municipio} — confira</small>}
-          </label>
-        </div>
-
-        <Secao titulo="Responsável técnico e TRT"
-          selo={<span className={rtSel ? "secao-selo completa" : "secao-selo vazia"}>{rtSel ? rtSel.nome : "não definido"}</span>}
-          dica="assina o memorial, as peças e a planta">
-          <div className="grade">
-            <label>Responsável Técnico
-              <select value={servico.rt_id ?? ""} onChange={(e) => campo("rt_id", e.target.value || null)}>
-                <option value="">—</option>
-                {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
-              </select>
-              <small className="sub">cadastre novos em ⚙ Configurações</small>
-            </label>
-            <label>TRT (Termo de Responsabilidade Técnica)
-              <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}
-                onChange={(e) => campo("trt", e.target.value.trim() || null)} />
-              <small className="sub">
-                {rtSel?.trt && servico.trt === rtSel.trt
-                  ? `preenchido com o TRT padrão de ${rtSel.nome} — troque se este serviço tem outro`
-                  : "vai no memorial, nas peças e na planta; sobrepõe o TRT do PDF do SIGEF"}
-              </small>
-            </label>
-          </div>
-        </Secao>
-
-        <Secao titulo={ehConferencia ? "Natureza e classificações" : "Registro, cartório e natureza"}
-          selo={<span className={`secao-selo ${seloRegistro === camposRegistro.length ? "completa" : seloRegistro === 0 ? "vazia" : ""}`}>{seloRegistro} de {camposRegistro.length}</span>}
-          dica={ehConferencia ? "SNCR e classificações do SIGEF" : "matrícula, CNS, SNCR e classificações do SIGEF"}>
-          <div className="grade">
-            <label>Natureza do serviço {sel(servico.natureza_servico, NATUREZAS_SERVICO, (v) => campo("natureza_servico", v))}</label>
-            <label>Tipo pessoa {sel(servico.tipo_pessoa, TIPOS_PESSOA, (v) => campo("tipo_pessoa", v))}</label>
-            <label>Situação {sel(servico.situacao, SITUACOES, (v) => campo("situacao", v))}</label>
-            <label>Natureza da área {sel(servico.natureza_area, NATUREZAS_AREA, (v) => campo("natureza_area", v))}</label>
-            <label>Código SNCR <input value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
-            {!ehConferencia && (
-              <>
-                <label>CNS (cartório)
-                  <input list="cartorios" value={servico.cns ?? ""} onChange={(e) => campo("cns", e.target.value)} />
-                  <datalist id="cartorios">{cartorios.map((c) => <option key={c} value={c} />)}</datalist>
+              {/* Sempre visível: exatamente o que bloqueia a geração. Nenhum campo
+                  obrigatório pode morar numa seção recolhida — a lista de pendências
+                  precisa apontar para algo que o operador vê. */}
+              <div className="grade">
+                <label>Cliente
+                  <select value={servico.cliente_id ?? ""} onChange={(e) => {
+                    const cli = clientes.find((c) => c.id === e.target.value) ?? null;
+                    setServico((s) => ({
+                      ...s,
+                      cliente_id: cli?.id ?? null,
+                      ...(cli ? {
+                        detentor_nome: cli.nome, detentor_cpf: cli.cpf_cnpj,
+                        detentor_genero: cli.genero, endereco_detentor: cli.endereco,
+                        is_espolio: cli.is_espolio ?? false,
+                        inventariante_nome: cli.inventariante_nome ?? null,
+                        inventariante_cpf: cli.inventariante_cpf ?? null,
+                        inventariante_rg: cli.inventariante_rg ?? null,
+                      } : {}),
+                    }));
+                  }}>
+                    <option value="">— (sem vínculo)</option>
+                    {clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                  </select>
+                  <small className="sub">preenche detentor, endereço e espólio de uma vez</small>
                 </label>
-                <label>Matrícula <input value={servico.matricula ?? ""} onChange={(e) => campo("matricula", e.target.value)} /></label>
-              </>
-            )}
-          </div>
-          {ehConferencia && (
-            <p className="sub" style={{ margin: "8px 0 0" }}>
-              Matrícula e CNS ficam no bloco "Conferência de área", junto da escolha entre matrícula e posse.
-            </p>
-          )}
-        </Secao>
+                <label><span>Credenciado <span className="obrigatorio">*</span></span>
+                  <select id="campo-credenciado" className={obg(servico.credenciado_id)}
+                    value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
+                    <option value="">—</option>
+                    {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
+                  </select>
+                </label>
+                <label><span>Detentor <span className="obrigatorio">*</span></span>
+                  <input id="campo-detentor" className={obg(servico.detentor_nome)} list="detentores" value={servico.detentor_nome ?? ""} onChange={(e) => {
+                    campo("detentor_nome", e.target.value);
+                    const d = detentores.find((x) => x.nome === e.target.value);
+                    if (d?.cpf) campo("detentor_cpf", d.cpf);
+                  }} />
+                  <datalist id="detentores">{detentores.map((d) => <option key={d.nome} value={d.nome} />)}</datalist>
+                </label>
+                <label>CPF/CNPJ <input className="mono" value={servico.detentor_cpf ?? ""} onChange={(e) => campo("detentor_cpf", e.target.value)} /></label>
+                <label><span>Denominação <span className="obrigatorio">*</span></span>
+                  <input id="campo-denominacao" className={obg(servico.denominacao)} value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} />
+                </label>
+                <label><span>Município <span className="obrigatorio">*</span></span>
+                  <input id="campo-municipio" className={obg(servico.municipio)} value={servico.municipio ?? ""} onChange={(e) => campo("municipio", e.target.value)} />
+                </label>
+                <label><span>UF <span className="obrigatorio">*</span></span>
+                  <select id="campo-uf" className={obg(servico.uf)} value={servico.uf ?? ""}
+                    onChange={(e) => { campo("uf", e.target.value); setUfSugerida(false); }}>
+                    <option value="">—</option>
+                    {UFS.map((u) => <option key={u}>{u}</option>)}
+                  </select>
+                  {ufSugerida && <small className="sub" style={{ color: "var(--alerta)" }}>sugerida pelo histórico de {servico.municipio} — confira</small>}
+                </label>
+              </div>
 
-        <Secao titulo="Identificação da parcela"
-          selo={<span className={`secao-selo ${seloParcela === 3 ? "completa" : seloParcela === 0 ? "vazia" : ""}`}>{seloParcela} de 3</span>}
-          dica="use quando a gleba foi dividida em partes">
-          <div className="grade">
-            <label>Denominação da parcela <input value={servico.denominacao_parcela ?? ""} placeholder="Parte 1" onChange={(e) => campo("denominacao_parcela", e.target.value)} /></label>
-            <label>Parcela número <input value={servico.parcela_numero ?? ""} placeholder="001" onChange={(e) => campo("parcela_numero", e.target.value)} /></label>
-            <label>Lado {sel(servico.lado, LADOS, (v) => campo("lado", v))}</label>
-          </div>
-        </Secao>
-
-        <Secao titulo="Espólio e inventariante"
-          selo={<span className={`secao-selo ${servico.is_espolio ? "completa" : ""}`}>{servico.is_espolio ? "é espólio" : "não"}</span>}
-          abrirEm={!!servico.is_espolio}
-          dica="proprietário falecido, representado por inventariante">
-          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 10 }}>
-            <input type="checkbox" checked={!!servico.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
-            <b>É Espólio? (possuidor/proprietário falecido com inventariante)</b>
-          </label>
-          {servico.is_espolio && (
-            <div className="grade">
-              <label>Nome do Inventariante <input value={servico.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome do inventariante" /></label>
-              <label>CPF do Inventariante <input value={servico.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
-              <label>RG do Inventariante (opcional) <input value={servico.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
-            </div>
-          )}
-        </Secao>
-      </section>
-
-      {/* ---------------- Bloco 2: confrontantes ---------------- */}
-      <section className="bloco" id="bloco-confrontantes">
-        <header>
-          <span className="num-bloco">2</span>
-          <h3>Confrontantes</h3>
-          <span className="desc">
-            {trechosOrdenados.length} trecho(s) · {confrontantesPreenchidos} descrito(s)
-            {numeracao.size > 0 ? ` · ${numeracao.size} numerado(s)` : ""} — as cores correspondem ao mapa
-          </span>
-          <span style={{ flex: 1 }} />
-          {/* Divisa curta não comporta o bloco de nome do vizinho: o texto quebra
-              em muitas linhas e acaba empilhado no do vizinho de baixo. Marcado
-              aqui, o confrontante sai da planta como número e reaparece por
-              extenso no quadro CONFRONTANTES do rodapé. */}
-          <button
-            className={modoNumeracao ? "principal" : ""}
-            title="Escolher quais confrontantes saem NUMERADOS na planta: no desenho fica só o número e o texto vai para o quadro do rodapé"
-            onClick={() => setModoNumeracao((v) => !v)}>
-            {modoNumeracao ? "✓ Concluir numeração" : "🔢 Adicionar numeração"}
-          </button>
-        </header>
-        {modoNumeracao && (
-          <p className="desc" style={{ margin: "0 0 10px" }}>
-            Marque os confrontantes cujo espaço na planta é curto demais para o nome.
-            Cada marcado recebe um número, na ordem do perímetro, e os dados dele
-            saem no quadro <b>CONFRONTANTES</b> embaixo do desenho. Faixa de domínio
-            e curso d'água não entram: o nome deles acompanha o próprio traço.
-          </p>
-        )}
-        <div className="confrontantes">
-          <div className="trechos">
-            {trechosOrdenados.map((t) => {
-              const v = vertices.find((x) => x.ordem === t.vertice_inicio_ordem);
-              return (
-                <div className="trecho" key={`t-${t.vertice_inicio_ordem}`}
-                  style={{ ["--cor-trecho" as string]: corDoTrecho(t) }}>
-                  <div className="linha">
-                    {numeracao.get(t.vertice_inicio_ordem) !== undefined && (
-                      <span className="badge-num" title="Sai numerado na planta; os dados vão ao quadro CONFRONTANTES do rodapé">
-                        {numeracao.get(t.vertice_inicio_ordem)}
-                      </span>
-                    )}
-                    {/* Trocar o ponto aqui move a confrontação inteira — o descritivo,
-                        o apelido, o CNS e a matrícula vão junto. */}
-                    <label title="Vértice M onde esta confrontação começa; ela vai até o próximo M. Trocar move a confrontação para o outro ponto, sem redigitar nada.">
-                      Inicia no ponto
-                      <select className="mono" style={{ fontWeight: 700 }}
-                        value={t.vertice_inicio_ordem}
-                        onChange={(e) => moverTrecho(t, Number(e.target.value))}>
-                        {[...vertices]
-                          .filter((x) => x.tipo !== "M" || x.ordem === t.vertice_inicio_ordem)
-                          .sort((a, b) => a.ordem - b.ordem)
-                          .map((x) => (
-                            <option key={x.ordem} value={x.ordem}>
-                              {nomePonto(x)}{x.ordem === t.vertice_inicio_ordem ? " (atual)" : ""}
-                            </option>
-                          ))}
+              <div className="secoes" style={{ marginTop: 22 }}>
+                <Secao titulo="Responsável técnico e TRT"
+                  selo={<span className={rtSel ? "secao-selo completa" : "secao-selo vazia"}>{rtSel ? rtSel.nome : "não definido"}</span>}
+                  dica="assina o memorial, as peças e a planta">
+                  <div className="grade">
+                    <label>Responsável Técnico
+                      <select value={servico.rt_id ?? ""} onChange={(e) => campo("rt_id", e.target.value || null)}>
+                        <option value="">—</option>
+                        {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
                       </select>
+                      <small className="sub">cadastre novos em Configurações</small>
                     </label>
-                    <label>Apelido
-                      <input value={t.apelido_txt ?? ""} placeholder="ex.: Varguim Serra"
-                        style={{ width: 150 }}
-                        onChange={(e) => setTrecho(t, { apelido_txt: e.target.value || null })} />
+                    <label>TRT (Termo de Responsabilidade Técnica)
+                      <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}
+                        onChange={(e) => campo("trt", e.target.value.trim() || null)} />
+                      <small className="sub">
+                        {rtSel?.trt && servico.trt === rtSel.trt
+                          ? `preenchido com o TRT padrão de ${rtSel.nome} — troque se este serviço tem outro`
+                          : "vai no memorial, nas peças e na planta; sobrepõe o TRT do PDF do SIGEF"}
+                      </small>
                     </label>
-                    <label>Tipo limite
-                      <select value={t.tipo_limite} onChange={(e) => setTrecho(t, { tipo_limite: e.target.value })}>
-                        {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
-                      </select>
-                    </label>
-                    <label title={ehRioPorLimite(t.tipo_limite)
-                      ? "LN1 é limite natural de curso d'água: sai na planta como linha dupla AZUL, no lugar da vermelha"
-                      : ehViaPorLimite(t.tipo_limite)
-                        ? "LA3 é limite de faixa de domínio: sempre via"
-                        : "Estrada, rodovia, corredor, linha férrea — desenhada na planta como linha dupla vermelha"}>
-                      <input type="checkbox" checked={t.eh_via || ehViaPorLimite(t.tipo_limite)}
-                        disabled={ehViaPorLimite(t.tipo_limite)}
-                        onChange={(e) => setTrecho(t, { eh_via: e.target.checked })} />
-                      {" "}faixa de domínio pública{ehViaPorLimite(t.tipo_limite) ? " (LA3)" : ""}
-                      {/* LN1 não é escolha de checkbox, é o tipo de limite — do
-                          mesmo jeito que LA3. Aqui só se avisa a cor que sai. */}
-                      {ehRioPorLimite(t.tipo_limite) && <span className="marca-rio"> ≈ rio (LN1, azul)</span>}
-                    </label>
-                    {modoNumeracao && (
-                      <label title={!ehNumeravel(t)
-                        ? "Faixa de domínio e curso d'água não são numerados: o nome acompanha o traço da via"
-                        : !chaveDoTrecho(t)
-                          ? "Preencha o descritivo ou o apelido: é o texto que sairia no quadro do rodapé"
-                          : "Na planta sai só o número; nome, matrícula e CPF vão para o quadro CONFRONTANTES do rodapé"}>
-                        <input type="checkbox" checked={!!t.numerado && ehNumeravel(t)}
-                          disabled={!ehNumeravel(t) || !chaveDoTrecho(t)}
-                          onChange={(e) => marcarNumeracao(t, e.target.checked)} />
-                        {" "}numerar
-                      </label>
-                    )}
-                    <label>CNS <input style={{ width: 110 }} value={t.cns ?? ""} onChange={(e) => setTrecho(t, { cns: e.target.value || null })} /></label>
-                    <label>Matrícula <input style={{ width: 100 }} value={t.matricula ?? ""} onChange={(e) => setTrecho(t, { matricula: e.target.value || null })} /></label>
-                    <span style={{ flex: 1 }} />
-                    <button className="remover" title="Remover trecho" onClick={() => removeTrecho(t)}>✕ remover</button>
                   </div>
-                  <textarea
-                    placeholder={"Descritivo formal (opcional), ex.: (MATR.432/CNS.00.770-8) FAZENDA LAMEIRO\\ RUDSON PINTO FERREIRA\\ CPF:791.234.145-53"}
-                    value={t.descritivo} onChange={(e) => setTrecho(t, { descritivo: e.target.value })} />
-                  {!t.descritivo && <div className="pendencia" style={{ color: "var(--texto-2)" }}>descritivo vazio — o memorial usará o apelido {t.apelido_txt ? `"${t.apelido_txt}"` : "(vazio: segue sem cláusula de confrontação)"} · inicia no pt {v ? nomePonto(v) : "?"}</div>}
-                </div>
-              );
-            })}
-            <div className="add-trecho">
-              <span>Nova transição de confrontante no ponto</span>
-              <select id="novo-trecho-ordem" defaultValue="">
-                <option value="" disabled>—</option>
-                {vertices.filter((v) => v.tipo !== "M")
-                  .map((v) => <option key={v.ordem} value={v.ordem}>{nomePonto(v)}</option>)}
-              </select>
-              <button onClick={() => {
-                const el = document.getElementById("novo-trecho-ordem") as HTMLSelectElement;
-                if (el.value !== "") { addTrecho(Number(el.value)); el.value = ""; }
-              }}>+ adicionar transição</button>
-            </div>
-          </div>
-          <div className="mapa">
-            <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} />
-            <div className="legenda">
-              {trechosOrdenados.map((t) => (
-                <span className="item" key={`leg-${t.vertice_inicio_ordem}`}>
-                  <span className="ponto-cor" style={{ background: corDoTrecho(t) }} />
-                  {numeracao.get(t.vertice_inicio_ordem) !== undefined && (
-                    <span className="badge-num pequeno">{numeracao.get(t.vertice_inicio_ordem)}</span>
-                  )}
-                  {t.apelido_txt || `pt ${nomePonto(vertices.find((v) => v.ordem === t.vertice_inicio_ordem) ?? vertices[0])}`}
-                  {ehRioPorLimite(t.tipo_limite)
-                    ? <span className="marca-rio" title="Curso d'água (LN1): sai na planta como linha dupla azul"> ≈ rio</span>
-                    : t.eh_via && <span className="marca-via" title="Faixa de domínio pública: sai na planta como linha dupla vermelha"> ═ via</span>}
-                </span>
-              ))}
-            </div>
-            <p className="desc" style={{ marginTop: 6 }}>
-              A linha dupla vermelha é o que sairá na planta como estrada. Se ela aparecer
-              onde não há estrada, desmarque "faixa de domínio pública" naquele trecho.
-              A linha dupla azul é o curso d'água: sai em todo trecho com tipo de limite
-              LN1. Se ali não houver rio, troque o tipo de limite.
-            </p>
-          </div>
-        </div>
-      </section>
+                </Secao>
 
-      {/* ---------------- Bloco 3: vértices ---------------- */}
-      <section className="bloco" id="bloco-vertices">
-        <header>
-          <span className="num-bloco">3</span>
-          <h3>Vértices</h3>
-          <span className="desc">
-            {vertices.length} pontos · início automático em {(() => {
-              const v = vertices.find((x) => x.ordem === verticeInicial);
-              return v ? nomePonto(v) : "—";
-            })()} (mais ao norte, exigido pelo SIGEF)
-          </span>
-        </header>
-        <div className="acoes-vertices">
-          {/* O método era um select por linha: em 60 vértices, 60 cliques para
-              trocar todos. Aqui troca de uma vez, sem perder o ajuste por linha. */}
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            Método de posicionamento em massa
-            <select defaultValue="" onChange={(e) => {
-              const m = e.target.value;
-              if (!m) return;
-              setVertices((vs) => vs.map((v) => ({ ...v, metodo: m })));
-              e.target.value = "";
-              avisar("ok", `Método ${m} aplicado aos ${vertices.length} vértices.`);
-            }}>
-              <option value="">aplicar a todos…</option>
-              {METODOS_POSICIONAMENTO.map((m) => <option key={m}>{m}</option>)}
-            </select>
-          </label>
-          <Secao titulo="Inserir vértice pré-existente" dica="tipo V · método PA1 — vértice já certificado que precisa entrar no perímetro">
-            <div className="inserir-v" style={{ border: "none", padding: 0, background: "transparent" }}>
-              <label>após o ponto
-                <select value={novoV.aposOrdem} onChange={(e) => setNovoV({ ...novoV, aposOrdem: e.target.value })}>
-                  <option value="">—</option>
-                  {vertices.map((v) => <option key={v.ordem} value={v.ordem}>{nomePonto(v)}</option>)}
-                </select>
-              </label>
-              <label>código
-                <input placeholder="DSBN-V-0758" value={novoV.codigo} onChange={(e) => setNovoV({ ...novoV, codigo: e.target.value })} />
-              </label>
-              <label>latitude GMS
-                <input placeholder="11 24 30,375 S" value={novoV.lat} onChange={(e) => setNovoV({ ...novoV, lat: e.target.value })} />
-              </label>
-              <label>longitude GMS
-                <input placeholder="39 4 47,198 W" value={novoV.lon} onChange={(e) => setNovoV({ ...novoV, lon: e.target.value })} />
-              </label>
-              <label>h (m)
-                <input placeholder="289,765" style={{ width: 100 }} value={novoV.h} onChange={(e) => setNovoV({ ...novoV, h: e.target.value })} />
-              </label>
-              <label>sigma h
-                <input style={{ width: 80 }} value={novoV.sigmaH} onChange={(e) => setNovoV({ ...novoV, sigmaH: e.target.value })} />
-              </label>
-              <button onClick={inserirV}>+ inserir</button>
-            </div>
-          </Secao>
-        </div>
-        <div className="tabela-wrap">
-          <table className="tabela-vertices">
-            <thead>
-              <tr><th>nº TXT</th><th>código</th><th>tipo</th><th>método</th><th>latitude</th><th>longitude</th><th>h (m)</th><th></th></tr>
-            </thead>
-            <tbody>
-              {vertices.map((v) => (
-                <tr key={v.ordem} className={v.ordem === verticeInicial ? "inicial" : ""}>
-                  <td>{v.num_txt ?? "—"}{v.rotulo_txt ? ` · ${v.rotulo_txt}` : ""}{v.ordem === verticeInicial ? " ★" : ""}</td>
-                  <td className="mono">{v.codigo ?? <span style={{ color: "var(--texto-2)" }}>na geração</span>}</td>
-                  <td>
-                    {v.inserido_manual ? (
-                      // V inserido à mão, ou vértice certificado do vizinho (código dele; um M
-                      // nosso igualado a ele continua M — a confrontação mora aí)
-                      <span className="chip V" title={/-[MPV]-/.test(v.codigo ?? "") && !/PA1/.test(v.metodo) ? "vértice certificado de parcela vizinha" : "vértice inserido"}>{v.tipo}</span>
-                    ) : (
-                      <select value={v.tipo} onChange={(e) => setVertice(v.ordem, { tipo: e.target.value as Vertice["tipo"] })}>
-                        <option>M</option><option>P</option><option>V</option>
-                      </select>
+                <Secao titulo={ehConferencia ? "Natureza e classificações" : "Registro, cartório e natureza"}
+                  selo={<span className={`secao-selo ${seloRegistro === camposRegistro.length ? "completa" : seloRegistro === 0 ? "vazia" : ""}`}>{seloRegistro} de {camposRegistro.length}</span>}
+                  dica={ehConferencia ? "SNCR e classificações do SIGEF" : "matrícula, CNS, SNCR e classificações do SIGEF"}>
+                  <div className="grade">
+                    <label>Natureza do serviço {sel(servico.natureza_servico, NATUREZAS_SERVICO, (v) => campo("natureza_servico", v))}</label>
+                    <label>Tipo pessoa {sel(servico.tipo_pessoa, TIPOS_PESSOA, (v) => campo("tipo_pessoa", v))}</label>
+                    <label>Situação {sel(servico.situacao, SITUACOES, (v) => campo("situacao", v))}</label>
+                    <label>Natureza da área {sel(servico.natureza_area, NATUREZAS_AREA, (v) => campo("natureza_area", v))}</label>
+                    <label>Código SNCR <input className="mono" value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
+                    {!ehConferencia && (
+                      <>
+                        <label>CNS (cartório)
+                          <input className="mono" list="cartorios" value={servico.cns ?? ""} onChange={(e) => campo("cns", e.target.value)} />
+                          <datalist id="cartorios">{cartorios.map((c) => <option key={c} value={c} />)}</datalist>
+                        </label>
+                        <label>Matrícula <input className="mono" value={servico.matricula ?? ""} onChange={(e) => campo("matricula", e.target.value)} /></label>
+                      </>
                     )}
-                  </td>
-                  <td>
-                    <select value={v.metodo} onChange={(e) => setVertice(v.ordem, { metodo: e.target.value })}>
-                      {METODOS_POSICIONAMENTO.map((m) => <option key={m}>{m}</option>)}
-                    </select>
-                  </td>
-                  <td className="mono">{v.lat_gms}</td>
-                  <td className="mono">{v.lon_gms}</td>
-                  <td className="mono">{String(v.h).replace(".", ",")}</td>
-                  <td>{v.inserido_manual && <button className="remover" title="Remover vértice inserido" onClick={() => removerV(v.ordem)}>✕</button>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                  </div>
+                  {ehConferencia && (
+                    <p className="sub" style={{ margin: "8px 0 0" }}>
+                      Matrícula e CNS ficam na etapa Documentos, junto da escolha entre matrícula e posse.
+                    </p>
+                  )}
+                </Secao>
 
-      {/* ---------------- Glebas: só no serviço com gleba ----------------
-          Fica ANTES da geração de propósito: as divisões têm de estar montadas
-          quando a planta for desenhada, que é o pedido do fluxo de gleba. */}
-      {temGlebas && (
-        <section className="bloco" id="bloco-glebas">
-          <header>
-            <span className="num-bloco">🧩</span>
-            <h3>Glebas</h3>
-            <span className="desc">
-              {glebas.length} gleba(s) — desenhadas dentro do perímetro, na mesma planta
-            </span>
-          </header>
-          <GlebasEditor
-            glebas={glebas}
-            vertices={vertices}
-            trechos={trechosOrdenados}
-            servicoId={servico.id}
-            areaTotalHa={Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0}
-            onChange={setGlebas}
-          />
-          {glebas.filter((g) => g.anel.length >= 3).length > 0 && (
-            <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <BotaoPerigo
-                titulo="Separar cada gleba em um serviço próprio"
-                confirmacao={`criar ${glebas.filter((g) => g.anel.length >= 3).length} serviço(s)`}
-                onConfirmar={separarGlebas}
-              >⧉ Separar glebas em serviços</BotaoPerigo>
-              <span className="sub" style={{ flex: 1, minWidth: 260 }}>
-                Cria um serviço por gleba, com os vértices e os códigos que ela já tem.
-                Este serviço continua como está — separar não move nada.
+                <Secao titulo="Identificação da parcela"
+                  selo={<span className={`secao-selo ${seloParcela === 3 ? "completa" : seloParcela === 0 ? "vazia" : ""}`}>{seloParcela} de 3</span>}
+                  dica="use quando a gleba foi dividida em partes">
+                  <div className="grade">
+                    <label>Denominação da parcela <input value={servico.denominacao_parcela ?? ""} placeholder="Parte 1" onChange={(e) => campo("denominacao_parcela", e.target.value)} /></label>
+                    <label>Parcela número <input value={servico.parcela_numero ?? ""} placeholder="001" onChange={(e) => campo("parcela_numero", e.target.value)} /></label>
+                    <label>Lado {sel(servico.lado, LADOS, (v) => campo("lado", v))}</label>
+                  </div>
+                </Secao>
+
+                <Secao titulo="Espólio e inventariante"
+                  selo={<span className={`secao-selo ${servico.is_espolio ? "completa" : ""}`}>{servico.is_espolio ? "é espólio" : "não"}</span>}
+                  abrirEm={!!servico.is_espolio}
+                  dica="proprietário falecido, representado por inventariante">
+                  <label className="linha-check">
+                    <input type="checkbox" checked={!!servico.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
+                    É espólio (possuidor/proprietário falecido com inventariante)
+                  </label>
+                  {servico.is_espolio && (
+                    <div className="grade">
+                      <label>Nome do inventariante <input value={servico.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome do inventariante" /></label>
+                      <label>CPF do inventariante <input className="mono" value={servico.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
+                      <label>RG do inventariante (opcional) <input value={servico.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
+                    </div>
+                  )}
+                </Secao>
+              </div>
+            </section>
+            {navEtapa}
+          </>
+        )}
+
+        {/* ================= Etapa · Confrontantes ================= */}
+        {etapa === "confrontantes" && (
+          <>
+            <div className="etapa-cabeca" id="bloco-confrontantes">
+              <h2>Confrontantes</h2>
+              <span className="desc">
+                {trechosOrdenados.length} {trechosOrdenados.length === 1 ? "trecho" : "trechos"} · {confrontantesPreenchidos} {confrontantesPreenchidos === 1 ? "descrito" : "descritos"}
+                {numeracao.size > 0 ? ` · ${numeracao.size} ${numeracao.size === 1 ? "numerado" : "numerados"}` : ""} — as cores correspondem ao mapa
               </span>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* ---------------- Conferência de área ----------------
-          A conferência para aqui. No lugar do SIGEF e das peças, o que ela tem é
-          o documento do imóvel, a folha da planta e o Memorial Tabular.
-
-          Fica ANTES da imagem de satélite e da geração de propósito: tudo aqui
-          decide o que a planta vai imprimir, e configuração depois do resultado
-          é convite a gerar duas vezes. */}
-      {ehConferencia && (
-        <section className="bloco" id="bloco-conferencia">
-          <header>
-            <span className="num-bloco">📐</span>
-            <h3>Conferência de área</h3>
-            <span className="desc">documento do imóvel, folha e entregas da prévia — não vai ao SIGEF e não consome numeração oficial</span>
-          </header>
-
-          <div className="grade">
-            <label>Folha da planta
-              <select value={servico.folha_conferencia ?? "A3"}
-                onChange={(e) => campo("folha_conferencia", e.target.value as Servico["folha_conferencia"])}>
-                <option value="A3">A3 (420×297 mm)</option>
-                <option value="A4">A4 (297×210 mm)</option>
-              </select>
-              <small className="sub">padrão A3 · vale na próxima geração dos documentos</small>
-            </label>
-
-            {/* Matrícula ou posse: é o que decide se a planta imprime
-                "(MATR./CNS.)" ou "(POSSE)". Posse não tem matrícula nem
-                cartório — pedir os dois a um posseiro é pedir um dado que não
-                existe, então os campos só aparecem para quem tem matrícula. E a
-                prévia pode acontecer antes de o imóvel ter qualquer documento:
-                é o terceiro estado, que não imprime nem um nem outro. */}
-            <label>Situação do imóvel
-              <select id="campo-situacao-imovel" value={situacaoImovel}
-                onChange={(e) => setSituacaoImovel(e.target.value as SituacaoImovel)}>
-                <option value="matricula">Matrícula (imóvel registrado)</option>
-                <option value="posse">Posse (imóvel sem matrícula)</option>
-                <option value="nao_informar">Ainda sem documento — não imprimir</option>
-              </select>
-              <small className="sub">
-                {situacaoImovel === "matricula" ? "a planta sai com (MATR./CNS.) e o campo Matrícula do Imóvel"
-                  : situacaoImovel === "posse" ? "a planta sai com (POSSE) no lugar da matrícula"
-                    : "a planta sai sem o bloco de matrícula/posse"}
-              </small>
-            </label>
-
-            {pedeMatricula(situacaoImovel) && (
-              <>
-                <label>Matrícula
-                  <input id="campo-matricula" value={servico.matricula ?? ""} placeholder="1.234"
-                    onChange={(e) => campo("matricula", e.target.value || null)} />
-                </label>
-                <label>CNS (cartório)
-                  <input list="cartorios" value={servico.cns ?? ""} placeholder="00.810-2"
-                    onChange={(e) => campo("cns", e.target.value || null)} />
-                  <datalist id="cartorios">{cartorios.map((c) => <option key={c} value={c} />)}</datalist>
-                </label>
-              </>
-            )}
-          </div>
-
-          {/* A prévia acontece antes de o imóvel ter documento: a área pode não
-              ter nome e o TRT pode não ter sido emitido. Campo em branco na
-              planta parece dado perdido — aqui o operador diz o que existe. Só
-              vale na conferência. Matrícula/posse não está aqui: virou a escolha
-              de três estados acima, que também guarda os dados do documento. */}
-          <fieldset style={{ border: "1px solid var(--borda)", borderRadius: 8, padding: "10px 14px", marginTop: 12 }}>
-            <legend className="sub" style={{ padding: "0 6px" }}>O que sai na planta</legend>
-            {([
-              ["conf_exibir_denominacao", "Nome da fazenda", "a denominação no desenho e no planimétrico"],
-              ["conf_exibir_trt", "TRT", "o número do termo de responsabilidade técnica"],
-            ] as const).map(([campoNome, rotulo, dica]) => (
-              <label key={campoNome} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 6 }}>
-                <input type="checkbox" checked={servico[campoNome] !== false}
-                  onChange={(e) => campo(campoNome, e.target.checked)} />
-                <b>{rotulo}</b>
-                <small className="sub">— {dica}</small>
-              </label>
-            ))}
-          </fieldset>
-
-          <div style={{ marginTop: 12 }}>
-            <button onClick={gerarTabular} disabled={!docsProntos || gerandoTabular}>
-              {gerandoTabular ? <><span className="spinner" /> Gerando…</> : "📄 Gerar Memorial Tabular"}
-            </button>
-            <p className="sub" style={{ marginTop: 6 }}>
-              {docsProntos
-                ? "Sai do cálculo do sistema, com os mesmos azimutes e distâncias do Memorial Descritivo. Não são os valores SGL que o SIGEF devolve após certificar — por isso vale como prévia."
-                : "Gere primeiro o memorial e a planta no botão do rodapé."}
-            </p>
-          </div>
-
-          {tabular && (
-            <div className="downloads" style={{ marginTop: 10 }}>
-              {tabular.map((a) => (
-                <a key={a.url} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
-                  <span className="ext">DOCX</span> {a.titulo}
-                </a>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* ---------------- Imagem de satélite: entra na planta desta etapa e na pós-SIGEF ---------------- */}
-      <section className="bloco" id="bloco-satelite">
-        <header>
-          <span className="num-bloco">🛰</span>
-          <h3>Imagem de satélite</h3>
-          <span className="desc">entra no quadro PLANTA DE SITUAÇÃO · a mesma imagem serve às duas plantas</span>
-        </header>
-        <label className="dropzone" style={{ padding: "14px 18px" }}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
-          {satelite
-            ? <><b>🛰 {satelite.nome}</b><span>clique para trocar a imagem</span></>
-            : salvo.satelite
-              ? <><b>🛰 imagem guardada da geração anterior</b><span>não precisa reenviar — clique só se quiser trocar</span></>
-              : <><b>🛰 Enviar imagem de satélite (PNG/JPG)</b><span>necessária para gerar a planta junto do memorial e da planilha</span></>}
-          <input type="file" accept="image/png,image/jpeg" hidden
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
-        </label>
-      </section>
-
-      {gerado && (
-        <section className="bloco gerados" id="bloco-gerados">
-          <header>
-            <span className="num-bloco">✓</span>
-            <h3>Documentos gerados</h3>
-            <span className="desc">regeração ilimitada — cada geração vira uma nova versão no histórico</span>
-          </header>
-          <div className="downloads">
-            <a className="botao-download" href={gerado.memorial_docx} target="_blank" rel="noreferrer">
-              <span className="ext">DOCX</span> Memorial Descritivo GEO
-            </a>
-            <a className="botao-download" href={gerado.planilha_ods} target="_blank" rel="noreferrer">
-              <span className="ext">ODS</span> Planilha SIGEF
-            </a>
-            {gerado.planta_pdf && (
-              <a className="botao-download" href={gerado.planta_pdf} target="_blank" rel="noreferrer">
-                <span className="ext">PDF</span> Planta {gerado.folha ?? "A1"} (dados do sistema)
-              </a>
-            )}
-          </div>
-          <p style={{ color: "var(--texto-2)" }}>
-            Vértice inicial {gerado.resumo.verticeInicial} · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
-          </p>
-        </section>
-      )}
-
-      {/* ---------------- Etapa 4: documento do SIGEF (só após gerar os documentos) ----------------
-          Não montado na conferência: os handlers de SIGEF não podem ficar
-          acessíveis numa modalidade que não passa por ele. */}
-      {ehConferencia ? null : !docsProntos ? (
-        <section className="bloco" style={{ opacity: 0.6 }}>
-          <header>
-            <span className="num-bloco">4</span>
-            <h3>PDF do SIGEF, planta oficial e peças</h3>
-            <span className="desc">liberados após a geração do memorial, da planilha e da planta</span>
-          </header>
-          <p style={{ color: "var(--texto-2)", margin: 0 }}>
-            Gere o Memorial (DOCX), a Planilha (ODS) e a Planta (PDF) no botão "⚡ Gerar documentos" no rodapé ·
-            certifique no SIGEF · envie o PDF aqui · gere a Planta do SIGEF e as peças técnicas.
-          </p>
-        </section>
-      ) : (
-        <section className="bloco" id="bloco-sigef">
-          <header>
-            <span className="num-bloco">4</span>
-            <h3>Documento do SIGEF</h3>
-            <span className="desc">após certificar a planilha, envie o PDF de prévia/certificação — ele libera a planta e as peças</span>
-          </header>
-          {sigefB64 || salvo.sigef ? (
-            <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-              <span className="ok" style={{ margin: 0 }}>
-                📄 {sigefB64 ? `${sigefNome} carregado` : "PDF guardado da geração anterior"}
-              </span>
-              <label style={{ cursor: "pointer", color: "var(--primaria)" }}>
-                trocar PDF
-                <input type="file" accept=".pdf" hidden
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSigef(f); e.target.value = ""; }} />
-              </label>
-            </div>
-          ) : (
-            <label className="dropzone dropzone-pdf" style={{ padding: "26px 20px" }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSigef(f); }}>
-              <b>📄 Arraste ou clique para enviar o PDF de prévia do SIGEF</b>
-              <span>com ele o sistema gera a Planta e as 7 peças técnicas</span>
-              <input type="file" accept=".pdf" hidden
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSigef(f); e.target.value = ""; }} />
-            </label>
-          )}
-
-          {/* ------- SIGEF acusou sobreposição? ------- */}
-          <Secao titulo="⚠️ O SIGEF acusou sobreposição?"
-            dica="recorta as invasões e regera a planilha"
-            abrirEm={sobreCsvs.length > 0 || relatorioSobre !== null}>
-            <p style={{ color: "var(--texto-2)", marginTop: 0 }}>
-              Quando há sobreposição, o SIGEF não gera o PDF e libera o CSV de cada parcela certificada
-              que conflita. Envie <b>todos</b> esses CSVs aqui. Com a opção abaixo ligada, a divisa com o
-              vizinho passa a ser descrita pelos <b>vértices já certificados dele</b> (mesmo código, mesmas
-              coordenadas do CSV): vértices nossos a menos da tolerância de um vértice certificado são
-              igualados a ele, e os vértices medidos dentro da parcela alheia saem. Onde ainda sobrar
-              conflito, o sistema recorta com o afastamento escolhido e insere vértices calculados
-              (tipo V · método PA1). Ao final regera a planilha ODS para reenvio ao SIGEF.
-            </p>
-            <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-              <label className="dropzone" style={{ padding: "14px 18px", flex: "1 1 280px" }}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files?.length) carregarCsvsSobreposicao(e.dataTransfer.files); }}>
-                <b>📑 Enviar CSVs das parcelas sobrepostas</b>
-                <span>exportacao (n).csv — pode selecionar vários de uma vez</span>
-                <input type="file" accept=".csv" multiple hidden
-                  onChange={(e) => { if (e.target.files?.length) carregarCsvsSobreposicao(e.target.files); e.target.value = ""; }} />
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <input type="checkbox" checked={usarCertificados} onChange={(e) => setUsarCertificados(e.target.checked)} />
-                <span>Usar os vértices certificados do vizinho
-                  <small className="sub" style={{ display: "block" }}>divisa pelos pontos do CSV, sem pontos virtuais</small></span>
-              </label>
-              <label>Tolerância p/ igualar (m)
-                <input style={{ width: 80 }} value={tolIgualar} disabled={!usarCertificados} onChange={(e) => setTolIgualar(e.target.value)} />
-                <small className="sub">vértice nosso até esta distância vira o certificado</small>
-              </label>
-              <label>Afastamento (m)
-                <input style={{ width: 80 }} value={afastamento} onChange={(e) => setAfastamento(e.target.value)} />
-                <small className="sub">{usarCertificados ? "recuo onde ainda sobrar conflito" : "recuo aplicado à divisa"}</small>
-              </label>
-              <button className="principal" disabled={corrigindo || sobreCsvs.length === 0} onClick={corrigirSobreposicao}>
-                {corrigindo ? "Corrigindo e regerando…" : "🛠 Corrigir sobreposição e regerar planilha"}
+              <span className="esticar" />
+              {/* Divisa curta não comporta o bloco de nome do vizinho: o texto quebra
+                  em muitas linhas e acaba empilhado no do vizinho de baixo. Marcado
+                  aqui, o confrontante sai da planta como número e reaparece por
+                  extenso no quadro CONFRONTANTES do rodapé. */}
+              <button
+                className={modoNumeracao ? "principal" : ""}
+                title="Escolher quais confrontantes saem NUMERADOS na planta: no desenho fica só o número e o texto vai para o quadro do rodapé"
+                onClick={() => setModoNumeracao((v) => !v)}>
+                {modoNumeracao ? "Concluir numeração" : "Adicionar numeração"}
               </button>
             </div>
-            {sobreCsvs.length > 0 && (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-                {sobreCsvs.map((c) => (
-                  <span key={c.nome} className="chip" style={{ display: "inline-flex", gap: 6, alignItems: "center", background: "#eef", borderRadius: 12, padding: "2px 10px" }}>
-                    📄 {c.nome}
-                    <button className="remover" title="Remover CSV"
-                      onClick={() => setSobreCsvs((prev) => prev.filter((x) => x.nome !== c.nome))}>✕</button>
-                  </span>
-                ))}
+            {modoNumeracao && (
+              <p className="sub" style={{ margin: "-8px 0 0" }}>
+                Marque os confrontantes cujo espaço na planta é curto demais para o nome.
+                Cada marcado recebe um número, na ordem do perímetro, e os dados dele
+                saem no quadro <b>CONFRONTANTES</b> embaixo do desenho. Faixa de domínio
+                e curso d'água não entram: o nome deles acompanha o próprio traço.
+              </p>
+            )}
+            <div className="confrontantes">
+              <div className="trechos">
+                {trechosOrdenados.map((t) => {
+                  const v = vertices.find((x) => x.ordem === t.vertice_inicio_ordem);
+                  const camposVisiveis = camposAbertos.has(t.vertice_inicio_ordem);
+                  const ehVia = t.eh_via || ehViaPorLimite(t.tipo_limite);
+                  return (
+                    <div className="trecho" key={`t-${t.vertice_inicio_ordem}`}
+                      style={{ ["--cor-trecho" as string]: corDoTrecho(t), marginBottom: 0 }}>
+                      <div className="trecho-cabeca">
+                        {numeracao.get(t.vertice_inicio_ordem) !== undefined && (
+                          <span className="badge-num" title="Sai numerado na planta; os dados vão ao quadro CONFRONTANTES do rodapé">
+                            {numeracao.get(t.vertice_inicio_ordem)}
+                          </span>
+                        )}
+                        <input className="apelido" value={t.apelido_txt ?? ""} placeholder="apelido do confrontante"
+                          aria-label="Apelido do confrontante"
+                          onChange={(e) => setTrecho(t, { apelido_txt: e.target.value || null })} />
+                        {/* Trocar o ponto aqui move a confrontação inteira — o descritivo,
+                            o apelido, o CNS e a matrícula vão junto. */}
+                        <span className="ponto" title="Vértice M onde esta confrontação começa; ela vai até o próximo M. Trocar move a confrontação para o outro ponto, sem redigitar nada.">
+                          a partir do ponto
+                          <select value={t.vertice_inicio_ordem} aria-label="Ponto inicial da confrontação"
+                            onChange={(e) => moverTrecho(t, Number(e.target.value))}>
+                            {[...vertices]
+                              .filter((x) => x.tipo !== "M" || x.ordem === t.vertice_inicio_ordem)
+                              .sort((a, b) => a.ordem - b.ordem)
+                              .map((x) => (
+                                <option key={x.ordem} value={x.ordem}>{nomePonto(x)}</option>
+                              ))}
+                          </select>
+                        </span>
+                        <select className="limite" value={t.tipo_limite} title="Tipo de limite" aria-label="Tipo de limite"
+                          onChange={(e) => setTrecho(t, { tipo_limite: e.target.value })}>
+                          {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
+                        </select>
+                        <label className={`marcador ${ehVia ? "via" : ""}`} title={ehRioPorLimite(t.tipo_limite)
+                          ? "LN1 é limite natural de curso d'água: sai na planta como linha dupla AZUL, no lugar da vermelha"
+                          : ehViaPorLimite(t.tipo_limite)
+                            ? "LA3 é limite de faixa de domínio: sempre via"
+                            : "Estrada, rodovia, corredor, linha férrea — desenhada na planta como linha dupla vermelha"}>
+                          <input type="checkbox" checked={ehVia}
+                            disabled={ehViaPorLimite(t.tipo_limite)}
+                            onChange={(e) => setTrecho(t, { eh_via: e.target.checked })} />
+                          faixa de domínio{ehViaPorLimite(t.tipo_limite) ? " (LA3)" : ""}
+                        </label>
+                        {/* LN1 não é escolha de checkbox, é o tipo de limite — do
+                            mesmo jeito que LA3. Aqui só se avisa a cor que sai. */}
+                        {ehRioPorLimite(t.tipo_limite) && <span className="chip rio">≈ rio (LN1, azul)</span>}
+                        {modoNumeracao && (
+                          <label className="marcador" title={!ehNumeravel(t)
+                            ? "Faixa de domínio e curso d'água não são numerados: o nome acompanha o traço da via"
+                            : !chaveDoTrecho(t)
+                              ? "Preencha o descritivo ou o apelido: é o texto que sairia no quadro do rodapé"
+                              : "Na planta sai só o número; nome, matrícula e CPF vão para o quadro CONFRONTANTES do rodapé"}>
+                            <input type="checkbox" checked={!!t.numerado && ehNumeravel(t)}
+                              disabled={!ehNumeravel(t) || !chaveDoTrecho(t)}
+                              onChange={(e) => marcarNumeracao(t, e.target.checked)} />
+                            numerar
+                          </label>
+                        )}
+                        <span style={{ flex: 1 }} />
+                        <button className="remover" title="Remover trecho" onClick={() => removeTrecho(t)}>remover</button>
+                      </div>
+                      <textarea
+                        placeholder={"Descritivo formal (opcional), ex.: (MATR.432/CNS.00.770-8) FAZENDA LAMEIRO\\ RUDSON PINTO FERREIRA\\ CPF:791.234.145-53"}
+                        value={t.descritivo} onChange={(e) => setTrecho(t, { descritivo: e.target.value })} />
+                      {!t.descritivo && (
+                        <div className="pendencia neutra">
+                          descritivo vazio — o memorial usará o apelido {t.apelido_txt ? `"${t.apelido_txt}"` : "(vazio: segue sem cláusula de confrontação)"} · inicia no pt {v ? nomePonto(v) : "?"}
+                        </div>
+                      )}
+                      {camposVisiveis ? (
+                        <div className="trecho-campos">
+                          <label>CNS <input className="mono" value={t.cns ?? ""} onChange={(e) => setTrecho(t, { cns: e.target.value || null })} /></label>
+                          <label>Matrícula <input className="mono" value={t.matricula ?? ""} onChange={(e) => setTrecho(t, { matricula: e.target.value || null })} /></label>
+                          <button className="link" style={{ alignSelf: "end", marginBottom: 10 }}
+                            onClick={() => setCamposAbertos((s) => { const n = new Set(s); n.delete(t.vertice_inicio_ordem); return n; })}>ocultar campos</button>
+                        </div>
+                      ) : (
+                        <div className="trecho-resumo">
+                          <span>CNS <span className={`mono ${t.cns ? "tem" : ""}`}>{t.cns || "—"}</span></span>
+                          <span>Matrícula <span className={`mono ${t.matricula ? "tem" : ""}`}>{t.matricula || "—"}</span></span>
+                          <button className="link" onClick={() => setCamposAbertos((s) => new Set(s).add(t.vertice_inicio_ordem))}>editar campos</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="add-trecho">
+                  <span>Nova transição no ponto</span>
+                  <select id="novo-trecho-ordem" defaultValue="" aria-label="Ponto da nova transição">
+                    <option value="" disabled>—</option>
+                    {vertices.filter((v) => v.tipo !== "M")
+                      .map((v) => <option key={v.ordem} value={v.ordem}>{nomePonto(v)}</option>)}
+                  </select>
+                  <button onClick={() => {
+                    const el = document.getElementById("novo-trecho-ordem") as HTMLSelectElement;
+                    if (el.value !== "") { addTrecho(Number(el.value)); el.value = ""; }
+                  }}>+ adicionar transição</button>
+                </div>
               </div>
-            )}
-            {relatorioSobre && (
-              <div style={{ marginTop: 14 }}>
-                <table className="tabela-vertices" style={{ maxWidth: 720 }}>
-                  <thead><tr><th>parcela (CSV)</th><th>sobreposição</th><th>situação</th></tr></thead>
-                  <tbody>
-                    {relatorioSobre.parcelas.map((p) => (
-                      <tr key={p.nome}>
-                        <td>{p.nome}</td>
-                        <td className="mono">{p.areaSobrepostaM2.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m²</td>
-                        <td style={{ color: STATUS_PARCELA[p.status].cor, fontWeight: 600 }}>{STATUS_PARCELA[p.status].rotulo}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {(relatorioSobre.removidos.length > 0 || (relatorioSobre.compartilhados?.length ?? 0) > 0) && (
-                  <p style={{ color: "var(--texto-2)", margin: "8px 0 0" }}>
-                    Área {relatorioSobre.areaAntesHa.toLocaleString("pt-BR", { minimumFractionDigits: 4 })} ha →{" "}
-                    {relatorioSobre.areaDepoisHa.toLocaleString("pt-BR", { minimumFractionDigits: 4 })} ha ·{" "}
-                    {relatorioSobre.mantidos} vértices mantidos
-                    {(relatorioSobre.compartilhados?.length ?? 0) > 0 && (
-                      <> · {relatorioSobre.compartilhados!.length} certificados do vizinho
-                        {(relatorioSobre.igualados ?? 0) > 0 ? ` (${relatorioSobre.igualados} igualados)` : ""}:{" "}
-                        <span className="mono">{relatorioSobre.compartilhados!.join(", ")}</span></>
-                    )}
-                    {relatorioSobre.novos.length > 0 && (
-                      <> · {relatorioSobre.novos.length} virtuais ({relatorioSobre.novos[0]}…{relatorioSobre.novos[relatorioSobre.novos.length - 1]})</>
-                    )}
-                    {relatorioSobre.removidos.length > 0 && (
-                      <> · {relatorioSobre.removidos.length} removidos: <span className="mono">{relatorioSobre.removidos.join(", ")}</span></>
-                    )}
-                  </p>
-                )}
-                {relatorioSobre.avisos.map((a, i) => (
-                  <div key={i} className="erro" style={{ marginTop: 8, background: "#fff4e5", color: "#8a5300" }}>⚠️ {a}</div>
-                ))}
+              <div className="mapa">
+                <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} />
+                <div className="legenda">
+                  {trechosOrdenados.map((t) => (
+                    <span className="item" key={`leg-${t.vertice_inicio_ordem}`}>
+                      <span className="ponto-cor" style={{ background: corDoTrecho(t) }} />
+                      {numeracao.get(t.vertice_inicio_ordem) !== undefined && (
+                        <span className="badge-num pequeno">{numeracao.get(t.vertice_inicio_ordem)}</span>
+                      )}
+                      {t.apelido_txt || `pt ${nomePonto(vertices.find((v) => v.ordem === t.vertice_inicio_ordem) ?? vertices[0])}`}
+                      {ehRioPorLimite(t.tipo_limite)
+                        ? <span className="marca-rio" title="Curso d'água (LN1): sai na planta como linha dupla azul"> ≈ rio</span>
+                        : t.eh_via && <span className="marca-via" title="Faixa de domínio pública: sai na planta como linha dupla vermelha"> ═ via</span>}
+                    </span>
+                  ))}
+                </div>
+                <p className="sub" style={{ margin: 0 }}>
+                  A linha dupla vermelha é o que sairá na planta como estrada. Se ela aparecer
+                  onde não há estrada, desmarque "faixa de domínio" naquele trecho.
+                  A linha dupla azul é o curso d'água: sai em todo trecho com tipo de limite
+                  LN1. Se ali não houver rio, troque o tipo de limite.
+                </p>
               </div>
-            )}
-          </Secao>
-        </section>
-      )}
-
-      {/* ---------------- Etapa 5A: planta (A1 matrícula / A3 posse) ----------------
-          `!ehConferencia` é redundante com `sigefB64` (a conferência não tem
-          onde carregar o PDF), mas explícito: a condição de existir é a
-          modalidade, não o efeito colateral de um estado vazio. */}
-      {!ehConferencia && docsProntos && temSigef && (
-        <section className="bloco" id="bloco-planta">
-          <header>
-            <span className="num-bloco">5</span>
-            <h3>Planta {folhaEfetiva} {servico.tipo_imovel === "posse" ? "(posse)" : "(matrícula)"} do SIGEF</h3>
-            <span className="desc">mesmo padrão da planta gerada com o memorial, mas desenhada a partir do PDF certificado do SIGEF · escala automática · carimbo e desenhista vêm das Configurações</span>
-          </header>
-          <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-            <label>Folha
-              <select value={folhaEfetiva} onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
-                <option value="A1">A1 (841×594 mm)</option>
-                <option value="A3">A3 (420×297 mm)</option>
-              </select>
-              <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
-            </label>
-            <label className="dropzone" style={{ padding: "14px 18px", flex: "1 1 280px" }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
-              {satelite
-                ? <b>🛰 {satelite.nome}</b>
-                : <><b>🛰 Enviar imagem de satélite (PNG/JPG)</b><span>obrigatória — entra no quadro PLANTA DE SITUAÇÃO</span></>}
-              <input type="file" accept="image/png,image/jpeg" hidden
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
-            </label>
-            <button className="principal" disabled={gerandoPlanta || !satelite} onClick={gerarPlanta}
-              title={!satelite ? "Envie a imagem de satélite primeiro" : undefined}>
-              {gerandoPlanta ? "Gerando planta…" : `🗺 Gerar Planta ${folhaEfetiva} do SIGEF (PDF)`}
-            </button>
-            {plantaUrl && (
-              <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
-                <span className="ext">PDF</span> Planta {folhaEfetiva} (SIGEF)
-              </a>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* ---------------- Etapa 5B: peças técnicas ---------------- */}
-      {!ehConferencia && docsProntos && temSigef && (
-      <section className="bloco" id="bloco-pecas">
-        <header>
-          <span className="num-bloco">6</span>
-          <h3>Peças técnicas</h3>
-          <span className="desc">os dados abaixo + o memorial + o PDF do SIGEF viram as 7 peças (memorial, tabular, cartas, declarações, requerimento)</span>
-        </header>
-
-        {/* Só o que muda peça a peça fica à vista; a papelada do RT vem do
-            cadastro e só aparece quando estiver incompleta. */}
-        <div className="grade" style={{ marginBottom: 12 }}>
-          <label>Situação do imóvel
-            <select value={servico.tipo_imovel ?? "matricula"} onChange={(e) => campo("tipo_imovel", e.target.value as "matricula" | "posse")}>
-              <option value="matricula">Matrícula (proprietário)</option>
-              <option value="posse">Posse (posseiro)</option>
-            </select>
-          </label>
-          <label>Gênero do detentor
-            <select value={servico.detentor_genero ?? "M"} onChange={(e) => campo("detentor_genero", e.target.value as "M" | "F")}>
-              <option value="M">Masculino</option><option value="F">Feminino</option>
-            </select>
-          </label>
-          <label style={{ gridColumn: "span 2" }}>Endereço dos requerentes
-            <input placeholder="Rua ..., Nº ..., Bairro, Cidade, Estado, CEP:..." value={servico.endereco_detentor ?? ""} onChange={(e) => campo("endereco_detentor", e.target.value || null)} />
-          </label>
-          <label>Área constante na matrícula (ha)
-            <input placeholder="ex.: 86" value={servico.area_matricula_ha ?? ""} onChange={(e) => campo("area_matricula_ha", e.target.value || null)} />
-          </label>
-          <label>Faixas de domínio (detectadas na planta)
-            <input readOnly value={viasDetectadas.length ? viasDetectadas.join(" · ") : "nenhuma"} />
-            <small className="sub">{viasDetectadas.length
-              ? `sai ${viasDetectadas.length} ${viasDetectadas.length > 1 ? "declarações" : "declaração"} de faixa de domínio, uma por via`
-              : "sem estrada, corredor, linha férrea ou rodovia na confrontação — a declaração não é gerada"}</small>
-          </label>
-        </div>
-
-        <Secao titulo="Segundo requerente"
-          selo={<span className={`secao-selo ${servico.requerente2_nome ? "completa" : ""}`}>{servico.requerente2_nome || "nenhum"}</span>}
-          abrirEm={!!servico.requerente2_nome}
-          dica="cônjuge ou co-proprietário que assina junto">
-          <div className="grade">
-            <label>Requerente 2 (opcional)
-              <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} />
-            </label>
-            <label>CPF do requerente 2
-              <input value={servico.requerente2_cpf ?? ""} onChange={(e) => campo("requerente2_cpf", e.target.value || null)} />
-            </label>
-            <label>Gênero do requerente 2
-              <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
-                <option value="M">Masculino</option><option value="F">Feminino</option>
-              </select>
-            </label>
-            <label>RG do detentor (opcional)
-              <input value={servico.detentor_rg ?? ""} onChange={(e) => campo("detentor_rg", e.target.value || null)} />
-            </label>
-          </div>
-        </Secao>
-
-        <Secao titulo="Dados do responsável técnico nas peças"
-          selo={(() => {
-            const n = contarPreenchidos([rtExtras.formacao, rtExtras.conselho_sigla, rtExtras.conselho_numero, rtExtras.identidade, rtExtras.cpf]);
-            return <span className={`secao-selo ${n === 5 ? "completa" : n === 0 ? "vazia" : ""}`}>{n} de 5</span>;
-          })()}
-          abrirEm={contarPreenchidos([rtExtras.formacao, rtExtras.conselho_numero, rtExtras.identidade, rtExtras.cpf]) < 4}
-          dica={rtSel ? `salvo no cadastro de ${rtSel.nome}` : "selecione um RT no bloco 1"}>
-          <div className="grade">
-            <label>Formação do RT
-              <input placeholder="Técnico em Agropecuária" value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} />
-            </label>
-            <label>Conselho (sigla)
-              <input placeholder="CFTA / CREA" value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} />
-            </label>
-            <label>Conselho (número)
-              <input placeholder="0578839458-9" value={rtExtras.conselho_numero} onChange={(e) => setRtExtras({ ...rtExtras, conselho_numero: e.target.value })} />
-            </label>
-            <label>Identidade do RT
-              <input placeholder="00.000.000-00 SSP/BA" value={rtExtras.identidade} onChange={(e) => setRtExtras({ ...rtExtras, identidade: e.target.value })} />
-            </label>
-            <label>CPF do RT
-              <input value={rtExtras.cpf} onChange={(e) => setRtExtras({ ...rtExtras, cpf: e.target.value })} />
-            </label>
-          </div>
-        </Secao>
-
-        <button className="principal" style={{ marginTop: 14 }} disabled={gerandoPecas} onClick={gerarPecas}>
-          {gerandoPecas ? "Gerando as 7 peças técnicas…" : "⚡ Gerar peças técnicas"}
-        </button>
-        {erroPecas && <div className="erro">{erroPecas}</div>}
-        {pecas && (
-          <div className="gerados" style={{ border: "none", background: "transparent", padding: "12px 0 0" }}>
-            <p style={{ color: "var(--texto-2)", margin: "4px 0 8px" }}>
-              Área SGL {pecas.resumo.areaHa} ha · perímetro {pecas.resumo.perimetro} m · TRT {pecas.resumo.trt} ·{" "}
-              {pecas.resumo.vertices} vértices · {pecas.resumo.cartas} carta(s) de anuência{pecas.resumo.via ? ` · via ${pecas.resumo.via}` : ""}
-            </p>
-            <div className="downloads">
-              {pecas.arquivos.map((a) => (
-                <a key={a.titulo} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
-                  <span className="ext">DOCX</span> {a.titulo}
-                </a>
-              ))}
             </div>
-          </div>
+            {navEtapa}
+          </>
         )}
-      </section>
-      )}
 
-      {/* ---------------- Histórico de documentos ---------------- */}
-      <section className="bloco">
-        <header><h3>📁 Histórico de documentos deste serviço</h3>
-          <span className="desc">cada geração vira uma versão preservada — baixe qualquer uma a qualquer momento</span></header>
-        <HistoricoDocs servicoId={servico.id} />
-      </section>
+        {/* ================= Etapa · Glebas (só no serviço com gleba) =================
+            Fica ANTES da geração de propósito: as divisões têm de estar montadas
+            quando a planta for desenhada, que é o pedido do fluxo de gleba. */}
+        {etapa === "glebas" && temGlebas && (
+          <>
+            <section className="bloco" id="bloco-glebas">
+              <header>
+                <h3>Glebas</h3>
+                <span className="desc">{glebas.length} gleba(s) — desenhadas dentro do perímetro, na mesma planta</span>
+              </header>
+              <GlebasEditor
+                glebas={glebas}
+                vertices={vertices}
+                trechos={trechosOrdenados}
+                servicoId={servico.id}
+                areaTotalHa={Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0}
+                onChange={setGlebas}
+              />
+              {glebas.filter((g) => g.anel.length >= 3).length > 0 && (
+                <div className="rodape-bloco">
+                  <BotaoPerigo
+                    titulo="Separar cada gleba em um serviço próprio"
+                    confirmacao={`criar ${glebas.filter((g) => g.anel.length >= 3).length} serviço(s)`}
+                    onConfirmar={separarGlebas}
+                    className=""
+                  >Separar glebas em serviços</BotaoPerigo>
+                  <span className="sub" style={{ flex: 1, minWidth: 260 }}>
+                    Cria um serviço por gleba, com os vértices e os códigos que ela já tem.
+                    Este serviço continua como está — separar não move nada.
+                  </span>
+                </div>
+              )}
+            </section>
+            {navEtapa}
+          </>
+        )}
 
-      {/* ---------------- Preview (rodapé fixo) ---------------- */}
+        {/* ================= Etapa · Vértices ================= */}
+        {etapa === "vertices" && (
+          <>
+            <div className="etapa-cabeca" id="bloco-vertices">
+              <h2>Vértices</h2>
+              <span className="desc">{vertices.length} pontos · início automático em {verticeInicialNome} (mais ao norte, exigido pelo SIGEF)</span>
+              <span className="esticar" />
+              {/* O método era um select por linha: em 60 vértices, 60 cliques para
+                  trocar todos. Aqui troca de uma vez, sem perder o ajuste por linha. */}
+              <label>Método em massa
+                <select defaultValue="" onChange={(e) => {
+                  const m = e.target.value;
+                  if (!m) return;
+                  setVertices((vs) => vs.map((v) => ({ ...v, metodo: m })));
+                  e.target.value = "";
+                  avisar("ok", `Método ${m} aplicado aos ${vertices.length} vértices.`);
+                }}>
+                  <option value="">aplicar a todos…</option>
+                  {METODOS_POSICIONAMENTO.map((m) => <option key={m}>{m}</option>)}
+                </select>
+              </label>
+              <button className={mostrarInserirV ? "principal" : ""} onClick={() => setMostrarInserirV((v) => !v)}>
+                + Vértice pré-existente
+              </button>
+            </div>
+
+            {mostrarInserirV && (
+              <fieldset className="inserir-v painel" style={{ margin: 0 }}>
+                <legend>Inserir vértice pré-existente · tipo V · método PA1 — vértice já certificado que precisa entrar no perímetro</legend>
+                <label>após o ponto
+                  <select value={novoV.aposOrdem} onChange={(e) => setNovoV({ ...novoV, aposOrdem: e.target.value })}>
+                    <option value="">—</option>
+                    {vertices.map((v) => <option key={v.ordem} value={v.ordem}>{nomePonto(v)}</option>)}
+                  </select>
+                </label>
+                <label>código
+                  <input className="mono" placeholder="DSBN-V-0758" value={novoV.codigo} onChange={(e) => setNovoV({ ...novoV, codigo: e.target.value })} />
+                </label>
+                <label>latitude GMS
+                  <input className="mono" placeholder="11 24 30,375 S" value={novoV.lat} onChange={(e) => setNovoV({ ...novoV, lat: e.target.value })} />
+                </label>
+                <label>longitude GMS
+                  <input className="mono" placeholder="39 4 47,198 W" value={novoV.lon} onChange={(e) => setNovoV({ ...novoV, lon: e.target.value })} />
+                </label>
+                <label>h (m)
+                  <input className="mono" placeholder="289,765" style={{ width: 110 }} value={novoV.h} onChange={(e) => setNovoV({ ...novoV, h: e.target.value })} />
+                </label>
+                <label>sigma h
+                  <input className="mono" style={{ width: 90 }} value={novoV.sigmaH} onChange={(e) => setNovoV({ ...novoV, sigmaH: e.target.value })} />
+                </label>
+                <button className="principal" onClick={inserirV}>Inserir</button>
+                <button className="fantasma" onClick={() => setMostrarInserirV(false)}>cancelar</button>
+              </fieldset>
+            )}
+
+            <div className="tabela-wrap" style={{ maxHeight: 620 }}>
+              <table className="tabela-vertices">
+                <thead>
+                  <tr><th>Nº</th><th>Rótulo TXT</th><th>Código</th><th>Tipo</th><th>Método</th><th>Latitude</th><th>Longitude</th><th className="direita">h (m)</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {vertices.map((v) => {
+                    const t = trechoDoVertice(trechosOrdenados, v.ordem);
+                    const cor = t ? CORES[trechosOrdenados.indexOf(t) % CORES.length] : "#D5DDD8";
+                    const ehInicial = v.ordem === verticeInicial;
+                    return (
+                      <tr key={v.ordem} className={ehInicial ? "inicial" : ""}>
+                        <td className="num">{v.num_txt ?? "—"}{ehInicial ? " ★" : ""}</td>
+                        <td>
+                          <span className="ponto-trecho" style={{ background: cor }} aria-hidden="true" />
+                          {v.rotulo_txt ? <span style={{ color: "#33453C" }}>{v.rotulo_txt}</span> : <span className="sub">—</span>}
+                        </td>
+                        <td className="mono">{v.codigo ?? <span className="sub">na geração</span>}</td>
+                        <td>
+                          {v.inserido_manual ? (
+                            // V inserido à mão, ou vértice certificado do vizinho (código dele; um M
+                            // nosso igualado a ele continua M — a confrontação mora aí)
+                            <button className={`chip-tipo ${v.tipo}`} disabled
+                              title={/-[MPV]-/.test(v.codigo ?? "") && !/PA1/.test(v.metodo) ? "vértice certificado de parcela vizinha" : "vértice inserido"}>{v.tipo}</button>
+                          ) : (
+                            <button className={`chip-tipo ${v.tipo}`} title="Clique para alternar: M → P → V"
+                              onClick={() => setVertice(v.ordem, { tipo: proximoTipo(v.tipo) })}>{v.tipo}</button>
+                          )}
+                        </td>
+                        <td>
+                          <select value={v.metodo} aria-label="Método de posicionamento" onChange={(e) => setVertice(v.ordem, { metodo: e.target.value })}>
+                            {METODOS_POSICIONAMENTO.map((m) => <option key={m}>{m}</option>)}
+                          </select>
+                        </td>
+                        <td className="mono">{v.lat_gms}</td>
+                        <td className="mono">{v.lon_gms}</td>
+                        <td className="mono direita">{String(v.h).replace(".", ",")}</td>
+                        <td className="acao">{v.inserido_manual && <button className="remover" title="Remover vértice inserido" onClick={() => removerV(v.ordem)}>✕</button>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div className="tabela-rodape">{vertices.length} vértices · {preview.qtdM} M · {preview.qtdP} P · {preview.qtdV} V</div>
+            </div>
+            {navEtapa}
+          </>
+        )}
+
+        {/* ================= Etapa · Documentos ================= */}
+        {etapa === "documentos" && (
+          <>
+            {/* ---- Conferência de área: para aqui. No lugar do SIGEF e das peças, o
+                que ela tem é o documento do imóvel, a folha da planta e o Memorial
+                Tabular. Fica ANTES da imagem de satélite: tudo aqui decide o que a
+                planta vai imprimir, e configuração depois do resultado é convite a
+                gerar duas vezes. */}
+            {ehConferencia && (
+              <section className="bloco" id="bloco-conferencia">
+                <header>
+                  <h3>Conferência de área</h3>
+                  <span className="desc">documento do imóvel, folha e entregas da prévia — não vai ao SIGEF e não consome numeração oficial</span>
+                </header>
+
+                <div className="grade">
+                  <label>Folha da planta
+                    <select value={servico.folha_conferencia ?? "A3"}
+                      onChange={(e) => campo("folha_conferencia", e.target.value as Servico["folha_conferencia"])}>
+                      <option value="A3">A3 (420×297 mm)</option>
+                      <option value="A4">A4 (297×210 mm)</option>
+                    </select>
+                    <small className="sub">padrão A3 · vale na próxima geração dos documentos</small>
+                  </label>
+
+                  {/* Matrícula ou posse: é o que decide se a planta imprime
+                      "(MATR./CNS.)" ou "(POSSE)". Posse não tem matrícula nem
+                      cartório — os campos só aparecem para quem tem matrícula. E a
+                      prévia pode acontecer antes de o imóvel ter qualquer documento:
+                      é o terceiro estado, que não imprime nem um nem outro. */}
+                  <label>Situação do imóvel
+                    <select id="conf-situacao-imovel" value={situacaoImovel}
+                      onChange={(e) => setSituacaoImovel(e.target.value as SituacaoImovel)}>
+                      <option value="matricula">Matrícula (imóvel registrado)</option>
+                      <option value="posse">Posse (imóvel sem matrícula)</option>
+                      <option value="nao_informar">Ainda sem documento — não imprimir</option>
+                    </select>
+                    <small className="sub">
+                      {situacaoImovel === "matricula" ? "a planta sai com (MATR./CNS.) e o campo Matrícula do Imóvel"
+                        : situacaoImovel === "posse" ? "a planta sai com (POSSE) no lugar da matrícula"
+                          : "a planta sai sem o bloco de matrícula/posse"}
+                    </small>
+                  </label>
+
+                  {pedeMatricula(situacaoImovel) && (
+                    <>
+                      <label>Matrícula
+                        <input id="conf-matricula" className="mono" value={servico.matricula ?? ""} placeholder="1.234"
+                          onChange={(e) => campo("matricula", e.target.value || null)} />
+                      </label>
+                      <label>CNS (cartório)
+                        <input className="mono" list="cartorios" value={servico.cns ?? ""} placeholder="00.810-2"
+                          onChange={(e) => campo("cns", e.target.value || null)} />
+                        <datalist id="cartorios">{cartorios.map((c) => <option key={c} value={c} />)}</datalist>
+                      </label>
+                    </>
+                  )}
+                </div>
+
+                {/* A prévia acontece antes de o imóvel ter documento: a área pode não
+                    ter nome e o TRT pode não ter sido emitido. Campo em branco na
+                    planta parece dado perdido — aqui o operador diz o que existe. */}
+                <fieldset className="fieldset-plano" style={{ marginTop: 18 }}>
+                  <legend>O que sai na planta</legend>
+                  {([
+                    ["conf_exibir_denominacao", "Nome da fazenda", "a denominação no desenho e no planimétrico"],
+                    ["conf_exibir_trt", "TRT", "o número do termo de responsabilidade técnica"],
+                  ] as const).map(([campoNome, rotulo, dica]) => (
+                    <label key={campoNome}>
+                      <input type="checkbox" checked={servico[campoNome] !== false}
+                        onChange={(e) => campo(campoNome, e.target.checked)} />
+                      <b>{rotulo}</b>
+                      <small className="sub">— {dica}</small>
+                    </label>
+                  ))}
+                </fieldset>
+
+                <div className="rodape-bloco">
+                  <button onClick={gerarTabular} disabled={!docsProntos || gerandoTabular}>
+                    {gerandoTabular ? <><span className="spinner" /> Gerando…</> : "Gerar Memorial Tabular"}
+                  </button>
+                  <span className="sub" style={{ flex: 1, minWidth: 260 }}>
+                    {docsProntos
+                      ? "Sai do cálculo do sistema, com os mesmos azimutes e distâncias do Memorial Descritivo. Não são os valores SGL que o SIGEF devolve após certificar — por isso vale como prévia."
+                      : "Gere primeiro o memorial e a planta no botão do rodapé."}
+                  </span>
+                </div>
+
+                {tabular && (
+                  <div className="downloads" style={{ marginTop: 10 }}>
+                    {tabular.map((a) => (
+                      <a key={a.url} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
+                        <span className="ext">DOCX</span> {a.titulo}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            <div className="grade-docs">
+              {/* ---- Imagem de satélite: entra na planta desta etapa e na pós-SIGEF ---- */}
+              <section className="bloco cartao" id="bloco-satelite">
+                <header>
+                  <h3>Imagem de satélite</h3>
+                  <span className="desc">entra no quadro Planta de Situação · a mesma imagem serve às duas plantas</span>
+                </header>
+                <label className="dropzone compacta"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
+                  {satelite
+                    ? <><b>{satelite.nome}</b><span>clique para trocar a imagem</span></>
+                    : salvo.satelite
+                      ? <><b>Imagem guardada da geração anterior</b><span>não precisa reenviar — clique só se quiser trocar</span></>
+                      : <><b>Enviar imagem (PNG/JPG)</b><span>necessária para gerar a planta junto do memorial e da planilha</span></>}
+                  <input type="file" accept="image/png,image/jpeg" hidden
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
+                </label>
+              </section>
+
+              {/* ---- Documento do SIGEF (só após gerar os documentos) ----
+                  Não montado na conferência: os handlers de SIGEF não podem ficar
+                  acessíveis numa modalidade que não passa por ele. */}
+              {!ehConferencia && (
+                <section className={`bloco cartao ${docsProntos && !temSigef ? "destaque" : ""} ${!docsProntos ? "apagado" : ""}`} id="bloco-sigef">
+                  <header>
+                    <h3><span className="num-etapa">4</span>Documento do SIGEF</h3>
+                    <span className="desc">
+                      {docsProntos
+                        ? "após certificar a planilha, envie o PDF de prévia/certificação — ele libera a planta e as peças"
+                        : "liberado após a geração do memorial, da planilha e da planta"}
+                    </span>
+                  </header>
+                  {!docsProntos ? (
+                    <p className="sub" style={{ margin: 0 }}>
+                      Gere o Memorial (DOCX), a Planilha (ODS) e a Planta (PDF) no botão "Gerar documentos" do rodapé ·
+                      certifique no SIGEF · envie o PDF aqui · gere a Planta do SIGEF e as peças técnicas.
+                    </p>
+                  ) : sigefB64 || salvo.sigef ? (
+                    <div className="acoes-linha">
+                      <span className="ok" style={{ margin: 0 }}>
+                        {sigefB64 ? `${sigefNome} carregado` : "PDF guardado da geração anterior"}
+                      </span>
+                      <label className="link" style={{ cursor: "pointer", color: "var(--primaria)", fontWeight: 500 }}>
+                        trocar PDF
+                        <input type="file" accept=".pdf" hidden
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSigef(f); e.target.value = ""; }} />
+                      </label>
+                    </div>
+                  ) : (
+                    <label className="dropzone compacta destaque"
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSigef(f); }}>
+                      <b>Arraste o PDF de prévia do SIGEF</b>
+                      <span>com ele o sistema gera a Planta e as 7 peças técnicas</span>
+                      <input type="file" accept=".pdf" hidden
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSigef(f); e.target.value = ""; }} />
+                    </label>
+                  )}
+
+                  {/* ------- SIGEF acusou sobreposição? ------- */}
+                  {docsProntos && (
+                    <button className="aviso-sobreposicao" onClick={() => setSobreAberto((v) => !v)} aria-expanded={sobreAberto || sobreCsvs.length > 0}>
+                      <b>O SIGEF acusou sobreposição?</b>
+                      <span>recorta as invasões e regera a planilha</span>
+                      <span className="seta">{sobreAberto || sobreCsvs.length > 0 || relatorioSobre ? "↑" : "→"}</span>
+                    </button>
+                  )}
+                </section>
+              )}
+            </div>
+
+            {!ehConferencia && docsProntos && (sobreAberto || sobreCsvs.length > 0 || relatorioSobre !== null) && (
+              <section className="bloco" id="bloco-sobreposicao">
+                <header>
+                  <h3>Correção de sobreposição</h3>
+                  <span className="desc">CSVs das parcelas certificadas que conflitam com esta</span>
+                </header>
+                <p className="sub" style={{ marginTop: 0 }}>
+                  Quando há sobreposição, o SIGEF não gera o PDF e libera o CSV de cada parcela certificada
+                  que conflita. Envie <b>todos</b> esses CSVs aqui. Com a opção abaixo ligada, a divisa com o
+                  vizinho passa a ser descrita pelos <b>vértices já certificados dele</b> (mesmo código, mesmas
+                  coordenadas do CSV): vértices nossos a menos da tolerância de um vértice certificado são
+                  igualados a ele, e os vértices medidos dentro da parcela alheia saem. Onde ainda sobrar
+                  conflito, o sistema recorta com o afastamento escolhido e insere vértices calculados
+                  (tipo V · método PA1). Ao final regera a planilha ODS para reenvio ao SIGEF.
+                </p>
+                <div className="acoes-linha">
+                  <label className="dropzone linha" style={{ flex: "1 1 280px" }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files?.length) carregarCsvsSobreposicao(e.dataTransfer.files); }}>
+                    <b>Enviar CSVs das parcelas sobrepostas</b>
+                    <span>exportacao (n).csv — pode selecionar vários de uma vez</span>
+                    <input type="file" accept=".csv" multiple hidden
+                      onChange={(e) => { if (e.target.files?.length) carregarCsvsSobreposicao(e.target.files); e.target.value = ""; }} />
+                  </label>
+                  <label className="marcador" style={{ fontSize: 13.5 }}>
+                    <input type="checkbox" checked={usarCertificados} onChange={(e) => setUsarCertificados(e.target.checked)} />
+                    <span>Usar os vértices certificados do vizinho
+                      <small className="sub" style={{ display: "block" }}>divisa pelos pontos do CSV, sem pontos virtuais</small></span>
+                  </label>
+                  <label>Tolerância p/ igualar (m)
+                    <input className="mono" style={{ width: 90 }} value={tolIgualar} disabled={!usarCertificados} onChange={(e) => setTolIgualar(e.target.value)} />
+                    <small className="sub">vértice nosso até esta distância vira o certificado</small>
+                  </label>
+                  <label>Afastamento (m)
+                    <input className="mono" style={{ width: 90 }} value={afastamento} onChange={(e) => setAfastamento(e.target.value)} />
+                    <small className="sub">{usarCertificados ? "recuo onde ainda sobrar conflito" : "recuo aplicado à divisa"}</small>
+                  </label>
+                  <button className="principal" disabled={corrigindo || sobreCsvs.length === 0} onClick={corrigirSobreposicao}>
+                    {corrigindo ? "Corrigindo e regerando…" : "Corrigir sobreposição e regerar planilha"}
+                  </button>
+                </div>
+                {sobreCsvs.length > 0 && (
+                  <div className="chips-arquivos">
+                    {sobreCsvs.map((c) => (
+                      <span key={c.nome} className="chip arquivo">
+                        {c.nome}
+                        <button className="remover" title="Remover CSV"
+                          onClick={() => setSobreCsvs((prev) => prev.filter((x) => x.nome !== c.nome))}>✕</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {relatorioSobre && (
+                  <div style={{ marginTop: 14 }}>
+                    <div className="tabela-wrap" style={{ maxWidth: 720 }}>
+                      <table className="tabela-vertices">
+                        <thead><tr><th>parcela (CSV)</th><th>sobreposição</th><th>situação</th></tr></thead>
+                        <tbody>
+                          {relatorioSobre.parcelas.map((p) => (
+                            <tr key={p.nome}>
+                              <td>{p.nome}</td>
+                              <td className="mono">{p.areaSobrepostaM2.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} m²</td>
+                              <td style={{ color: STATUS_PARCELA[p.status].cor, fontWeight: 600 }}>{STATUS_PARCELA[p.status].rotulo}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {(relatorioSobre.removidos.length > 0 || (relatorioSobre.compartilhados?.length ?? 0) > 0) && (
+                      <p className="sub" style={{ margin: "8px 0 0" }}>
+                        Área {relatorioSobre.areaAntesHa.toLocaleString("pt-BR", { minimumFractionDigits: 4 })} ha →{" "}
+                        {relatorioSobre.areaDepoisHa.toLocaleString("pt-BR", { minimumFractionDigits: 4 })} ha ·{" "}
+                        {relatorioSobre.mantidos} vértices mantidos
+                        {(relatorioSobre.compartilhados?.length ?? 0) > 0 && (
+                          <> · {relatorioSobre.compartilhados!.length} certificados do vizinho
+                            {(relatorioSobre.igualados ?? 0) > 0 ? ` (${relatorioSobre.igualados} igualados)` : ""}:{" "}
+                            <span className="mono">{relatorioSobre.compartilhados!.join(", ")}</span></>
+                        )}
+                        {relatorioSobre.novos.length > 0 && (
+                          <> · {relatorioSobre.novos.length} virtuais ({relatorioSobre.novos[0]}…{relatorioSobre.novos[relatorioSobre.novos.length - 1]})</>
+                        )}
+                        {relatorioSobre.removidos.length > 0 && (
+                          <> · {relatorioSobre.removidos.length} removidos: <span className="mono">{relatorioSobre.removidos.join(", ")}</span></>
+                        )}
+                      </p>
+                    )}
+                    {relatorioSobre.avisos.map((a, i) => (
+                      <div key={i} className="erro" style={{ marginTop: 8, background: "var(--alerta-claro)", color: "var(--alerta-escuro)" }}>{a}</div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {gerado && (
+              <section className="bloco gerados" id="bloco-gerados">
+                <header>
+                  <h3>Documentos gerados</h3>
+                  <span className="desc">regeração ilimitada — cada geração vira uma nova versão no histórico</span>
+                </header>
+                <div className="downloads">
+                  <a className="botao-download" href={gerado.memorial_docx} target="_blank" rel="noreferrer">
+                    <span className="ext">DOCX</span> Memorial Descritivo GEO
+                  </a>
+                  <a className="botao-download" href={gerado.planilha_ods} target="_blank" rel="noreferrer">
+                    <span className="ext">ODS</span> Planilha SIGEF
+                  </a>
+                  {gerado.planta_pdf && (
+                    <a className="botao-download" href={gerado.planta_pdf} target="_blank" rel="noreferrer">
+                      <span className="ext">PDF</span> Planta {gerado.folha ?? "A1"} (dados do sistema)
+                    </a>
+                  )}
+                </div>
+                <p className="sub" style={{ margin: 0 }}>
+                  Vértice inicial <span className="mono">{gerado.resumo.verticeInicial}</span> · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
+                </p>
+              </section>
+            )}
+
+            {/* ---- Planta do SIGEF (A1 matrícula / A3 posse) ----
+                `!ehConferencia` é redundante com `temSigef` (a conferência não tem
+                onde carregar o PDF), mas explícito: a condição de existir é a
+                modalidade, não o efeito colateral de um estado vazio. */}
+            {!ehConferencia && docsProntos && temSigef && (
+              <section className="bloco" id="bloco-planta">
+                <header>
+                  <h3><span className="num-etapa">5</span>Planta {folhaEfetiva} {servico.tipo_imovel === "posse" ? "(posse)" : "(matrícula)"} do SIGEF</h3>
+                  <span className="desc">mesmo padrão da planta gerada com o memorial, mas desenhada a partir do PDF certificado do SIGEF · escala automática · carimbo e desenhista vêm das Configurações</span>
+                </header>
+                <div className="acoes-linha">
+                  <label>Folha
+                    <select value={folhaEfetiva} onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
+                      <option value="A1">A1 (841×594 mm)</option>
+                      <option value="A3">A3 (420×297 mm)</option>
+                    </select>
+                    <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
+                  </label>
+                  <label className="dropzone linha" style={{ flex: "1 1 280px" }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
+                    {satelite
+                      ? <b>{satelite.nome}</b>
+                      : salvo.satelite
+                        ? <><b>Imagem guardada da geração anterior</b><span>clique só se quiser trocar</span></>
+                        : <><b>Enviar imagem de satélite (PNG/JPG)</b><span>obrigatória — entra no quadro Planta de Situação</span></>}
+                    <input type="file" accept="image/png,image/jpeg" hidden
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
+                  </label>
+                  <button className="principal" disabled={gerandoPlanta || !temSatelite} onClick={gerarPlanta}
+                    title={!temSatelite ? "Envie a imagem de satélite primeiro" : undefined}>
+                    {gerandoPlanta ? "Gerando planta…" : `Gerar Planta ${folhaEfetiva} do SIGEF (PDF)`}
+                  </button>
+                  {plantaUrl && (
+                    <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
+                      <span className="ext">PDF</span> Planta {folhaEfetiva} (SIGEF)
+                    </a>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {/* ---- Peças técnicas ---- */}
+            {!ehConferencia && docsProntos && temSigef && (
+              <section className="bloco" id="bloco-pecas">
+                <header>
+                  <h3><span className="num-etapa">6</span>Peças técnicas</h3>
+                  <span className="desc">os dados abaixo + o memorial + o PDF do SIGEF viram as 7 peças (memorial, tabular, cartas, declarações, requerimento)</span>
+                </header>
+
+                {/* Só o que muda peça a peça fica à vista; a papelada do RT vem do
+                    cadastro e só aparece quando estiver incompleta. */}
+                <div className="grade">
+                  <label>Situação do imóvel
+                    <select value={servico.tipo_imovel ?? "matricula"} onChange={(e) => campo("tipo_imovel", e.target.value as "matricula" | "posse")}>
+                      <option value="matricula">Matrícula (proprietário)</option>
+                      <option value="posse">Posse (posseiro)</option>
+                    </select>
+                  </label>
+                  <label>Gênero do detentor
+                    <select value={servico.detentor_genero ?? "M"} onChange={(e) => campo("detentor_genero", e.target.value as "M" | "F")}>
+                      <option value="M">Masculino</option><option value="F">Feminino</option>
+                    </select>
+                  </label>
+                  <label style={{ gridColumn: "span 2" }}>Endereço dos requerentes
+                    <input placeholder="Rua ..., Nº ..., Bairro, Cidade, Estado, CEP:..." value={servico.endereco_detentor ?? ""} onChange={(e) => campo("endereco_detentor", e.target.value || null)} />
+                  </label>
+                  <label>Área constante na matrícula (ha)
+                    <input className="mono" placeholder="ex.: 86" value={servico.area_matricula_ha ?? ""} onChange={(e) => campo("area_matricula_ha", e.target.value || null)} />
+                  </label>
+                  <label>Faixas de domínio (detectadas na planta)
+                    <input readOnly value={viasDetectadas.length ? viasDetectadas.join(" · ") : "nenhuma"} />
+                    <small className="sub">{viasDetectadas.length
+                      ? `sai ${viasDetectadas.length} ${viasDetectadas.length > 1 ? "declarações" : "declaração"} de faixa de domínio, uma por via`
+                      : "sem estrada, corredor, linha férrea ou rodovia na confrontação — a declaração não é gerada"}</small>
+                  </label>
+                </div>
+
+                <div className="secoes" style={{ marginTop: 22 }}>
+                  <Secao titulo="Segundo requerente"
+                    selo={<span className={`secao-selo ${servico.requerente2_nome ? "completa" : ""}`}>{servico.requerente2_nome || "nenhum"}</span>}
+                    abrirEm={!!servico.requerente2_nome}
+                    dica="cônjuge ou co-proprietário que assina junto">
+                    <div className="grade">
+                      <label>Requerente 2 (opcional)
+                        <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} />
+                      </label>
+                      <label>CPF do requerente 2
+                        <input className="mono" value={servico.requerente2_cpf ?? ""} onChange={(e) => campo("requerente2_cpf", e.target.value || null)} />
+                      </label>
+                      <label>Gênero do requerente 2
+                        <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
+                          <option value="M">Masculino</option><option value="F">Feminino</option>
+                        </select>
+                      </label>
+                      <label>RG do detentor (opcional)
+                        <input value={servico.detentor_rg ?? ""} onChange={(e) => campo("detentor_rg", e.target.value || null)} />
+                      </label>
+                    </div>
+                  </Secao>
+
+                  <Secao titulo="Dados do responsável técnico nas peças"
+                    selo={(() => {
+                      const n = contarPreenchidos([rtExtras.formacao, rtExtras.conselho_sigla, rtExtras.conselho_numero, rtExtras.identidade, rtExtras.cpf]);
+                      return <span className={`secao-selo ${n === 5 ? "completa" : n === 0 ? "vazia" : ""}`}>{n} de 5</span>;
+                    })()}
+                    abrirEm={contarPreenchidos([rtExtras.formacao, rtExtras.conselho_numero, rtExtras.identidade, rtExtras.cpf]) < 4}
+                    dica={rtSel ? `salvo no cadastro de ${rtSel.nome}` : "selecione um RT na etapa Dados"}>
+                    <div className="grade">
+                      <label>Formação do RT
+                        <input placeholder="Técnico em Agropecuária" value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} />
+                      </label>
+                      <label>Conselho (sigla)
+                        <input placeholder="CFTA / CREA" value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} />
+                      </label>
+                      <label>Conselho (número)
+                        <input className="mono" placeholder="0578839458-9" value={rtExtras.conselho_numero} onChange={(e) => setRtExtras({ ...rtExtras, conselho_numero: e.target.value })} />
+                      </label>
+                      <label>Identidade do RT
+                        <input placeholder="00.000.000-00 SSP/BA" value={rtExtras.identidade} onChange={(e) => setRtExtras({ ...rtExtras, identidade: e.target.value })} />
+                      </label>
+                      <label>CPF do RT
+                        <input className="mono" value={rtExtras.cpf} onChange={(e) => setRtExtras({ ...rtExtras, cpf: e.target.value })} />
+                      </label>
+                    </div>
+                  </Secao>
+                </div>
+
+                <div className="rodape-bloco">
+                  <button className="principal" disabled={gerandoPecas} onClick={gerarPecas}>
+                    {gerandoPecas ? "Gerando as 7 peças técnicas…" : "Gerar peças técnicas"}
+                  </button>
+                </div>
+                {erroPecas && <div className="erro">{erroPecas}</div>}
+                {pecas && (
+                  <div style={{ marginTop: 14 }}>
+                    <p className="sub" style={{ margin: "0 0 8px" }}>
+                      Área SGL {pecas.resumo.areaHa} ha · perímetro {pecas.resumo.perimetro} m · TRT {pecas.resumo.trt} ·{" "}
+                      {pecas.resumo.vertices} vértices · {pecas.resumo.cartas} carta(s) de anuência{pecas.resumo.via ? ` · via ${pecas.resumo.via}` : ""}
+                    </p>
+                    <div className="downloads">
+                      {pecas.arquivos.map((a) => (
+                        <a key={a.titulo} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
+                          <span className="ext">DOCX</span> {a.titulo}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* ---- Histórico de documentos ---- */}
+            <section className="bloco">
+              <header>
+                <h3>Histórico de documentos</h3>
+                <span className="desc">cada geração vira uma versão preservada — baixe qualquer uma a qualquer momento</span>
+              </header>
+              <HistoricoDocs servicoId={servico.id} />
+            </section>
+            {navEtapa}
+          </>
+        )}
+      </div>
+
+      {/* ---------------- Barra fixa (preview) ---------------- */}
       <footer className="preview">
         <div className="stats">
           <span className="stat"><span className="rotulo">Fuso</span><span className="valor">{servico.fuso_utm}S · MC-{Math.abs(6 * (servico.fuso_utm ?? 24) - 183)}°W</span></span>
           <span className="stat"><span className="rotulo">Área</span><span className="valor">{preview.areaHa} ha</span></span>
           <span className="stat"><span className="rotulo">Perímetro</span><span className="valor">{preview.perimetroM} m</span></span>
           <span className="stat"><span className="rotulo">M / P / V</span><span className="valor">{preview.qtdM} / {preview.qtdP} / {preview.qtdV}</span></span>
+          {!preview.erro && (
+            <button className="link-previa" onClick={() => setPreviaAberta((v) => !v)} aria-expanded={previaAberta}>
+              {previaAberta ? "ocultar prévia" : "prévia do memorial"}
+            </button>
+          )}
           <span className="acoes">
             <button disabled={ocupado} onClick={apenasSalvar}>Salvar rascunho</button>
             {!ehConferencia && (
-              <select value={folhaEfetiva} title="Folha da planta que sai junto com o memorial e a planilha"
+              <select value={folhaEfetiva} title="Folha da planta que sai junto com o memorial e a planilha" aria-label="Folha da planta"
                 onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
                 <option value="A1">Planta A1</option>
                 <option value="A3">Planta A3</option>
@@ -1762,8 +1875,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <button disabled={ocupado} className="principal" onClick={gerar}
               title={pendencias.length
                 ? `Pendências: ${pendencias.map((p) => p.msg).join("; ")}`
-                : satelite ? "Gerar Memorial DOCX + Planilha ODS + Planta PDF" : "Envie a imagem de satélite para gerar a planta junto"}>
-              {ocupado ? "Gerando…" : "⚡ Gerar documentos"}
+                : temSatelite ? "Gerar Memorial DOCX + Planilha ODS + Planta PDF" : "Envie a imagem de satélite para gerar a planta junto"}>
+              {ocupado ? "Gerando…" : "Gerar documentos"}
             </button>
           </span>
         </div>
@@ -1771,13 +1884,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           <div className="pendencias-lista">
             Antes de gerar:{" "}
             {pendencias.map((p, i) => (
-              <button key={i} className="link-pendencia" onClick={() => irPara(p.alvo, true)}>{p.msg}</button>
+              <button key={i} className="link-pendencia" onClick={() => irParaCampo(p.alvo, true)}>{p.msg}</button>
             ))}
           </div>
         )}
         {preview.erro
           ? <div className="erro">{preview.erro}</div>
-          : <div className="paragrafo">{preview.primeiroParagrafo}</div>}
+          : <div className={`paragrafo ${previaAberta ? "aberto" : ""}`}>{preview.primeiroParagrafo}</div>}
         {erro && <div className="erro">{erro}</div>}
       </footer>
     </div>

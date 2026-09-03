@@ -1,10 +1,11 @@
-// Tela de upload (5.1): drag-and-drop do TXT → Edge Function parse-txt.
+// Tela de upload: drag-and-drop do TXT → Edge Function parse-txt.
 import { useRef, useState } from "react";
 import { chamarFuncao } from "../lib/supabase";
 import { UFS } from "../lib/domains";
 import { guardar, lembrar } from "../lib/ux";
 import type { DefinicaoServico } from "../lib/modalidades";
 import type { PreviewParse, Servico, Trecho, Vertice } from "../lib/types";
+import { Icone, ICONE } from "./Icone";
 
 export interface ResultadoParse {
   servico: Servico;
@@ -43,7 +44,7 @@ export function Upload({ definicao, onParsed, onVoltar }: {
   }
 
   return (
-    <div className="upload-tela">
+    <div className="upload-tela fade">
       <div className="stepper">
         <span className="step ativa"><span className="num">1</span> Upload do TXT</span>
         <span className="step-seta">→</span>
@@ -52,19 +53,20 @@ export function Upload({ definicao, onParsed, onVoltar }: {
         <span className="step"><span className="num">3</span> Documentos</span>
       </div>
       <div className="upload-card">
-        {onVoltar && <button className="fantasma" style={{ justifySelf: "start" }} onClick={onVoltar}>← Início</button>}
-        <h2>{definicao.icone} {definicao.titulo}</h2>
-        <p className="sub">{definicao.resumo}</p>
+        {onVoltar && <button className="fantasma" style={{ justifySelf: "start", padding: 0 }} onClick={onVoltar}>← Início</button>}
+        <div>
+          <h2>{definicao.titulo}</h2>
+          <p className="sub">{definicao.resumo}</p>
+        </div>
         <p className="sub">Envie o TXT gerado pela máquina de topografia. O sistema detecta o fuso,
           converte as coordenadas e sugere os trechos de confrontantes pelos rótulos.</p>
-        <label>
-          UF do imóvel <span style={{ fontWeight: 400 }}>(opcional — ajuda a resolver o fuso UTM)</span><br />
-          <select value={uf} onChange={(e) => { setUf(e.target.value); guardar("uf", e.target.value); }}
-            style={{ marginTop: 4, width: 120 }}>
+        <label style={{ display: "grid", gap: 6, width: 200 }}>
+          <span>UF do imóvel <span className="sub" style={{ fontSize: 12.5 }}>opcional · resolve o fuso UTM</span></span>
+          <select value={uf} onChange={(e) => { setUf(e.target.value); guardar("uf", e.target.value); }}>
             <option value="">—</option>
             {UFS.map((u) => <option key={u}>{u}</option>)}
           </select>
-          {uf && lembrar("uf") === uf && <small className="sub" style={{ display: "block", marginTop: 3 }}>última UF usada</small>}
+          {uf && lembrar("uf") === uf && <small className="sub" style={{ fontSize: 12 }}>última UF usada</small>}
         </label>
         {/* role/tabIndex/onKeyDown: a zona de arraste era um div com onClick,
             inalcançável por teclado. */}
@@ -95,13 +97,10 @@ export function Upload({ definicao, onParsed, onVoltar }: {
             </>
           ) : (
             <>
-              <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#0e7a4d" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-              <b>Arraste o TXT aqui</b>
-              <span>ou clique para escolher o arquivo · formato: <code>ID;E;N;h;σpos;σh</code></span>
+              <Icone d={ICONE.upload} size={36} traco={1.6} />
+              <b style={{ marginTop: 6 }}>Arraste o TXT aqui</b>
+              <span>ou clique para escolher o arquivo</span>
+              <code style={{ marginTop: 6 }}>ID;E;N;h;σpos;σh</code>
             </>
           )}
           <input ref={inputRef} type="file" accept=".txt" hidden

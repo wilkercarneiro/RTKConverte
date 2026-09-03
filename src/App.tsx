@@ -10,6 +10,7 @@ import { Conferencia } from "./components/Conferencia";
 import { PecasServico } from "./components/PecasServico";
 import { Configuracoes } from "./components/Configuracoes";
 import { ClientePage } from "./components/ClientePage";
+import { Marca } from "./components/Marca";
 import { definicaoDe } from "./lib/modalidades";
 import type { ChaveServico } from "./lib/modalidades";
 import { useRota } from "./lib/rota";
@@ -17,6 +18,8 @@ import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
 
 export default function App() {
   const [logado, setLogado] = useState<boolean | null>(null);
+  // e-mail do operador: vai ao rodapé da barra lateral e à saudação do Início
+  const [usuario, setUsuario] = useState<string | null>(null);
   const { rota, ir, substituir } = useRota();
   // serviço aberto (carregado sob demanda pela rota #/servico/:id)
   const [aberto, setAberto] = useState<ResultadoParse | null>(null);
@@ -25,8 +28,8 @@ export default function App() {
 
   useEffect(() => {
     if (!configOk) return;
-    supabase.auth.getSession().then(({ data }) => setLogado(!!data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, sess) => setLogado(!!sess));
+    supabase.auth.getSession().then(({ data }) => { setLogado(!!data.session); setUsuario(data.session?.user.email ?? null); });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, sess) => { setLogado(!!sess); setUsuario(sess?.user.email ?? null); });
     return () => sub.subscription.unsubscribe();
   }, []);
 
@@ -110,19 +113,20 @@ export default function App() {
   }
 
   const abrirServico = (s: Servico) => ir({ t: "servico", id: s.id });
+  const casca = { rota, ir, usuario: usuario ? { nome: usuario, papel: "Operador" } : undefined };
 
   switch (rota.t) {
     case "novo": {
       const def = definicaoDe(rota.chave as ChaveServico);
       if (def.campos.tipo === "pecas") {
         return (
-          <AppShell rota={rota} ir={ir}>
+          <AppShell {...casca}>
             <PecasServico servicoId={null} clienteId={rota.clienteId} onVoltar={() => ir({ t: "inicio" })} />
           </AppShell>
         );
       }
       return (
-        <AppShell rota={rota} ir={ir}>
+        <AppShell {...casca}>
           <Upload
             definicao={def}
             onParsed={async (parse) => {
@@ -140,10 +144,10 @@ export default function App() {
     }
 
     case "servico": {
-      if (carregandoServico) return <AppShell rota={rota} ir={ir}><div className="centro"><span className="spinner" />&nbsp; Abrindo serviço…</div></AppShell>;
+      if (carregandoServico) return <AppShell {...casca}><div className="centro"><span className="spinner" />&nbsp; Abrindo serviço…</div></AppShell>;
       if (erroServico || !aberto) {
         return (
-          <AppShell rota={rota} ir={ir}>
+          <AppShell {...casca}>
             <div className="centro">
               <div>
                 <h2>{erroServico ?? "Serviço não encontrado"}</h2>
@@ -154,7 +158,7 @@ export default function App() {
         );
       }
       return (
-        <AppShell rota={rota} ir={ir}>
+        <AppShell {...casca}>
           {aberto.servico.tipo === "pecas"
             ? <PecasServico servicoId={aberto.servico.id} onVoltar={() => ir({ t: "servicos" })} />
             : <Conferencia inicial={aberto} onVoltar={() => ir({ t: "servicos" })} />}
@@ -164,7 +168,7 @@ export default function App() {
 
     case "cliente":
       return (
-        <AppShell rota={rota} ir={ir}>
+        <AppShell {...casca}>
           <ClientePage
             clienteId={rota.id}
             onVoltar={() => ir({ t: "clientes" })}
@@ -175,18 +179,22 @@ export default function App() {
       );
 
     case "clientes":
-      return <AppShell rota={rota} ir={ir}><Clientes onAbrir={(id) => ir({ t: "cliente", id })} /></AppShell>;
+      return <AppShell {...casca}><Clientes onAbrir={(id) => ir({ t: "cliente", id })} /></AppShell>;
 
     case "servicos":
-      return <AppShell rota={rota} ir={ir}><Servicos onAbrir={abrirServico} onNovo={() => ir({ t: "inicio" })} /></AppShell>;
+      return <AppShell {...casca}><Servicos onAbrir={abrirServico} onNovo={() => ir({ t: "inicio" })} /></AppShell>;
 
     case "config":
-      return <AppShell rota={rota} ir={ir}><Configuracoes onVoltar={() => ir({ t: "inicio" })} /></AppShell>;
+      return <AppShell {...casca}><Configuracoes /></AppShell>;
+
+    case "marca":
+      return <AppShell {...casca}><Marca /></AppShell>;
 
     default:
       return (
-        <AppShell rota={rota} ir={ir}>
-          <Inicio onNovo={(chave) => ir({ t: "novo", chave })} onAbrir={abrirServico} />
+        <AppShell {...casca}>
+          <Inicio onNovo={(chave) => ir({ t: "novo", chave })} onAbrir={abrirServico}
+            onVerServicos={() => ir({ t: "servicos" })} nome={usuario ?? undefined} />
         </AppShell>
       );
   }

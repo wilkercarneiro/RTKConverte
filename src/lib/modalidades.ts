@@ -16,6 +16,7 @@ export type ChaveServico = "completo" | "conferencia" | "gleba" | "pecas";
 export interface DefinicaoServico {
   chave: ChaveServico;
   titulo: string;
+  /** path SVG (viewBox 24×24, traço 1.8px) — desenhado por <Icone d={…} /> */
   icone: string;
   resumo: string;
   /** O que o operador precisa ter em mãos. */
@@ -33,7 +34,7 @@ export const SERVICOS: DefinicaoServico[] = [
   {
     chave: "completo",
     titulo: "Serviço completo",
-    icone: "🛰️",
+    icone: "M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
     resumo: "Do levantamento à certificação: memorial, planilha e planta, envio ao SIGEF e as peças técnicas.",
     requisitos: ["TXT do levantamento", "documentos do proprietário", "confrontantes", "imagem de satélite"],
     entrega: ["Memorial Descritivo", "Planilha SIGEF", "Planta A1/A3", "Planta oficial do SIGEF", "7 peças técnicas"],
@@ -44,7 +45,7 @@ export const SERVICOS: DefinicaoServico[] = [
   {
     chave: "conferencia",
     titulo: "Conferência de área",
-    icone: "📐",
+    icone: "M3 21 21 3M3 21h6M3 21v-6M14 4l6 6",
     resumo: "Prévia de área e perímetro, sem passar pelo SIGEF. Os pontos saem numerados P-1, P-2…, sem consumir a numeração oficial do credenciado.",
     requisitos: ["TXT do levantamento", "documentos do proprietário", "confrontantes", "imagem de satélite"],
     entrega: ["Memorial Descritivo timbrado", "Memorial Tabular (opcional)", "Planta A3 (ou A4)"],
@@ -55,7 +56,7 @@ export const SERVICOS: DefinicaoServico[] = [
   {
     chave: "gleba",
     titulo: "Serviço com gleba",
-    icone: "🧩",
+    icone: "M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z",
     resumo: "O serviço completo com as glebas desenhadas dentro do perímetro. As divisões são montadas na tela antes de gerar a planta.",
     requisitos: ["TXT do levantamento", "documentos do proprietário", "confrontantes", "imagem de satélite"],
     entrega: ["Tudo do serviço completo", "Planta com as glebas e suas áreas"],
@@ -66,7 +67,7 @@ export const SERVICOS: DefinicaoServico[] = [
   {
     chave: "pecas",
     titulo: "Peças a partir do PDF do SIGEF",
-    icone: "📑",
+    icone: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6",
     resumo: "Para quando o imóvel já foi certificado e só faltam as peças. Não precisa do TXT.",
     requisitos: ["PDF de prévia do SIGEF", "documentos do proprietário"],
     entrega: ["7 peças técnicas"],

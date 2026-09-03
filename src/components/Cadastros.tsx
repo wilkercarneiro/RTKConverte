@@ -96,17 +96,16 @@ function CadastroRTs() {
     <section className="bloco">
       <Avisos avisos={avisos} onFechar={fechar} />
       <header>
-        <span className="num-bloco">👷</span>
-        <h3>Responsáveis Técnicos</h3>
+        <h3>Responsáveis técnicos</h3>
         <span className="desc">nome + conselho (CFTA, CFT ou CREA) — aparecem no select "Responsável Técnico" dos serviços</span>
         <span className="esticar" style={{ flex: 1 }} />
         <button onClick={abrirNovo}>+ Novo responsável</button>
       </header>
 
       {rts.length === 0
-        ? <p style={{ color: "var(--texto-2)" }}>Nenhum responsável técnico cadastrado ainda.</p>
+        ? <p className="sub" style={{ margin: 0 }}>Nenhum responsável técnico cadastrado ainda.</p>
         : (
-          <table className="tabela-vertices">
+          <div className="tabela-wrap"><table className="tabela-vertices">
             <thead><tr><th>Nome</th><th>Formação</th><th>Conselho</th><th>CPF</th><th /></tr></thead>
             <tbody>
               {rts.map((r) => (
@@ -123,7 +122,7 @@ function CadastroRTs() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
 
       {form && (
@@ -239,7 +238,6 @@ function CadastroCredenciados() {
     <section className="bloco">
       <Avisos avisos={avisos} onFechar={fechar} />
       <header>
-        <span className="num-bloco">🏷️</span>
         <h3>Credenciados</h3>
         <span className="desc">o código prefixa todo vértice gerado (ex.: <code>DSBN-M-3605</code>)</span>
         <span className="esticar" style={{ flex: 1 }} />
@@ -247,9 +245,9 @@ function CadastroCredenciados() {
       </header>
 
       {creds.length === 0
-        ? <p style={{ color: "var(--texto-2)" }}>Nenhum credenciado cadastrado ainda.</p>
+        ? <p className="sub" style={{ margin: 0 }}>Nenhum credenciado cadastrado ainda.</p>
         : (
-          <table className="tabela-vertices">
+          <div className="tabela-wrap"><table className="tabela-vertices">
             <thead><tr><th>Nome</th><th>Código</th><th>Contador M</th><th>Contador P</th><th>Contador V</th><th /></tr></thead>
             <tbody>
               {creds.map((c) => (
@@ -267,7 +265,7 @@ function CadastroCredenciados() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
 
       {form && (

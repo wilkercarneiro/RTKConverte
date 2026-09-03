@@ -138,7 +138,7 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
             <div className="gleba-acoes">
               <button className="fantasma" disabled={!atual.anel.length}
                 onClick={() => editarComDesfazer(ativa, { anel: atual.anel.slice(0, -1) })}>
-                ↶ Desfazer último ponto
+                Desfazer último ponto
               </button>
               <button className="fantasma" disabled={!atual.anel.length}
                 onClick={() => editarComDesfazer(ativa, { anel: [] })}>
@@ -147,7 +147,7 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
               <button className="fantasma" disabled={atual.anel.length < 3}
                 onClick={() => editarComDesfazer(ativa, { anel: [...atual.anel].reverse() })}
                 title="inverte o sentido do contorno — não muda a área, só a ordem dos pontos">
-                ⇄ Inverter sentido
+                Inverter sentido
               </button>
             </div>
 
@@ -186,7 +186,7 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
             </Secao>
 
             <div style={{ marginTop: 12 }}>
-              <button className="perigo-btn" onClick={() => remover(ativa)}>🗑 Excluir esta gleba</button>
+              <button className="perigo-btn" onClick={() => remover(ativa)}>Excluir esta gleba</button>
             </div>
           </div>
         </div>

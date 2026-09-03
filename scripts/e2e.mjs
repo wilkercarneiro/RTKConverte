@@ -7,8 +7,8 @@ import JSZip from "jszip";
 
 const URL_BASE = process.env.SUPABASE_URL;
 const ANON = process.env.SUPABASE_ANON_KEY;
-const EMAIL = process.env.E2E_EMAIL ?? "e2e@rtkconverte.local";
-const SENHA = process.env.E2E_PASSWORD ?? "E2e-teste-123!";
+const EMAIL = process.env.E2E_EMAIL;
+const SENHA = process.env.E2E_PASSWORD;
 if (!URL_BASE || !ANON) { console.error("Defina SUPABASE_URL e SUPABASE_ANON_KEY"); process.exit(1); }
 
 const supa = createClient(URL_BASE, ANON);

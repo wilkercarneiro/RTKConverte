@@ -1,9 +1,10 @@
-// Serviço 2 — Peças técnicas direto do PDF do SIGEF (sem TXT).
+// Peças técnicas direto do PDF do SIGEF (sem TXT).
 // Fluxo: envia o PDF → o backend analisa e pré-preenche o cadastro → o
 // operador completa cliente/RT e os descritivos dos confrontantes → gera as 7 peças.
 //
 // Experiência: o PDF já preencheu a maior parte, então só o que costuma faltar
 // fica à vista; o restante vive em seções recolhíveis com selo de preenchimento.
+// Como na conferência, é uma etapa por vez: Dados, Confrontantes, Documentos.
 import { useEffect, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
 import { rotuloRT, TIPOS_LIMITE, UFS } from "../lib/domains";
@@ -11,7 +12,8 @@ import { contarPreenchidos, useAutosave, useAvisos } from "../lib/ux";
 import { ehRioPorLimite, ehViaPorLimite, numerarConfrontantes, viasDaPlanta } from "../lib/trechos";
 import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
-import { Avisos, Passos, ProximaAcao, Secao, StatusSalvamento, irPara, type Acao, type Passo } from "./ui";
+import { Avisos, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { Icone, ICONE } from "./Icone";
 
 interface TrechoPdf {
   id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string; eh_via: boolean;
@@ -30,6 +32,14 @@ interface Analise {
 interface PecasGeradas {
   arquivos: { titulo: string; url: string }[];
   resumo: { areaHa: string; perimetro: string; trt: string; vertices: number; cartas: number; via: string | null };
+}
+
+type Etapa = "dados" | "confrontantes" | "documentos";
+
+function etapaDoAlvo(id: string): Etapa {
+  if (id === "pc-confrontantes") return "confrontantes";
+  if (id === "pc-gerar" || id === "pc-planta") return "documentos";
+  return "dados";
 }
 
 function bufParaBase64(buf: ArrayBuffer): string {
@@ -60,6 +70,19 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   const folhaEfetiva: "A1" | "A3" = folhaPlanta ?? (servico?.tipo_imovel === "posse" ? "A3" : "A1");
   const { avisos, avisar, fechar } = useAvisos();
 
+  // uma etapa por vez (ver Conferencia.tsx para o mesmo mecanismo)
+  const [etapa, setEtapa] = useState<Etapa>("dados");
+  const [alvoPendente, setAlvoPendente] = useState<{ id: string; piscar: boolean } | null>(null);
+  useEffect(() => {
+    if (!alvoPendente) return;
+    const t = requestAnimationFrame(() => { rolarAte(alvoPendente.id, alvoPendente.piscar); setAlvoPendente(null); });
+    return () => cancelAnimationFrame(t);
+  }, [alvoPendente, etapa]);
+  function irParaCampo(id: string, piscar = false) {
+    setEtapa(etapaDoAlvo(id));
+    setAlvoPendente({ id, piscar });
+  }
+
   useEffect(() => {
     supabase.from("responsaveis_tecnicos").select().order("nome").then(({ data }) => setRts((data as RT[]) ?? []));
     supabase.from("credenciados").select().order("nome").then(({ data }) => setCredenciados((data as Credenciado[]) ?? []));
@@ -67,9 +90,24 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       supabase.from("servicos").select().eq("id", servicoId).single().then(({ data }) => setServico(data as Servico));
       supabase.from("trechos_confrontantes").select().eq("servico_id", servicoId).order("vertice_inicio_ordem")
         .then(({ data }) => setTrechos(((data ?? []) as (TrechoPdf & { codigo_inicio: string | null })[])
-          .map((t) => ({ id: (t as { id?: string }).id, codigo_inicio: t.codigo_inicio ?? "", descritivo: t.descritivo ?? "", tipo_limite: t.tipo_limite, eh_via: !!t.eh_via }))));
+          .map((t) => ({ id: (t as { id?: string }).id, codigo_inicio: t.codigo_inicio ?? "", descritivo: t.descritivo ?? "", tipo_limite: t.tipo_limite, eh_via: !!t.eh_via, numerado: !!t.numerado }))));
     }
   }, [servicoId]);
+
+  // Padrões das Configurações: preenche RT e credenciado só quando estão vazios.
+  useEffect(() => {
+    if (!servico || servico.status !== "rascunho" || (servico.rt_id && servico.credenciado_id)) return;
+    supabase.from("config_empresa").select("key, value").in("key", ["rt_padrao", "credenciado_padrao"])
+      .then(({ data }) => {
+        const cfg = Object.fromEntries(((data ?? []) as { key: string; value: string }[]).map((l) => [l.key, l.value]));
+        if (!cfg.rt_padrao && !cfg.credenciado_padrao) return;
+        setServico((s) => (s ? {
+          ...s,
+          rt_id: s.rt_id ?? (cfg.rt_padrao || null),
+          credenciado_id: s.credenciado_id ?? (cfg.credenciado_padrao || null),
+        } : s));
+      });
+  }, [servico?.id]);
 
   const rtSel = rts.find((r) => r.id === servico?.rt_id) ?? null;
   useEffect(() => {
@@ -186,6 +224,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64: b64 });
       setPecas(r);
       avisar("ok", "7 peças técnicas geradas.");
+      irParaCampo("pc-gerar");
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -228,23 +267,31 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   // ---------------- tela de entrada: envio do PDF ----------------
   if (!servico) {
     return (
-      <div className="upload-tela">
+      <div className="upload-tela fade">
         <Avisos avisos={avisos} onFechar={fechar} />
-        <Passos passos={[
-          { rotulo: "PDF do SIGEF", estado: "ativa" },
-          { rotulo: "Conferência", estado: "futura" },
-          { rotulo: "Peças técnicas", estado: "futura" },
-        ]} />
+        <div className="stepper">
+          <span className="step ativa"><span className="num">1</span> PDF do SIGEF</span>
+          <span className="step-seta">→</span>
+          <span className="step"><span className="num">2</span> Conferência</span>
+          <span className="step-seta">→</span>
+          <span className="step"><span className="num">3</span> Peças técnicas</span>
+        </div>
         <div className="upload-card">
-          <button className="fantasma" style={{ justifySelf: "start" }} onClick={onVoltar}>← Dashboard</button>
-          <h2>Serviço 2 — Peças técnicas</h2>
-          <p className="sub">Já tem o memorial do SIGEF em mãos? Envie o PDF de prévia/certificação:
-            o sistema lê o imóvel, o proprietário e os confrontantes automaticamente.</p>
+          <button className="fantasma" style={{ justifySelf: "start", padding: 0 }} onClick={onVoltar}>← Início</button>
+          <div>
+            <h2>Peças a partir do PDF do SIGEF</h2>
+            <p className="sub">Já tem o memorial do SIGEF em mãos? Envie o PDF de prévia/certificação:
+              o sistema lê o imóvel, o proprietário e os confrontantes automaticamente.</p>
+          </div>
           <label className="dropzone" onDragOver={(e) => e.preventDefault()}
             aria-busy={!!ocupado}
             onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && !ocupado) analisar(f); }}>
             {ocupado ? (<><span className="spinner" /> <b>{ocupado}</b></>) : (
-              <><b>📄 Arraste o PDF do SIGEF aqui</b><span>ou clique para escolher o arquivo</span></>
+              <>
+                <Icone d={ICONE.upload} size={36} traco={1.6} />
+                <b style={{ marginTop: 6 }}>Arraste o PDF do SIGEF aqui</b>
+                <span>ou clique para escolher o arquivo</span>
+              </>
             )}
             <input type="file" accept=".pdf" hidden disabled={!!ocupado}
               onChange={(e) => { const f = e.target.files?.[0]; if (f) analisar(f); e.target.value = ""; }} />
@@ -282,11 +329,24 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   // confrontante), uma declaração por via — não há campo para digitar
   const vias = viasDaPlanta(trechos);
 
-  const passos: Passo[] = [
-    { rotulo: "PDF do SIGEF", estado: "feita" },
-    { rotulo: "Conferência", estado: pendencias.length === 0 ? "feita" : "ativa", alvo: "pc-dados" },
-    { rotulo: "Peças técnicas", estado: pecas ? "feita" : pendencias.length === 0 ? "ativa" : "futura", alvo: "pc-gerar" },
+  const etapas: { chave: Etapa; rotulo: string; feita: boolean }[] = [
+    { chave: "dados", rotulo: "Dados", feita: pendencias.length === 0 },
+    { chave: "confrontantes", rotulo: "Confrontantes", feita: trechos.length > 0 && semDescritivo === 0 },
+    { chave: "documentos", rotulo: "Peças e planta", feita: !!pecas && !!plantaUrl },
   ];
+  const passos: Passo[] = etapas.map((e) => ({
+    rotulo: e.rotulo,
+    estado: e.chave === etapa ? "ativa" : e.feita ? "feita" : "futura",
+  }));
+  const indiceEtapa = etapas.findIndex((e) => e.chave === etapa);
+  const etapaAnterior = etapas[indiceEtapa - 1] ?? null;
+  const etapaSeguinte = etapas[indiceEtapa + 1] ?? null;
+  const navEtapa = (
+    <div className="etapa-nav">
+      {etapaAnterior && <button onClick={() => setEtapa(etapaAnterior.chave)}>← {etapaAnterior.rotulo}</button>}
+      {etapaSeguinte && <button className="escuro direita" onClick={() => setEtapa(etapaSeguinte.chave)}>{etapaSeguinte.rotulo} →</button>}
+    </div>
+  );
 
   const proxima: Acao = pendencias.length > 0
     ? {
@@ -294,7 +354,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       titulo: `Faltam ${pendencias.length} ${pendencias.length === 1 ? "campo obrigatório" : "campos obrigatórios"}`,
       detalhe: pendencias.map((p) => p.msg).join(" · "),
       rotuloBotao: "Ir para o primeiro",
-      onClick: () => irPara(pendencias[0].alvo, true),
+      onClick: () => irParaCampo(pendencias[0].alvo, true),
     }
     : !pecas
       ? {
@@ -303,7 +363,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         detalhe: semDescritivo > 0
           ? `${semDescritivo} de ${trechos.length} confrontantes ainda sem descritivo formal`
           : `${trechos.length} confrontantes descritos`,
-        rotuloBotao: "⚡ Gerar peças técnicas",
+        rotuloBotao: "Gerar peças técnicas",
         onClick: () => gerar(),
       }
       : !plantaUrl
@@ -312,7 +372,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
           titulo: `Gere a Planta ${folhaEfetiva}`,
           detalhe: satelite ? `imagem ${satelite.nome} carregada` : "requer a imagem de satélite",
           rotuloBotao: "Ir para a planta",
-          onClick: () => irPara("pc-gerar"),
+          onClick: () => irParaCampo("pc-planta"),
         }
         : { tom: "pronto", titulo: "Serviço completo", detalhe: "peças e planta geradas — disponíveis no histórico abaixo" };
 
@@ -322,271 +382,316 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   return (
     <div className="conferencia" style={{ paddingBottom: 40 }}>
       <Avisos avisos={avisos} onFechar={fechar} />
-      <Passos passos={passos} />
       <header className="topo">
-        <button className="fantasma" onClick={onVoltar}>← Dashboard</button>
-        <span className="arquivo">📑 Serviço 2 · {servico.denominacao ?? "peças técnicas"}{pdfNome ? ` · ${pdfNome}` : ""}</span>
+        <button className="fantasma voltar" onClick={onVoltar}>← Serviços</button>
+        <span className="sep" aria-hidden="true">/</span>
+        <h1 className="titulo">{servico.denominacao || "Peças técnicas"}</h1>
+        <span className="chip mod-pecas">Peças</span>
+        {(pdfNome ?? servico.nome_arquivo_txt) && <span className="arquivo">{pdfNome ?? servico.nome_arquivo_txt}</span>}
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
+        <span className="esticar" />
+        <Passos passos={passos} onClick={(_, i) => setEtapa(etapas[i].chave)} />
       </header>
 
-      <ProximaAcao acao={proxima} />
+      <div className="conferencia-corpo fade" key={etapa}>
+        <ProximaAcao acao={proxima} />
 
-      <section className="bloco" id="pc-dados">
-        <header><span className="num-bloco">1</span><h3>Imóvel e requerentes</h3>
-          <span className="desc">pré-preenchido pelo PDF — confira o essencial; o resto abre quando precisar</span></header>
+        {/* ================= Etapa · Dados ================= */}
+        {etapa === "dados" && (
+          <>
+            <section className="bloco" id="pc-dados">
+              <header><h3>Imóvel e requerentes</h3>
+                <span className="desc">pré-preenchido pelo PDF — confira o essencial; o resto abre quando precisar</span></header>
 
-        <div className="grade">
-          <label>Situação do imóvel *
-            <select value={servico.tipo_imovel ?? "matricula"} onChange={(e) => campo("tipo_imovel", e.target.value as "matricula" | "posse")}>
-              <option value="matricula">Matrícula (proprietário)</option>
-              <option value="posse">Posse (posseiro)</option>
-            </select>
-            <small className="sub">define planta A1 ou A3 e o conjunto de peças</small>
-          </label>
-          <label>Denominação * <input id="pc-denominacao" value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} /></label>
-          <label>Município * <input id="pc-municipio" value={servico.municipio ?? ""} onChange={(e) => campo("municipio", e.target.value)} /></label>
-          <label>UF *
-            <select id="pc-uf" value={servico.uf ?? ""} onChange={(e) => campo("uf", e.target.value)}>
-              <option value="">—</option>{UFS.map((u) => <option key={u}>{u}</option>)}
-            </select>
-          </label>
-          <label>Detentor * <input id="pc-detentor" value={servico.detentor_nome ?? ""} onChange={(e) => campo("detentor_nome", e.target.value)} /></label>
-          <label>CPF do detentor <input value={servico.detentor_cpf ?? ""} onChange={(e) => campo("detentor_cpf", e.target.value)} /></label>
-          <label>Responsável Técnico *
-            <select id="pc-rt" value={servico.rt_id ?? ""} onChange={(e) => campo("rt_id", e.target.value || null)}>
-              <option value="">—</option>
-              {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
-            </select>
-            <small className="sub">cadastre novos em ⚙ Configurações</small>
-          </label>
-          <label style={{ gridColumn: "span 2" }}>Endereço dos requerentes
-            <input placeholder="Rua ..., Nº ..., Bairro, Cidade, Estado, CEP:..." value={servico.endereco_detentor ?? ""} onChange={(e) => campo("endereco_detentor", e.target.value || null)} /></label>
-        </div>
-
-        <Secao titulo="Registro, cartório e área"
-          selo={<span className={`secao-selo ${seloRegistro === 4 ? "completa" : seloRegistro === 0 ? "vazia" : ""}`}>{seloRegistro} de 4</span>}
-          dica="o PDF costuma trazer matrícula, CNS e SNCR prontos">
-          <div className="grade">
-            <label>Matrícula <input value={servico.matricula ?? ""} onChange={(e) => campo("matricula", e.target.value)} /></label>
-            <label>CNS (cartório) <input value={servico.cns ?? ""} onChange={(e) => campo("cns", e.target.value)} /></label>
-            <label>Código SNCR <input value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
-            <label>Área constante na matrícula (ha) <input placeholder="ex.: 86" value={servico.area_matricula_ha ?? ""} onChange={(e) => campo("area_matricula_ha", e.target.value || null)} /></label>
-            <label style={{ gridColumn: "span 2" }}>Faixas de domínio (detectadas na planta)
-              <input readOnly value={vias.length ? vias.join(" · ") : "nenhuma"} />
-              <small className="sub">{vias.length
-                ? `sai ${vias.length} ${vias.length > 1 ? "declarações" : "declaração"} de faixa de domínio, uma por via`
-                : "sem estrada, corredor, linha férrea ou rodovia na confrontação — a declaração não é gerada"}</small>
-            </label>
-          </div>
-        </Secao>
-
-        <Secao titulo="Gênero e segundo requerente"
-          selo={<span className={`secao-selo ${servico.requerente2_nome ? "completa" : ""}`}>{servico.requerente2_nome || "só o detentor"}</span>}
-          abrirEm={!!servico.requerente2_nome}
-          dica="usado na flexão dos textos e nas assinaturas">
-          <div className="grade">
-            <label>Gênero do detentor
-              <select value={servico.detentor_genero ?? "M"} onChange={(e) => campo("detentor_genero", e.target.value as "M" | "F")}>
-                <option value="M">Masculino</option><option value="F">Feminino</option>
-              </select>
-            </label>
-            <label>Requerente 2 (opcional{servico.tipo_imovel === "posse" ? " — ignorado na posse" : ""})
-              <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} /></label>
-            <label>CPF do requerente 2 <input value={servico.requerente2_cpf ?? ""} onChange={(e) => campo("requerente2_cpf", e.target.value || null)} /></label>
-            <label>Gênero do requerente 2
-              <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
-                <option value="M">Masculino</option><option value="F">Feminino</option>
-              </select>
-            </label>
-          </div>
-        </Secao>
-
-        <Secao titulo="Espólio e inventariante"
-          selo={<span className={`secao-selo ${servico.is_espolio ? "completa" : ""}`}>{servico.is_espolio ? "é espólio" : "não"}</span>}
-          abrirEm={!!servico.is_espolio}
-          dica="proprietário falecido, representado por inventariante">
-          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 10 }}>
-            <input type="checkbox" checked={!!servico.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
-            <b>É Espólio? (possuidor/proprietário falecido com inventariante)</b>
-          </label>
-          {servico.is_espolio && (
-            <div className="grade">
-              <label>Nome do Inventariante <input value={servico.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome do inventariante" /></label>
-              <label>CPF do Inventariante <input value={servico.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
-              <label>RG do Inventariante (opcional) <input value={servico.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
-            </div>
-          )}
-        </Secao>
-
-        <Secao titulo="Credenciado, TRT e dados do RT nas peças"
-          selo={<span className={`secao-selo ${seloRt === 5 ? "completa" : seloRt === 0 ? "vazia" : ""}`}>{seloRt} de 5</span>}
-          abrirEm={seloRt < 4}
-          dica={rtSel ? `salvo no cadastro de ${rtSel.nome}` : "selecione um RT acima"}>
-          <div className="grade">
-            <label>Credenciado
-              <select value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
-                <option value="">—</option>
-                {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
-              </select>
-              <small className="sub">o código vai no carimbo da planta</small>
-            </label>
-            <label>TRT (Termo de Responsabilidade Técnica)
-              <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}
-                onChange={(e) => campo("trt", e.target.value.trim() || null)} />
-              <small className="sub">
-                {rtSel?.trt && servico.trt === rtSel.trt
-                  ? `preenchido com o TRT padrão de ${rtSel.nome}`
-                  : "vai nas peças e na planta; sobrepõe o TRT do PDF do SIGEF"}
-              </small>
-            </label>
-            <label>Formação do RT <input value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} /></label>
-            <label>Conselho (sigla) <input value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} /></label>
-            <label>Conselho (número) <input value={rtExtras.conselho_numero} onChange={(e) => setRtExtras({ ...rtExtras, conselho_numero: e.target.value })} /></label>
-            <label>Identidade do RT <input value={rtExtras.identidade} onChange={(e) => setRtExtras({ ...rtExtras, identidade: e.target.value })} /></label>
-            <label>CPF do RT <input value={rtExtras.cpf} onChange={(e) => setRtExtras({ ...rtExtras, cpf: e.target.value })} /></label>
-          </div>
-        </Secao>
-      </section>
-
-      <section className="bloco">
-        <header><span className="num-bloco">2</span><h3>Confrontantes</h3>
-          <span className="desc">
-            {trechos.length} trecho(s){semDescritivo > 0 ? ` · ${semDescritivo} sem descritivo formal` : " · todos descritos"}
-            {numeracao.size > 0 ? ` · ${numeracao.size} numerado(s)` : ""} — o PDF traz o texto truncado
-          </span>
-          <span style={{ flex: 1 }} />
-          <button
-            className={modoNumeracao ? "principal" : ""}
-            title="Escolher quais confrontantes saem NUMERADOS na planta: no desenho fica só o número e o texto vai para o quadro do rodapé"
-            onClick={() => setModoNumeracao((v) => !v)}>
-            {modoNumeracao ? "✓ Concluir numeração" : "🔢 Adicionar numeração"}
-          </button>
-        </header>
-        {modoNumeracao && (
-          <p className="desc" style={{ margin: "0 0 10px" }}>
-            Marque os confrontantes cujo espaço na planta é curto demais para o nome.
-            Cada marcado recebe um número, na ordem do perímetro, e os dados dele saem
-            no quadro <b>CONFRONTANTES</b> embaixo do desenho. Faixa de domínio e curso
-            d'água não entram: o nome deles acompanha o próprio traço.
-          </p>
-        )}
-        {trechos.map((t, i) => (
-          <div className="trecho" key={i} style={{ ["--cor-trecho" as string]: t.descritivo.trim() ? "#12b76a" : "#b54708" }}>
-            <div className="linha">
-              {numeracao.get(i) !== undefined && (
-                <span className="badge-num" title="Sai numerado na planta; os dados vão ao quadro CONFRONTANTES do rodapé">
-                  {numeracao.get(i)}
-                </span>
-              )}
-              <label>Início no vértice <input className="mono" style={{ width: 140 }} value={t.codigo_inicio}
-                onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, codigo_inicio: e.target.value } : x)))} /></label>
-              <label>Tipo limite
-                <select value={t.tipo_limite} onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, tipo_limite: e.target.value } : x)))}>
-                  {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
-                </select>
-              </label>
-              <label title={ehRioPorLimite(t.tipo_limite)
-                ? "LN1 é limite natural de curso d'água: sai na planta como linha dupla AZUL, no lugar da vermelha"
-                : ehViaPorLimite(t.tipo_limite)
-                  ? "LA3 é limite de faixa de domínio: sempre via"
-                  : "Estrada, rodovia, corredor, linha férrea — desenhada na planta como linha dupla vermelha"}>
-                <input type="checkbox" checked={t.eh_via || ehViaPorLimite(t.tipo_limite)}
-                  disabled={ehViaPorLimite(t.tipo_limite)}
-                  onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, eh_via: e.target.checked } : x)))} />
-                {" "}faixa de domínio pública{ehViaPorLimite(t.tipo_limite) ? " (LA3)" : ""}
-                {ehRioPorLimite(t.tipo_limite) && <span className="marca-rio"> ≈ rio (LN1, azul)</span>}
-              </label>
-              {modoNumeracao && (
-                <label title={!ehNumeravel(t)
-                  ? "Faixa de domínio e curso d'água não são numerados: o nome acompanha o traço da via"
-                  : !t.descritivo.trim()
-                    ? "Preencha o descritivo: é o texto que sairia no quadro do rodapé"
-                    : "Na planta sai só o número; nome, matrícula e CPF vão para o quadro CONFRONTANTES do rodapé"}>
-                  <input type="checkbox" checked={!!t.numerado && ehNumeravel(t)}
-                    disabled={!ehNumeravel(t) || !t.descritivo.trim()}
-                    onChange={(e) => marcarNumeracao(i, e.target.checked)} />
-                  {" "}numerar
+              <div className="grade">
+                <label><span>Situação do imóvel <span className="obrigatorio">*</span></span>
+                  <select value={servico.tipo_imovel ?? "matricula"} onChange={(e) => campo("tipo_imovel", e.target.value as "matricula" | "posse")}>
+                    <option value="matricula">Matrícula (proprietário)</option>
+                    <option value="posse">Posse (posseiro)</option>
+                  </select>
+                  <small className="sub">define planta A1 ou A3 e o conjunto de peças</small>
                 </label>
-              )}
-              <span style={{ flex: 1 }} />
-              <button className="remover" title="Remover trecho" onClick={() => setTrechos((ts) => ts.filter((_, j) => j !== i))}>✕</button>
-            </div>
-            <textarea value={t.descritivo} className={t.descritivo.trim() ? "" : "pendente"}
-              placeholder={"Descritivo formal, ex.: (MATR.432/CNS.00.770-8) FAZENDA LAMEIRO\\ RUDSON PINTO FERREIRA\\ CPF:791.234.145-53"}
-              onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, descritivo: e.target.value } : x)))} />
-          </div>
-        ))}
-      </section>
+                <label><span>Denominação <span className="obrigatorio">*</span></span>
+                  <input id="pc-denominacao" value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} />
+                </label>
+                <label><span>Município <span className="obrigatorio">*</span></span>
+                  <input id="pc-municipio" value={servico.municipio ?? ""} onChange={(e) => campo("municipio", e.target.value)} />
+                </label>
+                <label><span>UF <span className="obrigatorio">*</span></span>
+                  <select id="pc-uf" value={servico.uf ?? ""} onChange={(e) => campo("uf", e.target.value)}>
+                    <option value="">—</option>{UFS.map((u) => <option key={u}>{u}</option>)}
+                  </select>
+                </label>
+                <label><span>Detentor <span className="obrigatorio">*</span></span>
+                  <input id="pc-detentor" value={servico.detentor_nome ?? ""} onChange={(e) => campo("detentor_nome", e.target.value)} />
+                </label>
+                <label>CPF do detentor <input className="mono" value={servico.detentor_cpf ?? ""} onChange={(e) => campo("detentor_cpf", e.target.value)} /></label>
+                <label><span>Responsável Técnico <span className="obrigatorio">*</span></span>
+                  <select id="pc-rt" value={servico.rt_id ?? ""} onChange={(e) => campo("rt_id", e.target.value || null)}>
+                    <option value="">—</option>
+                    {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
+                  </select>
+                  <small className="sub">cadastre novos em Configurações</small>
+                </label>
+                <label style={{ gridColumn: "span 2" }}>Endereço dos requerentes
+                  <input placeholder="Rua ..., Nº ..., Bairro, Cidade, Estado, CEP:..." value={servico.endereco_detentor ?? ""} onChange={(e) => campo("endereco_detentor", e.target.value || null)} /></label>
+              </div>
 
-      <section className="bloco" id="pc-gerar">
-        <header><span className="num-bloco">3</span><h3>Gerar peças e planta</h3></header>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <button disabled={!!ocupado} onClick={async () => {
-            try { setErro(null); await salvar(); avisar("ok", "Rascunho salvo."); } catch (e) { setErro(String(e)); }
-          }}>Salvar rascunho</button>
-          <button className="principal" disabled={!!ocupado} onClick={() => gerar()}>
-            {ocupado ? ocupado : "⚡ Gerar peças técnicas"}
-          </button>
-          {!pdfB64 && (
-            <label style={{ cursor: "pointer", color: "var(--primaria)" }}>
-              📄 reenviar PDF do SIGEF
-              <input type="file" accept=".pdf" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) gerar(f); e.target.value = ""; }} />
-            </label>
-          )}
-        </div>
+              <div className="secoes" style={{ marginTop: 22 }}>
+                <Secao titulo="Registro, cartório e área"
+                  selo={<span className={`secao-selo ${seloRegistro === 4 ? "completa" : seloRegistro === 0 ? "vazia" : ""}`}>{seloRegistro} de 4</span>}
+                  dica="o PDF costuma trazer matrícula, CNS e SNCR prontos">
+                  <div className="grade">
+                    <label>Matrícula <input className="mono" value={servico.matricula ?? ""} onChange={(e) => campo("matricula", e.target.value)} /></label>
+                    <label>CNS (cartório) <input className="mono" value={servico.cns ?? ""} onChange={(e) => campo("cns", e.target.value)} /></label>
+                    <label>Código SNCR <input className="mono" value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
+                    <label>Área constante na matrícula (ha) <input className="mono" placeholder="ex.: 86" value={servico.area_matricula_ha ?? ""} onChange={(e) => campo("area_matricula_ha", e.target.value || null)} /></label>
+                    <label style={{ gridColumn: "span 2" }}>Faixas de domínio (detectadas na planta)
+                      <input readOnly value={vias.length ? vias.join(" · ") : "nenhuma"} />
+                      <small className="sub">{vias.length
+                        ? `sai ${vias.length} ${vias.length > 1 ? "declarações" : "declaração"} de faixa de domínio, uma por via`
+                        : "sem estrada, corredor, linha férrea ou rodovia na confrontação — a declaração não é gerada"}</small>
+                    </label>
+                  </div>
+                </Secao>
 
-        {/* A planta depende da imagem de satélite: separada das peças para não
-            parecer que o botão ao lado faz a mesma coisa. */}
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginTop: 14, paddingTop: 14, borderTop: "1px dashed var(--borda)" }}>
-          <label className="dropzone" style={{ padding: "12px 16px", flex: "1 1 260px" }}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
-            {satelite
-              ? <b>🛰 {satelite.nome}</b>
-              : <><b>🛰 Imagem de satélite (PNG/JPG)</b><span>obrigatória para a planta</span></>}
-            <input type="file" accept="image/png,image/jpeg" hidden
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
-          </label>
-          <label>Folha
-            <select value={folhaEfetiva} onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
-              <option value="A1">A1 (841×594 mm)</option>
-              <option value="A3">A3 (420×297 mm)</option>
-            </select>
-            <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
-          </label>
-          <button disabled={!!ocupado || !satelite} onClick={gerarPlanta}
-            title={!satelite ? "Envie a imagem de satélite primeiro" : undefined}>
-            🗺 Gerar Planta {folhaEfetiva} (PDF)
-          </button>
-          {plantaUrl && (
-            <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
-              <span className="ext">PDF</span> Planta {folhaEfetiva}
-            </a>
-          )}
-        </div>
+                <Secao titulo="Gênero e segundo requerente"
+                  selo={<span className={`secao-selo ${servico.requerente2_nome ? "completa" : ""}`}>{servico.requerente2_nome || "só o detentor"}</span>}
+                  abrirEm={!!servico.requerente2_nome}
+                  dica="usado na flexão dos textos e nas assinaturas">
+                  <div className="grade">
+                    <label>Gênero do detentor
+                      <select value={servico.detentor_genero ?? "M"} onChange={(e) => campo("detentor_genero", e.target.value as "M" | "F")}>
+                        <option value="M">Masculino</option><option value="F">Feminino</option>
+                      </select>
+                    </label>
+                    <label>Requerente 2 (opcional{servico.tipo_imovel === "posse" ? " — ignorado na posse" : ""})
+                      <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} /></label>
+                    <label>CPF do requerente 2 <input className="mono" value={servico.requerente2_cpf ?? ""} onChange={(e) => campo("requerente2_cpf", e.target.value || null)} /></label>
+                    <label>Gênero do requerente 2
+                      <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
+                        <option value="M">Masculino</option><option value="F">Feminino</option>
+                      </select>
+                    </label>
+                  </div>
+                </Secao>
 
-        {erro && <div className="erro">{erro}</div>}
-        {pecas && (
-          <div style={{ marginTop: 12 }}>
-            <p style={{ color: "var(--texto-2)" }}>
-              Área SGL {pecas.resumo.areaHa} ha · perímetro {pecas.resumo.perimetro} m · TRT {pecas.resumo.trt} ·{" "}
-              {pecas.resumo.vertices} vértices · {pecas.resumo.cartas} carta(s){pecas.resumo.via ? ` · via ${pecas.resumo.via}` : ""}
-            </p>
-            <div className="downloads">
-              {pecas.arquivos.map((a) => (
-                <a key={a.titulo} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
-                  <span className="ext">DOCX</span> {a.titulo}
-                </a>
-              ))}
-            </div>
-          </div>
+                <Secao titulo="Espólio e inventariante"
+                  selo={<span className={`secao-selo ${servico.is_espolio ? "completa" : ""}`}>{servico.is_espolio ? "é espólio" : "não"}</span>}
+                  abrirEm={!!servico.is_espolio}
+                  dica="proprietário falecido, representado por inventariante">
+                  <label className="linha-check">
+                    <input type="checkbox" checked={!!servico.is_espolio} onChange={(e) => campo("is_espolio", e.target.checked)} />
+                    É espólio (possuidor/proprietário falecido com inventariante)
+                  </label>
+                  {servico.is_espolio && (
+                    <div className="grade">
+                      <label>Nome do inventariante <input value={servico.inventariante_nome ?? ""} onChange={(e) => campo("inventariante_nome", e.target.value || null)} placeholder="Nome do inventariante" /></label>
+                      <label>CPF do inventariante <input className="mono" value={servico.inventariante_cpf ?? ""} onChange={(e) => campo("inventariante_cpf", e.target.value || null)} placeholder="000.000.000-00" /></label>
+                      <label>RG do inventariante (opcional) <input value={servico.inventariante_rg ?? ""} onChange={(e) => campo("inventariante_rg", e.target.value || null)} placeholder="00.000.000-00" /></label>
+                    </div>
+                  )}
+                </Secao>
+
+                <Secao titulo="Credenciado, TRT e dados do RT nas peças"
+                  selo={<span className={`secao-selo ${seloRt === 5 ? "completa" : seloRt === 0 ? "vazia" : ""}`}>{seloRt} de 5</span>}
+                  abrirEm={seloRt < 4}
+                  dica={rtSel ? `salvo no cadastro de ${rtSel.nome}` : "selecione um RT acima"}>
+                  <div className="grade">
+                    <label>Credenciado
+                      <select value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
+                        <option value="">—</option>
+                        {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
+                      </select>
+                      <small className="sub">o código vai no carimbo da planta</small>
+                    </label>
+                    <label>TRT (Termo de Responsabilidade Técnica)
+                      <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}
+                        onChange={(e) => campo("trt", e.target.value.trim() || null)} />
+                      <small className="sub">
+                        {rtSel?.trt && servico.trt === rtSel.trt
+                          ? `preenchido com o TRT padrão de ${rtSel.nome}`
+                          : "vai nas peças e na planta; sobrepõe o TRT do PDF do SIGEF"}
+                      </small>
+                    </label>
+                    <label>Formação do RT <input value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} /></label>
+                    <label>Conselho (sigla) <input value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} /></label>
+                    <label>Conselho (número) <input className="mono" value={rtExtras.conselho_numero} onChange={(e) => setRtExtras({ ...rtExtras, conselho_numero: e.target.value })} /></label>
+                    <label>Identidade do RT <input value={rtExtras.identidade} onChange={(e) => setRtExtras({ ...rtExtras, identidade: e.target.value })} /></label>
+                    <label>CPF do RT <input className="mono" value={rtExtras.cpf} onChange={(e) => setRtExtras({ ...rtExtras, cpf: e.target.value })} /></label>
+                  </div>
+                </Secao>
+              </div>
+            </section>
+            {navEtapa}
+          </>
         )}
-      </section>
 
-      <section className="bloco">
-        <header><h3>📁 Histórico de documentos deste serviço</h3></header>
-        <HistoricoDocs servicoId={servico.id} />
-      </section>
+        {/* ================= Etapa · Confrontantes ================= */}
+        {etapa === "confrontantes" && (
+          <>
+            <div className="etapa-cabeca" id="pc-confrontantes">
+              <h2>Confrontantes</h2>
+              <span className="desc">
+                {trechos.length} {trechos.length === 1 ? "trecho" : "trechos"}{semDescritivo > 0 ? ` · ${semDescritivo} sem descritivo formal` : " · todos descritos"}
+                {numeracao.size > 0 ? ` · ${numeracao.size} ${numeracao.size === 1 ? "numerado" : "numerados"}` : ""} — o PDF traz o texto truncado
+              </span>
+              <span className="esticar" />
+              <button
+                className={modoNumeracao ? "principal" : ""}
+                title="Escolher quais confrontantes saem NUMERADOS na planta: no desenho fica só o número e o texto vai para o quadro do rodapé"
+                onClick={() => setModoNumeracao((v) => !v)}>
+                {modoNumeracao ? "Concluir numeração" : "Adicionar numeração"}
+              </button>
+            </div>
+            {modoNumeracao && (
+              <p className="sub" style={{ margin: "-8px 0 0" }}>
+                Marque os confrontantes cujo espaço na planta é curto demais para o nome.
+                Cada marcado recebe um número, na ordem do perímetro, e os dados dele saem
+                no quadro <b>CONFRONTANTES</b> embaixo do desenho. Faixa de domínio e curso
+                d'água não entram: o nome deles acompanha o próprio traço.
+              </p>
+            )}
+            <div className="trechos" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {trechos.map((t, i) => {
+                const ehVia = t.eh_via || ehViaPorLimite(t.tipo_limite);
+                return (
+                  <div className="trecho" key={i} style={{ ["--cor-trecho" as string]: t.descritivo.trim() ? "var(--primaria)" : "var(--alerta)", marginBottom: 0 }}>
+                    <div className="trecho-cabeca">
+                      {numeracao.get(i) !== undefined && (
+                        <span className="badge-num" title="Sai numerado na planta; os dados vão ao quadro CONFRONTANTES do rodapé">
+                          {numeracao.get(i)}
+                        </span>
+                      )}
+                      <span className="ponto">início no vértice
+                        <input className="mono" style={{ width: 150, height: 30, padding: "0 8px", fontWeight: 700, borderRadius: 7 }} value={t.codigo_inicio}
+                          aria-label="Vértice inicial"
+                          onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, codigo_inicio: e.target.value } : x)))} />
+                      </span>
+                      <select className="limite" value={t.tipo_limite} title="Tipo de limite" aria-label="Tipo de limite"
+                        onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, tipo_limite: e.target.value } : x)))}>
+                        {TIPOS_LIMITE.map((l) => <option key={l}>{l}</option>)}
+                      </select>
+                      <label className={`marcador ${ehVia ? "via" : ""}`} title={ehRioPorLimite(t.tipo_limite)
+                        ? "LN1 é limite natural de curso d'água: sai na planta como linha dupla AZUL, no lugar da vermelha"
+                        : ehViaPorLimite(t.tipo_limite)
+                          ? "LA3 é limite de faixa de domínio: sempre via"
+                          : "Estrada, rodovia, corredor, linha férrea — desenhada na planta como linha dupla vermelha"}>
+                        <input type="checkbox" checked={ehVia}
+                          disabled={ehViaPorLimite(t.tipo_limite)}
+                          onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, eh_via: e.target.checked } : x)))} />
+                        faixa de domínio{ehViaPorLimite(t.tipo_limite) ? " (LA3)" : ""}
+                      </label>
+                      {ehRioPorLimite(t.tipo_limite) && <span className="chip rio">≈ rio (LN1, azul)</span>}
+                      {modoNumeracao && (
+                        <label className="marcador" title={!ehNumeravel(t)
+                          ? "Faixa de domínio e curso d'água não são numerados: o nome acompanha o traço da via"
+                          : !t.descritivo.trim()
+                            ? "Preencha o descritivo: é o texto que sairia no quadro do rodapé"
+                            : "Na planta sai só o número; nome, matrícula e CPF vão para o quadro CONFRONTANTES do rodapé"}>
+                          <input type="checkbox" checked={!!t.numerado && ehNumeravel(t)}
+                            disabled={!ehNumeravel(t) || !t.descritivo.trim()}
+                            onChange={(e) => marcarNumeracao(i, e.target.checked)} />
+                          numerar
+                        </label>
+                      )}
+                      <span style={{ flex: 1 }} />
+                      <button className="remover" title="Remover trecho" onClick={() => setTrechos((ts) => ts.filter((_, j) => j !== i))}>remover</button>
+                    </div>
+                    <textarea value={t.descritivo} className={t.descritivo.trim() ? "" : "pendente"}
+                      placeholder={"Descritivo formal, ex.: (MATR.432/CNS.00.770-8) FAZENDA LAMEIRO\\ RUDSON PINTO FERREIRA\\ CPF:791.234.145-53"}
+                      onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, descritivo: e.target.value } : x)))} />
+                    {!t.descritivo.trim() && <div className="pendencia">descritivo vazio — este confrontante sairia sem texto nas peças</div>}
+                  </div>
+                );
+              })}
+              {trechos.length === 0 && <p className="sub" style={{ margin: 0 }}>Nenhum confrontante lido do PDF.</p>}
+            </div>
+            {navEtapa}
+          </>
+        )}
+
+        {/* ================= Etapa · Peças e planta ================= */}
+        {etapa === "documentos" && (
+          <>
+            <section className="bloco" id="pc-gerar">
+              <header><h3>Peças técnicas</h3>
+                <span className="desc">os dados conferidos + o PDF do SIGEF viram as 7 peças (memorial, tabular, cartas, declarações, requerimento)</span></header>
+              <div className="acoes-linha">
+                <button disabled={!!ocupado} onClick={async () => {
+                  try { setErro(null); await salvar(); avisar("ok", "Rascunho salvo."); } catch (e) { setErro(String(e)); }
+                }}>Salvar rascunho</button>
+                <button className="principal" disabled={!!ocupado} onClick={() => gerar()}>
+                  {ocupado ? ocupado : "Gerar peças técnicas"}
+                </button>
+                {!pdfB64 && (
+                  <label className="link" style={{ cursor: "pointer", color: "var(--primaria)", fontWeight: 500, fontSize: 13.5 }}>
+                    reenviar PDF do SIGEF
+                    <input type="file" accept=".pdf" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) gerar(f); e.target.value = ""; }} />
+                  </label>
+                )}
+              </div>
+              {pecas && (
+                <div style={{ marginTop: 14 }}>
+                  <p className="sub" style={{ margin: "0 0 8px" }}>
+                    Área SGL {pecas.resumo.areaHa} ha · perímetro {pecas.resumo.perimetro} m · TRT {pecas.resumo.trt} ·{" "}
+                    {pecas.resumo.vertices} vértices · {pecas.resumo.cartas} carta(s){pecas.resumo.via ? ` · via ${pecas.resumo.via}` : ""}
+                  </p>
+                  <div className="downloads">
+                    {pecas.arquivos.map((a) => (
+                      <a key={a.titulo} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
+                        <span className="ext">DOCX</span> {a.titulo}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* A planta depende da imagem de satélite: separada das peças para não
+                parecer que o botão ao lado faz a mesma coisa. */}
+            <section className="bloco" id="pc-planta">
+              <header><h3>Planta {folhaEfetiva} {servico.tipo_imovel === "posse" ? "(posse)" : "(matrícula)"}</h3>
+                <span className="desc">desenhada a partir do PDF certificado do SIGEF · a imagem de satélite entra no quadro Planta de Situação</span></header>
+              <div className="acoes-linha">
+                <label className="dropzone linha" style={{ flex: "1 1 260px" }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
+                  {satelite
+                    ? <b>{satelite.nome}</b>
+                    : <><b>Imagem de satélite (PNG/JPG)</b><span>obrigatória para a planta</span></>}
+                  <input type="file" accept="image/png,image/jpeg" hidden
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
+                </label>
+                <label>Folha
+                  <select value={folhaEfetiva} onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
+                    <option value="A1">A1 (841×594 mm)</option>
+                    <option value="A3">A3 (420×297 mm)</option>
+                  </select>
+                  <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
+                </label>
+                <button className="principal" disabled={!!ocupado || !satelite} onClick={gerarPlanta}
+                  title={!satelite ? "Envie a imagem de satélite primeiro" : undefined}>
+                  Gerar Planta {folhaEfetiva} (PDF)
+                </button>
+                {plantaUrl && (
+                  <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
+                    <span className="ext">PDF</span> Planta {folhaEfetiva}
+                  </a>
+                )}
+              </div>
+              {erro && <div className="erro">{erro}</div>}
+            </section>
+
+            <section className="bloco">
+              <header><h3>Histórico de documentos</h3>
+                <span className="desc">cada geração vira uma versão preservada — baixe qualquer uma a qualquer momento</span></header>
+              <HistoricoDocs servicoId={servico.id} />
+            </section>
+            {navEtapa}
+          </>
+        )}
+      </div>
     </div>
   );
 }
