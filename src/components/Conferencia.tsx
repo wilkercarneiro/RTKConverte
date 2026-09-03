@@ -13,6 +13,8 @@ import {
 } from "../lib/domains";
 import { calcularPreviewLocal } from "../lib/preview";
 import { ehRioPorLimite, ehViaPorLimite, moverConfrontacao, numerarConfrontantes, SEM_CONFRONTACAO, trechoDoVertice, viasDaPlanta } from "../lib/trechos";
+import { reordenarVertices } from "../lib/ordem";
+import type { DestinoOrdem } from "../lib/ordem";
 import {
   camposDaSituacao, chaveDoServico, pedeMatricula, rotuloCurto, situacaoDoImovel, vaiAoSigef,
 } from "../lib/modalidades";
@@ -27,14 +29,14 @@ import { HistoricoDocs } from "./HistoricoDocs";
 import { Avisos, BotaoPerigo, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 
 /** Etapas do serviço: uma por vez, como abas dentro do cabeçalho. */
-type Etapa = "dados" | "confrontantes" | "glebas" | "vertices" | "documentos";
+type Etapa = "dados" | "confrontantes" | "glebas" | "documentos";
 
 /** Em que etapa mora um elemento — para as pendências e a próxima ação levarem
  *  o operador até o campo certo mesmo quando ele está em outra aba. */
 function etapaDoAlvo(id: string): Etapa {
   if (id.startsWith("campo-") || id === "bloco-dados") return "dados";
   if (id === "bloco-confrontantes") return "confrontantes";
-  if (id === "bloco-vertices") return "vertices";
+  if (id === "bloco-vertices") return "confrontantes";   // os vértices moram na mesma etapa dos confrontantes
   if (id === "bloco-glebas") return "glebas";
   return "documentos";
 }
@@ -137,6 +139,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // abre os inputs do trecho (chave: ordem do vértice inicial).
   const [camposAbertos, setCamposAbertos] = useState<Set<number>>(() => new Set());
   const [mostrarInserirV, setMostrarInserirV] = useState(false);
+  // Vértices marcados para reordenar em bloco (chave = id do vértice, que não
+  // muda quando a ordem muda). `ultimoClicado` é a âncora do Shift+clique.
+  const [selVert, setSelVert] = useState<Set<string>>(() => new Set());
+  const [ultimoClicado, setUltimoClicado] = useState<number | null>(null);
   const [previaAberta, setPreviaAberta] = useState(false);
   const [sobreAberto, setSobreAberto] = useState(false);
 
@@ -396,6 +402,35 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     setNovoV({ aposOrdem: "", codigo: "", lat: "", lon: "", h: "", sigmaH: "0,02" });
     avisar("ok", "Vértice V inserido.");
   }
+  // ------- ordem dos vértices -------
+  //
+  // A ordem É a sequência do anel: o mapa, os trechos (M até o próximo M), os
+  // códigos e todos os documentos saem dela. Pontos coletados fora de ordem se
+  // corrigem aqui, em bloco: marcar vários e mover. Ver src/lib/ordem.ts.
+  const chaveV = (v: Vertice) => v.id ?? `o${v.ordem}`;
+  function alternarSelecaoV(idx: number, shift: boolean) {
+    const lista = [...vertices].sort((a, b) => a.ordem - b.ordem);
+    setSelVert((s) => {
+      const n = new Set(s);
+      if (shift && ultimoClicado !== null) {
+        const [a, b] = ultimoClicado < idx ? [ultimoClicado, idx] : [idx, ultimoClicado];
+        for (let k = a; k <= b; k++) n.add(chaveV(lista[k]));
+      } else {
+        const c = chaveV(lista[idx]);
+        if (n.has(c)) n.delete(c); else n.add(c);
+      }
+      return n;
+    });
+    setUltimoClicado(idx);
+  }
+  function reordenar(destino: DestinoOrdem) {
+    if (!selVert.size) return;
+    setVertices((vs) => reordenarVertices(vs, (v) => selVert.has(chaveV(v)), destino));
+    // os campos abertos eram indexados pela ordem antiga
+    setCamposAbertos(new Set());
+    avisar("ok", `Ordem alterada: ${selVert.size} vértice(s) movido(s). Mapa, trechos e códigos seguem a nova sequência; gere os documentos de novo.`);
+  }
+
   function removerV(ordem: number) {
     setVertices((vs) => vs.filter((v) => v.ordem !== ordem).map((v) => (v.ordem > ordem ? { ...v, ordem: v.ordem - 1 } : v)));
   }
@@ -924,9 +959,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // ------- abas de etapa: uma por vez -------
   const etapas: { chave: Etapa; rotulo: string; feita: boolean }[] = [
     { chave: "dados", rotulo: "Dados", feita: pendencias.length === 0 },
-    { chave: "confrontantes", rotulo: "Confrontantes", feita: confrontantesPreenchidos > 0 },
+    { chave: "confrontantes", rotulo: "Confrontantes e vértices", feita: confrontantesPreenchidos > 0 },
     ...(temGlebas ? [{ chave: "glebas" as Etapa, rotulo: "Glebas", feita: glebas.some((g) => g.anel.length >= 3) }] : []),
-    { chave: "vertices", rotulo: "Vértices", feita: docsProntos },
     { chave: "documentos", rotulo: "Documentos", feita: ehConferencia ? docsProntos : !!plantaUrl && pecasProntas },
   ];
   const passos: Passo[] = etapas.map((e) => ({
@@ -1305,53 +1339,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                 </p>
               </div>
             </div>
-            {navEtapa}
-          </>
-        )}
-
-        {/* ================= Etapa · Glebas (só no serviço com gleba) =================
-            Fica ANTES da geração de propósito: as divisões têm de estar montadas
-            quando a planta for desenhada, que é o pedido do fluxo de gleba. */}
-        {etapa === "glebas" && temGlebas && (
-          <>
-            <section className="bloco" id="bloco-glebas">
-              <header>
-                <h3>Glebas</h3>
-                <span className="desc">{glebas.length} gleba(s) — desenhadas dentro do perímetro, na mesma planta</span>
-              </header>
-              <GlebasEditor
-                glebas={glebas}
-                vertices={vertices}
-                trechos={trechosOrdenados}
-                servicoId={servico.id}
-                areaTotalHa={Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0}
-                onChange={setGlebas}
-              />
-              {glebas.filter((g) => g.anel.length >= 3).length > 0 && (
-                <div className="rodape-bloco">
-                  <BotaoPerigo
-                    titulo="Separar cada gleba em um serviço próprio"
-                    confirmacao={`criar ${glebas.filter((g) => g.anel.length >= 3).length} serviço(s)`}
-                    onConfirmar={separarGlebas}
-                    className=""
-                  >Separar glebas em serviços</BotaoPerigo>
-                  <span className="sub" style={{ flex: 1, minWidth: 260 }}>
-                    Cria um serviço por gleba, com os vértices e os códigos que ela já tem.
-                    Este serviço continua como está — separar não move nada.
-                  </span>
-                </div>
-              )}
-            </section>
-            {navEtapa}
-          </>
-        )}
-
-        {/* ================= Etapa · Vértices ================= */}
-        {etapa === "vertices" && (
-          <>
+            {/* ------- Vértices: na mesma etapa, porque a ORDEM deles é o que define os
+                trechos e o mapa acima; reordenar aqui atualiza tudo ao mesmo tempo. ------- */}
             <div className="etapa-cabeca" id="bloco-vertices">
               <h2>Vértices</h2>
-              <span className="desc">{vertices.length} pontos · início automático em {verticeInicialNome} (mais ao norte, exigido pelo SIGEF)</span>
+              <span className="desc">{vertices.length} pontos · início automático em {verticeInicialNome} (mais ao norte, exigido pelo SIGEF) · a ordem da tabela é a sequência do perímetro: mudar aqui muda o mapa, os trechos e os documentos</span>
               <span className="esticar" />
               {/* O método era um select por linha: em 60 vértices, 60 cliques para
                   trocar todos. Aqui troca de uma vez, sem perder o ajuste por linha. */}
@@ -1401,18 +1393,53 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               </fieldset>
             )}
 
+            <div className="ordem-toolbar" role="toolbar" aria-label="Reordenar vértices">
+              <b style={{ fontSize: 13 }}>Ordem dos pontos</b>
+              <span className="sub" style={{ fontSize: 12.5 }}>
+                {selVert.size ? `${selVert.size} selecionado(s)` : "marque os pontos (Shift + clique seleciona um intervalo) e mova o bloco"}
+              </span>
+              <span className="grupo">
+                <button disabled={!selVert.size} onClick={() => reordenar({ tipo: "cima" })} title="sobe um passo">↑ subir</button>
+                <button disabled={!selVert.size} onClick={() => reordenar({ tipo: "baixo" })} title="desce um passo">↓ descer</button>
+              </span>
+              <span className="grupo">
+                <button disabled={!selVert.size} onClick={() => reordenar({ tipo: "inicio" })}>para o início</button>
+                <button disabled={!selVert.size} onClick={() => reordenar({ tipo: "fim" })}>para o fim</button>
+              </span>
+              <label className="grupo" style={{ alignItems: "center", gap: 6 }}>
+                <span className="sub" style={{ fontSize: 12.5 }}>para depois de</span>
+                <select disabled={!selVert.size} defaultValue="" aria-label="Mover os selecionados para depois do ponto"
+                  onChange={(e) => { if (e.target.value !== "") { reordenar({ tipo: "depois", ordem: Number(e.target.value) }); e.target.value = ""; } }}>
+                  <option value="">—</option>
+                  {[...vertices].sort((a, b) => a.ordem - b.ordem)
+                    .filter((v) => !selVert.has(chaveV(v)))
+                    .map((v) => <option key={chaveV(v)} value={v.ordem}>{v.ordem + 1}º · {nomePonto(v)}</option>)}
+                </select>
+              </label>
+              <button disabled={selVert.size < 2} onClick={() => reordenar({ tipo: "inverter" })} title="inverte a sequência dos selecionados, nas mesmas posições">inverter</button>
+              <span style={{ flex: 1 }} />
+              <button className="fantasma" onClick={() => setSelVert(new Set(vertices.map(chaveV)))}>selecionar todos</button>
+              <button className="fantasma" disabled={!selVert.size} onClick={() => { setSelVert(new Set()); setUltimoClicado(null); }}>limpar</button>
+            </div>
+
             <div className="tabela-wrap" style={{ maxHeight: 620 }}>
               <table className="tabela-vertices">
                 <thead>
-                  <tr><th>Nº</th><th>Rótulo TXT</th><th>Código</th><th>Tipo</th><th>Método</th><th>Latitude</th><th>Longitude</th><th className="direita">h (m)</th><th></th></tr>
+                  <tr><th></th><th>#</th><th>Nº</th><th>Rótulo TXT</th><th>Código</th><th>Tipo</th><th>Método</th><th>Latitude</th><th>Longitude</th><th className="direita">h (m)</th><th></th></tr>
                 </thead>
                 <tbody>
-                  {vertices.map((v) => {
+                  {[...vertices].sort((a, b) => a.ordem - b.ordem).map((v, idx) => {
                     const t = trechoDoVertice(trechosOrdenados, v.ordem);
                     const cor = t ? CORES[trechosOrdenados.indexOf(t) % CORES.length] : "#D5DDD8";
                     const ehInicial = v.ordem === verticeInicial;
+                    const marcado = selVert.has(chaveV(v));
                     return (
-                      <tr key={v.ordem} className={ehInicial ? "inicial" : ""}>
+                      <tr key={chaveV(v)} className={`${ehInicial ? "inicial" : ""} ${marcado ? "sel" : ""}`}>
+                        <td onClick={(e) => alternarSelecaoV(idx, e.shiftKey)}>
+                          <input type="checkbox" checked={marcado} aria-label={`Selecionar ${nomePonto(v)}`}
+                            onClick={(e) => { e.stopPropagation(); alternarSelecaoV(idx, e.shiftKey); }} onChange={() => { /* onClick decide */ }} />
+                        </td>
+                        <td className="pos">{v.ordem + 1}</td>
                         <td className="num">{v.num_txt ?? "—"}{ehInicial ? " ★" : ""}</td>
                         <td>
                           <span className="ponto-trecho" style={{ background: cor }} aria-hidden="true" />
@@ -1446,6 +1473,43 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               </table>
               <div className="tabela-rodape">{vertices.length} vértices · {preview.qtdM} M · {preview.qtdP} P · {preview.qtdV} V</div>
             </div>
+            {navEtapa}
+          </>
+        )}
+
+        {/* ================= Etapa · Glebas (só no serviço com gleba) =================
+            Fica ANTES da geração de propósito: as divisões têm de estar montadas
+            quando a planta for desenhada, que é o pedido do fluxo de gleba. */}
+        {etapa === "glebas" && temGlebas && (
+          <>
+            <section className="bloco" id="bloco-glebas">
+              <header>
+                <h3>Glebas</h3>
+                <span className="desc">{glebas.length} gleba(s) — desenhadas dentro do perímetro, na mesma planta</span>
+              </header>
+              <GlebasEditor
+                glebas={glebas}
+                vertices={vertices}
+                trechos={trechosOrdenados}
+                servicoId={servico.id}
+                areaTotalHa={Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0}
+                onChange={setGlebas}
+              />
+              {glebas.filter((g) => g.anel.length >= 3).length > 0 && (
+                <div className="rodape-bloco">
+                  <BotaoPerigo
+                    titulo="Separar cada gleba em um serviço próprio"
+                    confirmacao={`criar ${glebas.filter((g) => g.anel.length >= 3).length} serviço(s)`}
+                    onConfirmar={separarGlebas}
+                    className=""
+                  >Separar glebas em serviços</BotaoPerigo>
+                  <span className="sub" style={{ flex: 1, minWidth: 260 }}>
+                    Cria um serviço por gleba, com os vértices e os códigos que ela já tem.
+                    Este serviço continua como está — separar não move nada.
+                  </span>
+                </div>
+              )}
+            </section>
             {navEtapa}
           </>
         )}
