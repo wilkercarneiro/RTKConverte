@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import proj4lib from "proj4";
-import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef } from "../supabase/functions/_shared/reconciliacao.ts";
+import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef, trechosPlantaDoSigef } from "../supabase/functions/_shared/reconciliacao.ts";
 
 const proj4 = (f, t, c) => proj4lib(f, t, c);
 
@@ -109,4 +109,22 @@ test("ponto de terceiro vindo só do SIGEF não inventa confrontação", () => {
   assert.equal(novo.descritivo, null);
   assert.equal(novo.eh_via, false);
   assert.equal(novo.apelido_txt, null);
+});
+
+// A planta do SIGEF (gerar-planta com PDF) converte os trechos para o formato
+// do desenho. Era inline e deixava `numerado` de fora: o vizinho marcado saía
+// com o bloco de nome e sem o quadro CONFRONTANTES — só nessa planta, porque a
+// do sistema passa por geometriaDoCalculo, que sempre levou a marca.
+test("planta do SIGEF: a marca de numerado atravessa a conversão para o desenho", () => {
+  const starts = [
+    { idx: 0, descritivo: "(POSSE) FAZENDA X\\ OSEAS\\ CPF:1", ehVia: false, ehRio: false, numerado: true },
+    { idx: 5, descritivo: "CORREDOR", ehVia: true, ehRio: false, numerado: false },
+    { idx: 9, descritivo: "RIO SECO", ehVia: true, ehRio: true, numerado: false },
+  ];
+  const t = trechosPlantaDoSigef(starts);
+  assert.deepEqual(t.map((x) => [x.numerado, x.isEstrada, x.isRio, x.inicioIdx, x.fimIdx]), [
+    [true, false, false, 0, 5],
+    [false, true, false, 5, 9],
+    [false, false, true, 9, 0],   // rio vence estrada; o último fecha no primeiro
+  ]);
 });

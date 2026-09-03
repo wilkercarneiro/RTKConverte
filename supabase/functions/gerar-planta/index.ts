@@ -12,7 +12,7 @@ import type { ServicoInput } from "../_shared/servico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { Folha, TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
-import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef } from "../_shared/reconciliacao.ts";
+import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef, trechosPlantaDoSigef } from "../_shared/reconciliacao.ts";
 import type { VerticeReconciliado } from "../_shared/reconciliacao.ts";
 import {
   bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, montarDadosPlanta,
@@ -107,14 +107,8 @@ Deno.serve(async (req) => {
 
       // onde cada confrontação começa (ver montarTrechosDoSigef p/ a precedência)
       const starts = montarTrechosDoSigef(trechoRows ?? [], verticesReconciliados, sigef.linhas);
-      trechosPlanta = starts.map((s, k) => ({
-        descritivo: s.descritivo,
-        // rio vence estrada: LN1 sai azul, e a dupla vermelha não é desenhada
-        isEstrada: s.ehVia && !s.ehRio,
-        isRio: s.ehRio,
-        inicioIdx: s.idx,
-        fimIdx: starts[(k + 1) % starts.length].idx,
-      }));
+      // conversão compartilhada: leva estrada, rio E a marca de numerado
+      trechosPlanta = trechosPlantaDoSigef(starts);
       areaFmt = sigef.cabecalho.areaHa;
       perimetroFmt = sigef.cabecalho.perimetroM;
       if (!trtSistema) trt = sigef.cabecalho.documentoRt.split(" ")[0] || trt;

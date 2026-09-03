@@ -152,6 +152,30 @@ export function montarTrechosDoSigef(
   return [...unicos.values()].sort((a, b) => a.idx - b.idx);
 }
 
+/**
+ * Os trechos do SIGEF no formato que a planta desenha. Cada trecho vai do seu
+ * início ao início do seguinte, dando a volta no anel.
+ *
+ * Existe porque a conversão vivia inline em gerar-planta e deixou `numerado`
+ * de fora: o operador marcava o vizinho, a marca atravessava a reconciliação e
+ * `montarTrechosDoSigef`, e sumia aqui — a planta do SIGEF saía com o bloco de
+ * nome no lugar do número e sem o quadro CONFRONTANTES (2026-09-03). Um único
+ * lugar de conversão, testado, impede a próxima marca de cair no mesmo buraco.
+ */
+export function trechosPlantaDoSigef(starts: TrechoSigef[]): {
+  descritivo: string; isEstrada: boolean; isRio: boolean; numerado: boolean; inicioIdx: number; fimIdx: number;
+}[] {
+  return starts.map((s, k) => ({
+    descritivo: s.descritivo,
+    // rio vence estrada: LN1 sai azul, e a dupla vermelha não é desenhada
+    isEstrada: s.ehVia && !s.ehRio,
+    isRio: s.ehRio,
+    numerado: !!s.numerado,
+    inicioIdx: s.idx,
+    fimIdx: starts[(k + 1) % starts.length].idx,
+  }));
+}
+
 function gmsPdfParaDeg(s: string): number {
   const m = s.match(/(-?)(\d+)°(\d+)'([\d,]+)"/);
   if (!m) return 0;
