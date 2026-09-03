@@ -84,6 +84,13 @@ export interface GlebaPlanta {
   riosIdx?: number[];
 }
 
+/** Uma parte do imóvel na planta geral: anel próprio com os seus trechos (índices locais). */
+export interface ParteDaPlanta {
+  nome: string;
+  vertices: VerticePlanta[];
+  trechos: TrechoPlanta[];
+}
+
 export interface ProprietarioPlanta {
   nome: string;
   cpf: string;
@@ -123,6 +130,15 @@ export interface DadosPlanta {
    */
   exibir?: { matricula?: boolean; denominacao?: boolean; trt?: boolean };
   glebas?: GlebaPlanta[];           // sub-polígonos internos; ausente/vazio = nada muda
+  /**
+   * Imóvel em PARTES (anéis separados — cortado por estradas, ou levantado em
+   * glebas fechadas): cada parte é desenhada como um anel próprio, com as suas
+   * divisas de confrontação, marcos e códigos. `vertices`/`trechos` passam a ser
+   * só a concatenação (para enquadramento, quadro numerado e diagnóstico) e o
+   * polígono geral NÃO é desenhado. Combine com `glebas` (uma por parte) para o
+   * bloco de identificação e o quadro analítico por parte. Ausente = um anel só.
+   */
+  partes?: ParteDaPlanta[];
   matricula: string;
   cns: string;
   sncr: string;
@@ -270,9 +286,14 @@ function distSeg(p: Pt, a: Pt, b: Pt): number {
  * estreita, andar o bastante atravessa a divisa vizinha e volta para dentro do
  * imóvel. Ver `folgaExterna` no laço dos rótulos.
  */
-function distanciaAteDivisa(p: Pt, d: Pt, anel: Pt[]): number {
+/** Um anel ou vários (as partes do imóvel): o rótulo não pode cair dentro de nenhum. */
+type Aneis = Pt[] | Pt[][];
+const listaDeAneis = (a: Aneis): Pt[][] => (a.length && Array.isArray(a[0]) ? (a as Pt[][]) : [a as Pt[]]);
+const dentroDeAlgum = (p: Pt, a: Aneis): boolean => listaDeAneis(a).some((anel) => pontoDentro(p, anel));
+
+function distanciaAteDivisa(p: Pt, d: Pt, aneis: Aneis): number {
   let menor = Infinity;
-  for (let i = 0; i < anel.length; i++) {
+  for (const anel of listaDeAneis(aneis)) for (let i = 0; i < anel.length; i++) {
     const a = anel[i], b = anel[(i + 1) % anel.length];
     const ex = b.x - a.x, ey = b.y - a.y;
     const den = d.x * ey - d.y * ex;
@@ -499,12 +520,12 @@ function centroCand(r: Ret): Pt {
  * candidato mais barato, sem cruzamento, aceito de primeira.
  */
 function melhorLivre<T extends { ret: Ret; obb?: Obb; custo: number }>(
-  candidatos: T[], obstaculos: Seg[], ocupado: Ret[], folga = 0, anelProibido?: Pt[],
+  candidatos: T[], obstaculos: Seg[], ocupado: Ret[], folga = 0, anelProibido?: Aneis,
 ): T | null {
   let melhor: T | null = null;
   for (const cand of candidatos) {
     if (melhor && cand.custo >= melhor.custo) continue;
-    if (anelProibido && pontoDentro(centroCand(cand.ret), anelProibido)) continue;
+    if (anelProibido && dentroDeAlgum(centroCand(cand.ret), anelProibido)) continue;
     if (obstaculos.some((s) => (cand.obb ? segCruzaObb(s, cand.obb, folga) : segCruzaRet(s, inflar(cand.ret, folga))))) continue;
     if (ocupado.some((o) => retCruzaRet(inflar(cand.ret, folga), o))) continue;
     melhor = cand;
@@ -522,7 +543,7 @@ function melhorLivre<T extends { ret: Ret; obb?: Obb; custo: number }>(
  * linha. Empate fica com o primeiro, que é o mais próximo do centro do trecho.
  */
 function menosPior<T extends { ret: Ret; obb?: Obb }>(
-  candidatos: T[], obstaculos: Seg[], ocupado: Ret[], folga = 0, anelProibido?: Pt[],
+  candidatos: T[], obstaculos: Seg[], ocupado: Ret[], folga = 0, anelProibido?: Aneis,
 ): T {
   let melhor = candidatos[0], melhorN = Infinity;
   for (const cand of candidatos) {
@@ -530,7 +551,7 @@ function menosPior<T extends { ret: Ret; obb?: Obb }>(
       + ocupado.filter((o) => retCruzaRet(inflar(cand.ret, folga), o)).length
       // Cair dentro do imóvel pesa mais que cruzar uma linha: um nome sobre a
       // divisa ainda aponta a divisa certa; um nome no meio da fazenda, não.
-      + (anelProibido && pontoDentro(centroCand(cand.ret), anelProibido) ? 100 : 0);
+      + (anelProibido && dentroDeAlgum(centroCand(cand.ret), anelProibido) ? 100 : 0);
     if (n < melhorN) { melhor = cand; melhorN = n; if (n === 0) break; }
   }
   return melhor;
@@ -788,6 +809,76 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     texto(c, nt, dArea.x + dArea.w - f.widthOfTextAtSize(nt, GRID_TAM) - 6, Y(n) + 6, GRID_TAM, { cor: CINZA });
   }
 
+  // ------------------- anéis: o perímetro, ou as PARTES do imóvel -------------------
+  // Tudo o que é "do anel" — lado de fora, normais, trecho de cada aresta, o
+  // polígono em coordenadas de papel — vive num contexto por anel. Com um anel
+  // só (todo serviço até aqui) o resultado é o de sempre; com partes, cada uma
+  // é desenhada pelo MESMO código, e os rótulos de uma não podem cair dentro
+  // de nenhuma outra.
+  interface AnelCtx {
+    nome: string | null;
+    vs: VerticePlanta[];
+    nv: number;
+    trechos: TrechoPlanta[];
+    anelTela: Pt[];
+    normalAresta: (i: number) => Pt;
+    normalVertice: (i: number) => Pt;
+    trechoDoIdx: (i: number) => TrechoPlanta;
+  }
+  const contextoAnel = (nome: string | null, vsA: VerticePlanta[], trechosA: TrechoPlanta[]): AnelCtx => {
+    const nvA = vsA.length;
+    // ------------------- de que lado fica o "fora" -------------------
+    // Quem decide é o SENTIDO DO ANEL, não a distância ao centro da folha.
+    //
+    // O critério anterior era "o lado mais longe de (dcx, dcy)", que é o centro da
+    // ÁREA DE DESENHO — nem o centroide do imóvel. Num polígono convexo dá no
+    // mesmo; em côncavo, não: no braço estreito a noroeste da LAGOA SECA o centro
+    // da folha cai do lado de fora do braço, e a linha dupla da estrada era jogada
+    // para DENTRO da poligonal. Com o sentido do anel o lado é o mesmo para todas
+    // as arestas, côncavo ou não.
+    //
+    // Convenção: em coordenadas de tela (Y para cima), área assinada > 0 = anti-
+    // horário, e a normal externa da aresta a→b é (dy, -dx)/len.
+    const anelTelaA: Pt[] = vsA.map((v) => ({ x: X(v.e), y: Y(v.n) }));
+    let giro = 0;
+    for (let i = 0; i < nvA; i++) {
+      const a = vsA[i], b = vsA[(i + 1) % nvA];
+      giro += X(a.e) * Y(b.n) - X(b.e) * Y(a.n);
+    }
+    const sentido = giro >= 0 ? 1 : -1;
+    /** normal externa unitária da aresta i → i+1 */
+    const normalAresta = (i: number): Pt => {
+      const a = vsA[i], b = vsA[(i + 1) % nvA];
+      const dx = X(b.e) - X(a.e), dy = Y(b.n) - Y(a.n);
+      const len = Math.hypot(dx, dy) || 1;
+      return { x: sentido * dy / len, y: -sentido * dx / len };
+    };
+    /** normal externa unitária NO vértice i: bissetriz das duas arestas que o tocam */
+    const normalVertice = (i: number): Pt => {
+      const p = normalAresta((i - 1 + nvA) % nvA), q = normalAresta(i);
+      const x = p.x + q.x, y = p.y + q.y;
+      const l = Math.hypot(x, y);
+      // arestas antiparalelas (bico degenerado): fica com a normal da que sai
+      return l < 1e-6 ? q : { x: x / l, y: y / l };
+    };
+    const trechoDoIdx = (i: number): TrechoPlanta => {
+      for (const t of trechosA) {
+        if (t.fimIdx > t.inicioIdx ? i >= t.inicioIdx && i < t.fimIdx : i >= t.inicioIdx || i < t.fimIdx) return t;
+      }
+      return trechosA[trechosA.length - 1];
+    };
+    return { nome, vs: vsA, nv: nvA, trechos: trechosA, anelTela: anelTelaA, normalAresta, normalVertice, trechoDoIdx };
+  };
+  const partes = (d.partes ?? []).filter((pt) => pt.vertices.length >= 3);
+  const aneis: AnelCtx[] = partes.length
+    ? partes.map((pt) => contextoAnel(pt.nome, pt.vertices, pt.trechos))
+    : [contextoAnel(null, d.vertices, d.trechos)];
+  const aneisTela: Pt[][] = aneis.map((a) => a.anelTela);
+  // o anel do imóvel em coordenadas de papel (o primeiro, no caso de partes) —
+  // é o que o diagnóstico devolve como `poligono`
+  const anelTela: Pt[] = aneis[0].anelTela;
+  const nv = vs.length;
+
   // ------------------- trechos de estrada (linha dupla vermelha) -------------------
   // Linhas do desenho que nenhum rótulo pode cobrir: as duplas vermelhas das vias
   // e o próprio polígono. Preenchidas conforme são desenhadas, logo abaixo.
@@ -801,51 +892,13 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   const obbsTrecho: (Obb | undefined)[] = [];
   // quantos não couberam centrados e tiveram de deslizar pela divisa
   let deslocados = 0;
-  const nv = vs.length;
-
-  // ------------------- de que lado fica o "fora" -------------------
-  // Quem decide é o SENTIDO DO ANEL, não a distância ao centro da folha.
-  //
-  // O critério anterior era "o lado mais longe de (dcx, dcy)", que é o centro da
-  // ÁREA DE DESENHO — nem o centroide do imóvel. Num polígono convexo dá no
-  // mesmo; em côncavo, não: no braço estreito a noroeste da LAGOA SECA o centro
-  // da folha cai do lado de fora do braço, e a linha dupla da estrada era jogada
-  // para DENTRO da poligonal. Com o sentido do anel o lado é o mesmo para todas
-  // as arestas, côncavo ou não.
-  //
-  // Convenção: em coordenadas de tela (Y para cima), área assinada > 0 = anti-
-  // horário, e a normal externa da aresta a→b é (dy, -dx)/len.
-  // o anel do imóvel em coordenadas de papel, usado tanto para medir a folga do
-  // lado de fora quanto para barrar rótulo que caia dentro da fazenda
-  const anelTela: Pt[] = vs.map((v) => ({ x: X(v.e), y: Y(v.n) }));
-  let giro = 0;
-  for (let i = 0; i < nv; i++) {
-    const a = vs[i], b = vs[(i + 1) % nv];
-    giro += X(a.e) * Y(b.n) - X(b.e) * Y(a.n);
-  }
-  const sentido = giro >= 0 ? 1 : -1;
-  /** normal externa unitária da aresta i → i+1 */
-  const normalAresta = (i: number): Pt => {
-    const a = vs[i], b = vs[(i + 1) % nv];
-    const dx = X(b.e) - X(a.e), dy = Y(b.n) - Y(a.n);
-    const len = Math.hypot(dx, dy) || 1;
-    return { x: sentido * dy / len, y: -sentido * dx / len };
-  };
-  /** normal externa unitária NO vértice i: bissetriz das duas arestas que o tocam */
-  const normalVertice = (i: number): Pt => {
-    const p = normalAresta((i - 1 + nv) % nv), q = normalAresta(i);
-    const x = p.x + q.x, y = p.y + q.y;
-    const l = Math.hypot(x, y);
-    // arestas antiparalelas (bico degenerado): fica com a normal da que sai
-    return l < 1e-6 ? q : { x: x / l, y: y / l };
-  };
-
   const vias: Seg[] = [];
 
   // Unidade PROPORCIONAL ao desenho. Todo afastamento de rótulo é medido nela, e
   // não em pontos fixos: assim a mesma regra vale para um imóvel de 6 ha e um de
   // 600, e os rótulos de uma planta ficam todos à mesma distância da divisa. Era
-  // a falta disso que deixava cada nome a uma distância diferente.
+  // a falta disso que deixava cada nome a uma distância diferente. Com partes,
+  // a diagonal é a do conjunto: todos os rótulos da folha à mesma distância.
   const bbX = vs.map((v) => X(v.e)), bbY = vs.map((v) => Y(v.n));
   const diagPoly = Math.hypot(
     Math.max(...bbX) - Math.min(...bbX),
@@ -860,34 +913,31 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // depois de pronta, e a redução leva a folga junto, na mesma proporção.
   const FOLGA = Math.max(9, 0.011 * diagPoly);
 
-  const trechoDoIdx = (i: number): TrechoPlanta => {
-    for (const t of d.trechos) {
-      if (t.fimIdx > t.inicioIdx ? i >= t.inicioIdx && i < t.fimIdx : i >= t.inicioIdx || i < t.fimIdx) return t;
+  for (const A of aneis) {
+    const { vs, nv, normalAresta, trechoDoIdx } = A;
+    for (let i = 0; i < nv; i++) {
+      const t = trechoDoIdx(i);
+      // Rio (LN1) vence estrada: sai a dupla AZUL e a vermelha não é desenhada.
+      // As duas juntas na mesma divisa diriam que ali há uma estrada E um rio.
+      const cor = t.isRio ? AZUL_RIO : t.isEstrada ? VERMELHO : null;
+      if (!cor) continue;
+      const a = vs[i], b = vs[(i + 1) % nv];
+      // a linha dupla é SEMPRE por fora: a normal vem do sentido do anel
+      const { x: nx, y: ny } = normalAresta(i);
+      for (const off of [5, 11]) {
+        const seg = { x1: X(a.e) + nx * off, y1: Y(a.n) + ny * off, x2: X(b.e) + nx * off, y2: Y(b.n) + ny * off };
+        linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, cor);
+        obstaculos.push(seg);
+        vias.push(seg);
+      }
     }
-    return d.trechos[d.trechos.length - 1];
-  };
-  for (let i = 0; i < nv; i++) {
-    const t = trechoDoIdx(i);
-    // Rio (LN1) vence estrada: sai a dupla AZUL e a vermelha não é desenhada.
-    // As duas juntas na mesma divisa diriam que ali há uma estrada E um rio.
-    const cor = t.isRio ? AZUL_RIO : t.isEstrada ? VERMELHO : null;
-    if (!cor) continue;
-    const a = vs[i], b = vs[(i + 1) % nv];
-    // a linha dupla é SEMPRE por fora: a normal vem do sentido do anel
-    const { x: nx, y: ny } = normalAresta(i);
-    for (const off of [5, 11]) {
-      const seg = { x1: X(a.e) + nx * off, y1: Y(a.n) + ny * off, x2: X(b.e) + nx * off, y2: Y(b.n) + ny * off };
-      linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, cor);
-      obstaculos.push(seg);
-      vias.push(seg);
-    }
-  }
 
-  // ------------------- polígono -------------------
-  for (let i = 0; i < nv; i++) {
-    const a = vs[i], b = vs[(i + 1) % nv];
-    linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 3.4, AZUL);
-    obstaculos.push({ x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) });
+    // ------------------- polígono -------------------
+    for (let i = 0; i < nv; i++) {
+      const a = vs[i], b = vs[(i + 1) % nv];
+      linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 3.4, AZUL);
+      obstaculos.push({ x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) });
+    }
   }
   // ------------------- glebas -------------------
   //
@@ -901,7 +951,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // e o PDF sai igual ao de antes (lacrado em nao_regressao_completo.test.mjs).
   const rotulosGleba: Ret[] = [];
   const divisasGleba: Seg[] = [];
-  for (const gl of glebas) {
+  // Em modo PARTES as glebas são as próprias partes: as linhas já saíram do
+  // laço dos anéis; aqui só entrariam de novo, por cima. O bloco de
+  // identificação e o quadro analítico por parte continuam mais abaixo.
+  for (const gl of (partes.length ? [] : glebas)) {
     const gv = gl.vertices;
     const viasGl = new Set(gl.viasIdx ?? []);
     const riosGl = new Set(gl.riosIdx ?? []);
@@ -975,6 +1028,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // Antes era ao contrário — os códigos entravam em `ocupado` primeiro e o bloco
   // do vizinho tinha de se virar em volta deles.
   const codigosPendentes: { codigo: string; lx: number; ly: number; ret: Ret }[] = [];
+  const marcos: Seg[] = [];
+  for (const A of aneis) {
+    const { vs, nv, normalAresta, normalVertice, trechos: trechosAnel } = A;
+    const marcosAntes = marcos.length;
   for (let i = 0; i < nv; i++) {
     const v = vs[i];
     page.drawCircle({ x: X(v.e), y: Y(v.n), size: 1.4, color: PRETO });
@@ -997,59 +1054,6 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     });
   }
 
-  // ------------------- divisões de confrontação + rótulos -------------------
-  //
-  // No arranjo simples o miolo do polígono leva só a área: matrícula, CNS,
-  // proprietário e CPF já estão no selo do rodapé, e repeti-los dentro de um A4
-  // cobriria o desenho. Com glebas ele some de vez — cada gleba mostra a sua
-  // área e o total fica no canto, como no modelo.
-  const centroLinhas = (simples ? (glebas.length ? [] : [`${d.areaFmt} HA`, `${d.tarefasFmt} TAREFAS`]) : [
-    ...(exibe.matricula ? [posse ? "(POSSE)" : `(MATR.${d.matricula}/CNS.${d.cns})`] : []),
-    ...(exibe.denominacao ? [d.denominacao] : []),
-    ...d.proprietarios.flatMap((p) => {
-      const res = [p.nome, `CPF:${p.cpf}`];
-      if (posse && p.rg) res.push(`RG:${p.rg}`);
-      if (p.isEspolio && p.inventarianteNome) {
-        res.push(`REP. P/ INVENTARIANTE: ${p.inventarianteNome}`);
-        if (p.inventarianteCpf) res.push(`CPF:${p.inventarianteCpf}`);
-        if (p.inventarianteRg) res.push(`RG:${p.inventarianteRg}`);
-      }
-      return res;
-    }),
-    `ÁREA:${d.areaFmt} HA/ ${d.tarefasFmt} TAREFAS`,
-  ]).map((l) => l.toUpperCase());
-  // bloco do imóvel no centroide — fonte proporcional ao polígono desenhado,
-  // p/ o nome interno acompanhar o tamanho da propriedade sem vazar das bordas
-  if (centroLinhas.length) {
-    // O bloco é ancorado no ponto interior mais afastado das divisas e encolhe
-    // até caber INTEIRO dentro do polígono, com margem para não encostar nas
-    // bordas. O cálculo anterior usava só o retângulo envolvente e, em imóveis
-    // irregulares, o texto atravessava a divisa.
-    const poly: Pt[] = vs.map((v) => ({ x: X(v.e), y: Y(v.n) }));
-    const polo = poloInterior(poly);
-    const larguraUnit = Math.max(...centroLinhas.map((l) => fb.widthOfTextAtSize(l, 1)));
-    let tam = 0, esp = 0, bx0 = polo.x, byTopo = polo.y;
-    // teto de 18pt: acima disso o bloco fica maior que os títulos do carimbo
-    for (let t = 18; t >= 4; t -= 0.5) {
-      const bw = larguraUnit * t;
-      const e = t * 1.35;
-      const bh = centroLinhas.length * e;
-      const mg = Math.max(10, t * 0.9); // margem até a divisa
-      if (retanguloDentro(polo.x - bw / 2 - mg, polo.y - bh / 2 - mg, bw + 2 * mg, bh + 2 * mg, poly)) {
-        tam = t; esp = e; bx0 = polo.x - bw / 2; byTopo = polo.y + bh / 2;
-        break;
-      }
-    }
-    if (tam === 0) { // imóvel estreito demais: menor corpo possível, ainda no polo
-      tam = 4; esp = tam * 1.35;
-      bx0 = polo.x - (larguraUnit * tam) / 2;
-      byTopo = polo.y + (centroLinhas.length * esp) / 2;
-    }
-    // alinhado à esquerda, padrão da planta de referência
-    for (const [li, lt] of centroLinhas.entries()) {
-      texto(c, lt, bx0, byTopo - tam - li * esp, tam, { bold: li === 1 });
-    }
-  }
   // ------------------- marco de divisão: um por vértice M -------------------
   // Todo M é a troca de um confrontante para o outro, então todo M ganha o seu
   // traço verde. Isto é um laço próprio, sobre `d.trechos` cru, de propósito: o
@@ -1058,8 +1062,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // confrontante. Na LAGOA SECA, dos três M só o M-4501 (único não-via) recebia
   // marco — os outros dois sumiam e a planta não dizia onde cada divisa começa e
   // termina. Ver ARQUITETURA-TRECHOS.md.
-  const marcos: Seg[] = [];
-  for (const t of d.trechos) {
+  for (const t of trechosAnel) {
     const vm = vs[t.inicioIdx % nv];
     if (!vm) continue;
     const { x: gx, y: gy } = normalVertice(t.inicioIdx % nv);
@@ -1070,11 +1073,11 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // O traço verde tem 50pt e sai de dentro do vão de um vizinho para o do outro:
   // é o obstáculo mais fácil de um bloco atropelar, e era o único traço do desenho
   // que não estava na lista. Nome de vizinho não invade NADA.
-  obstaculos.push(...marcos);
+  obstaculos.push(...marcos.slice(marcosAntes));
   // Trechos contíguos do MESMO confrontante viram um único rótulo: no caso real
   // a FAZENDA KAGADOS chegava em 5 trechos seguidos e o bloco de texto saía
   // repetido 5× em volta do polígono.
-  const trechosOrd = [...d.trechos].sort((a, b) => a.inicioIdx - b.inicioIdx);
+  const trechosOrd = [...trechosAnel].sort((a, b) => a.inicioIdx - b.inicioIdx);
   const grupos: TrechoPlanta[] = [];
   for (const t of trechosOrd) {
     const ant = grupos[grupos.length - 1];
@@ -1154,7 +1157,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       // Quando age, planta o rótulo a 45% do corredor: perto o bastante da
       // divisa dele para continuar apontando a divisa certa, longe o bastante da
       // que fecha o corredor por trás.
-      const folga = distanciaAteDivisa({ x: ax, y: ay }, n, anelTela);
+      const folga = distanciaAteDivisa({ x: ax, y: ay }, n, aneisTela);
       return {
         mx: ax, my: ay, nx: n.x, ny: n.y, angSeg: ang,
         cabe: (afastRegra: number) => (folga < afastRegra ? 0.45 * folga : afastRegra),
@@ -1196,8 +1199,8 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
             obb: { x, y, w: vw, h: tam, ang: rot },
           };
         }));
-      const esc = melhorLivre(cands, obstaculos, ocupado, FOLGA, anelTela)
-        ?? menosPior(cands, obstaculos, ocupado, FOLGA, anelTela);
+      const esc = melhorLivre(cands, obstaculos, ocupado, FOLGA, aneisTela)
+        ?? menosPior(cands, obstaculos, ocupado, FOLGA, aneisTela);
       texto(c, nome, esc.x, esc.y, esc.tam, { bold: true, cor: PRETO, rot });
       ocupado.push(esc.ret);
       rotulosTrecho.push(esc.ret);
@@ -1237,8 +1240,8 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
         };
         });
       });
-      const escN = melhorLivre(candsN, obstaculos, ocupado, FOLGA, anelTela)
-        ?? menosPior(candsN, obstaculos, ocupado, FOLGA, anelTela);
+      const escN = melhorLivre(candsN, obstaculos, ocupado, FOLGA, aneisTela)
+        ?? menosPior(candsN, obstaculos, ocupado, FOLGA, aneisTela);
       // disco branco OPACO: o número cai sobre a malha de coordenadas tanto
       // quanto o bloco caía, e um dígito sobre linha tracejada não se lê
       page.drawCircle({ x: escN.cx, y: escN.cy, size: R, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 1.4 });
@@ -1334,8 +1337,8 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
         }
       }
     }
-    const esc = melhorLivre(cands, obstaculos, ocupado, FOLGA, anelTela)
-      ?? menosPior(cands, obstaculos, ocupado, FOLGA, anelTela);
+    const esc = melhorLivre(cands, obstaculos, ocupado, FOLGA, aneisTela)
+      ?? menosPior(cands, obstaculos, ocupado, FOLGA, aneisTela);
     for (const [li, lt] of esc.lbl.entries()) texto(c, lt, esc.lx, esc.ty - li * esc.esp, esc.tam);
     ocupado.push(esc.ret);
     rotulosTrecho.push(esc.ret);
@@ -1344,6 +1347,63 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     if (esc.desl !== 0) deslocados++;
   }
 
+  }
+
+  // ------------------- divisões de confrontação + rótulos -------------------
+  //
+  // No arranjo simples o miolo do polígono leva só a área: matrícula, CNS,
+  // proprietário e CPF já estão no selo do rodapé, e repeti-los dentro de um A4
+  // cobriria o desenho. Com glebas ele some de vez — cada gleba mostra a sua
+  // área e o total fica no canto, como no modelo.
+  const centroLinhas = (simples ? (glebas.length ? [] : [`${d.areaFmt} HA`, `${d.tarefasFmt} TAREFAS`]) : [
+    ...(exibe.matricula ? [posse ? "(POSSE)" : `(MATR.${d.matricula}/CNS.${d.cns})`] : []),
+    ...(exibe.denominacao ? [d.denominacao] : []),
+    ...d.proprietarios.flatMap((p) => {
+      const res = [p.nome, `CPF:${p.cpf}`];
+      if (posse && p.rg) res.push(`RG:${p.rg}`);
+      if (p.isEspolio && p.inventarianteNome) {
+        res.push(`REP. P/ INVENTARIANTE: ${p.inventarianteNome}`);
+        if (p.inventarianteCpf) res.push(`CPF:${p.inventarianteCpf}`);
+        if (p.inventarianteRg) res.push(`RG:${p.inventarianteRg}`);
+      }
+      return res;
+    }),
+    `ÁREA:${d.areaFmt} HA/ ${d.tarefasFmt} TAREFAS`,
+  ]).map((l) => l.toUpperCase());
+  // bloco do imóvel no centroide — fonte proporcional ao polígono desenhado,
+  // p/ o nome interno acompanhar o tamanho da propriedade sem vazar das bordas
+  // Em modo PARTES cada parte tem o seu bloco de identificação (o das glebas);
+  // o bloco geral não tem anel onde caber.
+  if (!partes.length && centroLinhas.length) {
+    // O bloco é ancorado no ponto interior mais afastado das divisas e encolhe
+    // até caber INTEIRO dentro do polígono, com margem para não encostar nas
+    // bordas. O cálculo anterior usava só o retângulo envolvente e, em imóveis
+    // irregulares, o texto atravessava a divisa.
+    const poly: Pt[] = vs.map((v) => ({ x: X(v.e), y: Y(v.n) }));
+    const polo = poloInterior(poly);
+    const larguraUnit = Math.max(...centroLinhas.map((l) => fb.widthOfTextAtSize(l, 1)));
+    let tam = 0, esp = 0, bx0 = polo.x, byTopo = polo.y;
+    // teto de 18pt: acima disso o bloco fica maior que os títulos do carimbo
+    for (let t = 18; t >= 4; t -= 0.5) {
+      const bw = larguraUnit * t;
+      const e = t * 1.35;
+      const bh = centroLinhas.length * e;
+      const mg = Math.max(10, t * 0.9); // margem até a divisa
+      if (retanguloDentro(polo.x - bw / 2 - mg, polo.y - bh / 2 - mg, bw + 2 * mg, bh + 2 * mg, poly)) {
+        tam = t; esp = e; bx0 = polo.x - bw / 2; byTopo = polo.y + bh / 2;
+        break;
+      }
+    }
+    if (tam === 0) { // imóvel estreito demais: menor corpo possível, ainda no polo
+      tam = 4; esp = tam * 1.35;
+      bx0 = polo.x - (larguraUnit * tam) / 2;
+      byTopo = polo.y + (centroLinhas.length * esp) / 2;
+    }
+    // alinhado à esquerda, padrão da planta de referência
+    for (const [li, lt] of centroLinhas.entries()) {
+      texto(c, lt, bx0, byTopo - tam - li * esp, tam, { bold: li === 1 });
+    }
+  }
   // ------------------- códigos dos vértices, por último -------------------
   // Reservados lá em cima e desenhados só agora: o nome do vizinho tem posição
   // fixada por regra, então quem cede é o código. Em divisas com muitos pontos
@@ -1875,7 +1935,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     diag.deslocados = deslocados;
     // rótulo de vizinho que foi parar DENTRO da fazenda: nomeia a divisa errada
     // e tem de ser sempre 0. Ver `cabeNoCorredor` e `anelProibido`.
-    diag.dentroDoImovel = rotulosTrecho.filter((r) => pontoDentro(centroCand(r), anelTela)).length;
+    diag.dentroDoImovel = rotulosTrecho.filter((r) => dentroDeAlgum(centroCand(r), aneisTela)).length;
     diag.marcos = marcos;
     diag.vias = vias;
     diag.corpos = corposTrecho;

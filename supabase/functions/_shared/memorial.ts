@@ -33,6 +33,21 @@ export interface DadosMemorial {
   ring: VerticeMemorial[];  // ordenado a partir do vértice inicial
   segs: Segmento[];         // segs[i] = ring[i] → ring[(i+1)%n]
   confrontantesDescritivos: string[]; // ordem dos trechos, p/ linhas de assinatura
+  /**
+   * Imóvel em PARTES (anéis separados): um parágrafo de descrição por parte,
+   * cada um com o seu anel, seus segmentos e o seu perímetro. `ring`/`segs`
+   * acima passam a ser só os da primeira parte; `areaHa`/`perimetroM` são os
+   * totais do cabeçalho.
+   */
+  partes?: ParteMemorial[];
+}
+
+export interface ParteMemorial {
+  nome: string;
+  areaHa: number;
+  perimetroM: number;
+  ring: VerticeMemorial[];
+  segs: Segmento[];
 }
 
 const b = (text: string): Run => ({ text, bold: true });

@@ -419,6 +419,105 @@ export function unirCertificados(
 }
 
 // ---------------------------------------------------------------------------
+// TXT com várias PARTES (blocos de numeração)
+// ---------------------------------------------------------------------------
+
+/**
+ * Um TXT pode trazer vários anéis fechados: o imóvel cortado por estradas chega
+ * numerado em blocos de centena (1–75, 100–123, 200–228 no RUY.txt), e cada
+ * bloco é uma parte com o seu próprio perímetro. Costurar tudo num anel só
+ * produz um polígono que cruza a si mesmo.
+ *
+ * Regra: um número múltiplo de 100 que chega com salto (o anterior não é ele
+ * menos 1) abre um bloco novo. Bloco com menos de 3 pontos não é anel: fica
+ * grudado no anterior. Devolve os ÍNDICES (na lista ordenada) de cada bloco.
+ */
+export function blocosPorNumeracao(pontos: { num: number }[]): number[][] {
+  const blocos: number[][] = [];
+  pontos.forEach((p, i) => {
+    const ult = blocos[blocos.length - 1];
+    const abre = !ult || (p.num % 100 === 0 && p.num - pontos[ult[ult.length - 1]].num > 1 && ult.length >= 3);
+    if (abre) blocos.push([i]); else ult.push(i);
+  });
+  // último bloco curto demais volta para o anterior
+  if (blocos.length > 1 && blocos[blocos.length - 1].length < 3) {
+    const curto = blocos.pop()!;
+    blocos[blocos.length - 1].push(...curto);
+  }
+  return blocos;
+}
+
+export interface ResultadoUniaoEmBlocos extends ResultadoUniao {
+  /** Posições no `anel` que pertencem a cada bloco, na ordem dos blocos. */
+  blocosAnel: number[][];
+  /** Índice do bloco a que cada grupo de certificados foi atribuído. */
+  blocoDoGrupo: number[];
+}
+
+/**
+ * União com certificados quando o TXT tem várias partes: cada parcela vizinha
+ * é atribuída à parte mais próxima (menor distância entre os vértices dela e
+ * os pontos da parte) e a união roda parte a parte. O anel devolvido é a
+ * concatenação das partes, com índices GLOBAIS (na lista de pontos original),
+ * pronto para `montarVerticesUnidos`.
+ */
+export function unirEmBlocos(
+  pontos: { e: number; n: number; num?: number }[],
+  blocos: number[][],
+  grupos: GrupoCertificado[],
+  geoParaUtm: (lon: number, lat: number) => [number, number],
+  opcoes: OpcoesUniao = {},
+): ResultadoUniaoEmBlocos {
+  const blocoDoGrupo = grupos.map((g) => {
+    let melhor = 0, dm = Infinity;
+    blocos.forEach((b, bi) => {
+      for (const v of g.vertices) {
+        const [lon, lat] = lonLatDoVerticeSigef(v);
+        const [e, n] = geoParaUtm(lon, lat);
+        for (const i of b) {
+          const d = Math.hypot(pontos[i].e - e, pontos[i].n - n);
+          if (d < dm) { dm = d; melhor = bi; }
+        }
+      }
+    });
+    return melhor;
+  });
+  const anel: EntradaAnel[] = [];
+  const blocosAnel: number[][] = [];
+  const avisos: string[] = [];
+  const removidos: number[] = [];
+  let igualados = 0, inseridos = 0;
+  blocos.forEach((b, bi) => {
+    const local = b.map((i) => pontos[i]);
+    const gruposLocais = grupos.map((g, gi) => ({ g, gi })).filter((x) => blocoDoGrupo[x.gi] === bi);
+    const inicios = new Set<number>();
+    for (const [k, i] of b.entries()) if (opcoes.inicios?.has(i)) inicios.add(k);
+    const r = unirCertificados(local, gruposLocais.map((x) => x.g), geoParaUtm, { ...opcoes, inicios });
+    const posicoes: number[] = [];
+    for (const ent of r.anel) {
+      posicoes.push(anel.length);
+      if (ent.origem === "txt") {
+        anel.push({
+          ...ent, idx: b[ent.idx],
+          igualado: ent.igualado ? { ...ent.igualado, grupo: gruposLocais[ent.igualado.grupo].gi } : undefined,
+          herdaConfrontacaoDe: ent.herdaConfrontacaoDe === undefined ? undefined : b[ent.herdaConfrontacaoDe],
+        });
+      } else {
+        anel.push({
+          ...ent, grupo: gruposLocais[ent.grupo].gi,
+          herdaConfrontacaoDe: ent.herdaConfrontacaoDe === undefined ? undefined : b[ent.herdaConfrontacaoDe],
+        });
+      }
+    }
+    blocosAnel.push(posicoes);
+    avisos.push(...r.avisos.map((a) => (blocos.length > 1 ? `Parte ${bi + 1}: ${a}` : a)));
+    removidos.push(...r.removidos.map((k) => b[k]));
+    igualados += r.igualados; inseridos += r.inseridos;
+  });
+  return { anel, igualados, inseridos, removidos: removidos.sort((a, b) => a - b), avisos, blocosAnel, blocoDoGrupo };
+}
+
+// ---------------------------------------------------------------------------
 // Linhas da tabela `vertices` a partir do anel unido
 // ---------------------------------------------------------------------------
 

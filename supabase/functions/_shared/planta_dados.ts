@@ -9,7 +9,7 @@
 // "mesmo padrão" seja o mesmo código, e não duas cópias que divergem com o tempo.
 import { areaAssinadaM2, calcularPerimetroM, calcularSegmentos, fmtBR, fmtGmsPlanilha } from "./geo.ts";
 import type { ServicoCalculado, VerticeMontado } from "./servico.ts";
-import type { DadosPlanta, Folha, GlebaPlanta, TrechoPlanta, VerticePlanta } from "./planta.ts";
+import type { DadosPlanta, Folha, GlebaPlanta, ParteDaPlanta, TrechoPlanta, VerticePlanta } from "./planta.ts";
 import type { DadosSigef } from "./sigef_pdf.ts";
 import type { LinhaVertice } from "./ods.ts";
 
@@ -286,6 +286,8 @@ export interface ContextoPlanta {
   exibir?: DadosPlanta["exibir"];
   /** Sub-polígonos internos. Ausente/vazio = a planta sai como sempre saiu. */
   glebas?: GlebaPlanta[];
+  /** Imóvel em partes: anéis desenhados por inteiro na planta geral (ver dadosDasPartes). */
+  partes?: ParteDaPlanta[];
 }
 
 /** Cabeçalho/carimbo/proprietários — comuns às duas fontes de geometria. */
@@ -341,6 +343,54 @@ export function montarDadosPlanta(ctx: ContextoPlanta): DadosPlanta {
     conferencia: ctx.conferencia,
     exibir: ctx.exibir,
     glebas: ctx.glebas?.length ? ctx.glebas : undefined,
+    partes: ctx.partes?.length ? ctx.partes : undefined,
+  };
+}
+
+/**
+ * Dados da PLANTA GERAL de um imóvel em partes: cada parte é um anel desenhado
+ * por inteiro (divisas, marcos, códigos) e, ao mesmo tempo, uma "gleba" para o
+ * bloco de identificação, o quadro analítico e o rodapé. A geometria geral é a
+ * concatenação — enquadramento, quadro de numerados e totais — e o polígono
+ * geral não é desenhado (ver DadosPlanta.partes).
+ */
+export function dadosDasPartes(
+  partes: { nome: string; calc: ServicoCalculado }[],
+  servico: ServicoRow,
+): { geometria: GeometriaPlanta; partes: ParteDaPlanta[]; glebas: GlebaPlanta[] } {
+  const geos = partes.map((p) => geometriaDoCalculo(p.calc));
+  const vertices: VerticePlanta[] = [];
+  const trechos: TrechoPlanta[] = [];
+  const partesPlanta: ParteDaPlanta[] = [];
+  const glebas: GlebaPlanta[] = [];
+  for (const [i, g] of geos.entries()) {
+    const off = vertices.length;
+    vertices.push(...g.vertices);
+    trechos.push(...g.trechos.map((t) => ({ ...t, inicioIdx: t.inicioIdx + off, fimIdx: t.fimIdx + off })));
+    partesPlanta.push({ nome: partes[i].nome, vertices: g.vertices, trechos: g.trechos });
+    const calc = partes[i].calc;
+    glebas.push({
+      nome: partes[i].nome,
+      areaFmt: fmtBR(calc.areaHa, 4),
+      tarefasFmt: fmtBR(calc.areaHa * 10000 / 4356, 2),
+      perimetroFmt: fmtBR(calc.perimetroM, 2),
+      identificacao: identificacaoDaGleba(servico, partes[i].nome),
+      vertices: g.vertices,
+      viasIdx: g.vertices.flatMap((_, k) => (calc.ring[k].trecho.ehVia && !calc.ring[k].trecho.ehRio ? [k] : [])),
+      riosIdx: g.vertices.flatMap((_, k) => (calc.ring[k].trecho.ehRio ? [k] : [])),
+    });
+  }
+  const areaHa = partes.reduce((s, p) => s + p.calc.areaHa, 0);
+  const perimetroM = partes.reduce((s, p) => s + p.calc.perimetroM, 0);
+  return {
+    geometria: {
+      vertices, trechos,
+      areaFmt: fmtBR(areaHa, 4),
+      perimetroFmt: fmtBR(perimetroM, 2),
+      latMediaDeg: geos[0]?.latMediaDeg ?? 0,
+    },
+    partes: partesPlanta,
+    glebas,
   };
 }
 

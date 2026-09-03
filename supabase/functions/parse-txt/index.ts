@@ -8,6 +8,11 @@
 // reparseado aqui (fonte da verdade é o arquivo, não a tela) e os vértices
 // escolhidos são unidos ao levantamento antes de gravar. Ver _shared/certificados.ts.
 //
+// TXT em PARTES: blocos de numeração por centena (1–75, 100–123, 200–228) são
+// anéis separados — o imóvel cortado por estradas. Cada bloco vira uma parte
+// (linha em `glebas`, "PARTE n") e o serviço nasce com `tem_glebas`; a união
+// com certificados e o cálculo do preview rodam parte a parte.
+//
 // Fuso: `fuso` explícito (tela) > candidato mais perto dos vértices certificados
 // > UF > prioridade histórica. O TXT sozinho é ambíguo perto de E = 500 km.
 import { createClient } from "@supabase/supabase-js";
@@ -18,8 +23,10 @@ import {
 } from "../_shared/geo.ts";
 import type { CandidatoZona, EntradaVertice, Proj4 } from "../_shared/geo.ts";
 import { sugerirTrechos } from "../_shared/servico.ts";
-import { fusoPelosCertificados, montarVerticesUnidos, parseCsvSigef, unirCertificados } from "../_shared/certificados.ts";
-import type { GrupoCertificado } from "../_shared/certificados.ts";
+import {
+  blocosPorNumeracao, fusoPelosCertificados, montarVerticesUnidos, parseCsvSigef, unirEmBlocos,
+} from "../_shared/certificados.ts";
+import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -32,6 +39,10 @@ const json = (body: unknown, status = 200) =>
 
 interface CertificadoEntrada { nome?: unknown; conteudo?: unknown; selecionados?: unknown }
 type OrigemFuso = "informado" | "certificados" | "uf" | "automatico";
+
+const entradaCalc = (l: VerticeUnido): EntradaVertice => l.inserido_manual
+  ? { numTxt: l.num_txt, latGms: parseGmsPlanilha(l.lat_gms), lonGms: parseGmsPlanilha(l.lon_gms), h: l.h, sigmaPos: l.sigma_pos, sigmaH: l.sigma_h, inserido: true }
+  : { numTxt: l.num_txt, e: l.e, n: l.n, h: l.h, sigmaPos: l.sigma_pos, sigmaH: l.sigma_h };
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -61,6 +72,7 @@ Deno.serve(async (req) => {
     const toleranciaLinhaM = Number.isFinite(tolLinhaNum) && tolLinhaNum >= 0 ? tolLinhaNum : undefined;
 
     const pontos = parseTxt(conteudo);
+    const blocos = blocosPorNumeracao(pontos);
     const candidatos = detectZoneCandidates(pontos, proj4);
     if (!candidatos.length) return json({ erro: "Nenhum fuso UTM brasileiro compatível com as coordenadas" }, 422);
 
@@ -94,8 +106,9 @@ Deno.serve(async (req) => {
       escolhido.zone, proj4,
     );
     const trechosSug = sugerirTrechos(pontos);
-    const uniao = unirCertificados(pontos, grupos, geoParaUtm, {
-      toleranciaM, toleranciaLinhaM: toleranciaLinhaM,
+    // união parte a parte (com um bloco só é a união de sempre)
+    const uniao = unirEmBlocos(pontos, blocos, grupos, geoParaUtm, {
+      toleranciaM, toleranciaLinhaM,
       inicios: new Set(trechosSug.map((t) => t.verticeInicioOrdem)),
     });
     const linhas = montarVerticesUnidos(
@@ -103,18 +116,17 @@ Deno.serve(async (req) => {
       (i) => ({ lat: fmtGmsPlanilha(calcTxt[i].latGms, "lat"), lon: fmtGmsPlanilha(calcTxt[i].lonGms, "lon") }),
       geoParaUtm,
     );
-    // o vértice inicial sugerido continua sendo o 1º início de trecho do TXT — na
-    // sua NOVA posição, já que os certificados inseridos deslocam as ordens
     const verticeInicial = linhas.find((l) => l.tipo === "M")?.ordem ?? 0;
 
-    // anel unido no motor geodésico: os certificados entram pelo GMS gravado, como
-    // gerar-documentos fará depois — o preview mostra o que vai ser publicado
-    const calc = calcularVertices(
-      linhas.map((l): EntradaVertice => l.inserido_manual
-        ? { numTxt: l.num_txt, latGms: parseGmsPlanilha(l.lat_gms), lonGms: parseGmsPlanilha(l.lon_gms), h: l.h, sigmaPos: l.sigma_pos, sigmaH: l.sigma_h, inserido: true }
-        : { numTxt: l.num_txt, e: l.e, n: l.n, h: l.h, sigmaPos: l.sigma_pos, sigmaH: l.sigma_h }),
-      escolhido.zone, proj4,
-    );
+    // ---- partes: cada bloco é um anel; o preview soma área e perímetro ----
+    const partesLinhas = uniao.blocosAnel.map((pos) => pos.map((k) => linhas[k]));
+    let areaHa = 0, perimetroM = 0;
+    for (const pl of partesLinhas) {
+      const calc = calcularVertices(pl.map(entradaCalc), escolhido.zone, proj4);
+      areaHa += calcularAreaHa(calc);
+      perimetroM += calcularPerimetroM(calcularSegmentos(calc));
+    }
+    const emPartes = partesLinhas.length > 1;
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -124,6 +136,9 @@ Deno.serve(async (req) => {
       fuso_utm: escolhido.zone,
       vertice_inicial: verticeInicial,
       uf: uf ?? null,
+      // várias partes só existem como serviço com glebas: uma aba, uma poligonal
+      // e um bloco de identificação por parte
+      ...(emPartes ? { tem_glebas: true } : {}),
     }).select().single();
     if (eServ) throw eServ;
 
@@ -146,11 +161,20 @@ Deno.serve(async (req) => {
     const { data: vertices, error: eVert } = await supa.from("vertices").insert(linhasVert).select().order("ordem");
     if (eVert) throw eVert;
 
+    // uma gleba ("PARTE n") por bloco, com o anel em E/N — é o que a conferência,
+    // a planilha e a planta usam para tratar cada parte como um anel próprio
+    if (emPartes) {
+      const { error: eG } = await supa.from("glebas").insert(partesLinhas.map((pl, i) => ({
+        servico_id: servico.id, ordem: i, nome: `PARTE ${i + 1}`,
+        anel: pl.map((l) => [l.e, l.n]),
+      })));
+      if (eG) throw eG;
+    }
+
     const trechos = (vertices ?? [])
       .filter((v) => v.tipo === "M")
       .map((v) => ({ vertice_inicio_ordem: v.ordem, apelido_txt: v.apelido_txt, descritivo: "" }));
 
-    const segs = calcularSegmentos(calc);
     const preview = {
       fuso: escolhido.zone,
       epsg: epsgForZone(escolhido.zone),
@@ -158,11 +182,18 @@ Deno.serve(async (req) => {
       fusoAmbiguo: ambiguo,
       fusoOrigem: origemFuso,
       foraDaUf,
-      areaHa: calcularAreaHa(calc),
-      perimetroM: calcularPerimetroM(segs),
+      areaHa,
+      perimetroM,
       qtdM: linhas.filter((v) => v.tipo === "M").length,
       qtdP: linhas.filter((v) => v.tipo === "P").length,
       qtdV: linhas.filter((v) => v.tipo === "V").length,
+      ...(emPartes ? {
+        partes: partesLinhas.map((pl, i) => ({
+          nome: `PARTE ${i + 1}`,
+          pontos: pl.length,
+          numeracao: `${pl.find((l) => l.num_txt !== null)?.num_txt ?? "?"}–${[...pl].reverse().find((l) => l.num_txt !== null)?.num_txt ?? "?"}`,
+        })),
+      } : {}),
       ...(grupos.length > 0 ? {
         certificados: {
           parcelas: grupos.length,

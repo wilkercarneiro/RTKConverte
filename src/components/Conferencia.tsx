@@ -20,6 +20,7 @@ import {
 } from "../lib/modalidades";
 import type { SituacaoImovel } from "../lib/modalidades";
 import { areaHaDoAnel, GlebasEditor } from "./GlebasEditor";
+import { partesDasGlebas } from "../lib/glebas";
 import type { Gleba } from "../lib/types";
 import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux";
 import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
@@ -300,12 +301,18 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // prometer um "3" que a planta imprime como "2". Chave por vértice inicial.
   const numeracao = useMemo(() => numerarConfrontantes(trechosOrdenados), [trechosOrdenados]);
 
+  // Imóvel em PARTES: as glebas cobrem todos os vértices, cada um numa só (o TXT
+  // veio em blocos de numeração). Cada parte é um anel próprio no mapa e na
+  // prévia — costurá-las num anel só era o que cruzava o perímetro.
+  const partesOrdens = useMemo(() => partesDasGlebas(glebas, vertices), [glebas, vertices]);
+
   const preview = useMemo(
     () => calcularPreviewLocal(
       servico.fuso_utm ?? 24, vertices, trechosOrdenados, credenciado,
       ehConferencia ? "conferencia" : "oficial",
+      partesOrdens,
     ),
-    [servico.fuso_utm, vertices, trechosOrdenados, credenciado, ehConferencia],
+    [servico.fuso_utm, vertices, trechosOrdenados, credenciado, ehConferencia, partesOrdens],
   );
   // faixas de domínio: saem da própria planta (trecho marcado como via ou rótulo
   // do confrontante), uma declaração por via — sem campo para digitar
@@ -1012,6 +1019,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           </span>
         )}
         {inicial.preview.foraDaUf && <em className="alerta">coordenadas fora da UF informada!</em>}
+        {inicial.preview.partes && (
+          <em className="alerta" title={inicial.preview.partes.map((p) => `${p.nome}: pontos ${p.numeracao} (${p.pontos})`).join("\n")}>
+            TXT em {inicial.preview.partes.length} partes ({inicial.preview.partes.map((p) => p.numeracao).join(" · ")}) — cada uma é um anel próprio
+          </em>
+        )}
         {inicial.preview.certificados && (
           <em className="alerta" title={inicial.preview.certificados.avisos.join("\n") || undefined}>
             {inicial.preview.certificados.total} vértice(s) certificado(s) de {inicial.preview.certificados.parcelas} parcela(s) vizinha(s) unidos ·{" "}
@@ -1476,7 +1488,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             </div>
               </div>{/* coluna-esq */}
               <div className="mapa">
-                <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} />
+                <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={partesOrdens ?? undefined} />
+                {partesOrdens && (
+                  <p className="sub" style={{ margin: 0 }}>
+                    <b>Imóvel em {partesOrdens.length} partes</b> — cada bloco de numeração do TXT é um anel próprio
+                    (glebas {glebas.filter((g) => g.anel.length >= 3).map((g) => g.nome).join(", ")}). Área e perímetro acima são a soma das partes.
+                  </p>
+                )}
                 <div className="legenda">
                   {trechosOrdenados.map((t) => (
                     <span className="item" key={`leg-${t.vertice_inicio_ordem}`}>

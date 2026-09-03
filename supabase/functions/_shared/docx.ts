@@ -1,6 +1,7 @@
 // Geração do Memorial DOCX por templating XML direto (jszip no chamador).
 // Retorna o mapa de arquivos do pacote OOXML; o chamador injeta word/document.xml
 // no template (memorial-template.docx do Storage) ou monta o pacote completo.
+import { fmtBR } from "./geo.ts";
 import { cabecalhoMemorial, corpoMemorial } from "./memorial.ts";
 import type { DadosMemorial, Run } from "./memorial.ts";
 
@@ -164,8 +165,16 @@ export function buildDocumentXml(d: DadosMemorial, marcaDagua = false, timbre?: 
     partes.push(par([{ text: c.rotulo, bold: true }, { text: c.valor, bold: false }], { spaceAfter: 0 }));
   }
   partes.push(par([], { spaceAfter: 120 }));
-  // 3. Corpo — parágrafo único justificado
-  partes.push(par(corpoMemorial(d), { align: "both", spaceAfter: 240 }));
+  // 3. Corpo — parágrafo único justificado; em PARTES, um título e um
+  //    parágrafo por parte, cada uma descrita como o anel que é
+  if (d.partes?.length) {
+    for (const pt of d.partes) {
+      partes.push(par([{ text: `${pt.nome.toUpperCase()}  —  Área: ${fmtBR(pt.areaHa, 4)} ha  ·  Perímetro: ${fmtBR(pt.perimetroM, 2)} m`, bold: true }], { spaceAfter: 120 }));
+      partes.push(par(corpoMemorial({ ...d, ring: pt.ring, segs: pt.segs, perimetroM: pt.perimetroM }), { align: "both", spaceAfter: 240 }));
+    }
+  } else {
+    partes.push(par(corpoMemorial(d), { align: "both", spaceAfter: 240 }));
+  }
   // 4. Data e assinaturas
   partes.push(par([{ text: `${d.municipio}, ${d.dataStr}`, bold: false }], { align: "right", spaceAfter: 360 }));
   partes.push(par([

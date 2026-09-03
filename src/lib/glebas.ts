@@ -134,3 +134,31 @@ export function ordenarNoAnel(indices: number[], total: number): number[] {
 export function anelDaSelecao(perimetro: PontoAnel[], indices: number[]): PontoAnel[] {
   return ordenarNoAnel(indices, perimetro.length).map((i) => perimetro[i]);
 }
+
+/**
+ * As glebas cobrem TODOS os vértices, cada um numa só? Então não são
+ * sub-polígonos: são PARTES — anéis separados (o TXT em blocos de numeração, o
+ * imóvel cortado por estradas). Devolve as ordens de cada parte, na sequência
+ * do anel dela, ou null quando as glebas são divisões dentro de um perímetro.
+ * Mesma regra do servidor (gerar-documentos.partesDasGlebas).
+ */
+export function partesDasGlebas(
+  glebas: { anel: PontoAnel[] }[],
+  vertices: { ordem: number; e: number | string | null; n: number | string | null }[],
+): number[][] | null {
+  const validas = glebas.filter((g) => g.anel.length >= 3);
+  if (validas.length < 2) return null;
+  const partes = validas.map((g) => g.anel.map(([e, n]) => {
+    let melhor = -1, dm = 0.1;
+    for (const v of vertices) {
+      if (v.e === null || v.n === null) continue;
+      const d = Math.hypot(Number(v.e) - e, Number(v.n) - n);
+      if (d < dm) { dm = d; melhor = v.ordem; }
+    }
+    return melhor;
+  }));
+  const usados = new Set<number>();
+  for (const p of partes) for (const o of p) { if (o < 0 || usados.has(o)) return null; usados.add(o); }
+  if (usados.size !== vertices.length) return null;
+  return partes;
+}

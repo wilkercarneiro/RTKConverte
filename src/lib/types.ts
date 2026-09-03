@@ -215,4 +215,6 @@ export interface PreviewParse {
   certificados?: { parcelas: number; total: number; igualados: number; inseridos: number; removidos: number[]; avisos: string[]; tolerancia: number };
   /** De onde saiu o fuso: informado na tela, pelos CSVs dos vizinhos, pela UF ou pela prioridade histórica. */
   fusoOrigem?: "informado" | "certificados" | "uf" | "automatico";
+  /** TXT em blocos de numeração (1–75, 100–123…): cada bloco é um anel próprio, gravado como gleba "PARTE n". */
+  partes?: { nome: string; pontos: number; numeracao: string }[];
 }

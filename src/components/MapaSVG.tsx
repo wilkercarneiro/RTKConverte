@@ -1,5 +1,8 @@
 // Mapa SVG do polígono: trechos coloridos por confrontante, vértices numerados.
 // Gerado client-side a partir das coordenadas E/N — sem lib de mapa.
+//
+// Imóvel em PARTES (TXT em blocos de numeração, cortado por estradas): cada
+// parte é um anel fechado por si. Sem `partes`, um anel só, como sempre.
 import { useMemo } from "react";
 import type { Trecho, Vertice } from "../lib/types";
 import { ehRioPorLimite, trechoDoVertice } from "../lib/trechos";
@@ -16,9 +19,11 @@ interface Props {
   vertices: Vertice[];
   trechos: Trecho[];
   verticeInicial: number;
+  /** Ordens de cada parte (anel próprio). Ausente = um anel com todos os vértices. */
+  partes?: number[][];
 }
 
-export function MapaSVG({ vertices, trechos, verticeInicial }: Props) {
+export function MapaSVG({ vertices, trechos, verticeInicial, partes }: Props) {
   const dados = useMemo(() => {
     const vs = [...vertices].sort((a, b) => a.ordem - b.ordem);
     // V inseridos não têm E/N: interpola visualmente entre vizinhos
@@ -41,24 +46,38 @@ export function MapaSVG({ vertices, trechos, verticeInicial }: Props) {
       const t = trechoDe(ordem);
       return t ? CORES[tOrd.indexOf(t) % CORES.length] : "#8A978F";
     };
-    // centroide em coordenadas de tela, para jogar a linha da via para FORA
-    const cx = pts.reduce((s, p) => s + px(p.x), 0) / pts.length;
-    const cy = pts.reduce((s, p) => s + py(p.y), 0) / pts.length;
-    return { pts, px, py, W, H, corDoVertice, trechoDe, cx, cy };
-  }, [vertices, trechos]);
+    // Anéis: as partes (por ordem → índice em pts) ou um anel só. Cada aresta
+    // liga um ponto ao seguinte DO MESMO anel — é o que impede a linha de
+    // costura entre o fim de uma parte e o começo da outra.
+    const idxPorOrdem = new Map(pts.map((p, i) => [p.v.ordem, i]));
+    const aneis: number[][] = partes?.length
+      ? partes.map((pt) => pt.map((o) => idxPorOrdem.get(o)).filter((i): i is number => i !== undefined)).filter((a) => a.length >= 2)
+      : [pts.map((_, i) => i)];
+    const arestas: [number, number][] = [];
+    for (const a of aneis) for (let k = 0; k < a.length; k++) arestas.push([a[k], a[(k + 1) % a.length]]);
+    // centroide de cada anel em coordenadas de tela, para jogar a linha da via para FORA
+    const centro = new Map<number, { cx: number; cy: number }>();
+    for (const a of aneis) {
+      const cx = a.reduce((s, i) => s + px(pts[i].x), 0) / a.length;
+      const cy = a.reduce((s, i) => s + py(pts[i].y), 0) / a.length;
+      for (const i of a) centro.set(i, { cx, cy });
+    }
+    return { pts, px, py, W, H, corDoVertice, trechoDe, arestas, centro };
+  }, [vertices, trechos, partes]);
 
-  const { pts, px, py, W, H, corDoVertice, trechoDe, cx, cy } = dados;
+  const { pts, px, py, W, H, corDoVertice, trechoDe, arestas, centro } = dados;
   if (pts.length < 3) return null;
 
   // Mesma construção da planta (planta.ts): duas paralelas deslocadas na normal
   // que aponta para fora do polígono. O que aparecer aqui é o que sai no PDF —
   // vermelhas para a faixa de domínio, AZUIS para o curso d'água (LN1), e rio
   // vence estrada, como lá.
-  const viaDoSegmento = (i: number) => {
+  const viaDaAresta = ([i, j]: [number, number]) => {
     const t = trechoDe(pts[i].v.ordem);
     const cor = ehRioPorLimite(t?.tipo_limite) ? COR_RIO : t?.eh_via ? COR_VIA : null;
     if (!cor) return null;
-    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const a = pts[i], b = pts[j];
+    const { cx, cy } = centro.get(i) ?? { cx: 0, cy: 0 };
     const ax = px(a.x), ay = py(a.y), bx = px(b.x), by = py(b.y);
     const dx = bx - ax, dy = by - ay;
     const len = Math.hypot(dx, dy) || 1;
@@ -73,20 +92,20 @@ export function MapaSVG({ vertices, trechos, verticeInicial }: Props) {
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="mapa-svg" role="img" aria-label="Mapa do perímetro">
       <g strokeWidth={3} fill="none" strokeLinecap="round">
-        {pts.map((p, i) => {
-          const q = pts[(i + 1) % pts.length];
+        {arestas.map(([i, j], k) => {
+          const p = pts[i], q = pts[j];
           return (
-            <line key={`s${i}`} x1={px(p.x)} y1={py(p.y)} x2={px(q.x)} y2={py(q.y)}
+            <line key={`s${k}`} x1={px(p.x)} y1={py(p.y)} x2={px(q.x)} y2={py(q.y)}
               stroke={corDoVertice(p.v.ordem)} />
           );
         })}
       </g>
       {/* faixas: dupla vermelha (estrada) ou azul (rio, LN1), como sai na planta */}
-      {pts.map((_, i) => {
-        const via = viaDoSegmento(i);
+      {arestas.map((ar, k) => {
+        const via = viaDaAresta(ar);
         if (!via) return null;
         return (
-          <g key={`via${i}`}>
+          <g key={`via${k}`}>
             {[4, 8].map((off) => (
               <line key={off}
                 x1={via.ax + via.nx * off} y1={via.ay + via.ny * off}

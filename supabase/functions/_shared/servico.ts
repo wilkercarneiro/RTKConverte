@@ -211,6 +211,49 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
   };
 }
 
+/** O serviço dividido em PARTES: cada uma é um anel completo, calculado por si. */
+export interface ServicoEmPartes {
+  partes: { nome: string; calc: ServicoCalculado }[];
+  areaHa: number;
+  perimetroM: number;
+  contadoresFinais: { M: number; P: number; V: number };
+}
+
+/**
+ * Um imóvel cortado por estradas (ou levantado em glebas fechadas) chega como
+ * VÁRIOS anéis no mesmo TXT — a FAZ COIXO tem três, numerados 1–75, 100–123 e
+ * 200–228. Costurar tudo num anel só produz um perímetro que cruza a si mesmo e
+ * erra área, vértice inicial, trechos e códigos.
+ *
+ * Aqui cada parte passa pelo MESMO pipeline do anel único (`montarServico`):
+ * início no vértice mais ao norte DA PARTE, sentido horário, trecho de M até o
+ * próximo M dentro da parte, códigos em sequência — a parte 2 continua a
+ * numeração onde a parte 1 parou. `ordens[i]` são as ordens (da tabela
+ * `vertices`) que compõem a parte i, na sequência do anel dela.
+ */
+export function montarPartes(
+  inp: ServicoInput,
+  partes: { nome: string; ordens: number[] }[],
+  proj4: Proj4,
+): ServicoEmPartes {
+  const porOrdem = new Map(inp.vertices.map((v) => [v.ordem, v]));
+  let contadores = { ...inp.contadores };
+  const out: { nome: string; calc: ServicoCalculado }[] = [];
+  for (const p of partes) {
+    const vertices = p.ordens.map((o) => porOrdem.get(o)).filter((v): v is VerticeServico => !!v);
+    if (vertices.length < 3) throw new Error(`Parte "${p.nome}" tem menos de 3 vértices`);
+    const calc = montarServico({ ...inp, contadores, vertices }, proj4);
+    contadores = calc.contadoresFinais;
+    out.push({ nome: p.nome, calc });
+  }
+  return {
+    partes: out,
+    areaHa: out.reduce((s, p) => s + p.calc.areaHa, 0),
+    perimetroM: Math.round(out.reduce((s, p) => s + p.calc.perimetroM, 0) * 100) / 100,
+    contadoresFinais: contadores,
+  };
+}
+
 /**
  * Confere a invariante "confrontação só no vértice M" sobre as linhas cruas do
  * banco. Cita sempre o CÓDIGO: o usuário raciocina em "DSBN-M-3704", nunca em

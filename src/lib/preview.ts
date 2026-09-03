@@ -31,8 +31,26 @@ export function calcularPreviewLocal(
   credenciado: Credenciado | null,
   /** Formato do código sugerido. A conferência numera "P-1"; ver `codigoConferencia`. */
   estiloCodigo: EstiloCodigo = "oficial",
+  /** Imóvel em PARTES (ordens de cada anel): área e perímetro são a soma; o texto é o da primeira. */
+  partes?: number[][] | null,
 ): PreviewCalc {
   try {
+    // em partes, cada anel é calculado por si e o total é a soma — costurar os
+    // blocos num anel só dava área com sinal trocado e perímetro que cruza
+    if (partes && partes.length > 1) {
+      const porOrdem = new Map(vertices.map((v) => [v.ordem, v]));
+      const primeira = calcularPreviewLocal(fuso, partes[0].map((o) => porOrdem.get(o)!).filter(Boolean), trechos, credenciado, estiloCodigo);
+      let areaHa = 0, perimetroM = 0;
+      for (const pt of partes) {
+        const r = calcularPreviewLocal(fuso, pt.map((o) => porOrdem.get(o)!).filter(Boolean), trechos, credenciado, estiloCodigo);
+        if (r.erro) return r;
+        areaHa += Number(r.areaHa.replace(/\./g, "").replace(",", "."));
+        perimetroM += Number(r.perimetroM.replace(/\./g, "").replace(",", "."));
+      }
+      const qtd = { M: 0, P: 0, V: 0 };
+      for (const v of vertices) qtd[v.tipo]++;
+      return { ...primeira, areaHa: fmtBR(areaHa, 4), perimetroM: fmtBR(perimetroM, 2), qtdM: qtd.M, qtdP: qtd.P, qtdV: qtd.V };
+    }
     const vs = [...vertices].sort((a, b) => a.ordem - b.ordem);
     const calc = calcularVertices(
       vs.map((v) => ({

@@ -14,7 +14,7 @@ import {
 } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { sugerirTrechos } from "../_shared/servico.ts";
-import { montarVerticesUnidos, parseCsvSigef, unirCertificados } from "../_shared/certificados.ts";
+import { blocosPorNumeracao, montarVerticesUnidos, parseCsvSigef, unirEmBlocos } from "../_shared/certificados.ts";
 import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
@@ -91,7 +91,9 @@ Deno.serve(async (req) => {
       zone, proj4,
     );
     const trechosSug = sugerirTrechos(pontos);
-    const uniao = unirCertificados(pontos, grupos, geoParaUtm, {
+    // TXT em partes (blocos de numeração): a união roda parte a parte
+    const blocos = blocosPorNumeracao(pontos);
+    const uniao = unirEmBlocos(pontos, blocos, grupos, geoParaUtm, {
       toleranciaM: Number.isFinite(tolNum) && tolNum >= 0 ? tolNum : 0.5,
       toleranciaLinhaM: Number.isFinite(tolLinhaNum) && tolLinhaNum >= 0 ? tolLinhaNum : undefined,
       inicios: new Set(trechosSug.map((t) => t.verticeInicioOrdem)),
@@ -159,8 +161,28 @@ Deno.serve(async (req) => {
     if (eDel) throw eDel;
     const { data: vertices, error: eIns } = await supa.from("vertices").insert(linhasVert).select().order("ordem");
     if (eIns) throw eIns;
+    // as PARTES (uma gleba por bloco) acompanham o anel novo: mesmos nomes e
+    // confrontantes internos, anel refeito com os E/N atuais
+    if (blocos.length > 1) {
+      const partesLinhas = uniao.blocosAnel.map((pos) => pos.map((k) => linhas[k]));
+      const { data: gAtuais } = await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem");
+      const atuaisG = gAtuais ?? [];
+      if (atuaisG.length === partesLinhas.length) {
+        for (const [i, pl] of partesLinhas.entries()) {
+          const { error: eG } = await supa.from("glebas").update({ anel: pl.map((l) => [l.e, l.n]) }).eq("id", atuaisG[i].id);
+          if (eG) throw eG;
+        }
+      } else {
+        await supa.from("glebas").delete().eq("servico_id", servico_id);
+        const { error: eG } = await supa.from("glebas").insert(partesLinhas.map((pl, i) => ({
+          servico_id, ordem: i, nome: `PARTE ${i + 1}`, anel: pl.map((l) => [l.e, l.n]),
+        })));
+        if (eG) throw eG;
+      }
+    }
+
     const { error: eUp } = await supa.from("servicos")
-      .update({ fuso_utm: zone, vertice_inicial: novoInicial ?? (novas.find((x) => x.tipo === "M")?.ordem ?? 0) })
+      .update({ fuso_utm: zone, vertice_inicial: novoInicial ?? (novas.find((x) => x.tipo === "M")?.ordem ?? 0), ...(blocos.length > 1 ? { tem_glebas: true } : {}) })
       .eq("id", servico_id);
     if (eUp) throw eUp;
 

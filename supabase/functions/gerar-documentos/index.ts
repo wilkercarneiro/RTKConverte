@@ -9,7 +9,7 @@
 import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import JSZip from "jszip";
-import { montarServico, validarConfrontacoes } from "../_shared/servico.ts";
+import { montarServico, validarConfrontacoes, montarPartes } from "../_shared/servico.ts";
 import type { ServicoInput, VerticeServico } from "../_shared/servico.ts";
 import { ehCodigoDeConferencia } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
@@ -22,7 +22,7 @@ import { patchOdsContent } from "../_shared/ods.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { Folha } from "../_shared/planta.ts";
 import {
-  bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta, perimetrosOdsDasGlebas,
+  bytesDeBase64, carregarLogoPlanta, dadosDasPartes, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta, perimetrosOdsDasGlebas,
 } from "../_shared/planta_dados.ts";
 import type { GlebaRow } from "../_shared/planta_dados.ts";
 
@@ -55,6 +55,35 @@ const PREFIXO_PROVISORIO = "PROV";
 const ehCodigoProvisorio = (v: { codigo: string | null; codigo_provisorio?: boolean | null }) =>
   !!v.codigo_provisorio || ehCodigoDeConferencia(v.codigo) ||
   (!!v.codigo && v.codigo.startsWith(`${PREFIXO_PROVISORIO}-`));
+
+/**
+ * As glebas cobrem TODOS os vértices, cada um numa só? Então não são
+ * sub-polígonos: são PARTES — anéis separados (o TXT em blocos de numeração, o
+ * imóvel cortado por estradas), e cada uma é calculada como o anel que é.
+ */
+function partesDasGlebas(
+  rows: GlebaRow[],
+  vertRows: { ordem: number; e: number | string | null; n: number | string | null }[],
+): { nome: string; ordens: number[] }[] | null {
+  const validas = rows.filter((g) => (g.anel?.length ?? 0) >= 3).sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
+  if (validas.length < 2) return null;
+  const partes = validas.map((g, gi) => ({
+    nome: (g.nome ?? "").trim() || `PARTE ${gi + 1}`,
+    ordens: g.anel!.map(([e, n]) => {
+      let melhor = -1, dm = 0.1;
+      for (const v of vertRows) {
+        if (v.e === null || v.n === null) continue;
+        const d = Math.hypot(Number(v.e) - e, Number(v.n) - n);
+        if (d < dm) { dm = d; melhor = v.ordem; }
+      }
+      return melhor;
+    }),
+  }));
+  const usados = new Set<number>();
+  for (const pt of partes) for (const o of pt.ordens) { if (o < 0 || usados.has(o)) return null; usados.add(o); }
+  if (usados.size !== vertRows.length) return null;
+  return partes;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -182,7 +211,18 @@ Deno.serve(async (req) => {
       estiloCodigo: conferencia ? "conferencia" : "oficial",
       vertices,
     };
-    const calc = montarServico(input, proj4);
+    // ---- PARTES: as glebas particionam os vértices? (TXT em blocos = anéis separados) ----
+    const glebaRows = servico.tem_glebas
+      ? ((await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")).data ?? []) as GlebaRow[]
+      : [];
+    const partesOrdens = partesDasGlebas(glebaRows, vertRows);
+    const calcPartes = partesOrdens ? montarPartes(input, partesOrdens, proj4) : null;
+    // com partes, `calc` é a PRIMEIRA (o que os caminhos de anel único leem);
+    // área, perímetro e códigos de todas saem de `calcPartes`
+    const calc = calcPartes ? calcPartes.partes[0].calc : montarServico(input, proj4);
+    const ringTodos = calcPartes ? calcPartes.partes.flatMap((pt) => pt.calc.ring) : calc.ring;
+    const areaHaTotal = calcPartes ? calcPartes.areaHa : calc.areaHa;
+    const perimetroMTotal = calcPartes ? calcPartes.perimetroM : calc.perimetroM;
 
     // Persiste códigos e a marca de prévia. A marca é gravada SEMPRE que o
     // serviço passa por aqui — inclusive ao promover a conferência, onde ela
@@ -194,7 +234,7 @@ Deno.serve(async (req) => {
     // redigitar o que já estava certo.
     const manuais = new Set(vertRows.filter((v) => v.inserido_manual).map((v) => v.ordem));
     if (precisaAlocar) {
-      for (const v of calc.ring) {
+      for (const v of ringTodos) {
         await supa.from("vertices")
           .update({ codigo: v.codigo, codigo_provisorio: conferencia && !manuais.has(v.ordem) })
           .eq("servico_id", servico_id).eq("ordem", v.ordem);
@@ -206,17 +246,20 @@ Deno.serve(async (req) => {
     // ------------------------- glebas -------------------------
     // Carregadas antes do DOCX/ODS porque a PLANILHA também depende delas: com
     // glebas o arquivo sai com uma aba de perímetro por gleba.
-    const glebaRows = servico.tem_glebas
-      ? ((await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")).data ?? []) as GlebaRow[]
-      : [];
-    const glebas = servico.tem_glebas ? glebasParaPlanta(glebaRows, calc, servico) : undefined;
+    // Em PARTES as "glebas" são as próprias partes (dadosDasPartes); fora disso,
+    // sub-polígonos desenhados dentro do perímetro.
+    const dp = calcPartes ? dadosDasPartes(calcPartes.partes, servico) : null;
+    const glebas = dp ? dp.glebas : (servico.tem_glebas ? glebasParaPlanta(glebaRows, calc, servico) : undefined);
 
     // Uma aba `perimetro_N` por gleba, na ordem em que foram montadas, cada
     // vértice com o confrontante do lado que sai dele (a divisa interna confronta
     // com a gleba vizinha). Sem glebas, um perímetro só — exatamente o que a
     // planilha sempre teve. Ver perimetrosOdsDasGlebas.
     const hemisferio = calc.ring[0].latDeg < 0 ? "Sul" : "Norte";
-    const abasGlebas = glebas?.length ? perimetrosOdsDasGlebas(glebaRows, calc, servico) : [];
+    // Partes: cada aba é o anel da parte, calculado por si (trechos fecham dentro dela)
+    const abasGlebas = calcPartes
+      ? calcPartes.partes.map((pt) => ({ nome: pt.nome, linhas: pt.calc.linhasOds, semCodigo: 0 }))
+      : (glebas?.length ? perimetrosOdsDasGlebas(glebaRows, calc, servico) : []);
     const avisosGlebas = abasGlebas
       .filter((g) => g.semCodigo > 0)
       .map((g) => `${g.nome}: ${g.semCodigo} ponto(s) do contorno não são vértices do levantamento e ficaram fora da planilha.`);
@@ -253,8 +296,8 @@ Deno.serve(async (req) => {
       matricula: servico.matricula ?? "",
       comarca: "",
       codigoCredenciamento: "",
-      areaHa: calc.areaHa,
-      perimetroM: calc.perimetroM,
+      areaHa: areaHaTotal,
+      perimetroM: perimetroMTotal,
       mcAbs: calc.mcAbs,
       dataStr: dataHojeBR(),
       rtNome: rt?.nome ?? "",
@@ -264,7 +307,16 @@ Deno.serve(async (req) => {
       rtTrt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
       ring: calc.memorialRing,
       segs: calc.segs,
-      confrontantesDescritivos: calc.trechosOrdenados.map((t) => t.descritivo).filter((d) => d.trim() !== ""),
+      confrontantesDescritivos: [...new Set(
+        (calcPartes ? calcPartes.partes.flatMap((pt) => pt.calc.trechosOrdenados) : calc.trechosOrdenados)
+          .map((t) => t.descritivo).filter((d) => d.trim() !== ""),
+      )],
+      // imóvel em partes: um parágrafo de descrição por parte
+      ...(calcPartes ? {
+        partes: calcPartes.partes.map((pt) => ({
+          nome: pt.nome, areaHa: pt.calc.areaHa, perimetroM: pt.calc.perimetroM, ring: pt.calc.memorialRing, segs: pt.calc.segs,
+        })),
+      } : {}),
     };
     // O memorial sai TIMBRADO, com o MESMO timbre das outras peças: cabeçalho
     // com a logo, marca d'água e rodapé de contato saem do
@@ -284,7 +336,9 @@ Deno.serve(async (req) => {
     const tplMemorial = await supa.storage.from("templates")
       .download(`${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx`);
     let doModelo = false;
-    if (!tplMemorial.error && tplMemorial.data) {
+    // O modelo da peça 1 descreve UM anel; em partes o memorial sai montado em
+    // código, uma descrição por parte, com o timbre do memorial-template.
+    if (!calcPartes && !tplMemorial.error && tplMemorial.data) {
       const tz = await JSZip.loadAsync(await tplMemorial.data.arrayBuffer());
       for (const name of Object.keys(tz.files)) {
         if (tz.files[name].dir) continue;
@@ -312,9 +366,9 @@ Deno.serve(async (req) => {
       }
       if (!timbre) for (const [path, content] of buildDocxSkeleton(logo)) zipDocx.file(path, content);
       zipDocx.file("word/document.xml", buildDocumentXml(dadosMemorial, !timbre && !!logo, timbre));
-      avisosGeracao.push(
-        `Memorial gerado fora do modelo da empresa: templates/${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx não está no Storage.`,
-      );
+      avisosGeracao.push(calcPartes
+        ? `Imóvel em ${calcPartes.partes.length} partes: o memorial descreve cada parte em sequência, com o timbre básico. A divisão em arquivos por parte é a próxima etapa.`
+        : `Memorial gerado fora do modelo da empresa: templates/${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx não está no Storage.`);
     }
     const docxBuf = await zipDocx.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 
@@ -362,7 +416,7 @@ Deno.serve(async (req) => {
       const dadosPlanta = montarDadosPlanta({
         servico, rt, cred,
         desenhista: cfgDes?.value ?? "",
-        geometria: geometriaDoCalculo(calc),
+        geometria: dp ? dp.geometria : geometriaDoCalculo(calc),
         fuso: servico.fuso_utm,
         trt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
         dataStr: dataHojeBR(),
@@ -371,6 +425,7 @@ Deno.serve(async (req) => {
           ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
           : null,
         folha, glebas, conferencia,
+        partes: dp?.partes,
         // Só a prévia pode esconder campo: num serviço que vai ao SIGEF a
         // matrícula, a denominação e o TRT são obrigatórios, e deixar as
         // chaves passarem para lá abriria a porta para uma planta oficial
@@ -456,12 +511,13 @@ Deno.serve(async (req) => {
       modalidade: servico.modalidade ?? "completo",
       provisorio: conferencia,
       resumo: {
-        areaHa: calc.areaHa,
-        perimetroM: calc.perimetroM,
-        qtdM: calc.ring.filter((v) => v.tipo === "M").length,
-        qtdP: calc.ring.filter((v) => v.tipo === "P").length,
-        qtdV: calc.ring.filter((v) => v.tipo === "V").length,
-        contadoresFinais: calc.contadoresFinais,
+        areaHa: areaHaTotal,
+        perimetroM: perimetroMTotal,
+        qtdM: ringTodos.filter((v) => v.tipo === "M").length,
+        qtdP: ringTodos.filter((v) => v.tipo === "P").length,
+        qtdV: ringTodos.filter((v) => v.tipo === "V").length,
+        contadoresFinais: calcPartes ? calcPartes.contadoresFinais : calc.contadoresFinais,
+        partes: calcPartes ? calcPartes.partes.map((pt) => ({ nome: pt.nome, areaHa: pt.calc.areaHa, perimetroM: pt.calc.perimetroM })) : undefined,
         verticeInicial: calc.ring[0].codigo,
       },
     });
