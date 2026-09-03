@@ -56,6 +56,7 @@ test("trechos do caso ANTONIO: pessoas reconhecidas e vias separadas", () => {
 });
 
 const textos = {};
+let xmlCartas = "";
 test("geração das 4 peças de posse", async () => {
   const tpl = {};
   const zips = {};
@@ -73,6 +74,7 @@ test("geração das 4 peças de posse", async () => {
     const re = await JSZip.loadAsync(buf);
     const xml = await re.file("word/document.xml").async("string");
     textos[k] = dec(xml.replace(/<[^>]+>/g, ""));
+    if (k === "3") xmlCartas = xml;
     const semSelf = xml.replace(/<[^<>]*\/>/g, "");
     for (const tag of ["w:p", "w:tbl", "w:tr", "w:tc"]) {
       const abre = (semSelf.match(new RegExp(`<${tag}[ >]`, "g")) ?? []).length;
@@ -101,6 +103,7 @@ test("peças de posse: dados de exemplo substituídos", () => {
   // 3: uma carta por confrontante-pessoa; sem carta para as vias
   const nCartas = (textos[3].match(/CARTA DE ANUÊNCIA/g) ?? []).length;
   assert.equal(nCartas, 4, `cartas: ${nCartas}`);
+  assert.equal((xmlCartas.match(/<w:pageBreakBefore\/>/g) ?? []).length, nCartas - 1, "cada carta em folha nova");
   assert.ok(textos[3].includes("MARIA NINA DA SILVA COSTA"), "carta da MARIA NINA");
   assert.ok(!textos[3].includes("ESTRADA VICINAL"), "via não ganha carta");
   // 7: uma declaração por via, cada uma com a tabela do próprio trecho

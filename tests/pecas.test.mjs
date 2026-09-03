@@ -319,6 +319,12 @@ test("vizinhos com o mesmo rótulo de imóvel não se misturam: carta e declara�
     if (tRudson.linhas.some((x) => x.codigo === l.codigo)) continue;
     assert.ok(!deRudson.includes(l.codigo), `carta do RUDSON com vértice alheio ${l.codigo}`);
   }
+  // cada carta começa em folha nova: quebra no título de todas menos a primeira
+  const quebras = (xmls["3"].match(/<w:pageBreakBefore\/>/g) ?? []).length;
+  assert.equal(quebras, cartas.length - 1, `quebras de página: ${quebras} para ${cartas.length} cartas`);
+  // a quebra fica no parágrafo do título, antes do texto: até o 1º título não pode haver nenhuma
+  const antesDoPrimeiroTitulo = xmls["3"].slice(0, xmls["3"].indexOf("CARTA DE ANU"));
+  assert.ok(!antesDoPrimeiroTitulo.includes("<w:pageBreakBefore/>"), "a primeira carta não pode começar com quebra");
   // declarações 4 e 5: uma linha por pessoa, imóvel repetido em cada linha
   for (const n of ["4", "5"]) {
     const t = dec(xmls[n].replace(/<[^>]+>/g, ""));
