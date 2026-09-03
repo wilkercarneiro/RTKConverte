@@ -777,3 +777,16 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .tabela-vertices tr.sel td { background: var(--primaria-clara); }
 .tabela-vertices td.pos { color: var(--texto-3); font-family: var(--mono); font-size: 12px; width: 36px; }
 .tabela-vertices input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var(--primaria); }
+
+/* ===== Confrontantes e vértices lado a lado; vértices compactos ===== */
+.confrontantes .coluna-esq { display: grid; gap: 16px; min-width: 0; align-content: start; }
+.tabela-vertices.compacta td, .tabela-vertices.compacta th { padding: 6px 10px; font-size: 13px; }
+.tabela-vertices.compacta .resumo-v { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+.tabela-vertices.compacta .chip { font-size: 11px; padding: 2px 7px; }
+.btn-expandir { height: 26px; width: 30px; padding: 0; border-radius: 7px; font-size: 13px; }
+.linha-detalhe td { background: #F8FAF9 !important; border-top: 0 !important; padding: 4px 10px 12px 46px !important; }
+.detalhe-grid { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; font-size: 12.5px; }
+.detalhe-grid > span { display: inline-flex; flex-direction: column; gap: 3px; }
+.detalhe-grid .rot { font-size: 11px; color: var(--texto-3); text-transform: uppercase; letter-spacing: .03em; }
+.detalhe-grid select { height: 28px; font: 12.5px var(--mono); }
+.detalhe-grid .remover { align-self: end; }

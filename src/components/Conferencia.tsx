@@ -5,7 +5,7 @@
 // Experiência: só os campos que bloqueiam a geração ficam sempre visíveis; o
 // resto vive em seções recolhíveis com selo de preenchimento. O cartão de
 // próxima ação diz em uma frase o que falta, e o trabalho é salvo sozinho.
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
 import {
   LADOS, METODOS_POSICIONAMENTO, NATUREZAS_AREA, NATUREZAS_SERVICO,
@@ -143,6 +143,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // muda quando a ordem muda). `ultimoClicado` é a âncora do Shift+clique.
   const [selVert, setSelVert] = useState<Set<string>>(() => new Set());
   const [ultimoClicado, setUltimoClicado] = useState<number | null>(null);
+  // Linhas da tabela de vértices abertas (código, método, coordenadas); a
+  // tabela em si mostra só nº e rótulo, para caber ao lado do mapa.
+  const [expandidos, setExpandidos] = useState<Set<string>>(() => new Set());
   const [previaAberta, setPreviaAberta] = useState(false);
   const [sobreAberto, setSobreAberto] = useState(false);
 
@@ -1214,6 +1217,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               </p>
             )}
             <div className="confrontantes">
+              <div className="coluna-esq">
               <div className="trechos">
                 {trechosOrdenados.map((t) => {
                   const v = vertices.find((x) => x.ordem === t.vertice_inicio_ordem);
@@ -1315,30 +1319,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                   }}>+ adicionar transição</button>
                 </div>
               </div>
-              <div className="mapa">
-                <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} />
-                <div className="legenda">
-                  {trechosOrdenados.map((t) => (
-                    <span className="item" key={`leg-${t.vertice_inicio_ordem}`}>
-                      <span className="ponto-cor" style={{ background: corDoTrecho(t) }} />
-                      {numeracao.get(t.vertice_inicio_ordem) !== undefined && (
-                        <span className="badge-num pequeno">{numeracao.get(t.vertice_inicio_ordem)}</span>
-                      )}
-                      {t.apelido_txt || `pt ${nomePonto(vertices.find((v) => v.ordem === t.vertice_inicio_ordem) ?? vertices[0])}`}
-                      {ehRioPorLimite(t.tipo_limite)
-                        ? <span className="marca-rio" title="Curso d'água (LN1): sai na planta como linha dupla azul"> ≈ rio</span>
-                        : t.eh_via && <span className="marca-via" title="Faixa de domínio pública: sai na planta como linha dupla vermelha"> ═ via</span>}
-                    </span>
-                  ))}
-                </div>
-                <p className="sub" style={{ margin: 0 }}>
-                  A linha dupla vermelha é o que sairá na planta como estrada. Se ela aparecer
-                  onde não há estrada, desmarque "faixa de domínio" naquele trecho.
-                  A linha dupla azul é o curso d'água: sai em todo trecho com tipo de limite
-                  LN1. Se ali não houver rio, troque o tipo de limite.
-                </p>
-              </div>
-            </div>
             {/* ------- Vértices: na mesma etapa, porque a ORDEM deles é o que define os
                 trechos e o mapa acima; reordenar aqui atualiza tudo ao mesmo tempo. ------- */}
             <div className="etapa-cabeca" id="bloco-vertices">
@@ -1420,12 +1400,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               <span style={{ flex: 1 }} />
               <button className="fantasma" onClick={() => setSelVert(new Set(vertices.map(chaveV)))}>selecionar todos</button>
               <button className="fantasma" disabled={!selVert.size} onClick={() => { setSelVert(new Set()); setUltimoClicado(null); }}>limpar</button>
+              <button className="fantasma" onClick={() => setExpandidos((e) => (e.size ? new Set() : new Set(vertices.map(chaveV))))}>{expandidos.size ? "recolher todos" : "expandir todos"}</button>
             </div>
 
-            <div className="tabela-wrap" style={{ maxHeight: 620 }}>
-              <table className="tabela-vertices">
+            <div className="tabela-wrap" style={{ maxHeight: 640 }}>
+              <table className="tabela-vertices compacta">
                 <thead>
-                  <tr><th></th><th>#</th><th>Nº</th><th>Rótulo TXT</th><th>Código</th><th>Tipo</th><th>Método</th><th>Latitude</th><th>Longitude</th><th className="direita">h (m)</th><th></th></tr>
+                  <tr><th></th><th>#</th><th>Nº</th><th>Rótulo TXT</th><th></th><th></th></tr>
                 </thead>
                 <tbody>
                   {[...vertices].sort((a, b) => a.ordem - b.ordem).map((v, idx) => {
@@ -1433,45 +1414,90 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                     const cor = t ? CORES[trechosOrdenados.indexOf(t) % CORES.length] : "#D5DDD8";
                     const ehInicial = v.ordem === verticeInicial;
                     const marcado = selVert.has(chaveV(v));
+                    const aberto = expandidos.has(chaveV(v));
+                    const alternarDetalhe = () => setExpandidos((s) => { const n = new Set(s); if (n.has(chaveV(v))) n.delete(chaveV(v)); else n.add(chaveV(v)); return n; });
                     return (
-                      <tr key={chaveV(v)} className={`${ehInicial ? "inicial" : ""} ${marcado ? "sel" : ""}`}>
-                        <td onClick={(e) => alternarSelecaoV(idx, e.shiftKey)}>
-                          <input type="checkbox" checked={marcado} aria-label={`Selecionar ${nomePonto(v)}`}
-                            onClick={(e) => { e.stopPropagation(); alternarSelecaoV(idx, e.shiftKey); }} onChange={() => { /* onClick decide */ }} />
-                        </td>
-                        <td className="pos">{v.ordem + 1}</td>
-                        <td className="num">{v.num_txt ?? "—"}{ehInicial ? " ★" : ""}</td>
-                        <td>
-                          <span className="ponto-trecho" style={{ background: cor }} aria-hidden="true" />
-                          {v.rotulo_txt ? <span style={{ color: "#33453C" }}>{v.rotulo_txt}</span> : <span className="sub">—</span>}
-                        </td>
-                        <td className="mono">{v.codigo ?? <span className="sub">na geração</span>}</td>
-                        <td>
-                          {v.inserido_manual ? (
-                            // V inserido à mão, ou vértice certificado do vizinho (código dele; um M
-                            // nosso igualado a ele continua M — a confrontação mora aí)
-                            <button className={`chip-tipo ${v.tipo}`} disabled
-                              title={/-[MPV]-/.test(v.codigo ?? "") && !/PA1/.test(v.metodo) ? "vértice certificado de parcela vizinha" : "vértice inserido"}>{v.tipo}</button>
-                          ) : (
-                            <button className={`chip-tipo ${v.tipo}`} title="Clique para alternar: M → P → V"
-                              onClick={() => setVertice(v.ordem, { tipo: proximoTipo(v.tipo) })}>{v.tipo}</button>
-                          )}
-                        </td>
-                        <td>
-                          <select value={v.metodo} aria-label="Método de posicionamento" onChange={(e) => setVertice(v.ordem, { metodo: e.target.value })}>
-                            {METODOS_POSICIONAMENTO.map((m) => <option key={m}>{m}</option>)}
-                          </select>
-                        </td>
-                        <td className="mono">{v.lat_gms}</td>
-                        <td className="mono">{v.lon_gms}</td>
-                        <td className="mono direita">{String(v.h).replace(".", ",")}</td>
-                        <td className="acao">{v.inserido_manual && <button className="remover" title="Remover vértice inserido" onClick={() => removerV(v.ordem)}>✕</button>}</td>
-                      </tr>
+                      <Fragment key={chaveV(v)}>
+                        <tr className={`${ehInicial ? "inicial" : ""} ${marcado ? "sel" : ""}`}>
+                          <td onClick={(e) => alternarSelecaoV(idx, e.shiftKey)}>
+                            <input type="checkbox" checked={marcado} aria-label={`Selecionar ${nomePonto(v)}`}
+                              onClick={(e) => { e.stopPropagation(); alternarSelecaoV(idx, e.shiftKey); }} onChange={() => { /* onClick decide */ }} />
+                          </td>
+                          <td className="pos">{v.ordem + 1}</td>
+                          <td className="num">{v.num_txt ?? "—"}{ehInicial ? " ★" : ""}</td>
+                          <td>
+                            <span className="ponto-trecho" style={{ background: cor }} aria-hidden="true" />
+                            {v.rotulo_txt ? <span style={{ color: "#33453C" }}>{v.rotulo_txt}</span> : <span className="sub">—</span>}
+                          </td>
+                          <td className="resumo-v">
+                            <span className={`chip ${v.tipo}`}>{v.tipo}</span>
+                            {v.codigo && <span className="mono sub" style={{ fontSize: 11.5 }}>{v.codigo}</span>}
+                          </td>
+                          <td className="acao">
+                            <button className="btn-expandir" aria-expanded={aberto} title={aberto ? "recolher" : "ver e editar código, tipo, método, coordenadas"}
+                              onClick={alternarDetalhe}>{aberto ? "▴" : "▾"}</button>
+                          </td>
+                        </tr>
+                        {aberto && (
+                          <tr className="linha-detalhe">
+                            <td colSpan={6}>
+                              <div className="detalhe-grid">
+                                <span><span className="rot">Código</span><span className="mono">{v.codigo ?? <span className="sub">na geração</span>}</span></span>
+                                <span><span className="rot">Tipo</span>
+                                  {v.inserido_manual ? (
+                                    // V inserido à mão, ou vértice certificado do vizinho (código dele; um M
+                                    // nosso igualado a ele continua M — a confrontação mora aí)
+                                    <button className={`chip-tipo ${v.tipo}`} disabled
+                                      title={/-[MPV]-/.test(v.codigo ?? "") && !/PA1/.test(v.metodo) ? "vértice certificado de parcela vizinha" : "vértice inserido"}>{v.tipo}</button>
+                                  ) : (
+                                    <button className={`chip-tipo ${v.tipo}`} title="Clique para alternar: M → P → V"
+                                      onClick={() => setVertice(v.ordem, { tipo: proximoTipo(v.tipo) })}>{v.tipo}</button>
+                                  )}
+                                </span>
+                                <span><span className="rot">Método</span>
+                                  <select value={v.metodo} aria-label="Método de posicionamento" onChange={(e) => setVertice(v.ordem, { metodo: e.target.value })}>
+                                    {METODOS_POSICIONAMENTO.map((m) => <option key={m}>{m}</option>)}
+                                  </select>
+                                </span>
+                                <span><span className="rot">Latitude</span><span className="mono">{v.lat_gms}</span></span>
+                                <span><span className="rot">Longitude</span><span className="mono">{v.lon_gms}</span></span>
+                                <span><span className="rot">h (m)</span><span className="mono">{String(v.h).replace(".", ",")}</span></span>
+                                {v.inserido_manual && <button className="remover" title="Remover vértice inserido" onClick={() => removerV(v.ordem)}>remover vértice</button>}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
               </table>
               <div className="tabela-rodape">{vertices.length} vértices · {preview.qtdM} M · {preview.qtdP} P · {preview.qtdV} V</div>
+            </div>
+              </div>{/* coluna-esq */}
+              <div className="mapa">
+                <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} />
+                <div className="legenda">
+                  {trechosOrdenados.map((t) => (
+                    <span className="item" key={`leg-${t.vertice_inicio_ordem}`}>
+                      <span className="ponto-cor" style={{ background: corDoTrecho(t) }} />
+                      {numeracao.get(t.vertice_inicio_ordem) !== undefined && (
+                        <span className="badge-num pequeno">{numeracao.get(t.vertice_inicio_ordem)}</span>
+                      )}
+                      {t.apelido_txt || `pt ${nomePonto(vertices.find((v) => v.ordem === t.vertice_inicio_ordem) ?? vertices[0])}`}
+                      {ehRioPorLimite(t.tipo_limite)
+                        ? <span className="marca-rio" title="Curso d'água (LN1): sai na planta como linha dupla azul"> ≈ rio</span>
+                        : t.eh_via && <span className="marca-via" title="Faixa de domínio pública: sai na planta como linha dupla vermelha"> ═ via</span>}
+                    </span>
+                  ))}
+                </div>
+                <p className="sub" style={{ margin: 0 }}>
+                  A linha dupla vermelha é o que sairá na planta como estrada. Se ela aparecer
+                  onde não há estrada, desmarque "faixa de domínio" naquele trecho.
+                  A linha dupla azul é o curso d'água: sai em todo trecho com tipo de limite
+                  LN1. Se ali não houver rio, troque o tipo de limite.
+                </p>
+              </div>
             </div>
             {navEtapa}
           </>
