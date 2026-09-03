@@ -46,7 +46,7 @@ export function PlantaCertificada({ vertices, selecionados, onChange }: {
     <PlantaSelecao
       pontos={pontos} colunas={COLUNAS} selecionados={selecionados} onChange={onChange}
       ariaLabel="Planta da parcela certificada — clique nos vértices da divisa comum"
-      dica={<>Clique nos vértices da divisa comum, no desenho ou na lista. <b>Shift + clique</b> marca a sequência do último vértice clicado até este, seguindo a numeração do vizinho.</>}
+      dica={<>Clique no primeiro vértice da divisa comum e depois no último: todos os que estão entre eles ficam marcados, pelo caminho mais curto do anel do vizinho. <b>Shift + clique</b> força o caminho na ordem da numeração; clicar num marcado desmarca só ele.</>}
     />
   );
 }

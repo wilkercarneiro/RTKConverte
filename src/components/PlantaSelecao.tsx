@@ -81,18 +81,30 @@ export function PlantaSelecao({
   if (n < 3) return null;
   const marcado = (i: number) => selecionados.has(pontos[i].id);
 
+  /**
+   * Clique num ponto:
+   * - já marcado → desmarca só ele (e a âncora se perde);
+   * - primeiro clique → marca ele e vira âncora;
+   * - clique seguinte → marca TODOS os pontos entre a âncora e este, pelo
+   *   caminho mais curto do anel (1 e depois 20 marca 1..20). Com Shift o
+   *   caminho é sempre para a frente, na ordem do anel — para quando o trecho
+   *   desejado é o lado longo.
+   */
   function alternar(i: number, shift: boolean) {
     const novo = new Set(selecionados);
-    if (shift && ultimo.current !== null && ultimo.current !== i) {
-      // do último clicado até este, no sentido do anel
-      let k = ultimo.current;
-      for (let passos = 0; passos <= n; passos++) {
-        novo.add(pontos[k].id);
-        if (k === i) break;
-        k = (k + 1) % n;
-      }
-    } else if (novo.has(pontos[i].id)) {
+    if (novo.has(pontos[i].id)) {
       novo.delete(pontos[i].id);
+      ultimo.current = null;
+      onChange(novo);
+      return;
+    }
+    const a = ultimo.current;
+    if (a !== null && a !== i) {
+      const frente = ((i - a) % n + n) % n;          // passos indo para a frente
+      const tras = ((a - i) % n + n) % n;            // passos indo para trás
+      const passo = shift || frente <= tras ? 1 : -1;
+      const quantos = passo === 1 ? frente : tras;
+      for (let k = 0; k <= quantos; k++) novo.add(pontos[(((a + passo * k) % n) + n) % n].id);
     } else {
       novo.add(pontos[i].id);
     }
@@ -156,7 +168,7 @@ export function PlantaSelecao({
           {acoes}
         </div>
         <p className="dica">
-          {dica ?? <>Clique nos pontos, no desenho ou na lista. <b>Shift + clique</b> marca a sequência do último ponto clicado até este, seguindo a ordem do anel.</>}
+          {dica ?? <>Clique no primeiro ponto e depois no último: todos os que estão entre eles ficam marcados, pelo caminho mais curto do anel. <b>Shift + clique</b> força o caminho para a frente. Clicar num ponto marcado desmarca só ele.</>}
         </p>
         <div className="tabela-wrap">
           <table className="tabela-vertices">

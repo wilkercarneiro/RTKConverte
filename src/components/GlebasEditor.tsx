@@ -159,7 +159,7 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
           poligonos={poligonos} previa={previa} ligarSelecionados={false}
           ariaLabel="Planta do imóvel — marque os vértices da gleba"
           acoes={<button type="button" className="fantasma" onClick={marcarRestante} disabled={!glebas.length}>Marcar o restante</button>}
-          dica={<>Clique nos vértices, no desenho ou na lista; <b>Shift + clique</b> marca a sequência entre dois vértices. Vértices da divisa interna entram nas duas glebas — pode marcar de novo.</>}
+          dica={<>Clique no primeiro vértice da gleba e depois no último: todos os que estão entre eles ficam marcados, pelo caminho mais curto do perímetro (o 1 e depois o 20 marcam 1 a 20). <b>Shift + clique</b> força o caminho para a frente; clicar num marcado desmarca só ele. Vértices da divisa interna entram nas duas glebas — pode marcar de novo.</>}
         />
         <div className="rodape-cert">
           <span className="sub">
