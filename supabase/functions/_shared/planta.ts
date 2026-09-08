@@ -26,6 +26,14 @@ export interface TrechoPlanta {
   descritivo: string;   // formato "(MATR.x/CNS.y) FAZENDA\ NOME\ CPF:..."
   isEstrada: boolean;
   /**
+   * Divisa INTERNA entre glebas do mesmo imóvel. Na planta geral (uma parte por
+   * gleba) ela é desenhada como lado do anel, mas não ganha rótulo de
+   * confrontante nem marco verde: o "vizinho" é a gleba ao lado, que já está
+   * identificada pelo próprio bloco, e um rótulo para fora dela cairia dentro
+   * da outra.
+   */
+  interno?: boolean;
+  /**
    * Curso d'água (limite LN1): linha dupla AZUL, no lugar da vermelha.
    *
    * Vem separado de `isEstrada` porque o rio continua sendo faixa de domínio
@@ -1063,6 +1071,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // marco — os outros dois sumiam e a planta não dizia onde cada divisa começa e
   // termina. Ver ARQUITETURA-TRECHOS.md.
   for (const t of trechosAnel) {
+    if (t.interno) continue;   // divisa entre glebas: sem marco
     const vm = vs[t.inicioIdx % nv];
     if (!vm) continue;
     const { x: gx, y: gy } = normalVertice(t.inicioIdx % nv);
@@ -1094,6 +1103,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   }
   const LBL_TAM = 13, LBL_ESP = 16, LBL_MAXW = 310;
   for (const t of grupos) {
+    if (t.interno) continue;   // divisa entre glebas: sem rótulo de confrontante
     // ponto médio GEOMÉTRICO do trecho: metade do comprimento da linha do
     // confrontante — o rótulo fica centralizado no "raio" da confrontação
     const idxs: number[] = [];

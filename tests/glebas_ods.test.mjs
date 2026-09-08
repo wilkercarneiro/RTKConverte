@@ -143,3 +143,87 @@ test("calcularGleba: mesmos códigos do imóvel, trecho interno vira M com a gle
   const g2 = calcularGleba(rows[1], rows, calc, SERVICO, { fusoUtm: 24, prefixo: "DSBN" }, proj4);
   assert.ok(Math.abs(g1.calc.areaHa + g2.calc.areaHa - calc.areaHa) < 1e-4, "as duas glebas somam o imóvel");
 });
+
+// ---- planta A1 pelas glebas e perímetro externo derivado delas ----
+import { anelExternoDasGlebas, dadosDasPartes, glebasCobremVertices } from "../supabase/functions/_shared/planta_dados.ts";
+import { gerarPlantaPdf } from "../supabase/functions/_shared/planta.ts";
+import { dadosPlantaDe } from "./fixtures/salgada_velha.mjs";
+
+test("anelExternoDasGlebas: as arestas que só uma gleba tem fecham o perímetro do imóvel, com a mesma área", () => {
+  const rows = [
+    { nome: "GLEBA 1", ordem: 0, anel: pontos(seq(0, 7)) },
+    { nome: "GLEBA 2", ordem: 1, anel: pontos([...seq(7, 31), 0]) },
+  ];
+  const base = { fusoUtm: 24, prefixo: "DSBN" };
+  const gs = rows.map((r) => calcularGleba(r, rows, calc, SERVICO, base, proj4).calc);
+  const ext = anelExternoDasGlebas(gs, calc, base, proj4);
+  assert.ok(ext, "o perímetro externo tem de fechar");
+  assert.equal(ext.ring.length, 32);
+  assert.ok(Math.abs(ext.areaHa - calc.areaHa) < 1e-6, `área ${ext.areaHa} vs ${calc.areaHa}`);
+  assert.ok(Math.abs(ext.perimetroM - calc.perimetroM) < 0.02);
+  // mesmos códigos e mesmos trechos do imóvel: a divisa interna não aparece
+  assert.deepEqual(new Set(ext.ring.map((v) => v.codigo)), new Set(calc.ring.map((v) => v.codigo)));
+  assert.ok(ext.trechosOrdenados.every((t) => !t.interno && !/GLEBA/.test(t.descritivo)));
+  // vértices do imóvel: cobertura total
+  const vertRows = ANEL.map(([ordem, e, n]) => ({ ordem, e, n }));
+  assert.equal(glebasCobremVertices(rows, vertRows), true);
+  assert.equal(glebasCobremVertices([rows[0]], vertRows), false);
+});
+
+test("planta A1 pelas glebas: dois anéis, sem o anel sequencial, e a divisa interna sem rótulo nem marco", async () => {
+  const rows = [
+    { nome: "GLEBA 1", ordem: 0, anel: pontos(seq(0, 7)) },
+    { nome: "GLEBA 2", ordem: 1, anel: pontos([...seq(7, 31), 0]) },
+  ];
+  const base = { fusoUtm: 24, prefixo: "DSBN" };
+  const unidades = rows.map((r) => { const g = calcularGleba(r, rows, calc, SERVICO, base, proj4); return { nome: g.nome, calc: g.calc }; });
+  const dp = dadosDasPartes(unidades, SERVICO);
+  const diag = {};
+  const pdf = await gerarPlantaPdf(dadosPlantaDe(dp.geometria, { partes: dp.partes, glebas: dp.glebas }), diag);
+  assert.ok(pdf.length > 10000);
+  assert.equal(diag.rotulosGleba.length, 2);
+  assert.equal(diag.dentroDoImovel, 0);
+  // marcos só nos M externos: os M da divisa interna (um por gleba) não ganham traço verde
+  const mExternos = unidades.reduce((s, u) => s + u.calc.trechosOrdenados.filter((t) => !t.interno).length, 0);
+  const mInternos = unidades.reduce((s, u) => s + u.calc.trechosOrdenados.filter((t) => t.interno).length, 0);
+  assert.equal(mInternos, 2);
+  assert.equal(diag.marcos.length, mExternos);
+});
+
+// ---- marco repetido no TXT e vértice fora de gleba (caso LAMEIRO: 16 e 17 são o mesmo marco) ----
+import { ordensDasGlebas, verticesForaDasGlebas } from "../supabase/functions/_shared/planta_dados.ts";
+
+test("ordensDasGlebas: dois pontos do anel no mesmo vértice viram um só; ponto livre fica de fora", () => {
+  const vertRows = ANEL.map(([ordem, e, n]) => ({ ordem, e, n }));
+  const [e5, n5] = pontos([5])[0];
+  // 0..7 com o vértice 5 repetido (a 1 cm, como o TXT repete o marco com número novo) e um ponto livre no meio
+  const anel = [...pontos(seq(0, 5)), [e5 + 0.01, n5 - 0.01], [e5 + 50, n5 + 50], ...pontos(seq(6, 7))];
+  const [g] = ordensDasGlebas([{ nome: "G", ordem: 0, anel }], vertRows);
+  assert.deepEqual(g.ordens, seq(0, 7));
+});
+
+test("verticesForaDasGlebas: marco repetido a menos de 10 cm conta como coberto; o resto é nomeado", () => {
+  const vertRows = ANEL.map(([ordem, e, n], i) => ({ ordem, num_txt: i + 1, e, n }));
+  const [e5, n5] = pontos([5])[0];
+  // vértice 99 é o marco 5 repetido (2 cm); o 100 está longe
+  const comExtras = [...vertRows, { ordem: 99, num_txt: 100, e: e5 + 0.02, n: n5 }, { ordem: 100, num_txt: 101, e: e5 + 30, n: n5 }];
+  const rows = [
+    { nome: "GLEBA 1", ordem: 0, anel: pontos(seq(0, 7)) },
+    { nome: "GLEBA 2", ordem: 1, anel: pontos([...seq(7, 31), 0]) },
+  ];
+  const fora = verticesForaDasGlebas(rows, comExtras);
+  assert.deepEqual(fora.map((v) => v.num_txt), [101]);
+  assert.equal(glebasCobremVertices(rows, comExtras), false);
+  assert.equal(glebasCobremVertices(rows, comExtras.slice(0, -1)), true, "só o marco repetido: coberto");
+});
+
+test("calcularGleba: o marco repetido não vira lado de comprimento zero", () => {
+  const [e5, n5] = pontos([5])[0];
+  const rows = [
+    { nome: "GLEBA 1", ordem: 0, anel: [...pontos(seq(0, 5)), [e5 + 0.01, n5], ...pontos(seq(6, 7))] },
+    { nome: "GLEBA 2", ordem: 1, anel: pontos([...seq(7, 31), 0]) },
+  ];
+  const g1 = calcularGleba(rows[0], rows, calc, SERVICO, { fusoUtm: 24, prefixo: "DSBN" }, proj4);
+  assert.equal(g1.calc.ring.length, 8);
+  assert.ok(g1.calc.segs.every((s) => s.distM > 0.5), "nenhum lado de comprimento zero");
+});

@@ -23,7 +23,8 @@ import { patchOdsContent } from "../_shared/ods.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { Folha } from "../_shared/planta.ts";
 import {
-  bytesDeBase64, calcularGleba, carregarLogoPlanta, dadosDasPartes, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta,
+  anelExternoDasGlebas, bytesDeBase64, calcularGleba, carregarLogoPlanta, dadosDasPartes, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta,
+  ordensDasGlebas, verticesForaDasGlebas,
 } from "../_shared/planta_dados.ts";
 import type { GlebaRow } from "../_shared/planta_dados.ts";
 
@@ -62,31 +63,25 @@ const ehCodigoProvisorio = (v: { codigo: string | null; codigo_provisorio?: bool
   (!!v.codigo && v.codigo.startsWith(`${PREFIXO_PROVISORIO}-`));
 
 /**
- * As glebas cobrem TODOS os vértices, cada um numa só? Então não são
- * sub-polígonos: são PARTES — anéis separados (o TXT em blocos de numeração, o
- * imóvel cortado por estradas), e cada uma é calculada como o anel que é.
+ * As glebas são anéis DISJUNTOS (nenhum vértice em duas)? Então não são
+ * sub-polígonos de um perímetro: são PARTES — anéis separados (o TXT em blocos
+ * de numeração, o imóvel cortado por estradas, o levantamento gleba por gleba
+ * em que cada gleba tem os seus próprios marcos), e cada uma é calculada como o
+ * anel que é.
+ *
+ * Vértice que não está em gleba nenhuma NÃO impede as partes: as glebas mandam
+ * no desenho, e o que ficou fora delas sai da geração com aviso (é o operador
+ * quem decide se falta dividir ou se o ponto sobra). Marco repetido no TXT já
+ * vem absorvido por `ordensDasGlebas`.
  */
 function partesDasGlebas(
   rows: GlebaRow[],
   vertRows: { ordem: number; e: number | string | null; n: number | string | null }[],
 ): { nome: string; ordens: number[] }[] | null {
-  const validas = rows.filter((g) => (g.anel?.length ?? 0) >= 3).sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
-  if (validas.length < 2) return null;
-  const partes = validas.map((g, gi) => ({
-    nome: (g.nome ?? "").trim() || `PARTE ${gi + 1}`,
-    ordens: g.anel!.map(([e, n]) => {
-      let melhor = -1, dm = 0.1;
-      for (const v of vertRows) {
-        if (v.e === null || v.n === null) continue;
-        const d = Math.hypot(Number(v.e) - e, Number(v.n) - n);
-        if (d < dm) { dm = d; melhor = v.ordem; }
-      }
-      return melhor;
-    }),
-  }));
+  const partes = ordensDasGlebas(rows, vertRows).filter((g) => g.ordens.length >= 3);
+  if (partes.length < 2) return null;
   const usados = new Set<number>();
-  for (const pt of partes) for (const o of pt.ordens) { if (o < 0 || usados.has(o)) return null; usados.add(o); }
-  if (usados.size !== vertRows.length) return null;
+  for (const pt of partes) for (const o of pt.ordens) { if (usados.has(o)) return null; usados.add(o); }
   return partes;
 }
 
@@ -226,8 +221,8 @@ Deno.serve(async (req) => {
     // área, perímetro e códigos de todas saem de `calcPartes`
     const calc = calcPartes ? calcPartes.partes[0].calc : montarServico(input, proj4);
     const ringTodos = calcPartes ? calcPartes.partes.flatMap((pt) => pt.calc.ring) : calc.ring;
-    const areaHaTotal = calcPartes ? calcPartes.areaHa : calc.areaHa;
-    const perimetroMTotal = calcPartes ? calcPartes.perimetroM : calc.perimetroM;
+    let areaHaTotal = calcPartes ? calcPartes.areaHa : calc.areaHa;
+    let perimetroMTotal = calcPartes ? calcPartes.perimetroM : calc.perimetroM;
 
     // Persiste códigos e a marca de prévia. A marca é gravada SEMPRE que o
     // serviço passa por aqui — inclusive ao promover a conferência, onde ela
@@ -253,12 +248,8 @@ Deno.serve(async (req) => {
     // glebas o arquivo sai com uma aba de perímetro por gleba.
     // Em PARTES as "glebas" são as próprias partes (dadosDasPartes); fora disso,
     // sub-polígonos desenhados dentro do perímetro.
-    const dp = calcPartes ? dadosDasPartes(calcPartes.partes, servico) : null;
-    const glebas = dp ? dp.glebas : (servico.tem_glebas ? glebasParaPlanta(glebaRows, calc, servico) : undefined);
-
     // UNIDADES: cada parte, ou cada gleba, calculada como o anel que é. Delas
-    // saem a aba da planilha, o memorial, o tabular e a planta A3 de cada uma;
-    // a planta A1 e o memorial acima são os do imóvel inteiro.
+    // saem a aba da planilha, o memorial, o tabular e a planta A3 de cada uma.
     const avisosGlebas: string[] = [];
     const unidades: { nome: string; calc: ServicoCalculado }[] = calcPartes ? calcPartes.partes : [];
     if (!calcPartes && servico.tem_glebas) {
@@ -273,6 +264,42 @@ Deno.serve(async (req) => {
           avisosGlebas.push(`${(g.nome ?? "").trim() || "Gleba"}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
+    }
+
+    // AS GLEBAS MANDAM NO DESENHO. Com qualquer gleba fechada, a planta A1 nasce
+    // das unidades: cada gleba é um anel próprio na folha, e o anel SEQUENCIAL do
+    // TXT NUNCA é desenhado. No levantamento gleba por gleba (1–29, 29–121,
+    // 121–230) a sequência do TXT não é o perímetro — o ponto 29 pode estar do
+    // outro lado do imóvel, e a aresta 28→29 cruzava o mapa inteiro. A divisão
+    // é feita ANTES da confrontação justamente para o desenho já nascer certo.
+    // Vértice fora de gleba não entra em documento nenhum: a geração diz quais
+    // são, pelo número do TXT, e o operador decide se falta dividir.
+    const dp = unidades.length ? dadosDasPartes(unidades, servico) : null;
+    const fora = unidades.length ? verticesForaDasGlebas(glebaRows, vertRows) : [];
+    if (fora.length) {
+      const nums = fora.map((v) => String(v.num_txt ?? v.ordem + 1));
+      avisosGlebas.push(`${fora.length} vértice(s) do TXT fora de qualquer gleba e por isso fora dos documentos: ${nums.slice(0, 20).join(", ")}${nums.length > 20 ? "…" : ""}. Se fazem parte do imóvel, inclua-os numa gleba.`);
+    }
+    const glebas = dp ? dp.glebas : (servico.tem_glebas ? glebasParaPlanta(glebaRows, calc, servico) : undefined);
+    // Perímetro EXTERNO derivado das glebas (arestas que só uma gleba tem): é o
+    // anel do memorial geral e dos totais. Sem ele (divisas internas que não
+    // coincidem ponto a ponto — cada gleba com os seus próprios marcos), o
+    // memorial geral descreve UMA GLEBA POR PARÁGRAFO, como o imóvel em partes,
+    // e os totais são a soma das glebas. O anel sequencial não volta nunca.
+    const calcExterno = !calcPartes && dp
+      ? anelExternoDasGlebas(unidades.map((u) => u.calc), calc, { fusoUtm: servico.fuso_utm, prefixo, estiloCodigo: conferencia ? "conferencia" : "oficial" }, proj4)
+      : null;
+    const calcGeral = calcExterno ?? calc;
+    if (calcExterno) { areaHaTotal = calcExterno.areaHa; perimetroMTotal = calcExterno.perimetroM; }
+    // unidades que o memorial geral descreve uma a uma (partes do TXT, ou glebas
+    // sem perímetro externo fechável)
+    const memorialPartes: { nome: string; calc: ServicoCalculado }[] | null = calcPartes
+      ? calcPartes.partes
+      : (dp && !calcExterno ? unidades : null);
+    if (!calcPartes && dp && !calcExterno) {
+      areaHaTotal = unidades.reduce((s, u) => s + u.calc.areaHa, 0);
+      perimetroMTotal = Math.round(unidades.reduce((s, u) => s + u.calc.perimetroM, 0) * 100) / 100;
+      avisosGlebas.push("As divisas internas das glebas não coincidem ponto a ponto, então o perímetro externo não fecha num anel só: o memorial geral descreve uma gleba por parágrafo e a área e o perímetro totais são a soma das glebas.");
     }
 
     // Uma aba `perimetro_N` por gleba, na ordem em que foram montadas, cada
@@ -325,15 +352,15 @@ Deno.serve(async (req) => {
       // preenche o campo do memorial quando não há CREA cadastrado
       rtCrea: (rt?.crea ?? "").trim() || (rt?.conselho_numero ?? ""),
       rtTrt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
-      ring: calc.memorialRing,
-      segs: calc.segs,
+      ring: calcGeral.memorialRing,
+      segs: calcGeral.segs,
       confrontantesDescritivos: [...new Set(
-        (calcPartes ? calcPartes.partes.flatMap((pt) => pt.calc.trechosOrdenados) : calc.trechosOrdenados)
+        (memorialPartes ? memorialPartes.flatMap((pt) => pt.calc.trechosOrdenados) : calcGeral.trechosOrdenados)
           .map((t) => t.descritivo).filter((d) => d.trim() !== ""),
       )],
-      // imóvel em partes: um parágrafo de descrição por parte
-      ...(calcPartes ? {
-        partes: calcPartes.partes.map((pt) => ({
+      // imóvel em partes (ou em glebas sem perímetro externo): um parágrafo por anel
+      ...(memorialPartes ? {
+        partes: memorialPartes.map((pt) => ({
           nome: pt.nome, areaHa: pt.calc.areaHa, perimetroM: pt.calc.perimetroM, ring: pt.calc.memorialRing, segs: pt.calc.segs,
         })),
       } : {}),
@@ -358,13 +385,13 @@ Deno.serve(async (req) => {
     let doModelo = false;
     // O modelo da peça 1 descreve UM anel; em partes o memorial sai montado em
     // código, uma descrição por parte, com o timbre do memorial-template.
-    if (!calcPartes && !tplMemorial.error && tplMemorial.data) {
+    if (!memorialPartes && !tplMemorial.error && tplMemorial.data) {
       const tz = await JSZip.loadAsync(await tplMemorial.data.arrayBuffer());
       for (const name of Object.keys(tz.files)) {
         if (tz.files[name].dir) continue;
         zipDocx.file(name, await tz.file(name)!.async("uint8array"));
       }
-      const dadosPecas = montarDadosPecasDoCalculo({ servico, rt, cred, calc, dataStr: dataHojeBR() });
+      const dadosPecas = montarDadosPecasDoCalculo({ servico, rt, cred, calc: calcGeral, dataStr: dataHojeBR() });
       zipDocx.file(
         "word/document.xml",
         gerarMemorialDescritivoXml(await tz.file("word/document.xml")!.async("string"), dadosPecas, posse),
@@ -386,8 +413,8 @@ Deno.serve(async (req) => {
       }
       if (!timbre) for (const [path, content] of buildDocxSkeleton(logo)) zipDocx.file(path, content);
       zipDocx.file("word/document.xml", buildDocumentXml(dadosMemorial, !timbre && !!logo, timbre));
-      avisosGeracao.push(calcPartes
-        ? `Imóvel em ${calcPartes.partes.length} partes: o memorial descreve cada parte em sequência, com o timbre básico. A divisão em arquivos por parte é a próxima etapa.`
+      avisosGeracao.push(memorialPartes
+        ? `Imóvel em ${memorialPartes.length} ${calcPartes ? "partes" : "glebas"}: o memorial geral descreve cada anel em sequência, com o timbre básico; o memorial pelo modelo da empresa sai por gleba, na pasta de cada uma.`
         : `Memorial gerado fora do modelo da empresa: templates/${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx não está no Storage.`);
     }
     const docxBuf = await zipDocx.generateAsync({ type: "uint8array", compression: "DEFLATE" });
@@ -617,8 +644,8 @@ Deno.serve(async (req) => {
         qtdP: ringTodos.filter((v) => v.tipo === "P").length,
         qtdV: ringTodos.filter((v) => v.tipo === "V").length,
         contadoresFinais: calcPartes ? calcPartes.contadoresFinais : calc.contadoresFinais,
-        partes: calcPartes ? calcPartes.partes.map((pt) => ({ nome: pt.nome, areaHa: pt.calc.areaHa, perimetroM: pt.calc.perimetroM })) : undefined,
-        verticeInicial: calc.ring[0].codigo,
+        partes: memorialPartes ? memorialPartes.map((pt) => ({ nome: pt.nome, areaHa: pt.calc.areaHa, perimetroM: pt.calc.perimetroM })) : undefined,
+        verticeInicial: calcGeral.ring[0].codigo,
       },
     });
   } catch (err) {

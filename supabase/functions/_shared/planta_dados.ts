@@ -225,8 +225,11 @@ export function calcularGleba(
   const n = calc.ring.length;
   const posNoRing = new Map(calc.ring.map((v, i) => [v.ordem, i]));
   const casadas = glebas.map((g) => g.anel!.map(([e, n0]) => casarNoRing(calc.ring, e, n0)));
-  const vs = (casadas[gi] ?? row.anel!.map(([e, n0]) => casarNoRing(calc.ring, e, n0))).filter((v): v is VerticeMontado => !!v);
-  const semCodigo = row.anel!.length - vs.length;
+  const casados = (casadas[gi] ?? row.anel!.map(([e, n0]) => casarNoRing(calc.ring, e, n0))).filter((v): v is VerticeMontado => !!v);
+  const semCodigo = row.anel!.length - casados.length;
+  // marco repetido no TXT (dois pontos do anel no mesmo vértice) entra uma vez só
+  const vs = casados.filter((v, i) => i === 0 || v.ordem !== casados[i - 1].ordem);
+  if (vs.length > 1 && vs[0].ordem === vs[vs.length - 1].ordem) vs.pop();
   if (vs.length < 3) throw new Error(`${nome}: menos de 3 vértices casados com o levantamento`);
   const vizinhos = (a: VerticeMontado, b: VerticeMontado) => {
     const pa = posNoRing.get(a.ordem)!, pb = posNoRing.get(b.ordem)!;
@@ -250,9 +253,9 @@ export function calcularGleba(
     const prox = vs[(k + 1) % vs.length];
     if (vizinhos(v, prox)) {
       const t = v.trecho;
-      return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado };
+      return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado, interno: false };
     }
-    return { descritivo: proprio || textoAuto(outraCom(v, prox) ?? "GLEBA VIZINHA"), tipoLimite: "LA1", ehVia: false, cns: null, matricula: null, numerado: false };
+    return { descritivo: proprio || textoAuto(outraCom(v, prox) ?? "GLEBA VIZINHA"), tipoLimite: "LA1", ehVia: false, cns: null, matricula: null, numerado: false, interno: true };
   });
   const mesmoLado = (a: typeof lados[number], b: typeof lados[number]) => a.descritivo === b.descritivo && a.tipoLimite === b.tipoLimite && a.ehVia === b.ehVia;
   const todosIguais = lados.every((l) => mesmoLado(l, lados[0]));
@@ -270,6 +273,146 @@ export function calcularGleba(
   });
   const calcGleba = montarServico({ fusoUtm: base.fusoUtm, prefixo: base.prefixo, contadores: { M: 0, P: 0, V: 0 }, estiloCodigo: base.estiloCodigo, vertices }, proj4);
   return { nome, calc: calcGleba, semCodigo };
+}
+
+type VertRowMin = { ordem: number; num_txt?: number | null; e: number | string | null; n: number | string | null };
+
+/** Ordem do vértice bruto (E/N do banco) mais próximo de (e, n) dentro do raio; -1 se nenhum. */
+export function ordemMaisProxima(vertRows: VertRowMin[], e: number, n: number, raio = RAIO_CASAMENTO_M): number {
+  let melhor = -1, dm = raio;
+  for (const v of vertRows) {
+    if (v.e === null || v.n === null) continue;
+    const d = Math.hypot(Number(v.e) - e, Number(v.n) - n);
+    if (d < dm) { dm = d; melhor = v.ordem; }
+  }
+  return melhor;
+}
+
+/**
+ * As ORDENS dos vértices de cada gleba fechada, na sequência do anel dela.
+ *
+ * Dois pontos do anel que caem no mesmo vértice (o TXT levantado gleba por gleba
+ * repete o ponto com número novo — 16 e 17 da LAMEIRO são o mesmo marco) viram
+ * UM só: um lado de comprimento zero quebraria azimute, distância e o quadro.
+ * Ponto que não casa com vértice nenhum (ponto livre) fica de fora.
+ */
+export function ordensDasGlebas(rows: GlebaRow[], vertRows: VertRowMin[]): { nome: string; ordens: number[] }[] {
+  return glebasValidas(rows).map((g, gi) => {
+    const brutas = g.anel!.map(([e, n]) => ordemMaisProxima(vertRows, e, n)).filter((o) => o >= 0);
+    const ordens = brutas.filter((o, i) => o !== brutas[(i - 1 + brutas.length) % brutas.length] || i === 0);
+    if (ordens.length > 1 && ordens[0] === ordens[ordens.length - 1]) ordens.pop();
+    return { nome: (g.nome ?? "").trim() || `GLEBA ${gi + 1}`, ordens };
+  });
+}
+
+/**
+ * Vértices do levantamento que NÃO estão em gleba nenhuma.
+ *
+ * Um vértice a menos de 10 cm de outro que está em gleba é o mesmo marco
+ * repetido — conta como coberto, não como esquecido. O que sobra é o que o
+ * operador ainda não dividiu (ou deixou de fora de propósito): com as glebas
+ * mandando no desenho, esses pontos não entram em documento nenhum, e a geração
+ * avisa quais são pelo número do TXT.
+ */
+export function verticesForaDasGlebas(rows: GlebaRow[], vertRows: VertRowMin[]): VertRowMin[] {
+  const cobertos = new Set(ordensDasGlebas(rows, vertRows).flatMap((g) => g.ordens));
+  if (!cobertos.size) return [...vertRows];
+  const cobertosXY = vertRows.filter((v) => cobertos.has(v.ordem) && v.e !== null && v.n !== null);
+  return vertRows.filter((v) => {
+    if (cobertos.has(v.ordem)) return false;
+    if (v.e === null || v.n === null) return true;
+    return ordemMaisProxima(cobertosXY, Number(v.e), Number(v.n)) < 0;
+  });
+}
+
+/** As glebas cobrem todos os vértices do imóvel (compartilhar vértice é permitido; marco repetido conta como coberto)? */
+export function glebasCobremVertices(rows: GlebaRow[], vertRows: VertRowMin[]): boolean {
+  if (!glebasValidas(rows).length) return false;
+  return verticesForaDasGlebas(rows, vertRows).length === 0;
+}
+
+/**
+ * O PERÍMETRO EXTERNO do imóvel a partir das glebas: as arestas que só UMA
+ * gleba tem são divisa com o mundo; as que duas glebas compartilham são
+ * internas. Encadeadas, as externas formam o anel do imóvel — que, num
+ * levantamento gleba por gleba, NÃO é a sequência do TXT.
+ *
+ * Devolve null quando as arestas externas não fecham um anel simples (divisas
+ * internas que não coincidem ponto a ponto, gleba sobreposta, buraco): aí quem
+ * chama decide o que usar no lugar, e avisa.
+ */
+export function anelExternoDasGlebas(
+  calcsGlebas: ServicoCalculado[],
+  calc: ServicoCalculado,
+  base: { fusoUtm: number; prefixo: string; estiloCodigo?: EstiloCodigo },
+  proj4: Proj4,
+): ServicoCalculado | null {
+  if (calcsGlebas.length < 1) return null;
+  // arestas por par de códigos (sem direção), com a gleba e o vértice de saída
+  const chave = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const contagem = new Map<string, number>();
+  for (const g of calcsGlebas) {
+    for (let i = 0; i < g.ring.length; i++) {
+      const a = g.ring[i].codigo, b = g.ring[(i + 1) % g.ring.length].codigo;
+      const k = chave(a, b);
+      contagem.set(k, (contagem.get(k) ?? 0) + 1);
+    }
+  }
+  const externas = [...contagem.entries()].filter(([, n]) => n === 1).map(([k]) => k.split("|") as [string, string]);
+  if (externas.length < 3) return null;
+  const viz = new Map<string, string[]>();
+  for (const [a, b] of externas) {
+    viz.set(a, [...(viz.get(a) ?? []), b]);
+    viz.set(b, [...(viz.get(b) ?? []), a]);
+  }
+  // anel simples: todo vértice externo tem exatamente dois vizinhos externos
+  if ([...viz.values()].some((l) => l.length !== 2)) return null;
+  const inicio = externas[0][0];
+  const ordemCodigos: string[] = [inicio];
+  let ant = "", atual = inicio;
+  for (let passos = 0; passos < viz.size; passos++) {
+    const [p, q] = viz.get(atual)!;
+    const prox = p === ant ? q : p;
+    if (prox === inicio) break;
+    ordemCodigos.push(prox);
+    ant = atual; atual = prox;
+  }
+  if (ordemCodigos.length !== viz.size) return null;   // mais de um anel (buraco ou gleba solta)
+
+  // cada vértice externo com o confrontante do lado que sai dele — o do imóvel,
+  // que é o que as glebas herdaram nesse lado; M onde o confrontante muda
+  const porCodigo = new Map(calc.ring.map((v) => [v.codigo, v]));
+  const vs = ordemCodigos.map((c) => porCodigo.get(c)).filter((v): v is VerticeMontado => !!v);
+  if (vs.length !== ordemCodigos.length) return null;
+  // o lado que sai de a→b: qual gleba tem essa aresta? o trecho dela para `a`
+  const ladoDe = (a: VerticeMontado, b: VerticeMontado) => {
+    for (const g of calcsGlebas) {
+      for (let i = 0; i < g.ring.length; i++) {
+        const x = g.ring[i], y = g.ring[(i + 1) % g.ring.length];
+        if ((x.codigo === a.codigo && y.codigo === b.codigo) || (x.codigo === b.codigo && y.codigo === a.codigo)) {
+          const t = (x.codigo === a.codigo ? x : y).trecho;
+          return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado, interno: false };
+        }
+      }
+    }
+    const t = a.trecho;
+    return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado, interno: false };
+  };
+  const lados = vs.map((v, k) => ladoDe(v, vs[(k + 1) % vs.length]));
+  const mesmo = (a: typeof lados[number], b: typeof lados[number]) => a.descritivo === b.descritivo && a.tipoLimite === b.tipoLimite && a.ehVia === b.ehVia;
+  const todosIguais = lados.every((l) => mesmo(l, lados[0]));
+  const vertices: VerticeServico[] = vs.map((v, k) => {
+    const inicia = todosIguais ? k === 0 : !mesmo(lados[k], lados[(k - 1 + lados.length) % lados.length]);
+    return {
+      ordem: k, numTxt: v.numTxt,
+      latGmsStr: fmtGmsPlanilha(v.latGms, "lat"), lonGmsStr: fmtGmsPlanilha(v.lonGms, "lon"),
+      h: v.h, sigmaPos: v.sigmaPos, sigmaH: v.sigmaH,
+      tipo: inicia ? "M" : (v.tipo === "M" ? "P" : v.tipo),
+      metodo: v.metodo, codigoManual: v.codigo, inserido: v.inserido,
+      ...(inicia ? lados[k] : {}),
+    };
+  });
+  return montarServico({ fusoUtm: base.fusoUtm, prefixo: base.prefixo, contadores: { M: 0, P: 0, V: 0 }, estiloCodigo: base.estiloCodigo, vertices }, proj4);
 }
 
 export interface GeometriaPlanta {
@@ -300,6 +443,7 @@ export function geometriaDoCalculo(calc: ServicoCalculado): GeometriaPlanta {
     isEstrada: t.ehVia && !t.ehRio,
     isRio: t.ehRio,
     numerado: t.numerado,
+    interno: t.interno,
     inicioIdx: posDe.get(t.verticeInicioOrdem) ?? 0,
     fimIdx: posDe.get(calc.trechosOrdenados[(k + 1) % calc.trechosOrdenados.length].verticeInicioOrdem) ?? 0,
   }));

@@ -33,6 +33,8 @@ export interface VerticeServico {
   matricula?: string | null;
   /** Sai numerado na planta (ver TrechoServico.numerado). */
   numerado?: boolean | null;
+  /** Divisa INTERNA de uma gleba (o lado que fecha por dentro): na planta geral não ganha rótulo nem marco. */
+  interno?: boolean | null;
 }
 
 export interface TrechoServico {
@@ -49,6 +51,8 @@ export interface TrechoServico {
    * do vizinho seguinte. Ver PLANO-CONFRONTANTES-NUMERADOS.md.
    */
   numerado: boolean;
+  /** Divisa interna entre glebas do mesmo imóvel: sem rótulo e sem marco na planta geral. */
+  interno: boolean;
   cns?: string | null;
   matricula?: string | null;
 }
@@ -161,13 +165,14 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
       // traço na planta (ver ehRioPorLimite).
       ehRio: ehRioPorLimite(v.conf.tipoLimite),
       numerado: v.conf.numerado ?? false,
+      interno: v.conf.interno ?? false,
       cns: v.conf.cns ?? null,
       matricula: v.conf.matricula ?? null,
     }));
   // Confrontantes são opcionais: sem nenhum M, todo o perímetro pertence a um
   // trecho sintético vazio (LA1, sem descritivo).
   if (trechosOrdenados.length === 0) {
-    trechosOrdenados = [{ verticeInicioOrdem: ordemInicial, descritivo: "", tipoLimite: "LA1", ehVia: false, ehRio: false, numerado: false }];
+    trechosOrdenados = [{ verticeInicioOrdem: ordemInicial, descritivo: "", tipoLimite: "LA1", ehVia: false, ehRio: false, numerado: false, interno: false }];
   }
 
   const inicioPorOrdem = new Map<number, TrechoServico>(trechosOrdenados.map((t) => [t.verticeInicioOrdem, t]));

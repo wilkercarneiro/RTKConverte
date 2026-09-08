@@ -20,7 +20,7 @@ import {
 } from "../lib/modalidades";
 import type { SituacaoImovel } from "../lib/modalidades";
 import { areaHaDoAnel, GlebasEditor } from "./GlebasEditor";
-import { partesDasGlebas } from "../lib/glebas";
+import { glebasCobremTodos, ordensDasGlebas, partesDasGlebas, verticesForaDasGlebas } from "../lib/glebas";
 import type { Gleba } from "../lib/types";
 import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux";
 import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
@@ -307,14 +307,35 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // veio em blocos de numeração). Cada parte é um anel próprio no mapa e na
   // prévia — costurá-las num anel só era o que cruzava o perímetro.
   const partesOrdens = useMemo(() => partesDasGlebas(glebas, vertices), [glebas, vertices]);
+  // AS GLEBAS MANDAM NO DESENHO. Com qualquer gleba fechada, o mapa, a prévia e
+  // os documentos são os anéis das glebas — o anel sequencial do TXT não é
+  // desenhado nunca mais: no levantamento gleba por gleba o ponto 29 pode estar
+  // do outro lado do imóvel, e a aresta 28→29 cruzava o mapa. É por isso que a
+  // etapa Glebas vem ANTES de Confrontantes e vértices: a planta daquela etapa
+  // já nasce dividida. Vértice fora de gleba fica solto no mapa e fora dos
+  // documentos, e a tela diz quais são.
+  const glebasOrdens = useMemo(() => ordensDasGlebas(glebas, vertices), [glebas, vertices]);
+  const aneisMapa = partesOrdens ?? (glebasOrdens.length ? glebasOrdens : null);
+  const aneisPrevia = aneisMapa;
+  const verticesFora = useMemo(() => (glebasOrdens.length ? verticesForaDasGlebas(glebasOrdens, vertices) : []), [glebasOrdens, vertices]);
+  const glebasCobrem = glebasOrdens.length > 0 && glebasCobremTodos(glebasOrdens, vertices);
+  // nome(s) da(s) gleba(s) de cada vértice, para a tabela de vértices
+  const glebasDoVertice = useMemo(() => {
+    const m = new Map<number, string[]>();
+    glebas.filter((g) => g.anel.length >= 3).forEach((g, i) => {
+      const nome = (g.nome ?? "").trim() || `GLEBA ${i + 1}`;
+      for (const o of ordensDasGlebas([g], vertices)[0] ?? []) m.set(o, [...(m.get(o) ?? []), nome]);
+    });
+    return m;
+  }, [glebas, vertices]);
 
   const preview = useMemo(
     () => calcularPreviewLocal(
       servico.fuso_utm ?? 24, vertices, trechosOrdenados, credenciado,
       ehConferencia ? "conferencia" : "oficial",
-      partesOrdens,
+      aneisPrevia,
     ),
-    [servico.fuso_utm, vertices, trechosOrdenados, credenciado, ehConferencia, partesOrdens],
+    [servico.fuso_utm, vertices, trechosOrdenados, credenciado, ehConferencia, aneisPrevia],
   );
   // faixas de domínio: saem da própria planta (trecho marcado como via ou rótulo
   // do confrontante), uma declaração por via — sem campo para digitar
@@ -891,6 +912,18 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         onClick: () => irParaCampo(pendencias[0].alvo, true),
       };
     }
+    // Serviço com glebas: a divisão vem logo depois dos dados, ANTES de
+    // confrontar — a planta dos confrontantes e o documento completo saem
+    // pelos anéis das glebas, não pela sequência do TXT.
+    if (temGlebas && !docsProntos && glebasOrdens.length === 0) {
+      return {
+        tom: "pendente",
+        titulo: "Divida o imóvel em glebas",
+        detalhe: "cada gleba vira um anel próprio na planta e nos documentos; sem a divisão, a sequência do TXT cruzaria o imóvel",
+        rotuloBotao: "Ir para as glebas",
+        onClick: () => irParaCampo("bloco-glebas"),
+      };
+    }
     // a imagem de satélite agora é pedida ANTES da geração: a planta sai junto
     // do memorial e da planilha, e o quadro PLANTA DE SITUAÇÃO vem dela
     if (!temSatelite && !docsProntos) {
@@ -906,7 +939,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       return {
         tom: "neutro",
         titulo: "Pronto para gerar o Memorial, a Planilha e a Planta",
-        detalhe: `${preview.areaHa} ha · ${preview.perimetroM} m · ${preview.qtdM}/${preview.qtdP}/${preview.qtdV} vértices M/P/V${confrontantesPreenchidos === 0 ? " · nenhum confrontante descrito (opcional)" : ""}`,
+        detalhe: `${preview.areaHa} ha · ${preview.perimetroM} m · ${preview.qtdM}/${preview.qtdP}/${preview.qtdV} vértices M/P/V${confrontantesPreenchidos === 0 ? " · nenhum confrontante descrito (opcional)" : ""}${verticesFora.length > 0 ? ` · ${verticesFora.length} vértice(s) fora de gleba ficam fora dos documentos (${verticesFora.slice(0, 8).map((v) => v.num_txt).join(", ")}${verticesFora.length > 8 ? "…" : ""})` : ""}`,
         rotuloBotao: "⚡ Gerar documentos",
         onClick: gerar,
       };
@@ -954,7 +987,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       };
     }
     return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, as duas plantas e as peças gerados — tudo disponível no histórico abaixo" };
-  }, [pendencias, docsProntos, temSigef, temSatelite, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia]);
+  }, [pendencias, docsProntos, temSigef, temSatelite, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia, temGlebas, glebasOrdens.length, verticesFora]);
 
   // selos das seções recolhidas: dizem o que há dentro sem precisar abrir.
   // Na conferência, matrícula e CNS saem daqui: quem manda neles é a escolha
@@ -971,8 +1004,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // ------- abas de etapa: uma por vez -------
   const etapas: { chave: Etapa; rotulo: string; feita: boolean }[] = [
     { chave: "dados", rotulo: "Dados", feita: pendencias.length === 0 },
+    // Glebas ANTES de confrontar: a divisão organiza o desenho — a planta da
+    // etapa seguinte e o documento completo já nascem pelos anéis das glebas.
+    ...(temGlebas ? [{ chave: "glebas" as Etapa, rotulo: "Glebas", feita: glebasOrdens.length > 0 }] : []),
     { chave: "confrontantes", rotulo: "Confrontantes e vértices", feita: confrontantesPreenchidos > 0 },
-    ...(temGlebas ? [{ chave: "glebas" as Etapa, rotulo: "Glebas", feita: glebas.some((g) => g.anel.length >= 3) }] : []),
     { chave: "documentos", rotulo: "Documentos", feita: ehConferencia ? docsProntos : !!plantaUrl && pecasProntas },
   ];
   const passos: Passo[] = etapas.map((e) => ({
@@ -1420,7 +1455,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <div className="tabela-wrap" style={{ maxHeight: 640 }}>
               <table className="tabela-vertices compacta">
                 <thead>
-                  <tr><th></th><th>#</th><th>Nº</th><th>Rótulo TXT</th><th></th><th></th></tr>
+                  <tr><th></th><th>#</th><th>Nº</th><th>Rótulo TXT</th>{temGlebas && <th>Gleba</th>}<th></th><th></th></tr>
                 </thead>
                 <tbody>
                   {[...vertices].sort((a, b) => a.ordem - b.ordem).map((v, idx) => {
@@ -1443,6 +1478,14 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                             <span className="ponto-trecho" style={{ background: cor }} aria-hidden="true" />
                             {v.rotulo_txt ? <span style={{ color: "#33453C" }}>{v.rotulo_txt}</span> : <span className="sub">—</span>}
                           </td>
+                          {temGlebas && (
+                            <td className="sub" style={{ whiteSpace: "nowrap" }} title="gleba(s) a que o vértice pertence">
+                              {glebasDoVertice.get(v.ordem)?.join(" · ")
+                                ?? (!glebasOrdens.length ? "—"
+                                  : verticesFora.some((f) => f.ordem === v.ordem) ? <em style={{ color: "#B3261E" }}>fora de gleba</em>
+                                  : <em>marco repetido</em>)}
+                            </td>
+                          )}
                           <td className="resumo-v">
                             <span className={`chip ${v.tipo}`}>{v.tipo}</span>
                             {v.codigo && <span className="mono sub" style={{ fontSize: 11.5 }}>{v.codigo}</span>}
@@ -1454,7 +1497,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                         </tr>
                         {aberto && (
                           <tr className="linha-detalhe">
-                            <td colSpan={6}>
+                            <td colSpan={temGlebas ? 7 : 6}>
                               <div className="detalhe-grid">
                                 <span><span className="rot">Código</span><span className="mono">{v.codigo ?? <span className="sub">na geração</span>}</span></span>
                                 <span><span className="rot">Tipo</span>
@@ -1490,11 +1533,23 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             </div>
               </div>{/* coluna-esq */}
               <div className="mapa">
-                <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={partesOrdens ?? undefined} />
-                {partesOrdens && (
+                <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={aneisMapa ?? undefined} />
+                {partesOrdens ? (
                   <p className="sub" style={{ margin: 0 }}>
                     <b>Imóvel em {partesOrdens.length} partes</b> — cada bloco de numeração do TXT é um anel próprio
                     (glebas {glebas.filter((g) => g.anel.length >= 3).map((g) => g.nome).join(", ")}). Área e perímetro acima são a soma das partes.
+                  </p>
+                ) : glebasOrdens.length > 0 ? (
+                  <p className="sub" style={{ margin: 0 }}>
+                    <b>{glebasOrdens.length} gleba(s) desenhada(s) como anel próprio</b> — a sequência do TXT não é desenhada;
+                    área e perímetro acima são a soma das glebas, e a planta geral sai pelas divisões.{" "}
+                    {glebasCobrem
+                      ? "Todos os vértices estão em alguma gleba."
+                      : <>Vértices <b>fora de gleba</b> aparecem soltos e ficam fora dos documentos: pontos {verticesFora.slice(0, 12).map((v) => v.num_txt).join(", ")}{verticesFora.length > 12 ? "…" : ""}. Volte à etapa Glebas para incluí-los.</>}
+                  </p>
+                ) : temGlebas && (
+                  <p className="sub" style={{ margin: 0 }}>
+                    <b>Nenhuma gleba fechada ainda.</b> O mapa mostra a sequência do TXT, que num levantamento gleba por gleba cruza o imóvel — divida na etapa Glebas antes de confrontar.
                   </p>
                 )}
                 <div className="legenda">
@@ -1531,14 +1586,19 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <section className="bloco" id="bloco-glebas">
               <header>
                 <h3>Glebas</h3>
-                <span className="desc">{glebas.length} gleba(s) — desenhadas dentro do perímetro, na mesma planta</span>
+                <span className="desc">
+                  {glebas.length} gleba(s) — divida ANTES de confrontar: cada gleba é um anel próprio na planta dos confrontantes e no documento completo
+                  {verticesFora.length > 0 && glebasOrdens.length > 0 && <> · <b>{verticesFora.length} vértice(s) fora de gleba</b> ({verticesFora.slice(0, 12).map((v) => v.num_txt).join(", ")}{verticesFora.length > 12 ? "…" : ""})</>}
+                </span>
               </header>
               <GlebasEditor
                 glebas={glebas}
                 vertices={vertices}
                 trechos={trechosOrdenados}
                 servicoId={servico.id}
-                areaTotalHa={Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0}
+                // com glebas fechadas a prévia já é a soma delas: não há "total" para
+                // comparar — o imóvel É a soma das glebas (0 = não mostrar restante)
+                areaTotalHa={glebasOrdens.length ? 0 : (Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0)}
                 onChange={setGlebas}
               />
               {glebas.filter((g) => g.anel.length >= 3).length > 0 && (

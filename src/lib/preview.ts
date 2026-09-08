@@ -31,13 +31,13 @@ export function calcularPreviewLocal(
   credenciado: Credenciado | null,
   /** Formato do código sugerido. A conferência numera "P-1"; ver `codigoConferencia`. */
   estiloCodigo: EstiloCodigo = "oficial",
-  /** Imóvel em PARTES (ordens de cada anel): área e perímetro são a soma; o texto é o da primeira. */
+  /** Imóvel em PARTES ou GLEBAS (ordens de cada anel): cada anel é calculado por si, área e perímetro são a soma; o texto é o do primeiro. Uma só gleba = só ela conta. */
   partes?: number[][] | null,
 ): PreviewCalc {
   try {
     // em partes, cada anel é calculado por si e o total é a soma — costurar os
     // blocos num anel só dava área com sinal trocado e perímetro que cruza
-    if (partes && partes.length > 1) {
+    if (partes && partes.length >= 1) {
       const porOrdem = new Map(vertices.map((v) => [v.ordem, v]));
       const primeira = calcularPreviewLocal(fuso, partes[0].map((o) => porOrdem.get(o)!).filter(Boolean), trechos, credenciado, estiloCodigo);
       let areaHa = 0, perimetroM = 0;

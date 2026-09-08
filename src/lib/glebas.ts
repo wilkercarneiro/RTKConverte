@@ -135,30 +135,80 @@ export function anelDaSelecao(perimetro: PontoAnel[], indices: number[]): PontoA
   return ordenarNoAnel(indices, perimetro.length).map((i) => perimetro[i]);
 }
 
+type VerticeXY = { ordem: number; e: number | string | null; n: number | string | null };
+
+/** Raio em que um ponto do anel "é" um vértice (o E/N bruto e o re-projetado diferem em até ~2 cm). */
+export const RAIO_CASAMENTO_M = 0.1;
+
+/** Ordem do vértice mais próximo de (e, n) dentro do raio; -1 se nenhum. */
+export function ordemMaisProxima(vertices: VerticeXY[], e: number, n: number, raio = RAIO_CASAMENTO_M): number {
+  let melhor = -1, dm = raio;
+  for (const v of vertices) {
+    if (v.e === null || v.n === null) continue;
+    const d = Math.hypot(Number(v.e) - e, Number(v.n) - n);
+    if (d < dm) { dm = d; melhor = v.ordem; }
+  }
+  return melhor;
+}
+
 /**
- * As glebas cobrem TODOS os vértices, cada um numa só? Então não são
+ * As ordens dos vértices de cada gleba fechada, na sequência do anel dela
+ * (casamento por 10 cm; ponto que não casa fica de fora). Serve para o mapa
+ * desenhar cada gleba como anel próprio — no levantamento gleba por gleba a
+ * sequência do TXT não é o perímetro, e desenhá-la cruzava o mapa.
+ *
+ * Marco repetido no TXT (dois pontos do anel no mesmo vértice) entra uma vez:
+ * um lado de comprimento zero não é lado. Mesma regra do servidor
+ * (planta_dados.ordensDasGlebas).
+ */
+export function ordensDasGlebas(glebas: { anel: PontoAnel[] }[], vertices: VerticeXY[]): number[][] {
+  return glebas
+    .filter((g) => g.anel.length >= 3)
+    .map((g) => {
+      const brutas = g.anel.map(([e, n]) => ordemMaisProxima(vertices, e, n)).filter((o) => o >= 0);
+      const ordens = brutas.filter((o, i) => i === 0 || o !== brutas[i - 1]);
+      if (ordens.length > 1 && ordens[0] === ordens[ordens.length - 1]) ordens.pop();
+      return ordens;
+    })
+    .filter((o) => o.length >= 3);
+}
+
+/**
+ * As glebas são anéis DISJUNTOS (nenhum vértice em duas)? Então não são
  * sub-polígonos: são PARTES — anéis separados (o TXT em blocos de numeração, o
- * imóvel cortado por estradas). Devolve as ordens de cada parte, na sequência
- * do anel dela, ou null quando as glebas são divisões dentro de um perímetro.
+ * imóvel cortado por estradas, cada gleba com os seus próprios marcos). Devolve
+ * as ordens de cada parte, na sequência do anel dela, ou null quando as glebas
+ * compartilham vértice (divisa interna comum). Vértice fora de gleba não
+ * impede: ele simplesmente não entra no desenho — ver `verticesForaDasGlebas`.
  * Mesma regra do servidor (gerar-documentos.partesDasGlebas).
  */
-export function partesDasGlebas(
-  glebas: { anel: PontoAnel[] }[],
-  vertices: { ordem: number; e: number | string | null; n: number | string | null }[],
-): number[][] | null {
-  const validas = glebas.filter((g) => g.anel.length >= 3);
-  if (validas.length < 2) return null;
-  const partes = validas.map((g) => g.anel.map(([e, n]) => {
-    let melhor = -1, dm = 0.1;
-    for (const v of vertices) {
-      if (v.e === null || v.n === null) continue;
-      const d = Math.hypot(Number(v.e) - e, Number(v.n) - n);
-      if (d < dm) { dm = d; melhor = v.ordem; }
-    }
-    return melhor;
-  }));
+export function partesDasGlebas(glebas: { anel: PontoAnel[] }[], vertices: VerticeXY[]): number[][] | null {
+  const partes = ordensDasGlebas(glebas, vertices);
+  if (partes.length < 2) return null;
   const usados = new Set<number>();
-  for (const p of partes) for (const o of p) { if (o < 0 || usados.has(o)) return null; usados.add(o); }
-  if (usados.size !== vertices.length) return null;
+  for (const p of partes) for (const o of p) { if (usados.has(o)) return null; usados.add(o); }
   return partes;
+}
+
+/**
+ * Vértices que não estão em gleba nenhuma. Um vértice a menos de 10 cm de
+ * outro que está em gleba é o mesmo marco repetido — conta como coberto. O que
+ * sobra é o que ainda não foi dividido: com as glebas mandando no desenho,
+ * esses pontos ficam soltos no mapa e fora dos documentos.
+ */
+export function verticesForaDasGlebas<V extends VerticeXY>(ordens: number[][], vertices: V[]): V[] {
+  const cobertos = new Set(ordens.flat());
+  if (!cobertos.size) return [...vertices];
+  const cobertosXY = vertices.filter((v) => cobertos.has(v.ordem));
+  return vertices.filter((v) => {
+    if (cobertos.has(v.ordem)) return false;
+    if (v.e === null || v.n === null) return true;
+    return ordemMaisProxima(cobertosXY, Number(v.e), Number(v.n)) < 0;
+  });
+}
+
+/** As glebas cobrem todos os vértices (compartilhar é permitido; marco repetido conta)? Então a área do imóvel é a soma delas. */
+export function glebasCobremTodos(ordens: number[][], vertices: VerticeXY[]): boolean {
+  if (!ordens.length) return false;
+  return verticesForaDasGlebas(ordens, vertices).length === 0;
 }

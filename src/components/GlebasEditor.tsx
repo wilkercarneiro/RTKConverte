@@ -206,7 +206,9 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
             {previa
               ? <>Seleção: <b>{indicesMarcados.length} vértices · {fmt(areaPrevia)} ha</b></>
               : <>marque ao menos 3 vértices</>}
-            {glebas.length > 0 && <> · glebas: {fmt(somaHa)} ha de {fmt(areaTotalHa)} ha · restante {fmt(restanteHa)} ha</>}
+            {glebas.length > 0 && (areaTotalHa > 0
+              ? <> · glebas: {fmt(somaHa)} ha de {fmt(areaTotalHa)} ha · restante {fmt(restanteHa)} ha</>
+              : <> · glebas: <b>{fmt(somaHa)} ha</b> (a área do imóvel é a soma das glebas)</>)}
           </span>
           <span className="esticar" />
           <button className="principal" disabled={!previa} onClick={dividir}>
@@ -233,7 +235,7 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
         <button className="gleba-item novo" onClick={nova} title="gleba vazia, para montar no ajuste fino">+ Gleba vazia</button>
       </div>
 
-      {glebas.length > 0 && somaHa > areaTotalHa * 1.001 && (
+      {glebas.length > 0 && areaTotalHa > 0 && somaHa > areaTotalHa * 1.001 && (
         <p className="sub" style={{ margin: "8px 0" }}>
           <em className="alerta">a soma das glebas ({fmt(somaHa)} ha) passou da área total ({fmt(areaTotalHa)} ha); confira os contornos</em>
         </p>
