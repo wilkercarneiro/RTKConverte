@@ -167,7 +167,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // glebas do serviço (só carregadas e salvas quando o serviço as tem)
   const [glebas, setGlebas] = useState<Gleba[]>([]);
   // o que ficou guardado no Storage de gerações anteriores (só os nomes)
-  const [salvo, setSalvo] = useState<{ satelite?: { nome: string; tipo: "png" | "jpg" }; sigef?: string }>({});
+  const [salvo, setSalvo] = useState<{ satelite?: { nome: string; tipo: "png" | "jpg" }; sigef?: string; satelitesGlebas?: Record<number, { nome: string; tipo: "png" | "jpg" }> }>({});
   const [tabular, setTabular] = useState<{ titulo: string; url: string }[] | null>(null);
   const [gerandoTabular, setGerandoTabular] = useState(false);
 
@@ -219,10 +219,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // imagem existe já permite gerar de novo sem pedir nada ao operador.
   useEffect(() => {
     supabase.storage.from("gerados").list(`${inicial.servico.id}/entrada`).then(({ data }) => {
-      const achados: { satelite?: { nome: string; tipo: "png" | "jpg" }; sigef?: string } = {};
+      const achados: typeof salvo = { satelitesGlebas: {} };
       for (const f of data ?? []) {
+        const mg = /^satelite-gleba-(\d+)\.(png|jpg)$/.exec(f.name);
         if (f.name === "satelite.png") achados.satelite = { nome: f.name, tipo: "png" };
         else if (f.name === "satelite.jpg") achados.satelite = { nome: f.name, tipo: "jpg" };
+        else if (mg) achados.satelitesGlebas![Number(mg[1])] = { nome: f.name, tipo: mg[2] as "png" | "jpg" };
         else if (f.name === "sigef.pdf") achados.sigef = f.name;
       }
       setSalvo(achados);
@@ -751,6 +753,27 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     // deixar duas na pasta sem dizer qual vale
     await guardarEntrada(`satelite.${tipo}`, file, ehPng ? "image/png" : "image/jpeg");
     setSalvo((s) => ({ ...s, satelite: { nome: `satelite.${tipo}`, tipo } }));
+  }
+
+  /**
+   * Imagem de satélite PRÓPRIA da gleba `k` (1-based, a posição dela na lista —
+   * a mesma que nomeia a pasta `glebas/{k}-{nome}` da geração). Não passa pelo
+   * corpo da chamada: fica no Storage e o servidor a busca ao desenhar a A3 da
+   * gleba. Sem ela, a A3 sai com a imagem do imóvel, avisado.
+   */
+  async function carregarSateliteGleba(k: number, file: File) {
+    const ehPng = /png$/i.test(file.type) || /\.png$/i.test(file.name);
+    if (!ehPng && !/jpe?g$/i.test(file.type) && !/\.jpe?g$/i.test(file.name)) {
+      setErro("Envie a imagem de satélite da gleba em PNG ou JPG");
+      return;
+    }
+    setErro(null);
+    const tipo = ehPng ? "png" : "jpg";
+    await guardarEntrada(`satelite-gleba-${k}.${tipo}`, file, ehPng ? "image/png" : "image/jpeg");
+    // só uma imagem por gleba: a de outra extensão, se existir, sai
+    await supabase.storage.from("gerados").remove([`${PASTA_ENTRADA}/satelite-gleba-${k}.${ehPng ? "jpg" : "png"}`]);
+    setSalvo((s) => ({ ...s, satelitesGlebas: { ...(s.satelitesGlebas ?? {}), [k]: { nome: `satelite-gleba-${k}.${tipo}`, tipo } } }));
+    avisar("ok", `Imagem da gleba ${k} guardada — entra na planta A3 dela na próxima geração.`);
   }
 
   // ------- etapa 3A: planta (A1 matrícula / A3 posse) -------
@@ -1738,6 +1761,26 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                   <input type="file" accept="image/png,image/jpeg" hidden
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
                 </label>
+                {/* ---- Uma imagem POR GLEBA: cada planta A3 tem a sua Planta de Situação ---- */}
+                {temGlebas && glebas.filter((g) => g.anel.length >= 3).length > 0 && (
+                  <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                    <span className="sub">Imagem de cada gleba — entra na planta A3 dela. Sem a própria, a A3 usa a imagem do imóvel.</span>
+                    {glebas.filter((g) => g.anel.length >= 3).map((g, i) => {
+                      const k = i + 1;
+                      const sg = salvo.satelitesGlebas?.[k];
+                      return (
+                        <label key={g.id ?? k} className="dropzone compacta" style={{ padding: "8px 12px" }}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSateliteGleba(k, f); }}>
+                          <b>{(g.nome ?? "").trim() || `GLEBA ${k}`}</b>
+                          <span>{sg ? `imagem guardada (${sg.nome}) — clique para trocar` : "enviar imagem (PNG/JPG) desta gleba"}</span>
+                          <input type="file" accept="image/png,image/jpeg" hidden
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSateliteGleba(k, f); e.target.value = ""; }} />
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
               </section>
 
               {/* ---- Documento do SIGEF (só após gerar os documentos) ----

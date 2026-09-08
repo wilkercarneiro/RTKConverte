@@ -274,9 +274,11 @@ test("os três M saem com traço verde, inclusive os de faixa de domínio", asyn
   // de obstáculos tem de conter tudo que é linha: poligonal, linha dupla das
   // vias, tique de cada vértice e o traço verde de cada marco. Os dois últimos
   // faltavam — o traço verde tem 50pt e sai bem no vão onde o nome cai.
-  assert.ok(diag.obstaculos.length >= ANEL.length * 2 + diag.vias.length + diag.marcos.length,
+  // A linha da estrada COINCIDE com a aresta da poligonal (uma vermelha sobre a
+  // azul), então ela não é um obstáculo a mais: a própria aresta já está na lista.
+  assert.ok(diag.obstaculos.length >= ANEL.length * 2 + diag.marcos.length,
     `só ${diag.obstaculos.length} obstáculos para ${ANEL.length} arestas + ${ANEL.length} tiques`
-    + ` + ${diag.vias.length} linhas de via + ${diag.marcos.length} marcos`);
+    + ` + ${diag.marcos.length} marcos`);
   for (const m of diag.marcos) {
     assert.ok(
       diag.obstaculos.some((s) => Math.hypot(s.x1 - m.x1, s.y1 - m.y1) < 0.01 && Math.hypot(s.x2 - m.x2, s.y2 - m.y2) < 0.01),
@@ -293,9 +295,16 @@ test("os três M saem com traço verde, inclusive os de faixa de domínio", asyn
     }
     return d;
   };
-  const invasoras = diag.vias.filter((s) =>
-    dentro({ x: (s.x1 + s.x2) / 2, y: (s.y1 + s.y2) / 2 }, diag.poligono));
+  // A estrada é UMA linha vermelha SOBRE a divisa (2026-09-08): cada traço de
+  // via coincide com uma aresta da poligonal — nem por dentro, nem afastado.
+  const naDivisa = (s) => diag.poligono.some((a, i) => {
+    const b = diag.poligono[(i + 1) % diag.poligono.length];
+    const eq = (p, q) => Math.hypot(p.x - q.x, p.y - q.y) < 0.01;
+    return (eq(a, { x: s.x1, y: s.y1 }) && eq(b, { x: s.x2, y: s.y2 })) || (eq(b, { x: s.x1, y: s.y1 }) && eq(a, { x: s.x2, y: s.y2 }));
+  });
+  const invasoras = diag.vias.filter((s) => !naDivisa(s) && dentro({ x: (s.x1 + s.x2) / 2, y: (s.y1 + s.y2) / 2 }, diag.poligono));
   assert.equal(invasoras.length, 0, `${invasoras.length} de ${diag.vias.length} linhas de estrada dentro da poligonal`);
+  assert.ok(diag.vias.every(naDivisa), "toda linha de estrada tem de coincidir com uma aresta da poligonal");
   // era 1 antes da correção: só o M-4501, único trecho que não é faixa de domínio
   assert.equal(diag.marcos.length, 3, `${diag.marcos.length} marco(s) para 3 vértices M`);
   // e cada marco sai do SEU M, não de um vértice qualquer

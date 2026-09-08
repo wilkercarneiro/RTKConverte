@@ -39,12 +39,12 @@ test("duas glebas desenham as duas poligonais", async () => {
   assert.equal(diag.divisasGleba.length, 4 + 5);
 });
 
-test("a faixa de domínio da gleba sai em linha dupla, como no perímetro", async () => {
+test("a faixa de domínio da gleba sai como UMA linha vermelha sobre a azul, como no perímetro", async () => {
   const g = geo();
   const semVia = await desenhar([glebaDe(g, [0, 1, 2, 3], "GLEBA 1")]);
-  // a aresta 1 da gleba é estrada: entram DOIS traços vermelhos (a linha dupla)
+  // a aresta 1 da gleba é estrada: entra UM traço vermelho, na própria divisa
   const comVia = await desenhar([glebaDe(g, [0, 1, 2, 3], "GLEBA 1", { viasIdx: [1] })]);
-  assert.equal(comVia.vias.length, semVia.vias.length + 2, "a via da gleba tem de sair em dupla");
+  assert.equal(comVia.vias.length, semVia.vias.length + 1, "a via da gleba sai numa linha só");
 });
 
 test("cada gleba ganha o seu bloco de identificação", async () => {

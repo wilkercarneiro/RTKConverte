@@ -85,6 +85,24 @@ function partesDasGlebas(
   return partes;
 }
 
+/**
+ * Imagem de satélite PRÓPRIA da gleba `k` (1-based, a posição dela na lista),
+ * guardada pela tela em `gerados/{servico}/entrada/satelite-gleba-{k}.{png|jpg}`.
+ * Null quando não há: quem chama decide o que usar no lugar.
+ */
+async function baixarSateliteGleba(
+  supa: ReturnType<typeof createClient>,
+  servicoId: string,
+  k: number,
+): Promise<{ bytes: Uint8Array; tipo: "png" | "jpg" } | null> {
+  for (const tipo of ["png", "jpg"] as const) {
+    const dl = await supa.storage.from("gerados").download(`${servicoId}/entrada/satelite-gleba-${k}.${tipo}`);
+    if (dl.error || !dl.data) continue;
+    return { bytes: new Uint8Array(await dl.data.arrayBuffer()), tipo };
+  }
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -581,6 +599,12 @@ Deno.serve(async (req) => {
         }
         // planta A3 da unidade: o modelo da gleba é a folha A3, com o anel dela e os confrontantes dela
         try {
+          // Cada gleba tem a SUA imagem de satélite (pedido do usuário): a tela
+          // guarda `entrada/satelite-gleba-{k}.{png|jpg}` pela posição da gleba.
+          // Sem a própria, entra a do imóvel, avisado — a planta da gleba não
+          // pode sair com o quadro vazio só porque a imagem dela ainda não veio.
+          const satGleba = await baixarSateliteGleba(supa, servico_id, k + 1);
+          if (!satGleba && satelite_base64) avisosGeracao.push(`${u.nome}: sem imagem de satélite própria — a planta A3 usou a imagem do imóvel.`);
           const dadosPlantaU = montarDadosPlanta({
             servico: servicoU, rt, cred,
             desenhista: cfgDes?.value ?? "",
@@ -589,7 +613,7 @@ Deno.serve(async (req) => {
             trt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
             dataStr: dataHojeBR(),
             logo,
-            satelite: satelite_base64 ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" } : null,
+            satelite: satGleba ?? (satelite_base64 ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" } : null),
             folha: "A3", conferencia,
             exibir: conferencia
               ? { matricula: servico.conf_exibir_matricula !== false, denominacao: servico.conf_exibir_denominacao !== false, trt: servico.conf_exibir_trt !== false }

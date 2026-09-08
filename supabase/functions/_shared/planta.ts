@@ -192,6 +192,8 @@ const AZUL = rgb(0, 0.2, 0.85);
 // água — o mesmo papel que o VERMELHO faz para a estrada.
 const AZUL_RIO = rgb(0.05, 0.6, 0.9);
 const VERMELHO = rgb(0.85, 0.05, 0.05);
+/** Estrada: uma linha vermelha por cima da azul da divisa, mais fina para a azul aparecer nas bordas. */
+const LARG_ESTRADA = 2.2;
 const VERDE = rgb(0.05, 0.65, 0.15);
 const PRETO = rgb(0, 0, 0);
 const CINZA = rgb(0.45, 0.45, 0.45);
@@ -927,24 +929,34 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       const t = trechoDoIdx(i);
       // Rio (LN1) vence estrada: sai a dupla AZUL e a vermelha não é desenhada.
       // As duas juntas na mesma divisa diriam que ali há uma estrada E um rio.
-      const cor = t.isRio ? AZUL_RIO : t.isEstrada ? VERMELHO : null;
-      if (!cor) continue;
+      if (!t.isRio) continue;
       const a = vs[i], b = vs[(i + 1) % nv];
-      // a linha dupla é SEMPRE por fora: a normal vem do sentido do anel
+      // a linha dupla do rio é SEMPRE por fora: a normal vem do sentido do anel
       const { x: nx, y: ny } = normalAresta(i);
       for (const off of [5, 11]) {
         const seg = { x1: X(a.e) + nx * off, y1: Y(a.n) + ny * off, x2: X(b.e) + nx * off, y2: Y(b.n) + ny * off };
-        linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, cor);
+        linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, AZUL_RIO);
         obstaculos.push(seg);
         vias.push(seg);
       }
     }
 
     // ------------------- polígono -------------------
+    // A ESTRADA sai como UMA linha vermelha POR CIMA da azul, na própria divisa
+    // (pedido do usuário, 2026-09-08): a dupla afastada engrossava a via e, em
+    // imóvel com várias glebas, virava uma faixa que disputava espaço com tudo.
+    // A vermelha é mais fina que a azul de propósito — a poligonal continua
+    // visível nas bordas, e a legenda mostra o mesmo par.
     for (let i = 0; i < nv; i++) {
       const a = vs[i], b = vs[(i + 1) % nv];
-      linha(c, X(a.e), Y(a.n), X(b.e), Y(b.n), 3.4, AZUL);
-      obstaculos.push({ x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) });
+      const seg = { x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) };
+      linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 3.4, AZUL);
+      obstaculos.push(seg);
+      const t = trechoDoIdx(i);
+      if (t.isEstrada && !t.isRio) {
+        linha(c, seg.x1, seg.y1, seg.x2, seg.y2, LARG_ESTRADA, VERMELHO);
+        vias.push(seg);
+      }
     }
   }
   // ------------------- glebas -------------------
@@ -986,14 +998,13 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       // o que deixava a estrada do meio "encavalada". Vale igual para o rio,
       // que também pode ser o que separa uma gleba da outra — e, como no
       // perímetro, rio vence estrada.
-      const corGl = riosGl.has(i) ? AZUL_RIO : viasGl.has(i) ? VERMELHO : null;
-      if (corGl) {
+      if (riosGl.has(i)) {
         const dx = q.x - p.x, dy = q.y - p.y;
         const len = Math.hypot(dx, dy) || 1;
         const nx = sg * dy / len, nyy = -sg * dx / len;
         for (const off of [5, 11]) {
           const seg = { x1: p.x + nx * off, y1: p.y + nyy * off, x2: q.x + nx * off, y2: q.y + nyy * off };
-          linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, corGl);
+          linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, AZUL_RIO);
           obstaculos.push(seg);
           vias.push(seg);
         }
@@ -1003,6 +1014,11 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       const seg = { x1: p.x, y1: p.y, x2: q.x, y2: q.y };
       obstaculos.push(seg);
       divisasGleba.push(seg);
+      // estrada da gleba: a mesma linha vermelha única, por cima da azul
+      if (viasGl.has(i) && !riosGl.has(i)) {
+        linha(c, p.x, p.y, q.x, q.y, LARG_ESTRADA, VERMELHO);
+        vias.push(seg);
+      }
     }
   }
 
@@ -1497,9 +1513,29 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // Sem o quadro, os blocos que ficam herdam o espaço dele, e a ordem resultante
   // (situação · carimbo · planimétrico · RT · rodapé) é a do modelo.
   const semQuadro = folha !== "A1" || !!d.conferencia;
+  // Com glebas o quadro analítico tem uma tabela por gleba, e a soma das linhas
+  // pode passar (e muito) do que 38% da barra comporta: a LAMEIRO tem 3 glebas
+  // e 175 vértices. Antes a última tabela vazava por cima da PLANTA DE
+  // SITUAÇÃO. Agora o quadro CRESCE até 62% da barra, tirando do planimétrico
+  // (que é só um esquema), para dar a cada linha ao menos ~7 pt; o que ainda
+  // não couber é cortado com a nota "+N vértices", nunca desenhado fora da caixa.
+  // O planimétrico precisa de ~400 pt (campos + faixa do RT com 192 pt) e o
+  // carimbo de ~100: o quadro só pode crescer 8 pontos percentuais (6 do
+  // planimétrico, 2 do carimbo). O resto das linhas vira "+N vértices".
+  const ROW_ALVO = 7, QUADRO_MIN = 0.38, QUADRO_MAX = 0.45, PLANI_MIN = 0.27;
+  const blocosQuadro = glebas.length ? glebas.map((g) => g.vertices.length) : [vs.length];
+  const precisaQuadro = blocosQuadro.reduce((a, n) => a + n, 0) * ROW_ALVO
+    + blocosQuadro.length * (22 + (glebas.length ? 15 : 0)) + 40;
+  const fracQuadro = semQuadro ? 0 : Math.min(QUADRO_MAX, Math.max(QUADRO_MIN, precisaQuadro / (sbTop - sbBot)));
+  const extraQuadro = Math.max(0, fracQuadro - QUADRO_MIN);
   const alturas = semQuadro
     ? { quadro: 0, situacao: 0.30, carimbo: 0.12, planimetrico: 0.42, rodape: 0.16 }
-    : { quadro: 0.38, situacao: 0.12, carimbo: 0.08, planimetrico: 0.31, rodape: 0.11 };
+    : {
+      quadro: fracQuadro, situacao: 0.12,
+      carimbo: 0.08 - Math.max(0, extraQuadro - 0.04),
+      planimetrico: Math.max(PLANI_MIN, 0.31 - Math.min(0.04, extraQuadro)),
+      rodape: 0.11,
+    };
   let yCursor = sbTop;
 
   // ---- QUADRO ANALÍTICO (tabela com grade, colunas centradas) ----
@@ -1530,16 +1566,25 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       - blocos.filter((b) => b.titulo).length * TIT_H;
     const rowH = Math.max(5.5, Math.min(20, dispTotal / Math.max(1, totalLinhas)));
     const tamCel = Math.max(4.5, Math.min(11, rowH - 2.5));
+    // Quando nem no corpo mínimo tudo cabe, o corte é PROPORCIONAL: cada gleba
+    // perde a mesma fração de linhas, e todas aparecem. Antes a última tabela
+    // era a que sumia inteira (GLEBA 3 sem nenhuma linha no quadro).
+    const fatorCabe = Math.min(1, dispTotal / Math.max(1, totalLinhas * rowH));
 
     let cursorQ = tableTop;
     let cortadas = 0;
     for (const bloco of blocos) {
+      // Sem espaço nem para o cabeçalho e uma linha, a tabela NÃO é desenhada:
+      // antes ela saía por cima da seção de baixo (título da PLANTA DE SITUAÇÃO
+      // "dentro" da GLEBA 3). O que ficou de fora entra na nota de cortadas.
+      const espacoBloco = cursorQ - (bloco.titulo ? TIT_H : 0) - headH - (yCursor - h) - 8;
+      if (espacoBloco < rowH) { cortadas += bloco.linhas.length; continue; }
       if (bloco.titulo) {
         texto(c, bloco.titulo, tx0, cursorQ - 11, 11, { bold: true });
         cursorQ -= TIT_H;
       }
       const espaco = cursorQ - headH - (yCursor - h) - 8;
-      const cabem = Math.max(1, Math.floor(espaco / rowH));
+      const cabem = Math.min(Math.max(1, Math.floor(espaco / rowH)), Math.max(1, Math.floor(bloco.linhas.length * fatorCabe)));
       const linhasQ = bloco.linhas.slice(0, cabem);
       cortadas += bloco.linhas.length - linhasQ.length;
       const topo = cursorQ;
@@ -1626,7 +1671,12 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // A coluna da direita mede a partir do topo fixo, não do cursor da esquerda
     // — senão esconder a denominação empurraria os campos do imóvel para baixo.
     const pyTopo = py;
-    if (exibe.denominacao) { campo("Denominação:", d.denominacao.toUpperCase(), colEsq, pyTopo); py -= 50; }
+    // Passo entre campos proporcional ao que sobra acima da faixa do RT: com o
+    // quadro analítico crescido (muitas glebas) o bloco encolhe, e a 50 pt fixos
+    // o "Código INCRA" e o "Município/UF" caíam por cima do selo do cartório.
+    const nDir = (exibe.trt ? 1 : 0) + (exibe.matricula ? (posse ? 1 : 2) : 0) + 2;
+    const passo = Math.max(36, Math.min(50, (pyTopo - (yCursor - h + 192) - 16) / nDir));
+    if (exibe.denominacao) { campo("Denominação:", d.denominacao.toUpperCase(), colEsq, pyTopo); py -= passo; }
     // coluna direita: TRT + campos do imóvel (na posse não há matrícula nem
     // cartório: o campo indica POSSE e o CNS sai)
     const camposDir: [string, string][] = [
@@ -1639,7 +1689,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       ["Código INCRA:", d.sncr],
       ["Município/UF:", d.municipioUf.toUpperCase()],
     ];
-    for (const [i, [rot, val]] of camposDir.entries()) campo(rot, val, colDir, pyTopo - i * 50);
+    for (const [i, [rot, val]] of camposDir.entries()) campo(rot, val, colDir, pyTopo - i * passo);
     texto(c, posse ? "Posseiro(s):" : "Proprietário(s):", colEsq, py, 13, { bold: true, cor: CINZA });
     let ppy = py - 24;
     for (const p of d.proprietarios) {
@@ -1733,7 +1783,12 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       const ix = sbX + col * cw + 8;
       const iy = yCursor - 26 - row * (h / 2);
       texto(c, rot, ix, iy, 15, { bold: true, cor: CINZA });
-      for (const [k, val] of vals.entries()) textoFit(c, val, ix, iy - 26 - k * 22, 20, cw - 16);
+      // Várias linhas (uma por gleba) cabem na METADE da célula: o passo e o
+      // corpo encolhem juntos, em vez de a terceira gleba descer por cima da
+      // linha de baixo (DESENHISTA/COORDENADA…).
+      const passo = Math.min(22, (h / 2 - 30) / Math.max(1, vals.length));
+      const corpo = Math.min(20, Math.max(8, passo - 3));
+      for (const [k, val] of vals.entries()) textoFit(c, val, ix, iy - 26 - k * passo, corpo, cw - 16);
       if (col > 0) linha(c, sbX + col * cw, yCursor - h, sbX + col * cw, yCursor, 0.5);
     }
     linha(c, sbX, yCursor - h / 2, sbX + SB_W, yCursor - h / 2, 0.5);
@@ -1898,7 +1953,13 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // coerente — a gleba é o imóvel dividido, não um traço de outro tipo.
     let lyy = lyTop - 38;
     for (const [cor, nome] of itens) {
-      linha(c, lx, lyy + 3, lx + 38, lyy + 3, 3.4, cor);
+      // a estrada é a vermelha SOBRE a azul — a amostra mostra o mesmo par
+      if (cor === VERMELHO) {
+        linha(c, lx, lyy + 3, lx + 38, lyy + 3, 3.4, AZUL);
+        linha(c, lx, lyy + 3, lx + 38, lyy + 3, LARG_ESTRADA, VERMELHO);
+      } else {
+        linha(c, lx, lyy + 3, lx + 38, lyy + 3, 3.4, cor);
+      }
       texto(c, nome, lx + 46, lyy, 9.5);
       lyy -= 20;
     }
