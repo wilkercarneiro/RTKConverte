@@ -132,6 +132,7 @@ Deno.serve(async (req) => {
           ehVia: v.eh_via, cns: v.cns, matricula: v.matricula,
           // confrontante que o operador mandou sair numerado no desenho
           numerado: v.numerado,
+          exibirPlanta: v.exibir_planta !== false,
         })),
       };
       const g = geometriaDoCalculo(montarServico(input, proj4));

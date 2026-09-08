@@ -297,6 +297,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         cns: v.cns,
         matricula: v.matricula,
         numerado: !!v.numerado,
+        exibir_planta: v.exibir_planta !== false,
       })),
     [vertices],
   );
@@ -381,7 +382,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   }
   function addTrecho(ordem: number) {
     setVertices((vs) => vs.map((v) => (v.ordem === ordem && v.tipo !== "M"
-      ? { ...v, tipo: "M", descritivo: "", tipo_limite: "LA1", eh_via: false, numerado: false, apelido_txt: v.apelido_txt ?? "" }
+      ? { ...v, tipo: "M", descritivo: "", tipo_limite: "LA1", eh_via: false, numerado: false, exibir_planta: true, apelido_txt: v.apelido_txt ?? "" }
       : v)));
   }
   function removeTrecho(t: Trecho) {
@@ -429,7 +430,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         tipo: "V" as const, codigo: novoV.codigo, codigo_provisorio: false, metodo: "PA1", inserido_manual: true,
         lat_gms: novoV.lat, lon_gms: novoV.lon,
         // V é ponto intermediário: nunca carrega confrontação
-        descritivo: null, tipo_limite: null, eh_via: false, numerado: false,
+        descritivo: null, tipo_limite: null, eh_via: false, numerado: false, exibir_planta: true,
         cns: null, matricula: null, apelido_txt: null,
       }].sort((a, b) => a.ordem - b.ordem);
     });
@@ -1338,6 +1339,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                         {/* LN1 não é escolha de checkbox, é o tipo de limite — do
                             mesmo jeito que LA3. Aqui só se avisa a cor que sai. */}
                         {ehRioPorLimite(t.tipo_limite) && <span className="chip rio">≈ rio (LN1, azul)</span>}
+                        {/* Vem marcado; desmarcar tira só o NOME do desenho — a divisa
+                            continua traçada e o memorial, a planilha e as peças não mudam. */}
+                        <label className="marcador" title="Escreve o nome deste confrontante (ou estrada) na planta. Desmarque para sair só o traço da divisa — memorial e planilha não mudam.">
+                          <input type="checkbox" checked={t.exibir_planta !== false}
+                            onChange={(e) => setTrecho(t, { exibir_planta: e.target.checked })} />
+                          nome na planta
+                        </label>
                         {modoNumeracao && (
                           <label className="marcador" title={!ehNumeravel(t)
                             ? "Faixa de domínio e curso d'água não são numerados: o nome acompanha o traço da via"

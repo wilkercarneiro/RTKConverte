@@ -219,6 +219,8 @@ Deno.serve(async (req) => {
       // confrontante que o operador mandou sair numerado no desenho: na planta
       // fica só o número, e o texto vai ao quadro CONFRONTANTES do rodapé
       numerado: v.numerado,
+      // o operador pode esconder o NOME deste confrontante/estrada na planta
+      exibirPlanta: v.exibir_planta !== false,
     }));
 
     const input: ServicoInput = {

@@ -152,6 +152,8 @@ export interface Vertice {
    * bloco de nome. Ver PLANO-CONFRONTANTES-NUMERADOS.md.
    */
   numerado: boolean;
+  /** O nome deste confrontante/estrada sai escrito na planta (default true). Só vale em M. */
+  exibir_planta: boolean;
 }
 
 /**
@@ -173,6 +175,8 @@ export interface Trecho {
   matricula: string | null;
   /** Sai numerado na planta. Ver Vertice.numerado. */
   numerado: boolean;
+  /** O nome sai na planta. Ver Vertice.exibir_planta. */
+  exibir_planta: boolean;
 }
 
 export interface Credenciado {

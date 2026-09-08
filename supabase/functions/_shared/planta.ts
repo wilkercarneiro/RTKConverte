@@ -34,6 +34,12 @@ export interface TrechoPlanta {
    */
   interno?: boolean;
   /**
+   * O operador desmarcou "exibir na planta" neste confrontante/estrada: a
+   * divisa é desenhada normalmente, mas o nome NÃO sai (nem bloco, nem número
+   * no quadro do rodapé). Default ausente = exibe, como sempre.
+   */
+  semRotulo?: boolean;
+  /**
    * Curso d'água (limite LN1): linha dupla AZUL, no lugar da vermelha.
    *
    * Vem separado de `isEstrada` porque o rio continua sendo faixa de domínio
@@ -618,12 +624,12 @@ export interface ConfrontanteNumerado {
  * do sistema e PDF do SIGEF — produzirem a mesma sequência.
  */
 export function numerarConfrontantes(
-  trechos: { descritivo: string; isEstrada?: boolean; isRio?: boolean; numerado?: boolean; inicioIdx: number }[],
+  trechos: { descritivo: string; isEstrada?: boolean; isRio?: boolean; numerado?: boolean; semRotulo?: boolean; inicioIdx: number }[],
 ): ConfrontanteNumerado[] {
   const out: ConfrontanteNumerado[] = [];
   const vistos = new Set<string>();
   for (const t of [...trechos].sort((a, b) => a.inicioIdx - b.inicioIdx)) {
-    if (!t.numerado || t.isEstrada || t.isRio) continue;
+    if (!t.numerado || t.isEstrada || t.isRio || t.semRotulo) continue;   // oculto na planta: nem número
     const chave = chaveConfrontante(t.descritivo);
     if (!chave || vistos.has(chave)) continue;
     vistos.add(chave);
@@ -1106,7 +1112,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   const grupos: TrechoPlanta[] = [];
   for (const t of trechosOrd) {
     const ant = grupos[grupos.length - 1];
-    if (ant && ant.descritivo === t.descritivo && ant.fimIdx % nv === t.inicioIdx % nv) ant.fimIdx = t.fimIdx;
+    if (ant && ant.descritivo === t.descritivo && !!ant.semRotulo === !!t.semRotulo && ant.fimIdx % nv === t.inicioIdx % nv) ant.fimIdx = t.fimIdx;
     else grupos.push({ ...t });
   }
   // fechamento do anel: o último grupo pode continuar no primeiro
@@ -1120,6 +1126,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   const LBL_TAM = 13, LBL_ESP = 16, LBL_MAXW = 310;
   for (const t of grupos) {
     if (t.interno) continue;   // divisa entre glebas: sem rótulo de confrontante
+    if (t.semRotulo) continue; // o operador desmarcou "exibir na planta": só o traço
     // ponto médio GEOMÉTRICO do trecho: metade do comprimento da linha do
     // confrontante — o rótulo fica centralizado no "raio" da confrontação
     const idxs: number[] = [];

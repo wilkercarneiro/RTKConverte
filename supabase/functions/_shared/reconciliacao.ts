@@ -38,6 +38,7 @@ export interface VerticeBanco {
   matricula?: string | null;
   apelido_txt?: string | null;
   numerado?: boolean | null;
+  exibir_planta?: boolean | null;
 }
 
 export interface VerticeReconciliado {
@@ -63,6 +64,7 @@ export interface VerticeReconciliado {
   matricula: string | null;
   apelido_txt: string | null;
   numerado: boolean;
+  exibir_planta: boolean;
 }
 
 export interface TrechoSigef {
@@ -72,6 +74,8 @@ export interface TrechoSigef {
   ehRio: boolean;     // curso d'água (LN1): linha dupla azul, no lugar da vermelha
   /** Sai numerado no desenho, com o texto no quadro do rodapé. */
   numerado: boolean;
+  /** O nome sai na planta (default true; false = só o traço). */
+  exibirPlanta: boolean;
 }
 
 export interface TrechoBanco {
@@ -82,6 +86,7 @@ export interface TrechoBanco {
   eh_via?: boolean | null;
   tipo_limite?: string | null;
   numerado?: boolean | null;
+  exibir_planta?: boolean | null;
 }
 
 /**
@@ -118,6 +123,7 @@ export function montarTrechosDoSigef(
           ehVia: !!t.eh_via || ehViaPorLimite(t.tipo_limite),
           ehRio: ehRioPorLimite(t.tipo_limite),
           numerado: !!t.numerado,
+          exibirPlanta: t.exibir_planta !== false,
         }
         : null;
     })
@@ -132,6 +138,7 @@ export function montarTrechosDoSigef(
         ehVia: !!v.eh_via || ehViaPorLimite(v.tipo_limite),
         ehRio: ehRioPorLimite(v.tipo_limite),
         numerado: !!v.numerado,
+        exibirPlanta: v.exibir_planta !== false,
       }));
   }
 
@@ -142,7 +149,7 @@ export function montarTrechosDoSigef(
         ultima = l.confrontacao;
         // O texto do PDF não diz o que é faixa de domínio nem o que o operador
         // quis numerar: sem fonte, nada sai numerado.
-        starts.push({ idx: i, descritivo: l.confrontacao.replace(/\.{3}$/, ""), ehVia: false, ehRio: false, numerado: false });
+        starts.push({ idx: i, descritivo: l.confrontacao.replace(/\.{3}$/, ""), ehVia: false, ehRio: false, numerado: false, exibirPlanta: true });
       }
     });
   }
@@ -163,7 +170,7 @@ export function montarTrechosDoSigef(
  * lugar de conversão, testado, impede a próxima marca de cair no mesmo buraco.
  */
 export function trechosPlantaDoSigef(starts: TrechoSigef[]): {
-  descritivo: string; isEstrada: boolean; isRio: boolean; numerado: boolean; inicioIdx: number; fimIdx: number;
+  descritivo: string; isEstrada: boolean; isRio: boolean; numerado: boolean; semRotulo: boolean; inicioIdx: number; fimIdx: number;
 }[] {
   return starts.map((s, k) => ({
     descritivo: s.descritivo,
@@ -171,6 +178,7 @@ export function trechosPlantaDoSigef(starts: TrechoSigef[]): {
     isEstrada: s.ehVia && !s.ehRio,
     isRio: s.ehRio,
     numerado: !!s.numerado,
+    semRotulo: s.exibirPlanta === false,
     inicioIdx: s.idx,
     fimIdx: starts[(k + 1) % starts.length].idx,
   }));
@@ -267,6 +275,7 @@ export function reconciliarVerticesBancoComSigef(
         matricula: correspondente.matricula ?? null,
         apelido_txt: correspondente.apelido_txt ?? null,
         numerado: !!correspondente.numerado,
+        exibir_planta: correspondente.exibir_planta !== false,
       };
     } else {
       // Ponto novo / sobreposto de outro profissional vindo do SIGEF
@@ -294,6 +303,7 @@ export function reconciliarVerticesBancoComSigef(
         matricula: null,
         apelido_txt: null,
         numerado: false,
+        exibir_planta: true,
       };
     }
   });

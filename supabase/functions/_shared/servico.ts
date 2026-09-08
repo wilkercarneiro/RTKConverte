@@ -33,6 +33,8 @@ export interface VerticeServico {
   matricula?: string | null;
   /** Sai numerado na planta (ver TrechoServico.numerado). */
   numerado?: boolean | null;
+  /** O nome sai escrito na planta? false = só o traço (ver TrechoServico.semRotulo). Default true. */
+  exibirPlanta?: boolean | null;
   /** Divisa INTERNA de uma gleba (o lado que fecha por dentro): na planta geral não ganha rótulo nem marco. */
   interno?: boolean | null;
 }
@@ -53,6 +55,12 @@ export interface TrechoServico {
   numerado: boolean;
   /** Divisa interna entre glebas do mesmo imóvel: sem rótulo e sem marco na planta geral. */
   interno: boolean;
+  /**
+   * O operador desmarcou "exibir na planta": a divisa é desenhada (azul, ou a
+   * vermelha da estrada), mas o NOME não sai — nem em bloco, nem numerado.
+   * Memorial, planilha e peças não mudam: é só o desenho.
+   */
+  semRotulo: boolean;
   cns?: string | null;
   matricula?: string | null;
 }
@@ -166,13 +174,14 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
       ehRio: ehRioPorLimite(v.conf.tipoLimite),
       numerado: v.conf.numerado ?? false,
       interno: v.conf.interno ?? false,
+      semRotulo: v.conf.exibirPlanta === false,
       cns: v.conf.cns ?? null,
       matricula: v.conf.matricula ?? null,
     }));
   // Confrontantes são opcionais: sem nenhum M, todo o perímetro pertence a um
   // trecho sintético vazio (LA1, sem descritivo).
   if (trechosOrdenados.length === 0) {
-    trechosOrdenados = [{ verticeInicioOrdem: ordemInicial, descritivo: "", tipoLimite: "LA1", ehVia: false, ehRio: false, numerado: false, interno: false }];
+    trechosOrdenados = [{ verticeInicioOrdem: ordemInicial, descritivo: "", tipoLimite: "LA1", ehVia: false, ehRio: false, numerado: false, interno: false, semRotulo: false }];
   }
 
   const inicioPorOrdem = new Map<number, TrechoServico>(trechosOrdenados.map((t) => [t.verticeInicioOrdem, t]));

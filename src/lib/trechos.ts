@@ -28,11 +28,13 @@ export interface Confrontacao {
   apelido_txt: string | null;
   /** Sai numerado na planta. Ver numerarConfrontantes. */
   numerado: boolean;
+  /** O nome sai escrito na planta (default true; false = só o traço da divisa). */
+  exibir_planta: boolean;
 }
 
 export const SEM_CONFRONTACAO: Confrontacao = {
   descritivo: null, tipo_limite: null, eh_via: false,
-  cns: null, matricula: null, apelido_txt: null, numerado: false,
+  cns: null, matricula: null, apelido_txt: null, numerado: false, exibir_planta: true,
 };
 
 // Faixa de domínio pública reconhecida pelo rótulo do trecho. Espelha RE_VIA de
@@ -105,7 +107,7 @@ export function moverConfrontacao<
   const conf: Confrontacao = {
     descritivo: origem.descritivo, tipo_limite: origem.tipo_limite, eh_via: origem.eh_via,
     cns: origem.cns, matricula: origem.matricula, apelido_txt: origem.apelido_txt,
-    numerado: origem.numerado,
+    numerado: origem.numerado, exibir_planta: origem.exibir_planta,
   };
   return vertices.map((v) => {
     if (v.ordem === deOrdem) return { ...v, tipo: v.inserido_manual ? "V" as const : "P" as const, ...SEM_CONFRONTACAO };
@@ -169,12 +171,13 @@ export function numerarConfrontantes(
     tipo_limite?: string | null;
     eh_via?: boolean | null;
     numerado?: boolean | null;
+    exibir_planta?: boolean | null;
   }[],
 ): Map<number, number> {
   const out = new Map<number, number>();
   const vistos = new Map<string, number>();
   for (const t of [...trechos].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem)) {
-    if (!t.numerado) continue;
+    if (!t.numerado || t.exibir_planta === false) continue;   // oculto na planta: nem número
     if (t.eh_via || ehViaPorLimite(t.tipo_limite) || ehRioPorLimite(t.tipo_limite)) continue;
     const chave = (t.descritivo || t.apelido_txt || "").trim().toUpperCase();
     if (!chave) continue;

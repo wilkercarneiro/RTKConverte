@@ -31,10 +31,10 @@ interface LinhaBanco {
   e: number | string | null; n: number | string | null; h: number | string; sigma_pos: number | string; sigma_h: number | string;
   tipo: "M" | "P" | "V"; codigo: string | null; codigo_provisorio: boolean; metodo: string; inserido_manual: boolean;
   lat_gms: string; lon_gms: string; descritivo: string | null; tipo_limite: string | null; eh_via: boolean;
-  cns: string | null; matricula: string | null; apelido_txt: string | null; numerado: boolean;
+  cns: string | null; matricula: string | null; apelido_txt: string | null; numerado: boolean; exibir_planta: boolean;
 }
 
-const CONFRONTACAO = ["descritivo", "tipo_limite", "eh_via", "cns", "matricula", "apelido_txt", "numerado"] as const;
+const CONFRONTACAO = ["descritivo", "tipo_limite", "eh_via", "cns", "matricula", "apelido_txt", "numerado", "exibir_planta"] as const;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -107,9 +107,9 @@ Deno.serve(async (req) => {
     // ---- preserva o trabalho da tela ----
     const porNum = new Map(atuais.filter((v) => v.num_txt !== null).map((v) => [v.num_txt as number, v]));
     const porCodigo = new Map(atuais.filter((v) => v.codigo).map((v) => [v.codigo as string, v]));
-    type Nova = VerticeUnido & { numerado: boolean; cns: string | null; matricula: string | null };
+    type Nova = VerticeUnido & { numerado: boolean; exibir_planta: boolean; cns: string | null; matricula: string | null };
     const novas: Nova[] = linhas.map((l) => {
-      const nova: Nova = { ...l, numerado: false, cns: null, matricula: null };
+      const nova: Nova = { ...l, numerado: false, exibir_planta: true, cns: null, matricula: null };
       const atual = l.num_txt !== null ? porNum.get(l.num_txt) : (l.codigo ? porCodigo.get(l.codigo) : undefined);
       if (!atual) return nova;
       // a confrontação da tela vence a sugestão do rótulo

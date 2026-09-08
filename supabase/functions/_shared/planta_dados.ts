@@ -253,7 +253,7 @@ export function calcularGleba(
     const prox = vs[(k + 1) % vs.length];
     if (vizinhos(v, prox)) {
       const t = v.trecho;
-      return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado, interno: false };
+      return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado, interno: false, exibirPlanta: !t.semRotulo };
     }
     return { descritivo: proprio || textoAuto(outraCom(v, prox) ?? "GLEBA VIZINHA"), tipoLimite: "LA1", ehVia: false, cns: null, matricula: null, numerado: false, interno: true };
   });
@@ -391,12 +391,12 @@ export function anelExternoDasGlebas(
         const x = g.ring[i], y = g.ring[(i + 1) % g.ring.length];
         if ((x.codigo === a.codigo && y.codigo === b.codigo) || (x.codigo === b.codigo && y.codigo === a.codigo)) {
           const t = (x.codigo === a.codigo ? x : y).trecho;
-          return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado, interno: false };
+          return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado, interno: false, exibirPlanta: !t.semRotulo };
         }
       }
     }
     const t = a.trecho;
-    return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado, interno: false };
+    return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado, interno: false, exibirPlanta: !t.semRotulo };
   };
   const lados = vs.map((v, k) => ladoDe(v, vs[(k + 1) % vs.length]));
   const mesmo = (a: typeof lados[number], b: typeof lados[number]) => a.descritivo === b.descritivo && a.tipoLimite === b.tipoLimite && a.ehVia === b.ehVia;
@@ -444,6 +444,7 @@ export function geometriaDoCalculo(calc: ServicoCalculado): GeometriaPlanta {
     isRio: t.ehRio,
     numerado: t.numerado,
     interno: t.interno,
+    semRotulo: t.semRotulo,
     inicioIdx: posDe.get(t.verticeInicioOrdem) ?? 0,
     fimIdx: posDe.get(calc.trechosOrdenados[(k + 1) % calc.trechosOrdenados.length].verticeInicioOrdem) ?? 0,
   }));

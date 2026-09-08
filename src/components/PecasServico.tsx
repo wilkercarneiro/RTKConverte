@@ -23,6 +23,8 @@ interface TrechoPdf {
    * nome. Ver PLANO-CONFRONTANTES-NUMERADOS.md.
    */
   numerado?: boolean;
+  /** O nome sai escrito na planta (default true). */
+  exibir_planta?: boolean;
 }
 interface Analise {
   cabecalho: Record<string, string | null>;
@@ -90,7 +92,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       supabase.from("servicos").select().eq("id", servicoId).single().then(({ data }) => setServico(data as Servico));
       supabase.from("trechos_confrontantes").select().eq("servico_id", servicoId).order("vertice_inicio_ordem")
         .then(({ data }) => setTrechos(((data ?? []) as (TrechoPdf & { codigo_inicio: string | null })[])
-          .map((t) => ({ id: (t as { id?: string }).id, codigo_inicio: t.codigo_inicio ?? "", descritivo: t.descritivo ?? "", tipo_limite: t.tipo_limite, eh_via: !!t.eh_via, numerado: !!t.numerado }))));
+          .map((t) => ({ id: (t as { id?: string }).id, codigo_inicio: t.codigo_inicio ?? "", descritivo: t.descritivo ?? "", tipo_limite: t.tipo_limite, eh_via: !!t.eh_via, numerado: !!t.numerado, exibir_planta: t.exibir_planta !== false }))));
     }
   }, [servicoId]);
 
@@ -198,6 +200,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       servico_id: id, vertice_inicio_ordem: i, codigo_inicio: t.codigo_inicio,
       descritivo: t.descritivo, tipo_limite: t.tipo_limite, eh_via: t.eh_via,
       numerado: !!t.numerado,
+      exibir_planta: t.exibir_planta !== false,
     })));
     if (e3) throw e3;
     if (servico.rt_id) await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
@@ -583,6 +586,11 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                         faixa de domínio{ehViaPorLimite(t.tipo_limite) ? " (LA3)" : ""}
                       </label>
                       {ehRioPorLimite(t.tipo_limite) && <span className="chip rio">≈ rio (LN1, azul)</span>}
+                      <label className="marcador" title="Escreve o nome deste confrontante (ou estrada) na planta. Desmarque para sair só o traço da divisa.">
+                        <input type="checkbox" checked={t.exibir_planta !== false}
+                          onChange={(e) => setTrechos((ts) => ts.map((x, j) => (j === i ? { ...x, exibir_planta: e.target.checked } : x)))} />
+                        nome na planta
+                      </label>
                       {modoNumeracao && (
                         <label className="marcador" title={!ehNumeravel(t)
                           ? "Faixa de domínio e curso d'água não são numerados: o nome acompanha o traço da via"
