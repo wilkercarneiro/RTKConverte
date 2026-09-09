@@ -281,7 +281,20 @@ Deno.serve(async (req) => {
     const sigefImovel: DadosSigef = unidades.length
       ? { cabecalho: { ...sigef.cabecalho, areaHa: fmtBR(areaTotalHa(blocos), 4) }, linhas: blocos.flatMap((b) => b.linhas) }
       : sigef;
-    const { trechos, confrontacaoDe } = montarTrechosPecas(sigefImovel.linhas, inicios);
+    // Os trechos do imóvel são a SOMA dos de cada gleba, não uma passada pela
+    // emenda. Percorrendo a emenda, o confrontante da última divisa de uma gleba
+    // seguia mandando nas primeiras linhas da gleba seguinte (elas não iniciam
+    // trecho nenhum): a carta de anuência dele saía com vértices de outra gleba,
+    // e o vizinho da abertura dela ficava sem os seus. Cada anel fecha em si.
+    const { trechos, confrontacaoDe } = unidades.length
+      ? {
+        trechos: unidades.flatMap((u) => u.trechos),
+        confrontacaoDe: (c: string) => {
+          for (const u of unidades) { const s = u.confrontacaoDe(c); if (s) return s; }
+          return "";
+        },
+      }
+      : montarTrechosPecas(sigefImovel.linhas, inicios);
 
     // ---------------- dados ----------------
     const requerentes: Requerente[] = [{
