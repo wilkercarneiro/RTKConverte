@@ -128,3 +128,31 @@ test("planta do SIGEF: a marca de numerado atravessa a conversão para o desenho
     [false, false, true, 9, 0],   // rio vence estrada; o último fecha no primeiro
   ]);
 });
+
+// --- serviço completo: do SIGEF só área e perímetro ---
+
+test("serviço completo: o texto do PDF não vira confrontante", () => {
+  // o PDF traz nomes (truncados) na coluna de confrontação; no fluxo 'geo' quem
+  // define confrontante é o sistema, então nada disso pode entrar no desenho
+  const linhas = [
+    { codigo: "X-M-1", confrontacao: "FULANO DE T..." },
+    { codigo: "X-P-2", confrontacao: "FULANO DE T..." },
+    { codigo: "X-P-3", confrontacao: "ESTRADA VICINAL" },
+  ];
+  assert.deepEqual(montarTrechosDoSigef([], [], linhas, { usarTextoDoPdf: false }), []);
+  // e a tabela do fluxo 'pecas', quando o chamador a passa vazia, também não manda
+  const reconciliados = reconciliarVerticesBancoComSigef("s1", vertBanco, sigefLinhas, 24, proj4);
+  const trechos = montarTrechosDoSigef([], reconciliados, sigefLinhas, { usarTextoDoPdf: false });
+  assert.deepEqual(trechos.map((t) => t.descritivo), ["estrada", vertBanco[2].descritivo]);
+});
+
+test("reconciliação por proximidade casa o mais próximo, e uma vez só", () => {
+  // dois vértices do banco perto do mesmo ponto do SIGEF, com códigos que o
+  // SIGEF não conhece: o M certo não pode perder o par para o vizinho
+  const banco = [
+    { servico_id: "s2", ordem: 0, num_txt: 1, rotulo_txt: null, codigo: "OUTRO-P-9", e: 491302, n: 8740276, h: 300, sigma_pos: 0.05, sigma_h: 0.08, tipo: "P", metodo: "PG6", inserido_manual: false, lat_gms: null, lon_gms: null, descritivo: null, tipo_limite: null, eh_via: false, cns: null, matricula: null, apelido_txt: null },
+    { servico_id: "s2", ordem: 1, num_txt: 2, rotulo_txt: null, codigo: "OUTRO-M-9", e: 491296.7, n: 8740271.5, h: 300, sigma_pos: 0.05, sigma_h: 0.08, tipo: "M", metodo: "PG6", inserido_manual: false, lat_gms: null, lon_gms: null, descritivo: "VIZINHO CERTO", tipo_limite: "LA1", eh_via: false, cns: null, matricula: null, apelido_txt: null },
+  ];
+  const out = reconciliarVerticesBancoComSigef("s2", banco, [sigefLinhas[0]], 24, proj4);
+  assert.equal(out[0].descritivo, "VIZINHO CERTO", "o par tem de ser o vértice mais próximo");
+});

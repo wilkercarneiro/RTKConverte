@@ -511,8 +511,19 @@ Deno.serve(async (req) => {
             }
           });
         }
+        // TUDO OU NADA. Uma folha com o total do SIGEF e as linhas do quadro em
+        // números calculados é pior que uma folha inteira calculada: os números
+        // não fecham entre si e ninguém sabe de onde cada um veio. Só se TODAS as
+        // glebas casarem com um memorial é que a folha passa a falar SIGEF.
+        const todasCasaram = unidades.length > 0 && numsPorUnidade.every((n) => n !== null);
+        if (unidades.length && !todasCasaram) {
+          numsPorUnidade = [];
+          numsTotais = null;
+          avisosGeracao.push("Como nem todas as glebas casaram com um memorial do PDF, a planta saiu inteira com a área e o perímetro CALCULADOS — misturar as duas fontes na mesma folha deixaria os números sem fechar.");
+        }
         if (blocos.length > 1 && !unidades.length) {
-          avisosGeracao.push(`O PDF do SIGEF traz ${blocos.length} memoriais (glebas), mas este serviço não tem glebas fechadas: só a área total foi aproveitada.`);
+          numsTotais = null;
+          avisosGeracao.push(`O PDF do SIGEF traz ${blocos.length} memoriais (glebas), mas este serviço não tem glebas fechadas: a planta saiu com os números calculados. Divida as glebas antes de gerar.`);
         }
       } catch (e) {
         // O PDF é um extra: se ele não for lido, a planta sai com os números do
@@ -641,7 +652,16 @@ Deno.serve(async (req) => {
         const saida = { nome: u.nome, memorial_docx: null as string | null, tabular_docx: null as string | null, planta_pdf: null as string | null, areaHa: u.calc.areaHa };
         if (modelosOk) {
           try {
-            const dadosU = montarDadosPecasDoCalculo({ servico: servicoU, rt, cred, calc: u.calc, dataStr: dataHojeBR() });
+            // O memorial e o tabular DESTA gleba levam o mesmo par de números
+            // que a A3 dela: uma pasta de gleba em que a planta diz 550,5523 ha
+            // e o memorial ao lado diz outro valor é papel que o cartório
+            // devolve. Continua valendo a regra: do SIGEF vêm só os NÚMEROS —
+            // o texto do memorial segue descrevendo o anel calculado.
+            const nU = numsPorUnidade[k];
+            const dadosU = {
+              ...montarDadosPecasDoCalculo({ servico: servicoU, rt, cred, calc: u.calc, dataStr: dataHojeBR() }),
+              ...(nU ? { areaHa: nU.areaFmt, perimetro: nU.perimetroFmt } : {}),
+            };
             const xmlsU = posse ? gerarPecasPosseXml(tplXml, dadosU) : gerarPecasXml(tplXml, dadosU);
             for (const [num, arquivo, rotulo] of [["1", "memorial", "Memorial Descritivo"], ["2", "tabular", "Memorial Tabular"]] as const) {
               const xml = xmlsU[num];

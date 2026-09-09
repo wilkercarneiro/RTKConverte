@@ -6,7 +6,7 @@
 import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import { extractText, getDocumentProxy } from "unpdf";
-import { parseSigefTexto } from "../_shared/sigef_pdf.ts";
+import { parseSigefBlocos } from "../_shared/sigef_pdf.ts";
 import { montarServico } from "../_shared/servico.ts";
 import type { ServicoInput } from "../_shared/servico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
@@ -72,7 +72,22 @@ Deno.serve(async (req) => {
       if (!pdf_base64) return json({ erro: "Envie o PDF do SIGEF para gerar a planta deste serviço" }, 422);
       const proxy = await getDocumentProxy(bytesDeBase64(pdf_base64));
       const { text } = await extractText(proxy, { mergePages: true });
-      const sigef = parseSigefTexto(text as string);
+      // Esta função é de imóvel de ANEL ÚNICO. A prévia de um serviço de glebas
+      // traz um memorial por gleba, e aceitá-la aqui não desenha só a primeira:
+      // mais abaixo, `persistirReconciliados` APAGA os vértices do serviço e
+      // grava os do PDF no lugar. Em 09/09/2026 isso levou a FAZENDA LAMEIRO DA
+      // BOA VISTA de 176 vértices para 29 — as glebas 2 e 3 sumiram da tabela.
+      // A planta do imóvel em glebas é a de gerar-documentos (A1 geral + A3 por
+      // gleba); aqui o PDF multi-memorial é recusado antes de tocar em nada.
+      const blocos = parseSigefBlocos(text as string);
+      if (blocos.length > 1) {
+        return json({
+          erro: `Este PDF do SIGEF traz ${blocos.length} memoriais (um por gleba): ` +
+            `ele é a prévia de um serviço de glebas, e esta planta é a de imóvel com um perímetro só. ` +
+            `Gere a planta pelo botão de documentos — de lá saem a A1 do imóvel inteiro e a A3 de cada gleba.`,
+        }, 422);
+      }
+      const sigef = blocos[0];
       const lon0 = gmsPdfParaDeg(sigef.linhas[0].lon);
       latMedia = gmsPdfParaDeg(sigef.linhas[0].lat);
       if (!servico.fuso_utm) fuso = Math.floor((lon0 + 180) / 6) + 1;
@@ -105,8 +120,21 @@ Deno.serve(async (req) => {
         };
       });
 
-      // onde cada confrontação começa (ver montarTrechosDoSigef p/ a precedência)
-      const starts = montarTrechosDoSigef(trechoRows ?? [], verticesReconciliados, sigef.linhas);
+      // onde cada confrontação começa (ver montarTrechosDoSigef p/ a precedência).
+      // No serviço completo quem define confrontante é o sistema: nem a tabela
+      // `trechos_confrontantes` (âncora do fluxo 'pecas', que pode ter sobrado de
+      // uma geração antiga) nem o texto do PDF entram — do SIGEF ficam só a área
+      // e o perímetro, logo abaixo.
+      const ehPecas = servico.tipo === "pecas";
+      const starts = montarTrechosDoSigef(
+        ehPecas ? (trechoRows ?? []) : [],
+        verticesReconciliados,
+        sigef.linhas,
+        { usarTextoDoPdf: ehPecas },
+      );
+      if (!ehPecas && starts.length === 0) {
+        return json({ erro: "Nenhum confrontante definido no sistema: marque os confrontantes na conferência antes de gerar a planta" }, 422);
+      }
       // conversão compartilhada: leva estrada, rio E a marca de numerado
       trechosPlanta = trechosPlantaDoSigef(starts);
       areaFmt = sigef.cabecalho.areaHa;

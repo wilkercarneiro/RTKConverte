@@ -102,12 +102,21 @@ export interface TrechoBanco {
  *
  * Pular o item 2 era o motivo de a estrada aparecer certa na tela e sem a linha
  * vermelha no PDF. Ver ARQUITETURA-TRECHOS.md.
+ *
+ * No serviço completo (fluxo 'geo') o item 3 NÃO vale: quem manda na
+ * confrontação é o sistema, e do SIGEF só se aproveita área e perímetro. O
+ * texto do PDF vinha truncado ("FULANO DE T...") e ainda por cima apagava a
+ * marcação de estrada/rio e a numeração feitas na conferência. Passe
+ * `usarTextoDoPdf: false` nesse fluxo — sem confrontação no sistema, a lista
+ * volta vazia de propósito, para quem chamou avisar em vez de desenhar o PDF.
  */
 export function montarTrechosDoSigef(
   trechoRows: TrechoBanco[],
   verticesReconciliados: VerticeReconciliado[],
   sigefLinhas: { codigo: string; confrontacao: string }[],
+  opts: { usarTextoDoPdf?: boolean } = {},
 ): TrechoSigef[] {
+  const usarTextoDoPdf = opts.usarTextoDoPdf !== false;
   const idxDe = new Map(sigefLinhas.map((l, i) => [l.codigo, i]));
   const codPorOrdem = new Map(
     verticesReconciliados.filter((v) => v.codigo).map((v) => [v.ordem, v.codigo]),
@@ -142,7 +151,7 @@ export function montarTrechosDoSigef(
       }));
   }
 
-  if (starts.length === 0) {
+  if (starts.length === 0 && usarTextoDoPdf) {
     let ultima = "";
     sigefLinhas.forEach((l, i) => {
       if (l.confrontacao !== ultima) {
@@ -219,6 +228,12 @@ export function reconciliarVerticesBancoComSigef(
     if (v.codigo) porCodigoBanco.set(v.codigo, v);
   }
 
+  // Um vértice do banco só casa com UMA linha do SIGEF. Sem isso, o primeiro
+  // ponto dentro de 10 m levava a confrontação embora e o vértice M verdadeiro
+  // ficava sem par — a confrontação do sistema sumia da planta.
+  const usados = new Set<VerticeBanco>();
+  const codigosSigef = new Set(sigefLinhas.map((s) => s.codigo));
+
   const resultado: VerticeReconciliado[] = sigefLinhas.map((l, idx) => {
     const lonDeg = gmsPdfParaDeg(l.lon);
     const latDeg = gmsPdfParaDeg(l.lat);
@@ -228,23 +243,29 @@ export function reconciliarVerticesBancoComSigef(
     // 1. Tentar encontrar por código exato
     let correspondente = porCodigoBanco.get(l.codigo);
 
-    // 2. Se não encontrou por código, tentar por proximidade (< 10 metros)
-    // apenas em vértices do banco que não possuem código ou cujo código não pertence ao SIGEF
+    if (correspondente && usados.has(correspondente)) correspondente = undefined;
+
+    // 2. Se não encontrou por código, casar pelo MAIS PRÓXIMO (< 10 metros)
+    // ainda livre, entre os vértices do banco sem código ou cujo código não
+    // pertence ao SIGEF
     if (!correspondente) {
-      const codigosSigef = new Set(sigefLinhas.map((s) => s.codigo));
+      let melhor: VerticeBanco | undefined;
+      let melhorDist = Infinity;
       for (const vb of vertBanco) {
-        if (vb.e !== null && vb.n !== null) {
-          if (vb.codigo && codigosSigef.has(vb.codigo)) continue;
-          const dist = Math.hypot(vb.e - e, vb.n - n);
-          if (dist < 10) {
-            correspondente = vb;
-            break;
-          }
+        if (vb.e === null || vb.n === null) continue;
+        if (usados.has(vb)) continue;
+        if (vb.codigo && codigosSigef.has(vb.codigo)) continue;
+        const dist = Math.hypot(vb.e - e, vb.n - n);
+        if (dist < 10 && dist < melhorDist) {
+          melhor = vb;
+          melhorDist = dist;
         }
       }
+      correspondente = melhor;
     }
 
     if (correspondente) {
+      usados.add(correspondente);
       // Ponto existente na nossa planilha: atualiza com as coordenadas oficiais do
       // SIGEF, PRESERVANDO a confrontação — o PDF traz geometria, não confrontantes,
       // e descartá-la aqui apagava o trabalho do usuário a cada geração de planta.
