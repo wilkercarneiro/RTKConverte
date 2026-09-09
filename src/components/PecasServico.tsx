@@ -33,7 +33,13 @@ interface Analise {
 }
 interface PecasGeradas {
   arquivos: { titulo: string; url: string }[];
-  resumo: { areaHa: string; perimetro: string; trt: string; vertices: number; cartas: number; via: string | null };
+  resumo: {
+    areaHa: string; perimetro: string; trt: string; vertices: number; cartas: number; via: string | null;
+    /** Serviço de glebas: uma linha por gleba, com a área e o perímetro do memorial dela. */
+    glebas?: { nome: string; areaHa: string; perimetro: string; vertices: number }[];
+  };
+  /** Memorial sem gleba desenhada, gleba sem memorial — a geração seguiu mesmo assim. */
+  avisos?: string[];
 }
 
 type Etapa = "dados" | "confrontantes" | "documentos";

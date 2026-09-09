@@ -56,7 +56,13 @@ interface Gerado {
 
 interface PecasGeradas {
   arquivos: { titulo: string; url: string }[];
-  resumo: { areaHa: string; perimetro: string; trt: string; vertices: number; cartas: number; via: string | null };
+  resumo: {
+    areaHa: string; perimetro: string; trt: string; vertices: number; cartas: number; via: string | null;
+    /** Serviço de glebas: uma linha por gleba, com a área e o perímetro do memorial dela. */
+    glebas?: { nome: string; areaHa: string; perimetro: string; vertices: number }[];
+  };
+  /** Memorial sem gleba desenhada, gleba sem memorial — a geração seguiu mesmo assim. */
+  avisos?: string[];
 }
 
 interface RelatorioSobreposicao {
@@ -787,13 +793,16 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       const sat = await garantirSatelite();
       if (!sat) { setGerandoPlanta(false); setErro("Envie a imagem de satélite para gerar a planta"); return; }
       await salvar();
-      const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", {
+      const r = await chamarFuncao<{ planta_pdf: string; avisos?: string[] }>("gerar-planta", {
         servico_id: servico.id, pdf_base64: pdf,
         satelite_base64: sat.b64, satelite_tipo: sat.tipo,
         folha: folhaEfetiva,
       });
       setPlantaUrl(r.planta_pdf);
       avisar("ok", `Planta ${folhaEfetiva} gerada.`);
+      // prévia de glebas: memorial que não casou com o contorno desenhado, gleba
+      // sem memorial no PDF. A planta saiu — o operador é que precisa conferir.
+      for (const a of r.avisos ?? []) avisar("alerta", a);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -811,7 +820,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       await salvar();
       const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64: pdf });
       setPecas(r);
-      avisar("ok", "7 peças técnicas geradas.");
+      const nGlebas = r.resumo?.glebas?.length ?? 0;
+      avisar("ok", nGlebas
+        ? `Peças geradas: um jogo do imóvel e um de cada uma das ${nGlebas} glebas.`
+        : "7 peças técnicas geradas.");
+      for (const a of r.avisos ?? []) avisar("alerta", a);
     } catch (e) {
       setErroPecas(e instanceof Error ? e.message : String(e));
     } finally {

@@ -5,8 +5,12 @@ import { createClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import proj4mod from "proj4";
 import { extractText, getDocumentProxy } from "unpdf";
-import { parseSigefTexto } from "../_shared/sigef_pdf.ts";
+import { parseSigefBlocos } from "../_shared/sigef_pdf.ts";
 import type { DadosSigef } from "../_shared/sigef_pdf.ts";
+import { areaTotalHa, avisosDoCasamento, casarBlocosComGlebas } from "../_shared/sigef_glebas.ts";
+import type { BlocoDaGleba } from "../_shared/sigef_glebas.ts";
+import { fmtBR } from "../_shared/geo.ts";
+import type { GlebaRow } from "../_shared/planta_dados.ts";
 import { cartasDe, gerarPecasPosseXml, gerarPecasXml, montarTrechosPecas, rotuloVia, viasDaPlanta } from "../_shared/pecas.ts";
 import type { DadosPecas, Requerente } from "../_shared/pecas.ts";
 import { ehViaPorLimite, montarServico } from "../_shared/servico.ts";
@@ -52,6 +56,9 @@ function dataHojeBR(): string {
   return `${String(agora.getUTCDate()).padStart(2, "0")}/${String(agora.getUTCMonth() + 1).padStart(2, "0")}/${agora.getUTCFullYear()}`;
 }
 
+/** Caracteres que o Storage e o Windows não aceitam em nome de arquivo. */
+const RE_NOME_ARQUIVO = /[\\/:*?"<>|]/g;
+
 const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 25);
 
 Deno.serve(async (req) => {
@@ -72,7 +79,11 @@ Deno.serve(async (req) => {
       const bytes = b64ToBytes(pdf_base64);
       const proxy = await getDocumentProxy(bytes);
       const { text: txt } = await extractText(proxy, { mergePages: true });
-      const dadosSigef = parseSigefTexto(txt as string);
+      // No modo "analisar" o resumo é do PRIMEIRO memorial: é ele que
+      // pré-preenche o cadastro (denominação, matrícula, RT). A contagem de
+      // glebas vai separada, para a tela avisar que o PDF traz mais de uma.
+      const blocosAnalise = parseSigefBlocos(txt as string);
+      const dadosSigef = blocosAnalise[0];
       const trechosPdf: { codigo: string; confrontacao: string; segmentos: number }[] = [];
       let ultima = "";
       for (const l of dadosSigef.linhas) {
@@ -83,7 +94,16 @@ Deno.serve(async (req) => {
           trechosPdf[trechosPdf.length - 1].segmentos++;
         }
       }
-      return json({ ok: true, cabecalho: dadosSigef.cabecalho, trechos: trechosPdf, vertices: dadosSigef.linhas.length });
+      return json({
+        ok: true, cabecalho: dadosSigef.cabecalho, trechos: trechosPdf, vertices: dadosSigef.linhas.length,
+        glebas: blocosAnalise.length > 1
+          ? blocosAnalise.map((b) => ({
+            denominacao: b.cabecalho.denominacao, areaHa: b.cabecalho.areaHa,
+            perimetro: b.cabecalho.perimetroM, vertices: b.linhas.length,
+          }))
+          : undefined,
+        areaTotalHa: blocosAnalise.length > 1 ? fmtBR(areaTotalHa(blocosAnalise), 4) : undefined,
+      });
     }
 
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
@@ -110,6 +130,9 @@ Deno.serve(async (req) => {
       : null;
 
     let sigef: DadosSigef;
+    // Todos os memoriais do PDF. Um só = imóvel de anel único (o caminho de
+    // sempre); mais de um = serviço de glebas.
+    let blocos: DadosSigef[] = [];
     // trechos vindos do cálculo, quando é ele a origem (chave = código do M)
     let iniciosDoCalculo: Map<string, { descritivo: string; tipoLimite: string; ehVia?: boolean }> | null = null;
 
@@ -155,7 +178,11 @@ Deno.serve(async (req) => {
       const pdfBytes = b64ToBytes(pdf_base64);
       const pdf = await getDocumentProxy(pdfBytes);
       const { text } = await extractText(pdf, { mergePages: true });
-      sigef = parseSigefTexto(text as string);
+      // Prévia de GLEBAS: um memorial por gleba no mesmo PDF. As peças do imóvel
+      // saem do conjunto (área total = soma, memorial com um bloco por gleba) e
+      // cada gleba ganha o seu jogo próprio — ver `casados`, mais abaixo.
+      blocos = parseSigefBlocos(text as string);
+      sigef = blocos[0];
     }
 
     // ---------------- trechos: código do vértice inicial → descritivo ----------------
@@ -193,11 +220,15 @@ Deno.serve(async (req) => {
     // fallback: PDF de outra geração (códigos diferentes) → detecta trechos pela
     // mudança da confrontação e tenta casar com o descritivo completo do banco.
     // Não se aplica à origem 'calculo': lá os códigos são os mesmos por construção.
-    if (!iniciosDoCalculo && !sigef.linhas.some((l) => inicios.has(l.codigo))) {
+    // Num serviço de glebas o teste tem de correr TODOS os memoriais: os códigos
+    // do banco podem casar só com a segunda gleba, e olhar apenas a primeira
+    // jogava o serviço inteiro no fallback textual (confrontação truncada do PDF).
+    const linhasDeTodos = blocos.length > 1 ? blocos.flatMap((b) => b.linhas) : sigef.linhas;
+    if (!iniciosDoCalculo && !linhasDeTodos.some((l) => inicios.has(l.codigo))) {
       inicios.clear();
       let ultima = "";
       const comTexto = fontes.filter((f) => f.descritivo.trim());
-      for (const l of sigef.linhas) {
+      for (const l of linhasDeTodos) {
         if (l.confrontacao !== ultima) {
           ultima = l.confrontacao;
           const alvo = norm(l.confrontacao.replace(/\.{3}$/, ""));
@@ -210,8 +241,36 @@ Deno.serve(async (req) => {
         }
       }
     }
-    const { trechos, confrontacaoDe } = montarTrechosPecas(sigef.linhas, inicios);
     const posse = servico.tipo_imovel === "posse";
+
+    // ---------------- glebas: uma unidade por memorial do PDF ----------------
+    // As peças do IMÓVEL descrevem uma gleba por bloco (ver DadosPecas.unidades)
+    // e somam as áreas; além delas, cada gleba ganha o seu jogo completo. Foi o
+    // que o operador pediu: o cartório recebe o conjunto e a parcela.
+    let casados: BlocoDaGleba[] = [];
+    const avisos: string[] = [];
+    if (blocos.length > 1) {
+      const { data: glebaRows } = await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem");
+      casados = casarBlocosComGlebas(blocos, (glebaRows ?? []) as GlebaRow[], servico.denominacao ?? "", servico.fuso_utm ?? 24, proj4);
+      avisos.push(...avisosDoCasamento(casados, (glebaRows ?? []) as GlebaRow[]));
+    }
+    const unidades = casados.map((c) => {
+      const t = montarTrechosPecas(c.bloco.linhas, inicios);
+      return {
+        nome: c.nome, sigef: c.bloco, trechos: t.trechos,
+        perimetro: c.bloco.cabecalho.perimetroM, confrontacaoDe: t.confrontacaoDe,
+        // usados só na emissão do jogo próprio desta gleba
+        areaHa: c.bloco.cabecalho.areaHa, numeroGleba: c.numeroGleba,
+      };
+    });
+
+    // O anel de referência das peças do imóvel: com glebas, é a emenda dos
+    // memoriais (o Memorial Tabular lista TODOS os vértices; o Descritivo usa
+    // `unidades` e nunca percorre esta emenda como se fosse um anel só).
+    const sigefImovel: DadosSigef = unidades.length
+      ? { cabecalho: { ...sigef.cabecalho, areaHa: fmtBR(areaTotalHa(blocos), 4) }, linhas: blocos.flatMap((b) => b.linhas) }
+      : sigef;
+    const { trechos, confrontacaoDe } = montarTrechosPecas(sigefImovel.linhas, inicios);
 
     // ---------------- dados ----------------
     const requerentes: Requerente[] = [{
@@ -237,7 +296,11 @@ Deno.serve(async (req) => {
       cns: servico.cns ?? sigef.cabecalho.cns,
       sncrFmt: servico.codigo_sncr ?? sigef.cabecalho.sncr,
       sncrNum: (servico.codigo_sncr ?? sigef.cabecalho.sncr ?? "").replace(/\D/g, ""),
-      areaHa: sigef.cabecalho.areaHa,
+      // Com glebas, a área é a SOMA (sigefImovel.cabecalho). O perímetro
+      // continua o do primeiro memorial: perímetro é por gleba, e somá-lo daria
+      // um número que não é o contorno de nada — o Memorial Descritivo fecha
+      // cada gleba no perímetro dela (ver unidades).
+      areaHa: sigefImovel.cabecalho.areaHa,
       perimetro: sigef.cabecalho.perimetroM,
       areaMatriculaHa: servico.area_matricula_ha ?? null,
       mcAbs: Math.abs(6 * (servico.fuso_utm ?? 24) - 183),
@@ -254,7 +317,8 @@ Deno.serve(async (req) => {
         identidade: rt!.identidade ?? "",
         cpf: rt!.cpf ?? "",
       },
-      sigef, trechos, confrontacaoDe,
+      sigef: sigefImovel, trechos, confrontacaoDe,
+      unidades: unidades.length ? unidades : undefined,
     };
 
     // ---------------- templates → geração → upload ----------------
@@ -268,35 +332,71 @@ Deno.serve(async (req) => {
     const PECAS = TODAS.filter(([num]) => !filtro || filtro.includes(num));
     if (PECAS.length === 0) return json({ erro: `Nenhuma peça corresponde a: ${filtro?.join(", ")}` }, 422);
     const pasta = posse ? "pecas-posse" : "pecas";
-    const zips: Record<string, JSZip> = {};
+    // Os BYTES do template, não o JSZip: escrever document.xml MUTA o zip, e um
+    // serviço de glebas emite vários jogos do mesmo modelo. Reaproveitar o
+    // objeto faria o jogo da gleba 2 sair com o memorial da gleba 1.
+    const tplBytes: Record<string, ArrayBuffer> = {};
     const tplXml: Record<string, string> = {};
     for (const [num, arquivo] of TODAS) {
       const dl = await supa.storage.from("templates").download(`${pasta}/${arquivo}.docx`);
       if (dl.error || !dl.data) return json({ erro: `Template ${pasta}/${arquivo}.docx não encontrado no Storage` }, 500);
-      const zip = await JSZip.loadAsync(await dl.data.arrayBuffer());
-      zips[num] = zip;
-      tplXml[num] = await zip.file("word/document.xml")!.async("string");
+      const bytes = await dl.data.arrayBuffer();
+      tplBytes[num] = bytes;
+      tplXml[num] = await (await JSZip.loadAsync(bytes)).file("word/document.xml")!.async("string");
     }
-    const xmls = posse ? gerarPecasPosseXml(tplXml, dados) : gerarPecasXml(tplXml, dados);
 
-    const nomeBase = (servico.denominacao ?? "documento").replace(/[\\/:*?"<>|]/g, "-").trim();
+    const nomeBase = (servico.denominacao ?? "documento").replace(RE_NOME_ARQUIVO, "-").trim();
     const { data: vmax } = await supa.from("documentos_gerados").select("versao")
       .eq("servico_id", servico_id).order("versao", { ascending: false }).limit(1);
     const versao = ((vmax?.[0]?.versao as number | undefined) ?? 0) + 1;
     const historico: { servico_id: string; versao: number; tipo: string; titulo: string; path: string }[] = [];
     const arquivos: { titulo: string; url: string }[] = [];
-    for (const [num, arquivo, titulo] of PECAS) {
-      if (xmls[num] == null) continue; // ex.: declaração de faixa sem estrada/corredor/rio
-      zips[num].file("word/document.xml", xmls[num]);
-      const buf = await zips[num].generateAsync({ type: "uint8array", compression: "DEFLATE" });
-      const path = `${servico_id}/v${versao}/pecas/${arquivo}.docx`;
-      historico.push({ servico_id, versao, tipo: `peca_${num}`, titulo, path });
-      const up = await supa.storage.from("gerados").upload(path, buf, {
-        upsert: true, contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      });
-      if (up.error) throw up.error;
-      const s = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `${titulo} - ${nomeBase}.docx` });
-      arquivos.push({ titulo, url: s.data?.signedUrl ?? "" });
+
+    /**
+     * Um JOGO de peças. `sufixo` vazio = as peças do imóvel, na pasta de sempre
+     * (`pecas/`): todo serviço sem glebas continua produzindo exatamente os
+     * mesmos caminhos, tipos de histórico e nomes de download de antes.
+     */
+    const emitirJogo = async (d: DadosPecas, sufixo: string, rotulo: string) => {
+      const xmls = posse ? gerarPecasPosseXml(tplXml, d) : gerarPecasXml(tplXml, d);
+      for (const [num, arquivo, titulo] of PECAS) {
+        if (xmls[num] == null) continue; // ex.: declaração de faixa sem estrada/corredor/rio
+        const zip = await JSZip.loadAsync(tplBytes[num]);
+        zip.file("word/document.xml", xmls[num]!);
+        const buf = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+        const path = `${servico_id}/v${versao}/pecas${sufixo}/${arquivo}.docx`;
+        const tituloCompleto = rotulo ? `${titulo} · ${rotulo}` : titulo;
+        const chave = sufixo ? `_${sufixo.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "")}` : "";
+        historico.push({ servico_id, versao, tipo: `peca_${num}${chave}`, titulo: tituloCompleto, path });
+        const up = await supa.storage.from("gerados").upload(path, buf, {
+          upsert: true, contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        });
+        if (up.error) throw up.error;
+        const nomeDl = rotulo ? `${titulo} - ${nomeBase} - ${rotulo}.docx` : `${titulo} - ${nomeBase}.docx`;
+        const s = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: nomeDl });
+        arquivos.push({ titulo: tituloCompleto, url: s.data?.signedUrl ?? "" });
+      }
+    };
+
+    // 1) as peças do IMÓVEL — com glebas, área somada e Memorial Descritivo com
+    //    um bloco por gleba (ver DadosPecas.unidades).
+    await emitirJogo(dados, "", "");
+    // 2) o jogo próprio de cada gleba: mesmas peças, com o anel, a área e o
+    //    perímetro DAQUELA gleba, e o nome dela na denominação.
+    for (const u of unidades) {
+      const seguro = u.nome.replace(RE_NOME_ARQUIVO, "-").trim();
+      await emitirJogo({
+        ...dados,
+        denominacao: `${servico.denominacao} - ${u.nome}`,
+        areaHa: u.areaHa,
+        perimetro: u.perimetro,
+        sigef: u.sigef,
+        trechos: u.trechos,
+        confrontacaoDe: u.confrontacaoDe,
+        // o jogo da gleba descreve UM anel: sem `unidades`, para o Memorial
+        // Descritivo dela não repetir as irmãs
+        unidades: undefined,
+      }, `/glebas/${u.numeroGleba ?? "s"}-${seguro}`, u.nome);
     }
 
     await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
@@ -306,13 +406,20 @@ Deno.serve(async (req) => {
       ok: true,
       arquivos,
       resumo: {
-        areaHa: sigef.cabecalho.areaHa,
+        areaHa: dados.areaHa,
         perimetro: sigef.cabecalho.perimetroM,
         trt: dados.trt,
-        vertices: sigef.linhas.length,
+        vertices: sigefImovel.linhas.length,
         cartas: cartasDe(dados).length,
         via: viasDaPlanta(trechos).map(rotuloVia).join(", ") || null,
+        // uma linha por gleba: área e perímetro como o SIGEF os certificou
+        glebas: unidades.length
+          ? unidades.map((u) => ({ nome: u.nome, areaHa: u.areaHa, perimetro: u.perimetro, vertices: u.sigef.linhas.length }))
+          : undefined,
       },
+      // Aviso não é erro: as peças saíram. Mas um memorial que não casou com a
+      // gleba desenhada precisa chegar ao operador antes do cartório.
+      avisos: avisos.length ? avisos : undefined,
     });
   } catch (err) {
     return json({ erro: err instanceof Error ? err.message : String(err) }, 400);

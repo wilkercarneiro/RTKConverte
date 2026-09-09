@@ -114,7 +114,7 @@ export function glebasParaPlanta(
  * referência: matrícula/CNS (ou POSSE), denominação com o nome da gleba,
  * proprietário e CPF, e o inventariante quando é espólio.
  */
-function identificacaoDaGleba(s: ServicoRow, nomeGleba: string): string[] {
+export function identificacaoDaGleba(s: ServicoRow, nomeGleba: string): string[] {
   const linhas: string[] = [];
   linhas.push(s.tipo_imovel === "posse" ? "(POSSE)" : `(MATR.${s.matricula ?? ""}/CNS.${s.cns ?? ""})`);
   linhas.push(`${(s.denominacao ?? "").toUpperCase()} - ${nomeGleba}`);

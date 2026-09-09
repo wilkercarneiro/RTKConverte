@@ -39,8 +39,57 @@ function campo(texto: string, re: RegExp): string {
   return m ? m[1].trim() : "";
 }
 
-export function parseSigefTexto(texto: string): DadosSigef {
+/**
+ * Corta o texto do PDF em UM PEDAÇO POR MEMORIAL.
+ *
+ * A prévia de um serviço de glebas não é um memorial: é um memorial por gleba,
+ * emendado num PDF só ("PREVIA TOTAL"). Cada bloco tem cabeçalho, área,
+ * perímetro e anel PRÓPRIOS. Lidos juntos, as linhas das três glebas viram uma
+ * tabela só, o encadeamento vante→código quebra na virada de gleba e a leitura
+ * falha inteira — era o que acontecia com FAZENDA LAMEIRO DA BOA VISTA.
+ *
+ * O corte é feito em "MEMORIAL DESCRITIVO" seguido de "Denominação:", porque a
+ * expressão sozinha também aparece no rodapé de toda página ("Este Memorial
+ * Descritivo foi gerado automaticamente…").
+ */
+function blocosDoTexto(t: string): string[] {
+  const inicios: number[] = [];
+  const re = /MEMORIAL DESCRITIVO\s+Denominação:/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) inicios.push(m.index);
+  if (inicios.length <= 1) return [t];
+  return inicios.map((ini, i) => t.slice(ini, i + 1 < inicios.length ? inicios[i + 1] : t.length));
+}
+
+/**
+ * Todos os memoriais do PDF, na ordem em que aparecem. Um PDF de imóvel simples
+ * devolve uma posição só; a prévia de glebas devolve uma por gleba.
+ */
+export function parseSigefBlocos(texto: string): DadosSigef[] {
   const t = texto.replace(/\s+/g, " ");
+  return blocosDoTexto(t).map((b) => parseBloco(b));
+}
+
+/** Área total em ha (SOMA das glebas) e perímetro de cada bloco, para a planta. */
+export function totaisDosBlocos(blocos: DadosSigef[]): { areaHa: number; perimetrosM: number[] } {
+  const num = (s: string) => parseFloat(s.replace(/\./g, "").replace(",", ".")) || 0;
+  return {
+    areaHa: blocos.reduce((s, b) => s + num(b.cabecalho.areaHa), 0),
+    // NÃO somado de propósito: o perímetro é individual por gleba (a soma não é
+    // o contorno de nada). A planta lista um por gleba.
+    perimetrosM: blocos.map((b) => num(b.cabecalho.perimetroM)),
+  };
+}
+
+/**
+ * O PRIMEIRO memorial do PDF. Mantido para o fluxo de imóvel simples, em que o
+ * PDF tem um memorial só; quem lida com glebas usa `parseSigefBlocos`.
+ */
+export function parseSigefTexto(texto: string): DadosSigef {
+  return parseSigefBlocos(texto)[0];
+}
+
+function parseBloco(t: string): DadosSigef {
 
   const cabecalho: CabecalhoSigef = {
     denominacao: campo(t, /Denominação:\s*(.+?)\s*Proprietário/),
@@ -90,7 +139,10 @@ export function parseSigefTexto(texto: string): DadosSigef {
       confrontacao: m[8].trim(),
     });
   }
-  if (linhas.length === 0) throw new Error("Não foi possível ler a tabela de vértices do PDF do SIGEF");
+  // Sem denominação não dá para dizer QUAL gleba falhou; com ela o operador
+  // não precisa abrir o PDF para descobrir onde a leitura parou.
+  const onde = cabecalho.denominacao ? ` (${cabecalho.denominacao})` : "";
+  if (linhas.length === 0) throw new Error(`Não foi possível ler a tabela de vértices do PDF do SIGEF${onde}`);
   // O SIGEF lista o perímetro em sequência: o vante de cada linha é o código da
   // linha seguinte e a última fecha no primeiro vértice. Se o encadeamento
   // quebrar, alguma linha não foi lida — melhor falhar do que gerar planta com
@@ -99,14 +151,14 @@ export function parseSigefTexto(texto: string): DadosSigef {
     const prox = linhas[(i + 1) % linhas.length];
     if (linhas[i].vante !== prox.codigo) {
       throw new Error(
-        `Leitura do PDF do SIGEF incompleta: o vértice ${linhas[i].codigo} aponta para ` +
+        `Leitura do PDF do SIGEF${onde} incompleta: o vértice ${linhas[i].codigo} aponta para ` +
         `${linhas[i].vante}, mas a linha seguinte lida é ${prox.codigo}. ` +
         `Foram lidos ${linhas.length} vértices.`,
       );
     }
   }
   if (!cabecalho.areaHa || !cabecalho.perimetroM) {
-    throw new Error("PDF não parece ser um Memorial Descritivo do SIGEF (área/perímetro não encontrados)");
+    throw new Error(`PDF não parece ser um Memorial Descritivo do SIGEF${onde} (área/perímetro não encontrados)`);
   }
   return { cabecalho, linhas };
 }

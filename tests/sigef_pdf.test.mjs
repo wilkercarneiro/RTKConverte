@@ -73,6 +73,8 @@ test("encadeamento quebrado do anel falha em vez de gerar planta com pontos falt
   );
   assert.throws(
     () => parseSigefTexto(truncado),
-    /Leitura do PDF do SIGEF incompleta/,
+    // a mensagem nomeia o memorial: numa prévia de glebas são vários, e sem o
+    // nome o operador não sabe em qual deles a leitura parou
+    /Leitura do PDF do SIGEF \(FAZENDA MONOINO - Parte 1\) incompleta/,
   );
 });
