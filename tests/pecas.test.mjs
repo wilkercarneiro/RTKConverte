@@ -355,3 +355,33 @@ test("faixa de domínio: negrito fica só no nome do requerente", async () => {
     }
   }
 });
+
+// ---------- como o CONFRONTANTE é qualificado na carta ----------
+// O modelo tem duas cartas-protótipo; a de uma pessoa é a do vizinho em POSSE
+// ("posseiro do imóvel rural denominado FAZENDA LAMEIRO (POSSE)"). Clonada para
+// todo mundo, ela chamava de posseiro quem tem matrícula — e, sem rótulo de
+// imóvel, usava o NOME da pessoa como denominação da fazenda dela.
+test("a carta qualifica o vizinho pelo imóvel DELE (posse × matrícula)", async () => {
+  const descs = new Map(Object.entries({
+    ...DESCS,
+    // vizinho sem rótulo de imóvel nenhum: só a pessoa
+    "DSBN-M-3608": { descritivo: "VALDETE DOS SANTOS\ CPF:161.770.455-53", tipoLimite: "LA1" },
+  }));
+  const { trechos: ts, confrontacaoDe: cd } = montarTrechosPecas(sigef.linhas, descs);
+  const tpl = {};
+  for (let i = 1; i <= 7; i++) {
+    const zip = await JSZip.loadAsync(readFileSync(new URL(`../reference/pecas/${NOMES[i - 1]}.docx`, import.meta.url)));
+    tpl[String(i)] = await zip.file("word/document.xml").async("string");
+  }
+  const t3 = dec(gerarPecasXml(tpl, { ...dados, trechos: ts, confrontacaoDe: cd })["3"].replace(/<[^>]+>/g, ""));
+
+  // com matrícula: proprietário
+  assert.match(t3, /CARLOS MATOS DE LIMA[^]{0,80}?proprietário do imóvel rural denominado FAZENDA TERRA NOVA \(MATR\.4\.403/);
+  // com (POSSE): posseiro
+  assert.match(t3, /RUDSON PINTO FERREIRA[^]{0,80}?posseiro do imóvel rural denominado FAZENDA LAMEIRO \(POSSE\)/);
+  // sem rótulo: não se inventa denominação com o nome da pessoa
+  assert.match(t3, /VALDETE DOS SANTOS[^]{0,80}?proprietário de imóvel rural sem denominação/);
+  assert.ok(!t3.includes("denominado VALDETE DOS SANTOS"), "o nome da pessoa não é o nome da fazenda dela");
+  // e o imóvel de exemplo do modelo não sobra em lugar nenhum
+  assert.ok(!t3.includes("FAZENDA LAMEIRO (POSSE) ,"), "rótulo de exemplo não substituído");
+});

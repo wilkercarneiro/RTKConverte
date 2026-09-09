@@ -296,6 +296,16 @@ Deno.serve(async (req) => {
       }
       : montarTrechosPecas(sigefImovel.linhas, inicios);
 
+    // Perímetro do imóvel: a SOMA dos memoriais quando ele é dividido em glebas.
+    // O contorno do imóvel é a união dos anéis, e a área ao lado já é a soma —
+    // sair com o perímetro de UMA gleba (sempre a primeira) punha no cabeçalho
+    // de todas as peças um número que não é o contorno de nada. Cada gleba
+    // continua fechando no perímetro dela dentro do Memorial Descritivo.
+    const numBR = (s: string) => parseFloat(String(s).replace(/\./g, "").replace(",", ".")) || 0;
+    const perimetroImovel = unidades.length
+      ? fmtBR(unidades.reduce((s, u) => s + numBR(u.perimetro), 0), 2)
+      : sigef.cabecalho.perimetroM;
+
     // ---------------- dados ----------------
     const requerentes: Requerente[] = [{
       nome: servico.detentor_nome,
@@ -320,12 +330,10 @@ Deno.serve(async (req) => {
       cns: servico.cns ?? sigef.cabecalho.cns,
       sncrFmt: servico.codigo_sncr ?? sigef.cabecalho.sncr,
       sncrNum: (servico.codigo_sncr ?? sigef.cabecalho.sncr ?? "").replace(/\D/g, ""),
-      // Com glebas, a área é a SOMA (sigefImovel.cabecalho). O perímetro
-      // continua o do primeiro memorial: perímetro é por gleba, e somá-lo daria
-      // um número que não é o contorno de nada — o Memorial Descritivo fecha
-      // cada gleba no perímetro dela (ver unidades).
+      // Com glebas, área e perímetro do imóvel são a SOMA das glebas; dentro do
+      // Memorial Descritivo cada uma fecha no perímetro dela (ver unidades).
       areaHa: sigefImovel.cabecalho.areaHa,
-      perimetro: sigef.cabecalho.perimetroM,
+      perimetro: perimetroImovel,
       areaMatriculaHa: servico.area_matricula_ha ?? null,
       mcAbs: Math.abs(6 * (servico.fuso_utm ?? 24) - 183),
       // TRT preenchido no sistema manda: campo do serviço, depois o TRT padrão do

@@ -95,7 +95,10 @@ function partesDasGlebas(
  * Null quando não há: quem chama decide o que usar no lugar.
  */
 async function baixarSateliteGleba(
-  supa: ReturnType<typeof createClient>,
+  // Só o Storage é usado aqui. `ReturnType<typeof createClient>` traz os
+  // genéricos do schema e não casa com o cliente já construído lá embaixo
+  // (TS2345); a função não precisa saber de tabela nenhuma.
+  supa: { storage: { from: (bucket: string) => { download: (path: string) => Promise<{ data: Blob | null; error: unknown }> } } },
   servicoId: string,
   k: number,
 ): Promise<{ bytes: Uint8Array; tipo: "png" | "jpg" } | null> {

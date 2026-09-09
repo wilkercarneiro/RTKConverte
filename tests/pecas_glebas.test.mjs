@@ -89,9 +89,26 @@ test("Memorial Descritivo do imóvel: um bloco por gleba, cada um no seu períme
     );
   }
   assert.ok(t.includes("GLEBA 1") && t.includes("GLEBA 2") && t.includes("GLEBA 3"));
-  // a soma dos perímetros NÃO aparece em lugar nenhum
-  assert.ok(!t.includes("27.961,08"));
+  // A soma dos perímetros não fecha anel NENHUM: no corpo, cada gleba fecha no
+  // dela. (No cabeçalho a soma é o perímetro do imóvel, ao lado da área somada —
+  // ver o teste do cabeçalho.)
+  assert.ok(!t.includes("deste perímetro de 27.961,08 m."));
   writeFileSync(new URL("memorial-imovel.xml", OUT), xmls["1"]);
+});
+
+// O cabeçalho das peças do imóvel descreve o IMÓVEL: área e perímetro são os
+// dois somados. Saía a área somada ao lado do perímetro da PRIMEIRA gleba — um
+// número que não é o contorno de nada, repetido em todas as peças pelo mapa.
+test("cabeçalho do imóvel: área e perímetro são os das glebas somadas", () => {
+  const soma = blocos
+    .reduce((s, b) => s + parseFloat(b.cabecalho.perimetroM.replace(/\./g, "").replace(",", ".")), 0);
+  const perimetroImovel = fmtBR(soma, 2);
+  assert.equal(perimetroImovel, "27.961,08");
+  const t = textoDe(gerarPecasXml(tpl, { ...base, perimetro: perimetroImovel, unidades })["1"]);
+  assert.ok(t.includes(`Perímetro: ${perimetroImovel} m`), "o cabeçalho tem de trazer a soma");
+  for (const b of blocos.slice(1)) {
+    assert.ok(!t.includes(`Perímetro: ${b.cabecalho.perimetroM} m`));
+  }
 });
 
 test("o Memorial Tabular do imóvel lista os vértices das três glebas", () => {
