@@ -646,6 +646,17 @@ Deno.serve(async (req) => {
         tplXml[num] = await (await JSZip.loadAsync(tplBytes[num])).file("word/document.xml")!.async("string");
       }
       const slug = (s: string) => s.replace(/[\\/:*?"<>|]/g, "-").trim();
+      // A tela numera a imagem de cada gleba pela posição na lista de glebas com
+      // anel fechado (`entrada/satelite-gleba-{k}`), e é dessa MESMA lista que
+      // sai o nome da unidade (ver calcularGleba/ordensDasGlebas). Casar pelo
+      // nome, e não pelo índice do laço: uma gleba que falha no cálculo não
+      // entra em `unidades` e deslocava todas as seguintes — cada A3 recebia a
+      // imagem da vizinha.
+      const posSatPorNome = new Map(
+        glebaRows.filter((g) => (g.anel?.length ?? 0) >= 3)
+          .sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0))
+          .map((g, i) => [(g.nome ?? "").trim() || `GLEBA ${i + 1}`, i + 1] as const),
+      );
       for (const [k, u] of unidades.entries()) {
         const pastaU = `${servico_id}/v${versao}/glebas/${k + 1}-${slug(u.nome)}`;
         const servicoU = { ...servico, denominacao: `${servico.denominacao} - ${u.nome}` };
@@ -688,7 +699,7 @@ Deno.serve(async (req) => {
           // guarda `entrada/satelite-gleba-{k}.{png|jpg}` pela posição da gleba.
           // Sem a própria, entra a do imóvel, avisado — a planta da gleba não
           // pode sair com o quadro vazio só porque a imagem dela ainda não veio.
-          const satGleba = await baixarSateliteGleba(supa, servico_id, k + 1);
+          const satGleba = await baixarSateliteGleba(supa, servico_id, posSatPorNome.get(u.nome) ?? k + 1);
           if (!satGleba && satelite_base64) avisosGeracao.push(`${u.nome}: sem imagem de satélite própria — a planta A3 usou a imagem do imóvel.`);
           const dadosPlantaU = montarDadosPlanta({
             servico: servicoU, rt, cred,

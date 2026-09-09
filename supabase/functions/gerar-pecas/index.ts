@@ -44,6 +44,17 @@ const PECAS_POSSE = [
   ["7", "4-declaracao-faixa-dominio", "4 - Declaração Faixa de Domínio"],
 ] as const;
 
+/**
+ * As peças que se repetem POR GLEBA: só as que descrevem um anel.
+ *
+ * Carta de anuência, declaração do técnico, declaração do proprietário,
+ * requerimento e declaração de faixa de domínio falam do IMÓVEL, não de cada
+ * parte dele: são um documento só, assinado uma vez, sobre a área total. Com
+ * três glebas saíam três requerimentos e três jogos de anuência do mesmo
+ * vizinho, e o operador tinha de jogar fora dois terços da pasta.
+ */
+const PECAS_DA_GLEBA: ReadonlySet<string> = new Set(["1", "2"]);
+
 function b64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -357,9 +368,10 @@ Deno.serve(async (req) => {
      * (`pecas/`): todo serviço sem glebas continua produzindo exatamente os
      * mesmos caminhos, tipos de histórico e nomes de download de antes.
      */
-    const emitirJogo = async (d: DadosPecas, sufixo: string, rotulo: string) => {
+    const emitirJogo = async (d: DadosPecas, sufixo: string, rotulo: string, apenas?: ReadonlySet<string>) => {
       const xmls = posse ? gerarPecasPosseXml(tplXml, d) : gerarPecasXml(tplXml, d);
       for (const [num, arquivo, titulo] of PECAS) {
+        if (apenas && !apenas.has(num)) continue; // jogo da gleba: só o que descreve o anel dela
         if (xmls[num] == null) continue; // ex.: declaração de faixa sem estrada/corredor/rio
         const zip = await JSZip.loadAsync(tplBytes[num]);
         zip.file("word/document.xml", xmls[num]!);
@@ -381,8 +393,10 @@ Deno.serve(async (req) => {
     // 1) as peças do IMÓVEL — com glebas, área somada e Memorial Descritivo com
     //    um bloco por gleba (ver DadosPecas.unidades).
     await emitirJogo(dados, "", "");
-    // 2) o jogo próprio de cada gleba: mesmas peças, com o anel, a área e o
-    //    perímetro DAQUELA gleba, e o nome dela na denominação.
+    // 2) o jogo próprio de cada gleba: memorial descritivo e tabular, com o
+    //    anel, a área e o perímetro DAQUELA gleba, e o nome dela na
+    //    denominação. As demais peças saíram uma vez só, no jogo do imóvel
+    //    acima (ver PECAS_DA_GLEBA).
     for (const u of unidades) {
       const seguro = u.nome.replace(RE_NOME_ARQUIVO, "-").trim();
       await emitirJogo({
@@ -396,7 +410,7 @@ Deno.serve(async (req) => {
         // o jogo da gleba descreve UM anel: sem `unidades`, para o Memorial
         // Descritivo dela não repetir as irmãs
         unidades: undefined,
-      }, `/glebas/${u.numeroGleba ?? "s"}-${seguro}`, u.nome);
+      }, `/glebas/${u.numeroGleba ?? "s"}-${seguro}`, u.nome, PECAS_DA_GLEBA);
     }
 
     await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);

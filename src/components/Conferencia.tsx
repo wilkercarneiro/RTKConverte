@@ -614,10 +614,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // algo que nem sempre é usado.
   const PASTA_ENTRADA = `${servico.id}/entrada`;
 
-  async function guardarEntrada(nome: string, bytes: Blob | File, tipo: string) {
+  async function guardarEntrada(nome: string, bytes: Blob | File, tipo: string): Promise<boolean> {
     const up = await supabase.storage.from("gerados")
       .upload(`${PASTA_ENTRADA}/${nome}`, bytes, { upsert: true, contentType: tipo });
     if (up.error) avisar("alerta", `O arquivo foi aceito, mas não ficou guardado para a próxima geração: ${up.error.message}`);
+    return !up.error;
   }
 
   async function baixarEntrada(nome: string): Promise<string | null> {
@@ -779,7 +780,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     }
     setErro(null);
     const tipo = ehPng ? "png" : "jpg";
-    await guardarEntrada(`satelite-gleba-${k}.${tipo}`, file, ehPng ? "image/png" : "image/jpeg");
+    // Aqui o Storage não é conveniência: a imagem da gleba NÃO viaja no corpo da
+    // geração, o servidor a lê de `entrada/`. Upload que falha = A3 com a imagem
+    // do imóvel, e o operador precisa saber disso agora, não ao abrir o PDF.
+    if (!await guardarEntrada(`satelite-gleba-${k}.${tipo}`, file, ehPng ? "image/png" : "image/jpeg")) {
+      setErro(`A imagem da gleba ${k} não foi guardada no servidor — sem ela a planta A3 sai com a imagem do imóvel inteiro.`);
+      return;
+    }
     // só uma imagem por gleba: a de outra extensão, se existir, sai
     await supabase.storage.from("gerados").remove([`${PASTA_ENTRADA}/satelite-gleba-${k}.${ehPng ? "jpg" : "png"}`]);
     setSalvo((s) => ({ ...s, satelitesGlebas: { ...(s.satelitesGlebas ?? {}), [k]: { nome: `satelite-gleba-${k}.${tipo}`, tipo } } }));
