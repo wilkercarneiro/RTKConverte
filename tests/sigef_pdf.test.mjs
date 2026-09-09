@@ -78,3 +78,39 @@ test("encadeamento quebrado do anel falha em vez de gerar planta com pontos falt
     /Leitura do PDF do SIGEF \(FAZENDA MONOINO - Parte 1\) incompleta/,
   );
 });
+
+// Imóvel litorâneo: a altitude geodésica fica ABAIXO do elipsoide e sai negativa
+// no PDF ("-12.222"). A regex da linha só aceitava dígitos na altitude, então
+// toda linha negativa era descartada e a leitura quebrava o encadeamento.
+// Caso real: FAZENDA SANTA BARBARA - Parte 1 (matr. 315, São Francisco do Conde),
+// que lia 5 dos 26 vértices e falhava com
+// "o vértice DJ9-M-2490 aponta para ONDE-P-33446, mas a linha seguinte lida é DSBN-M-4838".
+const ANEL_LITORANEO =
+  "DJ9-M-2491 -38°37'37,440\" -12°36'14,174\" 1.05 DJ9-M-2490 116°23' 262,66 " +
+  "(MATR.287\CNS.00.701-3) FAZENDA GUAIBA\ ADNIL DE FATIMA SILVA FALCAO BAHIA\ C... " +
+  "DJ9-M-2490 -38°37'29,644\" -12°36'17,973\" 23.11 ONDE-P-33446 207°22' 485,52 " +
+  "(MATR.325\CNS.00.701-3) FAZENDA ENGENHO NOVO\ GERALDO MOREIRA DE OLIVEIRA\ CP... " +
+  "ONDE-P-33446 -38°37'37,040\" -12°36'32,004\" -6.74 ONDE-P-33447 210°17' 331,0 " +
+  "(MATR.325\CNS.00.701-3) FAZENDA ENGENHO NOVO\ GERALDO MOREIRA DE OLIVEIRA\ CP... " +
+  "ONDE-P-33447 -38°37'42,573\" -12°36'41,304\" -9.13 DSBN-P-16858 246°30' 18,03 " +
+  "(MATR.325\CNS.00.701-3) FAZENDA ENGENHO NOVO\ GERALDO MOREIRA DE OLIVEIRA\ CP... " +
+  "DSBN-P-16858 -38°37'47,618\" -12°36'48,163\" -12.222 DSBN-M-4838 246°52' 69,5 " +
+  "(MATR.51\CNS.00.701-3) FAZENDA ENGENHO DE BAIXO\ ARMANDO TOURINHO RIBEIRO\ CP... " +
+  "DSBN-M-4838 -38°38'00,379\" -12°36'37,756\" 4.911 DJ9-M-2491 332°03' 8,25 BA-522 " +
+  "Data da Geração: 09/09/2026 12:10";
+
+test("altitude negativa (imóvel litorâneo) não faz a linha ser descartada", () => {
+  const { linhas } = parseSigefTexto(CABECALHO + ANEL_LITORANEO);
+
+  // o anel inteiro é lido, não só os vértices de altitude positiva
+  assert.deepEqual(
+    linhas.map((l) => l.codigo),
+    ["DJ9-M-2491", "DJ9-M-2490", "ONDE-P-33446", "ONDE-P-33447", "DSBN-P-16858", "DSBN-M-4838"],
+  );
+  // o sinal é preservado: a altitude vai para o memorial como está no PDF
+  assert.deepEqual(
+    linhas.map((l) => l.alt),
+    ["1.05", "23.11", "-6.74", "-9.13", "-12.222", "4.911"],
+  );
+  assert.equal(linhas[2].confrontacao.startsWith("(MATR.325"), true);
+});

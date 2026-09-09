@@ -126,8 +126,12 @@ function parseBloco(t: string): DadosSigef {
   // de vértice — um código seguido de uma coordenada GMS (longitude negativa).
   // Usar apenas `COD\s+-` casaria com palavras do texto da confrontação ("FAZENDA -").
   const PROX = `(?:${COD})\\s+${GMS}`;
+  // A altitude pode ser NEGATIVA (imóvel litorâneo: altitude geodésica abaixo do
+  // elipsoide, ex. -12.222). Sem o `-?` a linha inteira não casava, o vértice
+  // sumia da leitura e o encadeamento vante→código quebrava: FAZENDA SANTA
+  // BARBARA lia só os 5 vértices de altitude positiva, dos 26 do memorial.
   const rowRe = new RegExp(
-    `(${COD})\\s+(${GMS})\\s+(${GMS})\\s+([\\d.,]+)\\s+(${COD})\\s+(\\d+°\\d+')\\s+([\\d.,]+)\\s+` +
+    `(${COD})\\s+(${GMS})\\s+(${GMS})\\s+(-?[\\d.,]+)\\s+(${COD})\\s+(\\d+°\\d+')\\s+([\\d.,]+)\\s+` +
     `(.*?)(?=${PROX}|Este Memorial|Data da Geração|$)`,
     "g",
   );
