@@ -9,6 +9,7 @@
 import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import JSZip from "jszip";
+import { extractText, getDocumentProxy } from "unpdf";
 import { montarServico, validarConfrontacoes, montarPartes } from "../_shared/servico.ts";
 import type { ServicoInput, VerticeServico } from "../_shared/servico.ts";
 import { ehCodigoDeConferencia } from "../_shared/geo.ts";
@@ -27,6 +28,9 @@ import {
   ordensDasGlebas, verticesForaDasGlebas,
 } from "../_shared/planta_dados.ts";
 import type { GlebaRow } from "../_shared/planta_dados.ts";
+import { parseSigefBlocos } from "../_shared/sigef_pdf.ts";
+import { numerosDoSigefPorAnel, numerosTotaisDoSigef } from "../_shared/sigef_glebas.ts";
+import type { NumerosSigef } from "../_shared/sigef_glebas.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -110,7 +114,10 @@ Deno.serve(async (req) => {
     // PLANTA DE SITUAÇÃO vazio e um aviso pedindo o reenvio
     // `folha` (A1/A3) é a escolha do operador para a planta do serviço completo;
     // ausente = regra histórica (posse → A3, matrícula → A1)
-    const { servico_id, satelite_base64, satelite_tipo, folha: folhaPedida } = await req.json();
+    // `pdf_base64`: a prévia do SIGEF, OPCIONAL. Ela não desenha nada — só
+    // fornece a área e o perímetro certificados para as plantas exibirem no
+    // lugar dos calculados. Sem ela, tudo sai como sempre saiu.
+    const { servico_id, satelite_base64, satelite_tipo, folha: folhaPedida, pdf_base64 } = await req.json();
     if (!servico_id) return json({ erro: "servico_id ausente" }, 400);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -479,11 +486,67 @@ Deno.serve(async (req) => {
     const folha: Folha | undefined = conferencia
       ? ((["A1", "A3", "A4"].includes(servico.folha_conferencia ?? "") ? servico.folha_conferencia : "A3") as Folha)
       : (folhaPedida === "A1" || folhaPedida === "A3" ? (folhaPedida as Folha) : undefined);
+
+    // ------------- números certificados pelo SIGEF (só os números) -------------
+    // A prévia do SIGEF traz a área e o perímetro que valem — e é SÓ isso que se
+    // aproveita dela aqui. O desenho continua saindo do cálculo do próprio
+    // sistema, que é o que funciona: nenhum vértice do PDF entra na planta.
+    // Um serviço de glebas tem um memorial por gleba; cada um é casado com a sua
+    // unidade PELA GEOMETRIA (nome e ordem não são confiáveis) e empresta o seu
+    // par de números para a linha dela no quadro e para a A3 dela.
+    let numsPorUnidade: (NumerosSigef | null)[] = [];
+    let numsTotais: { areaFmt: string; tarefasFmt: string; perimetroFmt: string | null } | null = null;
+    if (pdf_base64) {
+      try {
+        const proxy = await getDocumentProxy(bytesDeBase64(pdf_base64));
+        const { text } = await extractText(proxy, { mergePages: true });
+        const blocos = parseSigefBlocos(text as string);
+        numsTotais = numerosTotaisDoSigef(blocos);
+        if (unidades.length) {
+          const aneis = unidades.map((u) => u.calc.ring.map((v) => [v.eProj, v.nProj] as [number, number]));
+          numsPorUnidade = numerosDoSigefPorAnel(blocos, aneis, servico.fuso_utm, proj4);
+          unidades.forEach((u, i) => {
+            if (!numsPorUnidade[i]) {
+              avisosGeracao.push(`${u.nome}: nenhum memorial do PDF do SIGEF bateu com o contorno dela — a planta manteve a área e o perímetro calculados.`);
+            }
+          });
+        }
+        if (blocos.length > 1 && !unidades.length) {
+          avisosGeracao.push(`O PDF do SIGEF traz ${blocos.length} memoriais (glebas), mas este serviço não tem glebas fechadas: só a área total foi aproveitada.`);
+        }
+      } catch (e) {
+        // O PDF é um extra: se ele não for lido, a planta sai com os números do
+        // cálculo, como sempre saiu. Derrubar a geração inteira por causa disso
+        // seria trocar um número melhor por documento nenhum.
+        avisosGeracao.push(`PDF do SIGEF não foi lido (${e instanceof Error ? e.message : String(e)}): a planta saiu com a área e o perímetro calculados.`);
+      }
+    }
+
+    // As linhas do quadro que já foram montadas ganham os números do SIGEF; o
+    // resto de cada gleba (vértices, vias, identificação) fica intocado.
+    const glebasPlanta = glebas?.map((g, i) => {
+      const n = numsPorUnidade[i];
+      return n ? { ...g, areaFmt: n.areaFmt, tarefasFmt: n.tarefasFmt, perimetroFmt: n.perimetroFmt } : g;
+    });
+
+    /** A geometria com a área/perímetro do SIGEF por cima — nunca com a forma. */
+    const comNumerosSigef = <T extends { areaFmt: string; perimetroFmt: string }>(g: T, n: NumerosSigef | null | undefined): T =>
+      (n ? { ...g, areaFmt: n.areaFmt, perimetroFmt: n.perimetroFmt } : g);
+
     try {
+      const geometriaGeral = dp ? dp.geometria : geometriaDoCalculo(calc);
       const dadosPlanta = montarDadosPlanta({
         servico, rt, cred,
         desenhista: cfgDes?.value ?? "",
-        geometria: dp ? dp.geometria : geometriaDoCalculo(calc),
+        geometria: numsTotais
+          ? {
+            ...geometriaGeral,
+            areaFmt: numsTotais.areaFmt,
+            // com glebas o perímetro é individual (o quadro lista um por gleba);
+            // por isso `perimetroFmt` só é trocado quando o PDF descreve um anel só
+            perimetroFmt: numsTotais.perimetroFmt ?? geometriaGeral.perimetroFmt,
+          }
+          : geometriaGeral,
         fuso: servico.fuso_utm,
         trt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
         dataStr: dataHojeBR(),
@@ -491,7 +554,7 @@ Deno.serve(async (req) => {
         satelite: satelite_base64
           ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
           : null,
-        folha, glebas, conferencia,
+        folha, glebas: glebasPlanta, conferencia,
         partes: dp?.partes,
         // Só a prévia pode esconder campo: num serviço que vai ao SIGEF a
         // matrícula, a denominação e o TRT são obrigatórios, e deixar as
@@ -610,7 +673,9 @@ Deno.serve(async (req) => {
           const dadosPlantaU = montarDadosPlanta({
             servico: servicoU, rt, cred,
             desenhista: cfgDes?.value ?? "",
-            geometria: geometriaDoCalculo(u.calc),
+            // a A3 da gleba mostra a área e o perímetro DO MEMORIAL dela; a
+            // forma continua sendo a que o sistema calculou
+            geometria: comNumerosSigef(geometriaDoCalculo(u.calc), numsPorUnidade[k]),
             fuso: servico.fuso_utm,
             trt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
             dataStr: dataHojeBR(),

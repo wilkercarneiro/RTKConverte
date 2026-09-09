@@ -2,20 +2,24 @@
 //
 // O SIGEF não certifica "o imóvel com três glebas": certifica três parcelas.
 // A prévia sai como três memoriais emendados, cada um com cabeçalho, área,
-// perímetro e anel próprios (ver parseSigefBlocos). Deste lado, cada memorial
-// vira uma PARTE da planta — anel desenhado por inteiro — e uma gleba do quadro
-// analítico, exatamente como o imóvel em partes do fluxo 'geo'.
+// perímetro e anel próprios (ver parseSigefBlocos).
 //
-// O que este módulo resolve e o resto do sistema não resolvia:
+// O QUE O SIGEF MANDA E O QUE NÃO MANDA (regra do usuário, 2026-09-09):
+// o PDF é fonte de ÁREA e PERÍMETRO, e de mais nada. O DESENHO da planta continua
+// nascendo do cálculo do próprio sistema, que é o que funciona — este módulo
+// nunca devolve vértice para desenhar, só o número que vai impresso na folha.
+// Ver `numerosDoSigefPorAnel` e `numerosTotaisDoSigef`.
+//
+// O que ele resolve e o resto do sistema não resolvia:
 //   1. saber QUAL gleba do sistema é cada memorial (pela geometria, não pelo
 //      nome: o operador renomeia a gleba na tela e o SIGEF não fica sabendo);
-//   2. corrigir as coordenadas de cada gleba pelas do SIGEF, gleba a gleba —
-//      reconciliar tudo de uma vez casaria o vértice de uma gleba com o marco
-//      homônimo da vizinha.
+//   2. nas PEÇAS, usar as coordenadas de cada gleba gleba a gleba — reconciliar
+//      tudo de uma vez casaria o vértice de uma gleba com o marco homônimo da
+//      vizinha.
 
 import type { DadosSigef, LinhaSigef } from "./sigef_pdf.ts";
 import type { GlebaRow } from "./planta_dados.ts";
-import { GEO_DEF, utmDef } from "./geo.ts";
+import { GEO_DEF, fmtBR, utmDef } from "./geo.ts";
 import type { Proj4 } from "./geo.ts";
 
 /** "-39°19'35,975\"" → graus decimais. */
@@ -54,6 +58,43 @@ function pontosEmComum(anelGleba: [number, number][], anelBloco: [number, number
     if (anelBloco.some(([be, bn]) => Math.hypot(be - ge, bn - gn) < raio)) n++;
   }
   return n;
+}
+
+/**
+ * Para cada anel da lista, qual memorial do PDF o descreve (índice), ou null.
+ *
+ * Casamento guloso: o par (anel, bloco) com mais pontos em comum fecha primeiro,
+ * e nem anel nem bloco entram em dois pares. Nome e ordem são ignorados de
+ * propósito — o operador renomeia e reordena glebas na tela, e a ordem em que o
+ * SIGEF devolve os memoriais não é promessa de nada.
+ */
+export function casarBlocosComAneis(
+  blocos: DadosSigef[],
+  aneis: [number, number][][],
+  fusoUtm: number,
+  proj4: Proj4,
+): (number | null)[] {
+  const aneisBloco = blocos.map((b) => anelDoBloco(b.linhas, fusoUtm, proj4));
+  const pares: { ai: number; bi: number; comuns: number }[] = [];
+  for (let ai = 0; ai < aneis.length; ai++) {
+    if (aneis[ai].length < 3) continue;
+    for (let bi = 0; bi < blocos.length; bi++) {
+      const comuns = pontosEmComum(aneis[ai], aneisBloco[bi]);
+      if (comuns >= 3) pares.push({ ai, bi, comuns });
+    }
+  }
+  pares.sort((a, b) => b.comuns - a.comuns);
+
+  const out: (number | null)[] = aneis.map(() => null);
+  const blocoUsado = new Set<number>();
+  const anelUsado = new Set<number>();
+  for (const p of pares) {
+    if (anelUsado.has(p.ai) || blocoUsado.has(p.bi)) continue;
+    anelUsado.add(p.ai);
+    blocoUsado.add(p.bi);
+    out[p.ai] = p.bi;
+  }
+  return out;
 }
 
 export interface BlocoDaGleba {
@@ -143,6 +184,57 @@ export function casarBlocosComGlebas(
       cobertura: casou && g ? casou.comuns / g.anel.length : 0,
     };
   });
+}
+
+/** Área e perímetro que o SIGEF certificou, já no formato que a planta imprime. */
+export interface NumerosSigef {
+  areaFmt: string;       // "550,5523"
+  tarefasFmt: string;    // "12.639,17"
+  perimetroFmt: string;  // "11.753,39"
+}
+
+const numerosDoBloco = (b: DadosSigef): NumerosSigef => {
+  const ha = parseFloat(b.cabecalho.areaHa.replace(/\./g, "").replace(",", ".")) || 0;
+  return {
+    areaFmt: b.cabecalho.areaHa,
+    tarefasFmt: fmtBR(ha * 10000 / 4356, 2),
+    perimetroFmt: b.cabecalho.perimetroM,
+  };
+};
+
+/**
+ * Os NÚMEROS do SIGEF para cada anel — e só eles.
+ *
+ * O PDF do SIGEF não desenha nada aqui: a planta continua nascendo do cálculo do
+ * próprio sistema, que é o que funciona. O que o SIGEF tem de melhor é a área e o
+ * perímetro que ele certificou, e é isso — e nada além disso — que deve aparecer
+ * impresso na folha. Por isso esta função devolve strings formatadas, uma por
+ * anel, e nunca vértices.
+ *
+ * `aneis` são os anéis das unidades (glebas/partes) na ordem em que a planta as
+ * lista. Anel sem memorial correspondente volta como null e mantém o número
+ * calculado — a planta não pode ficar sem área só porque o casamento falhou.
+ */
+export function numerosDoSigefPorAnel(
+  blocos: DadosSigef[],
+  aneis: [number, number][][],
+  fusoUtm: number,
+  proj4: Proj4,
+): (NumerosSigef | null)[] {
+  return casarBlocosComAneis(blocos, aneis, fusoUtm, proj4)
+    .map((bi) => (bi === null ? null : numerosDoBloco(blocos[bi])));
+}
+
+/**
+ * Os números do imóvel INTEIRO: área somada das glebas (o usuário confirmou que
+ * a área total é a soma) e perímetro só quando o PDF descreve um anel único —
+ * com glebas o perímetro é individual, e somá-lo daria um número que não é o
+ * contorno de nada. `perimetroFmt` null = a planta mantém o perímetro calculado.
+ */
+export function numerosTotaisDoSigef(blocos: DadosSigef[]): { areaFmt: string; tarefasFmt: string; perimetroFmt: string | null } {
+  if (blocos.length === 1) return { ...numerosDoBloco(blocos[0]), perimetroFmt: blocos[0].cabecalho.perimetroM };
+  const ha = areaTotalHa(blocos);
+  return { areaFmt: fmtBR(ha, 4), tarefasFmt: fmtBR(ha * 10000 / 4356, 2), perimetroFmt: null };
 }
 
 /**

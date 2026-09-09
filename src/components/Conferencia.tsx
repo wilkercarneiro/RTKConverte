@@ -729,6 +729,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           servico_id: servico.id,
           satelite_base64: satelite?.b64, satelite_tipo: satelite?.tipo,
           folha: folhaEfetiva,
+          // opcional: se o PDF do SIGEF já foi enviado, as plantas exibem a área
+          // e o perímetro certificados no lugar dos calculados. O desenho não muda.
+          pdf_base64: await garantirSigef() ?? undefined,
         });
         setGerado(g);
         const { data: vs } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
@@ -793,16 +796,13 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       const sat = await garantirSatelite();
       if (!sat) { setGerandoPlanta(false); setErro("Envie a imagem de satélite para gerar a planta"); return; }
       await salvar();
-      const r = await chamarFuncao<{ planta_pdf: string; avisos?: string[] }>("gerar-planta", {
+      const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", {
         servico_id: servico.id, pdf_base64: pdf,
         satelite_base64: sat.b64, satelite_tipo: sat.tipo,
         folha: folhaEfetiva,
       });
       setPlantaUrl(r.planta_pdf);
       avisar("ok", `Planta ${folhaEfetiva} gerada.`);
-      // prévia de glebas: memorial que não casou com o contorno desenhado, gleba
-      // sem memorial no PDF. A planta saiu — o operador é que precisa conferir.
-      for (const a of r.avisos ?? []) avisar("alerta", a);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -876,6 +876,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         servico_id: servico.id,
         satelite_base64: sat.b64, satelite_tipo: sat.tipo,
         folha: folhaEfetiva,
+        // opcional: com o PDF do SIGEF já enviado, as plantas saem com a área e o
+        // perímetro certificados. Sem ele, com os do cálculo, como sempre.
+        pdf_base64: await garantirSigef() ?? undefined,
       });
       setGerado(r);
       for (const a of r.avisos ?? []) avisar("alerta", a);

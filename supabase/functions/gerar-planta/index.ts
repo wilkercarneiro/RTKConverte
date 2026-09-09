@@ -6,8 +6,7 @@
 import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import { extractText, getDocumentProxy } from "unpdf";
-import { parseSigefBlocos } from "../_shared/sigef_pdf.ts";
-import { areaTotalHa, avisosDoCasamento, casarBlocosComGlebas } from "../_shared/sigef_glebas.ts";
+import { parseSigefTexto } from "../_shared/sigef_pdf.ts";
 import { montarServico } from "../_shared/servico.ts";
 import type { ServicoInput } from "../_shared/servico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
@@ -16,11 +15,8 @@ import type { Folha, TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
 import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef, trechosPlantaDoSigef } from "../_shared/reconciliacao.ts";
 import type { VerticeReconciliado } from "../_shared/reconciliacao.ts";
 import {
-  bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, identificacaoDaGleba, montarDadosPlanta,
+  bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, montarDadosPlanta,
 } from "../_shared/planta_dados.ts";
-import type { GlebaRow } from "../_shared/planta_dados.ts";
-import type { GlebaPlanta, ParteDaPlanta } from "../_shared/planta.ts";
-import { fmtBR } from "../_shared/geo.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -37,21 +33,6 @@ function gmsPdfParaDeg(s: string): number {
   if (!m) throw new Error(`Coordenada inválida no PDF: ${s}`);
   const v = parseInt(m[2], 10) + parseInt(m[3], 10) / 60 + parseFloat(m[4].replace(",", ".")) / 3600;
   return m[1] === "-" ? -v : v;
-}
-
-/**
- * Os índices do anel cuja aresta de SAÍDA pertence ao trecho — de `inicioIdx`
- * até um antes de `fimIdx`, dando a volta. É o formato que a planta usa para
- * saber onde pintar a linha dupla de estrada (vermelha) e a de rio (azul):
- * `viasIdx`/`riosIdx` são vértices, e o trecho é um intervalo.
- */
-function idxDoTrecho(t: { inicioIdx: number; fimIdx: number }, total: number): number[] {
-  if (total <= 0) return [];
-  const out: number[] = [];
-  // trecho que dá a volta inteira (início === fim) cobre o anel todo
-  const quantos = ((t.fimIdx - t.inicioIdx) % total + total) % total || total;
-  for (let k = 0; k < quantos; k++) out.push((t.inicioIdx + k) % total);
-  return out;
 }
 
 Deno.serve(async (req) => {
@@ -77,12 +58,6 @@ Deno.serve(async (req) => {
 
     let vertices: VerticePlanta[] = [];
     let trechosPlanta: TrechoPlanta[] = [];
-    // Prévia de glebas: cada memorial do PDF é uma parte desenhada por inteiro e
-    // uma gleba do quadro analítico. Vazios = imóvel de memorial único, e a
-    // planta sai idêntica à de sempre.
-    const partes: ParteDaPlanta[] = [];
-    const glebas: GlebaPlanta[] = [];
-    const avisos: string[] = [];
     // vértices oficializados pelo SIGEF, gravados só depois que o PDF sai
     let persistirReconciliados: VerticeReconciliado[] = [];
     // TRT preenchido no sistema manda: campo do serviço, depois o TRT padrão do
@@ -97,70 +72,10 @@ Deno.serve(async (req) => {
       if (!pdf_base64) return json({ erro: "Envie o PDF do SIGEF para gerar a planta deste serviço" }, 422);
       const proxy = await getDocumentProxy(bytesDeBase64(pdf_base64));
       const { text } = await extractText(proxy, { mergePages: true });
-      // A prévia de um serviço de glebas traz UM MEMORIAL POR GLEBA no mesmo
-      // PDF. Lê-los como uma tabela só quebrava o encadeamento vante→código na
-      // virada de gleba e a geração falhava inteira. Ver parseSigefBlocos.
-      const blocos = parseSigefBlocos(text as string);
-      const sigef = blocos[0];
+      const sigef = parseSigefTexto(text as string);
       const lon0 = gmsPdfParaDeg(sigef.linhas[0].lon);
       latMedia = gmsPdfParaDeg(sigef.linhas[0].lat);
       if (!servico.fuso_utm) fuso = Math.floor((lon0 + 180) / 6) + 1;
-
-      if (blocos.length > 1) {
-        // -------- prévia de GLEBAS: cada memorial é uma parte da planta --------
-        const { data: glebaRows } = await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem");
-        const casados = casarBlocosComGlebas(blocos, (glebaRows ?? []) as GlebaRow[], servico.denominacao ?? "", fuso, proj4);
-        avisos.push(...avisosDoCasamento(casados, (glebaRows ?? []) as GlebaRow[]));
-
-        for (const c of casados) {
-          // Uma reconciliação POR GLEBA: correr os vértices do banco contra as
-          // linhas das três glebas de uma vez casaria o marco de uma gleba com o
-          // homônimo da vizinha, e a gleba sairia com a confrontação da outra.
-          const rec = reconciliarVerticesBancoComSigef(servico_id, vertRows ?? [], c.bloco.linhas, fuso, proj4);
-          const vertsGleba: VerticePlanta[] = c.bloco.linhas.map((l, i) => ({
-            codigo: l.codigo,
-            e: rec[i] ? rec[i].e : 0,
-            n: rec[i] ? rec[i].n : 0,
-            lonFmt: l.lon, latFmt: l.lat, alt: l.alt,
-            azFmt: l.azimute, distFmt: l.dist, vante: l.vante,
-          }));
-          const startsGleba = montarTrechosDoSigef(trechoRows ?? [], rec, c.bloco.linhas);
-          const trechosGleba = trechosPlantaDoSigef(startsGleba);
-
-          // Índices do anel DESTA gleba, contados a partir de onde ela começa na
-          // geometria geral — a planta desenha um vetor só de vértices.
-          const off = vertices.length;
-          vertices.push(...vertsGleba);
-          trechosPlanta.push(...trechosGleba.map((t) => ({ ...t, inicioIdx: t.inicioIdx + off, fimIdx: t.fimIdx + off })));
-          partes.push({ nome: c.nome, vertices: vertsGleba, trechos: trechosGleba });
-
-          // Área e perímetro vêm DO MEMORIAL da gleba, não de recalcular o anel:
-          // é o número que o SIGEF certificou, e é ele que tem de sair na planta.
-          const areaHaGleba = parseFloat(c.bloco.cabecalho.areaHa.replace(/\./g, "").replace(",", ".")) || 0;
-          glebas.push({
-            nome: c.nome,
-            areaFmt: c.bloco.cabecalho.areaHa,
-            tarefasFmt: fmtBR(areaHaGleba * 10000 / 4356, 2),
-            perimetroFmt: c.bloco.cabecalho.perimetroM,
-            identificacao: identificacaoDaGleba(servico, c.nome),
-            vertices: vertsGleba,
-            viasIdx: trechosGleba.flatMap((t) => (t.isEstrada ? idxDoTrecho(t, vertsGleba.length) : [])),
-            riosIdx: trechosGleba.flatMap((t) => (t.isRio ? idxDoTrecho(t, vertsGleba.length) : [])),
-          });
-        }
-
-        // ÁREA TOTAL = soma das glebas. PERÍMETRO TOTAL não existe: ele é
-        // individual por gleba, e somá-lo daria um número que não é o contorno de
-        // nada. A planta lista um perímetro por gleba (ver planta.ts), então este
-        // campo fica vazio de propósito em vez de carregar uma soma inventada.
-        areaFmt = fmtBR(areaTotalHa(blocos), 4);
-        perimetroFmt = "";
-        if (!trtSistema) trt = sigef.cabecalho.documentoRt.split(" ")[0] || trt;
-        // Vértices do PDF NÃO substituem os do banco num serviço de glebas: a
-        // lista reconciliada aqui é por gleba, e gravá-las em sequência
-        // destruiria a divisão que o operador desenhou.
-        persistirReconciliados = [];
-      } else {
 
       // Reconciliação dos vértices cadastrados no banco com o PDF do SIGEF
       const verticesReconciliados = reconciliarVerticesBancoComSigef(
@@ -197,7 +112,6 @@ Deno.serve(async (req) => {
       areaFmt = sigef.cabecalho.areaHa;
       perimetroFmt = sigef.cabecalho.perimetroM;
       if (!trtSistema) trt = sigef.cabecalho.documentoRt.split(" ")[0] || trt;
-      }
     } else {
       // -------- fluxo 'geo': dados do próprio sistema --------
       if (!vertRows?.length) return json({ erro: "Serviço sem vértices" }, 422);
@@ -242,10 +156,6 @@ Deno.serve(async (req) => {
       satelite: satelite_base64
         ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
         : null,
-      // só existem na prévia de glebas; `undefined` mantém a planta do imóvel
-      // simples byte a byte igual à de antes
-      partes: partes.length ? partes : undefined,
-      glebas: glebas.length ? glebas : undefined,
     });
 
     const pdfBytes = await gerarPlantaPdf(dados);
@@ -271,15 +181,7 @@ Deno.serve(async (req) => {
     return json({
       ok: true,
       planta_pdf: s.data?.signedUrl,
-      resumo: {
-        vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt,
-        logo: !!dados.logo, folha: folhaSaida,
-        // uma linha por gleba, para o operador conferir sem abrir o PDF
-        glebas: glebas.length ? glebas.map((g) => ({ nome: g.nome, area: g.areaFmt, perimetro: g.perimetroFmt })) : undefined,
-      },
-      // Aviso NÃO é erro: a planta saiu. Mas se um memorial não casou com a
-      // gleba desenhada, o operador precisa saber antes de mandar ao cartório.
-      avisos: avisos.length ? avisos : undefined,
+      resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!dados.logo, folha: folhaSaida },
     });
   } catch (err) {
     return json({ erro: err instanceof Error ? err.message : String(err) }, 400);
