@@ -805,3 +805,35 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .mapa-fundo-toggle button.discreto { border-color: transparent; background: transparent; text-decoration: underline; padding: 0 4px; }
 .mapa-fundo-toggle .sub { font-size: 12px; color: var(--texto-3); }
 .mapa-svg.com-satelite { background: #12201A; }
+
+/* ---- mapa interativo (MapLibre: Esri World Imagery + AWS Terrain Tiles) e sobreposição SIGEF ---- */
+.mapa-interativo { width: 100%; border-radius: 10px; overflow: hidden; background: #12201A; position: relative; }
+.mapa-interativo .maplibregl-ctrl-attrib { font-size: 11px; background: rgba(255,255,255,.85); }
+.mapa-interativo .maplibregl-popup-content { font: 12.5px var(--fonte, system-ui); padding: 8px 10px; border-radius: 8px; line-height: 1.4; }
+.mapa-interativo .maplibregl-popup-content .mono { font-family: var(--mono); font-size: 11px; }
+.mapa-btn-3d { width: 29px; height: 29px; font: 700 11px system-ui; color: #333; background: #fff; border: 0; cursor: pointer; }
+.mapa-btn-3d.ativo { background: #0E3B2B; color: #fff; }
+.mapa-vertice {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 999px; border: 2px solid #fff; background: rgba(14,59,43,.92); color: #fff;
+  font: 700 11px var(--mono); box-shadow: 0 1px 3px rgba(0,0,0,.5); cursor: default; white-space: nowrap;
+}
+.mapa-parcela-rotulo {
+  max-width: 180px; padding: 2px 8px; border-radius: 6px; background: rgba(245,158,11,.92); color: #1f1300;
+  font: 600 11px system-ui; text-shadow: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+}
+.mapa-parcela-rotulo.destaque { background: rgba(34,211,238,.92); color: #062a30; }
+.sobreposicao-painel { display: grid; gap: 8px; border: 1px solid var(--borda); border-radius: 10px; padding: 12px 14px; background: #F8FAF9; }
+.sobreposicao-painel.perigo { border-color: #FCA5A5; background: #FEF2F2; }
+.sobreposicao-painel.ok { border-color: #A7F3D0; background: #ECFDF5; }
+.sobreposicao-painel > header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 700; font-size: 13.5px; }
+.sobreposicao-painel > header .esticar { flex: 1; }
+.sobreposicao-painel .sub { font-size: 12.5px; line-height: 1.5; margin: 0; }
+.sobreposicao-lista { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.sobreposicao-lista li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; padding: 8px 10px; border-radius: 8px; background: #fff; border: 1px solid #FECACA; cursor: pointer; font-size: 13px; }
+.sobreposicao-lista li:hover, .sobreposicao-lista li.ativo { border-color: #EF4444; box-shadow: 0 0 0 2px rgba(239,68,68,.15); }
+.sobreposicao-lista li b { font-size: 13px; }
+.sobreposicao-lista li .cod { font-family: var(--mono); font-size: 11px; color: var(--texto-3); }
+.sobreposicao-lista li .area { font-family: var(--mono); font-size: 12.5px; color: #B91C1C; font-weight: 700; text-align: right; }
+.sobreposicao-lista li .pct { font-size: 11.5px; color: var(--texto-3); text-align: right; }
+.mapa-cert { display: grid; gap: 10px; }

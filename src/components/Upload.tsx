@@ -11,6 +11,9 @@ import { parseCsvSigef } from "../../supabase/functions/_shared/certificados.ts"
 import type { VerticeSigef } from "../../supabase/functions/_shared/certificados.ts";
 import { Icone, ICONE } from "./Icone";
 import { PlantaCertificada } from "./PlantaCertificada";
+import { PainelSigef } from "./PainelSigef";
+import { guardarParcelasSigef } from "../lib/sigef";
+import type { LonLat } from "../lib/sigef";
 
 export interface ResultadoParse {
   servico: Servico;
@@ -98,7 +101,18 @@ export function Upload({ definicao, onParsed, onVoltar }: {
       });
     }
     setErroCsv(erros.length ? erros.join("\n") : null);
+    // A parcela do vizinho entra na base local de parcelas certificadas: é ela
+    // que o mapa e a verificação de sobreposição da conferência consultam.
+    if (lidos.length) {
+      guardarParcelasSigef(lidos.map((g) => ({
+        codigo: codigoParcela(g), nome: nomeParcela(g), uf: uf || null, fonte: "csv",
+        geometria: { type: "Polygon", coordinates: [[...g.vertices.map((v) => [v.lon, v.lat] as LonLat), [g.vertices[0].lon, g.vertices[0].lat]]] },
+      }))).catch((e) => console.warn("parcela do CSV não foi guardada na base SIGEF:", e));
+    }
   }
+  const codigoParcela = (g: GrupoCsv) => g.parcela ?? `csv:${g.vertices[0]?.codigo.split("-")[0] ?? g.nome}`;
+  const nomeParcela = (g: GrupoCsv) => g.vertices[0]?.codigo.split("-")[0] ?? g.nome;
+  const destaquesSigef = grupos.map((g) => ({ codigo: codigoParcela(g), nome: nomeParcela(g), anel: g.vertices.map((v) => [v.lon, v.lat] as LonLat) }));
   function setSelecao(id: string, sel: Set<string>) {
     setGrupos((gs) => gs.map((g) => (g.id === id ? { ...g, selecionados: sel } : g)));
   }
@@ -228,6 +242,16 @@ export function Upload({ definicao, onParsed, onVoltar }: {
               <PlantaCertificada vertices={g.vertices} selecionados={g.selecionados} onChange={(s) => setSelecao(g.id, s)} />
             </section>
           ))}
+
+          {grupos.length > 0 && (
+            <section className="cert-grupo">
+              <header>
+                <span className="nome">Mapa das parcelas</span>
+                <span className="sub" style={{ fontSize: 13 }}>satélite Esri + relevo AWS · em azul os CSVs enviados, em amarelo as parcelas certificadas já na base</span>
+              </header>
+              <PainelSigef modo="vizinhanca" destaques={destaquesSigef} ignorar={destaquesSigef.map((d) => d.codigo)} uf={uf || null} altura={420} />
+            </section>
+          )}
 
           {grupos.length > 0 && (
             <label style={{ display: "grid", gap: 4, width: 260 }}>

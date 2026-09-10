@@ -10,10 +10,12 @@
     "test:engine": "node --test tests/engine.test.mjs",
     "make:docx-template": "node scripts/make-docx-template.mjs",
     "upload:templates": "node scripts/upload-templates.mjs",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "importar:sigef": "node scripts/importar-sigef.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.0",
+    "maplibre-gl": "^5.24.0",
     "pdf-lib": "^1.17.1",
     "proj4": "^2.15.0",
     "react": "^18.3.1",
@@ -21,11 +23,13 @@
     "unpdf": "^1.6.2"
   },
   "devDependencies": {
+    "@types/geojson": "^7946.0.16",
     "@types/proj4": "^2.5.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "jszip": "^3.10.1",
+    "shapefile": "^0.6.6",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
   }

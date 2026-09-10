@@ -27,6 +27,9 @@ import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/
 import type { ResultadoParse } from "./Upload";
 import { CORES, MapaSVG } from "./MapaSVG";
 import type { FundoSatelite } from "./MapaSVG";
+import { PainelSigef } from "./PainelSigef";
+import type { PontoMapa } from "./MapaInterativo";
+import { aneisLonLat, lonLatDoVertice } from "../lib/sigef";
 import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { Avisos, BotaoPerigo, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
@@ -250,7 +253,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // Fundo de satélite do mapa de vértices: a imagem limpa (entrada/mapa.jpg)
   // e a georreferência (mapa.json) que posiciona cada ponto sobre ela.
   const [mapaSat, setMapaSat] = useState<FundoSatelite | null>(null);
-  const [fundoMapa, setFundoMapa] = useState<"satelite" | "esquema">("satelite");
+  const [fundoMapa, setFundoMapa] = useState<"mapa" | "satelite" | "esquema">("mapa");
   async function carregarMapaSat() {
     const dl = await supabase.storage.from("gerados").download(`${inicial.servico.id}/entrada/mapa.json`);
     if (dl.error || !dl.data) { setMapaSat(null); return; }
@@ -397,6 +400,15 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const glebasOrdens = useMemo(() => ordensDasGlebas(glebas, vertices), [glebas, vertices]);
   const aneisMapa = partesOrdens ?? (glebasOrdens.length ? glebasOrdens : null);
   const aneisPrevia = aneisMapa;
+  // Mapa interativo e sobreposição SIGEF: o imóvel em lon/lat, pelos mesmos
+  // anéis que o mapa desenha (partes/glebas ou a sequência do TXT).
+  const fusoSigef = servico.fuso_utm ?? inicial.preview.fuso ?? 24;
+  const aneisSigef = useMemo(() => aneisLonLat(vertices, fusoSigef, aneisMapa), [vertices, fusoSigef, aneisMapa]);
+  const pontosSigef = useMemo<PontoMapa[]>(() => vertices.flatMap((v) => {
+    const ll = lonLatDoVertice(v, fusoSigef);
+    return ll ? [{ lonlat: ll, rotulo: String(v.num_txt ?? v.rotulo_txt ?? v.codigo ?? v.ordem), titulo: `${v.codigo ?? ""} ${v.tipo}
+${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
+  }), [vertices, fusoSigef]);
   const verticesFora = useMemo(() => (glebasOrdens.length ? verticesForaDasGlebas(glebasOrdens, vertices) : []), [glebasOrdens, vertices]);
   const glebasCobrem = glebasOrdens.length > 0 && glebasCobremTodos(glebasOrdens, vertices);
   // nome(s) da(s) gleba(s) de cada vértice, para a tabela de vértices
@@ -1576,6 +1588,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               </div>{/* coluna-esq */}
               <div className="mapa">
                 <div className="mapa-fundo-toggle" role="group" aria-label="Fundo do mapa">
+                  <button type="button" className={fundoMapa === "mapa" ? "ativo" : ""} onClick={() => setFundoMapa("mapa")}
+                    title="Mapa interativo (Esri World Imagery + AWS Terrain Tiles) com as parcelas certificadas e a sobreposição">Mapa</button>
                   <button type="button" className={fundoMapa === "satelite" ? "ativo" : ""} onClick={() => setFundoMapa("satelite")}
                     disabled={!mapaSat} title={!mapaSat ? (buscandoSat ? "buscando a imagem de satélite…" : "imagem de satélite ainda não disponível") : undefined}>
                     Satélite
@@ -1587,8 +1601,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                       title="Busca de novo a imagem de fundo pelas coordenadas atuais">atualizar</button>
                   )}
                 </div>
-                <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={aneisMapa ?? undefined}
-                  fundo={fundoMapa === "satelite" ? mapaSat : null} />
+                {fundoMapa === "mapa" ? (
+                  <PainelSigef modo="sobreposicao" aneis={aneisSigef} pontos={pontosSigef} uf={servico.uf} altura={440} />
+                ) : (
+                  <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={aneisMapa ?? undefined}
+                    fundo={fundoMapa === "satelite" ? mapaSat : null} />
+                )}
                 {partesOrdens ? (
                   <p className="sub" style={{ margin: 0 }}>
                     <b>Imóvel em {partesOrdens.length} partes</b> — cada bloco de numeração do TXT é um anel próprio
