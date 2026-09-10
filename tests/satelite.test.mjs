@@ -43,3 +43,60 @@ test("URL do Mapbox: estilo, overlay por anel, auto, @2x, token e tamanho da URL
   assert.equal(dois.split("path-4+").length - 1, 2);
   assert.throws(() => urlImagemSatelite([[[-39, -11], [-39, -11.1]]], { token: "t" }), /3 vértices/);
 });
+
+import { garantirImagemSatelite } from "../supabase/functions/_shared/satelite.ts";
+
+/** Storage de mentira: um mapa caminho → bytes. */
+function storageFalso(inicial = {}) {
+  const arquivos = new Map(Object.entries(inicial));
+  return {
+    arquivos,
+    from: () => ({
+      download: async (p) => arquivos.has(p) ? { data: new Blob([arquivos.get(p)]), error: null } : { data: null, error: new Error("404") },
+      upload: async (p, bytes) => { arquivos.set(p, bytes); return { error: null }; },
+      remove: async (ps) => { for (const p of ps) arquivos.delete(p); },
+    }),
+  };
+}
+const anel = [[-39.0, -11.0], [-39.01, -11.0], [-39.01, -11.01]];
+
+test("garantir: a imagem guardada em entrada/ vale, sem chamar o Mapbox", async () => {
+  const st = storageFalso({ "sid/entrada/satelite.jpg": new Uint8Array([1, 2, 3]) });
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("não devia buscar"); };
+  try {
+    const r = await garantirImagemSatelite(st, "sid", "satelite", [anel], "tok", "Planta");
+    assert.equal(r.aviso, null);
+    assert.equal(r.imagem.tipo, "jpg");
+    assert.deepEqual([...r.imagem.bytes], [1, 2, 3]);
+  } finally { globalThis.fetch = fetchOriginal; }
+});
+
+test("garantir: sem imagem guardada busca no Mapbox e guarda para a próxima", async () => {
+  const st = storageFalso();
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    assert.ok(String(url).includes("access_token=tok"));
+    return new Response(new Uint8Array([9, 9]), { status: 200, headers: { "content-type": "image/jpeg" } });
+  };
+  try {
+    const r = await garantirImagemSatelite(st, "sid", "satelite-gleba-2", [anel], "tok", "GLEBA 2");
+    assert.equal(r.aviso, null);
+    assert.equal(r.imagem.tipo, "jpg");
+    assert.ok(st.arquivos.has("sid/entrada/satelite-gleba-2.jpg"));
+  } finally { globalThis.fetch = fetchOriginal; }
+});
+
+test("garantir: sem token ou com falha do Mapbox devolve aviso, nunca lança", async () => {
+  const st = storageFalso();
+  const semToken = await garantirImagemSatelite(st, "sid", "satelite", [anel], undefined, "Planta");
+  assert.equal(semToken.imagem, null);
+  assert.match(semToken.aviso, /MAPBOX_TOKEN/);
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = async () => new Response("Unauthorized", { status: 401 });
+  try {
+    const r = await garantirImagemSatelite(st, "sid", "satelite", [anel], "tok", "Planta");
+    assert.equal(r.imagem, null);
+    assert.match(r.aviso, /401/);
+  } finally { globalThis.fetch = fetchOriginal; }
+});

@@ -131,3 +131,96 @@ export function urlImagemSatelite(aneis: LonLat[][], o: OpcoesImagem): string {
   return `https://api.mapbox.com/styles/v1/${estilo}/static/${overlay}/auto/${largura}x${altura}@2x` +
     `?padding=${margem}&access_token=${encodeURIComponent(o.token)}`;
 }
+
+// ---------------------------------------------------------------------------
+// Garantia da imagem na geração
+//
+// A planta não depende mais de upload: quem gera (gerar-planta,
+// gerar-documentos) chama `garantirImagemSatelite` com o anel do imóvel ou da
+// gleba. Se a imagem já está em `entrada/`, é ela; senão o Mapbox é chamado e
+// o resultado fica guardado para as gerações seguintes (e para a prévia da
+// tela). Falha vira aviso, nunca planta perdida: o quadro sai vazio e o
+// operador é avisado.
+
+export interface ImagemSatelite { bytes: Uint8Array; tipo: "png" | "jpg" }
+
+/** O mínimo do Storage que estas funções usam — evita casar com os genéricos do supabase-js. */
+export interface StorageMinimo {
+  from: (bucket: string) => {
+    download: (path: string) => Promise<{ data: Blob | null; error: unknown }>;
+    upload: (path: string, bytes: Uint8Array, opts: { upsert: boolean; contentType: string }) => Promise<{ error: { message: string } | null }>;
+    remove: (paths: string[]) => Promise<unknown>;
+  };
+}
+
+/** [lon, lat] a partir das coordenadas planas do desenho (E/N no fuso do serviço). */
+export function anelLonLatDeEN(
+  pontos: { e: number | string | null; n: number | string | null }[],
+  fuso: number,
+  proj4: (from: string, to: string, c: [number, number]) => [number, number],
+): LonLat[] {
+  const utm = `+proj=utm +zone=${fuso} +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs`;
+  const geo = "+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +no_defs";
+  const out: LonLat[] = [];
+  for (const p of pontos) {
+    if (p.e == null || p.n == null) continue;
+    const e = Number(p.e), n = Number(p.n);
+    if (!Number.isFinite(e) || !Number.isFinite(n) || (e === 0 && n === 0)) continue;
+    out.push(proj4(utm, geo, [e, n]));
+  }
+  return out;
+}
+
+/** A imagem guardada em `entrada/{nome}.png|jpg`, ou null. */
+export async function baixarImagemGuardada(storage: StorageMinimo, servicoId: string, nome: string): Promise<ImagemSatelite | null> {
+  for (const tipo of ["png", "jpg"] as const) {
+    const dl = await storage.from("gerados").download(`${servicoId}/entrada/${nome}.${tipo}`);
+    if (dl.error || !dl.data) continue;
+    return { bytes: new Uint8Array(await dl.data.arrayBuffer()), tipo };
+  }
+  return null;
+}
+
+/** Pede a imagem ao Mapbox. Lança em qualquer falha (status, rede). */
+export async function buscarImagemMapbox(aneis: LonLat[][], token: string, opcoes?: Omit<OpcoesImagem, "token">): Promise<ImagemSatelite> {
+  const resp = await fetch(urlImagemSatelite(aneis, { token, ...(opcoes ?? {}) }));
+  if (!resp.ok) {
+    const corpo = await resp.text().catch(() => "");
+    throw new Error(`Mapbox respondeu ${resp.status}: ${corpo.slice(0, 200)}`);
+  }
+  const ct = resp.headers.get("content-type") ?? "";
+  return { bytes: new Uint8Array(await resp.arrayBuffer()), tipo: /jpe?g/i.test(ct) ? "jpg" : "png" };
+}
+
+/** Guarda em `entrada/{nome}.{tipo}` e apaga a outra extensão, para sobrar uma só. */
+export async function guardarImagem(storage: StorageMinimo, servicoId: string, nome: string, img: ImagemSatelite): Promise<void> {
+  const pasta = `${servicoId}/entrada`;
+  const up = await storage.from("gerados").upload(`${pasta}/${nome}.${img.tipo}`, img.bytes,
+    { upsert: true, contentType: img.tipo === "png" ? "image/png" : "image/jpeg" });
+  if (up.error) throw new Error(`não ficou guardada no Storage: ${up.error.message}`);
+  await storage.from("gerados").remove([`${pasta}/${nome}.${img.tipo === "png" ? "jpg" : "png"}`]);
+}
+
+/**
+ * A imagem para a planta: a guardada, ou a buscada agora (e guardada). `aviso`
+ * explica por que veio null — e é o que a geração devolve ao operador.
+ */
+export async function garantirImagemSatelite(
+  storage: StorageMinimo,
+  servicoId: string,
+  nome: string,
+  aneis: LonLat[][],
+  token: string | undefined,
+  rotulo: string,
+): Promise<{ imagem: ImagemSatelite | null; aviso: string | null }> {
+  const guardada = await baixarImagemGuardada(storage, servicoId, nome);
+  if (guardada) return { imagem: guardada, aviso: null };
+  if (!token) return { imagem: null, aviso: `${rotulo}: MAPBOX_TOKEN não configurado no servidor — a planta saiu sem imagem de satélite.` };
+  try {
+    const img = await buscarImagemMapbox(aneis, token);
+    try { await guardarImagem(storage, servicoId, nome, img); } catch { /* a planta desta geração sai mesmo assim */ }
+    return { imagem: img, aviso: null };
+  } catch (e) {
+    return { imagem: null, aviso: `${rotulo}: a imagem de satélite não pôde ser buscada (${e instanceof Error ? e.message : String(e)}) — o quadro PLANTA DE SITUAÇÃO saiu vazio.` };
+  }
+}

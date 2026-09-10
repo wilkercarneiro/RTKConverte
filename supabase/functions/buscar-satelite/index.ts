@@ -16,7 +16,7 @@ import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import { GEO_DEF, gmsToDeg, parseGmsPlanilha, utmDef } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
-import { urlImagemSatelite } from "../_shared/satelite.ts";
+import { buscarImagemMapbox, guardarImagem } from "../_shared/satelite.ts";
 import type { LonLat } from "../_shared/satelite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
@@ -118,21 +118,9 @@ Deno.serve(async (req) => {
     const avisos: string[] = [];
     for (const a of alvos) {
       try {
-        const url = urlImagemSatelite(a.aneis, { token });
-        const resp = await fetch(url);
-        if (!resp.ok) {
-          const corpo = await resp.text().catch(() => "");
-          throw new Error(`Mapbox respondeu ${resp.status}: ${corpo.slice(0, 200)}`);
-        }
-        const ct = resp.headers.get("content-type") ?? "";
-        const tipo: "png" | "jpg" = /jpe?g/i.test(ct) ? "jpg" : "png";
-        const bytes = new Uint8Array(await resp.arrayBuffer());
-        const up = await supa.storage.from("gerados")
-          .upload(`${pasta}/${a.nome}.${tipo}`, bytes, { upsert: true, contentType: tipo === "png" ? "image/png" : "image/jpeg" });
-        if (up.error) throw new Error(`não ficou guardada no Storage: ${up.error.message}`);
-        // só uma imagem por alvo: a de outra extensão, se existir, sai
-        await supa.storage.from("gerados").remove([`${pasta}/${a.nome}.${tipo === "png" ? "jpg" : "png"}`]);
-        gerados.push({ alvo: a.alvo, nome: `${a.nome}.${tipo}`, tipo });
+        const img = await buscarImagemMapbox(a.aneis, token);
+        await guardarImagem(supa.storage, servico_id, a.nome, img);
+        gerados.push({ alvo: a.alvo, nome: `${a.nome}.${img.tipo}`, tipo: img.tipo });
       } catch (e) {
         const rotulo = a.alvo === "imovel" ? "imóvel" : `gleba ${a.alvo}`;
         avisos.push(`Imagem de satélite do ${rotulo}: ${e instanceof Error ? e.message : String(e)}`);

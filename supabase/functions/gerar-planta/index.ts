@@ -17,6 +17,8 @@ import type { VerticeReconciliado } from "../_shared/reconciliacao.ts";
 import {
   bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, montarDadosPlanta,
 } from "../_shared/planta_dados.ts";
+import { anelLonLatDeEN, garantirImagemSatelite } from "../_shared/satelite.ts";
+import type { LonLat } from "../_shared/satelite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -40,7 +42,7 @@ Deno.serve(async (req) => {
   try {
     // `folha` (A1/A3) é escolha do operador na tela; ausente = regra histórica
     // (posse → A3, matrícula → A1)
-    const { servico_id, pdf_base64, satelite_base64, satelite_tipo, folha } = await req.json();
+    const { servico_id, pdf_base64, folha } = await req.json();
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -66,6 +68,8 @@ Deno.serve(async (req) => {
     let areaFmt = "", perimetroFmt = "", trt = trtSistema;
     let fuso = servico.fuso_utm ?? 24;
     let latMedia = -12;
+    // anel em [lon, lat] para a imagem de satélite (buscada pelo servidor)
+    let anelSat: LonLat[] = [];
 
     if (servico.tipo === "pecas" || pdf_base64) {
       // -------- fluxo via PDF do SIGEF (valores SGL) --------
@@ -91,6 +95,7 @@ Deno.serve(async (req) => {
       const lon0 = gmsPdfParaDeg(sigef.linhas[0].lon);
       latMedia = gmsPdfParaDeg(sigef.linhas[0].lat);
       if (!servico.fuso_utm) fuso = Math.floor((lon0 + 180) / 6) + 1;
+      anelSat = sigef.linhas.map((l) => [gmsPdfParaDeg(l.lon), gmsPdfParaDeg(l.lat)] as LonLat);
 
       // Reconciliação dos vértices cadastrados no banco com o PDF do SIGEF
       const verticesReconciliados = reconciliarVerticesBancoComSigef(
@@ -168,11 +173,17 @@ Deno.serve(async (req) => {
       vertices = g.vertices;
       trechosPlanta = g.trechos;
       areaFmt = g.areaFmt;
+      anelSat = anelLonLatDeEN(g.vertices, fuso, proj4);
       perimetroFmt = g.perimetroFmt;
     }
 
     const posse = servico.tipo_imovel === "posse";
     const folhaSaida: Folha = folha === "A1" || folha === "A3" ? folha : (posse ? "A3" : "A1");
+    // A imagem de satélite é do servidor: a guardada em entrada/, ou a que o
+    // Mapbox devolve agora pelo anel do imóvel. Sem ela a planta sai, avisada.
+    const avisos: string[] = [];
+    const sat = await garantirImagemSatelite(supa.storage, servico_id, "satelite", [anelSat], Deno.env.get("MAPBOX_TOKEN"), "Planta");
+    if (sat.aviso) avisos.push(sat.aviso);
     const dados = montarDadosPlanta({
       servico, rt, cred,
       desenhista: cfgDes?.value ?? "",
@@ -181,9 +192,7 @@ Deno.serve(async (req) => {
       folha: folhaSaida,
       dataStr: dataHojeBR(),
       logo: await carregarLogoPlanta(supa),
-      satelite: satelite_base64
-        ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
-        : null,
+      satelite: sat.imagem,
     });
 
     const pdfBytes = await gerarPlantaPdf(dados);
@@ -209,6 +218,7 @@ Deno.serve(async (req) => {
     return json({
       ok: true,
       planta_pdf: s.data?.signedUrl,
+      avisos,
       resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!dados.logo, folha: folhaSaida },
     });
   } catch (err) {

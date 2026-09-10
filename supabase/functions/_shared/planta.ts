@@ -1638,7 +1638,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
         width: img.width * sc, height: img.height * sc,
       });
     } else {
-      texto(c, "(envie a imagem de satélite ao gerar a planta)", sbX + SB_W / 2, yCursor - h / 2, 20, { cor: CINZA, center: true });
+      texto(c, "(imagem de satélite indisponível — veja o aviso da geração)", sbX + SB_W / 2, yCursor - h / 2, 20, { cor: CINZA, center: true });
     }
     yCursor -= h;
   }
@@ -1828,7 +1828,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
           width: img.width * sc, height: img.height * sc,
         });
       } else {
-        texto(c, i === 0 ? "(envie a logo em Configurações)" : "(envie a imagem de satélite ao gerar a planta)",
+        texto(c, i === 0 ? "(envie a logo em Configurações)" : "(imagem de satélite indisponível — veja o aviso da geração)",
           cx + meia / 2, faixaY + FAIXA_H / 2, 20, { cor: CINZA, center: true });
       }
     }

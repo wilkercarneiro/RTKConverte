@@ -71,7 +71,6 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   const [modoNumeracao, setModoNumeracao] = useState(false);
   const [pecas, setPecas] = useState<PecasGeradas | null>(null);
   const [plantaUrl, setPlantaUrl] = useState<string | null>(null);
-  const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
   // Folha da planta (A1/A3): escolha do operador antes de gerar; sem escolha vale
   // a regra histórica (posse → A3, matrícula → A1). Não é gravada no serviço.
   const [folhaPlanta, setFolhaPlanta] = useState<"A1" | "A3" | null>(null);
@@ -241,30 +240,20 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     }
   }
 
-  async function carregarSatelite(file: File) {
-    const ehPng = /png$/i.test(file.type) || /\.png$/i.test(file.name);
-    if (!ehPng && !/jpe?g$/i.test(file.type) && !/\.jpe?g$/i.test(file.name)) {
-      setErro("Envie a imagem de satélite em PNG ou JPG");
-      return;
-    }
-    setErro(null);
-    setSatelite({ b64: bufParaBase64(await file.arrayBuffer()), tipo: ehPng ? "png" : "jpg", nome: file.name });
-  }
-
   async function gerarPlanta() {
     if (!servico) return;
     if (!pdfB64) { setErro("Envie o PDF do SIGEF para gerar a planta"); return; }
-    if (!satelite) { setErro("Envie a imagem de satélite para gerar a planta"); return; }
     setOcupado(`Gerando a Planta ${folhaEfetiva}…`);
     setErro(null);
     try {
       await salvar();
-      const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", {
+      // a imagem de satélite é do servidor: buscada pelas coordenadas do PDF
+      const r = await chamarFuncao<{ planta_pdf: string; avisos?: string[] }>("gerar-planta", {
         servico_id: servico.id, pdf_base64: pdfB64,
-        satelite_base64: satelite.b64, satelite_tipo: satelite.tipo,
         folha: folhaEfetiva,
       });
       setPlantaUrl(r.planta_pdf);
+      for (const a of r.avisos ?? []) avisar("alerta", a);
       avisar("ok", `Planta ${folhaEfetiva} gerada.`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
@@ -379,7 +368,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         ? {
           tom: "neutro",
           titulo: `Gere a Planta ${folhaEfetiva}`,
-          detalhe: satelite ? `imagem ${satelite.nome} carregada` : "requer a imagem de satélite",
+          detalhe: "a imagem de satélite é buscada pelas coordenadas do PDF",
           rotuloBotao: "Ir para a planta",
           onClick: () => irParaCampo("pc-planta"),
         }
@@ -662,21 +651,13 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
               )}
             </section>
 
-            {/* A planta depende da imagem de satélite: separada das peças para não
-                parecer que o botão ao lado faz a mesma coisa. */}
+            {/* A planta é separada das peças para não parecer que o botão ao
+                lado faz a mesma coisa. A imagem de satélite do quadro Planta de
+                Situação é buscada pelo servidor pelas coordenadas do PDF. */}
             <section className="bloco" id="pc-planta">
               <header><h3>Planta {folhaEfetiva} {servico.tipo_imovel === "posse" ? "(posse)" : "(matrícula)"}</h3>
-                <span className="desc">desenhada a partir do PDF certificado do SIGEF · a imagem de satélite entra no quadro Planta de Situação</span></header>
+                <span className="desc">desenhada a partir do PDF certificado do SIGEF · a imagem de satélite do quadro Planta de Situação é buscada automaticamente pelas coordenadas</span></header>
               <div className="acoes-linha">
-                <label className="dropzone linha" style={{ flex: "1 1 260px" }}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
-                  {satelite
-                    ? <b>{satelite.nome}</b>
-                    : <><b>Imagem de satélite (PNG/JPG)</b><span>obrigatória para a planta</span></>}
-                  <input type="file" accept="image/png,image/jpeg" hidden
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
-                </label>
                 <label>Folha
                   <select value={folhaEfetiva} onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
                     <option value="A1">A1 — modelo com quadro analítico</option>
@@ -684,8 +665,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                   </select>
                   <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
                 </label>
-                <button className="principal" disabled={!!ocupado || !satelite} onClick={gerarPlanta}
-                  title={!satelite ? "Envie a imagem de satélite primeiro" : undefined}>
+                <button className="principal" disabled={!!ocupado} onClick={gerarPlanta}>
                   Gerar Planta {folhaEfetiva} (PDF)
                 </button>
                 {plantaUrl && (

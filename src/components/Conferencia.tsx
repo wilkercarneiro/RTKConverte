@@ -123,7 +123,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const folhaEfetiva: "A1" | "A3" = folhaPlanta ?? (servico.tipo_imovel === "posse" ? "A3" : "A1");
   const [sigefB64, setSigefB64] = useState<string | null>(null);
   const [sigefNome, setSigefNome] = useState<string | null>(null);
-  const [satelite, setSatelite] = useState<{ b64: string; tipo: "png" | "jpg"; nome: string } | null>(null);
   const [ufSugerida, setUfSugerida] = useState(false);
   // Modo de numeração dos confrontantes: só revela os checkboxes. O que fica
   // gravado é a marca por confrontante (`numerado`), não o modo — ligar e
@@ -261,14 +260,14 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
           return n;
         });
         // a cópia da sessão era a imagem antiga: a próxima geração baixa a nova
-        if (r.gerados.some((g) => g.alvo === "imovel")) { setSatelite(null); setVersaoSat((v) => v + 1); }
+        if (r.gerados.some((g) => g.alvo === "imovel")) setVersaoSat((v) => v + 1);
         avisar("ok", pedido.faltantes
           ? "Imagem de satélite buscada automaticamente pelas coordenadas."
           : "Imagem de satélite atualizada pelas coordenadas.");
       }
-      for (const a of r.avisos) avisar("alerta", `${a} — você ainda pode enviar a imagem manualmente.`);
+      for (const a of r.avisos) avisar("alerta", a);
     } catch (e) {
-      avisar("alerta", `Não foi possível buscar a imagem de satélite pelas coordenadas: ${e instanceof Error ? e.message : String(e)}. Você ainda pode enviar a imagem manualmente.`);
+      avisar("alerta", `Não foi possível buscar a imagem de satélite pelas coordenadas: ${e instanceof Error ? e.message : String(e)}.`);
     } finally {
       setBuscandoSat(false);
     }
@@ -309,7 +308,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // "temos o PDF" inclui o que ficou guardado: reabrir o serviço não pode
   // esconder a planta e as peças só porque o arquivo não está na memória
   const temSigef = !!sigefB64 || !!salvo.sigef;
-  const temSatelite = !!satelite || !!salvo.satelite;
 
   const credenciado = credenciados.find((c) => c.id === servico.credenciado_id) ?? null;
   const rtSel = rts.find((r) => r.id === servico.rt_id) ?? null;
@@ -679,17 +677,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     return bufParaBase64(await dl.data.arrayBuffer());
   }
 
-  /** Base64 da imagem de satélite: a da sessão, ou a guardada na geração anterior. */
-  async function garantirSatelite(): Promise<{ b64: string; tipo: "png" | "jpg" } | null> {
-    if (satelite) return satelite;
-    if (!salvo.satelite) return null;
-    const b64 = await baixarEntrada(salvo.satelite.nome);
-    if (!b64) return null;
-    const s = { b64, tipo: salvo.satelite.tipo, nome: salvo.satelite.nome };
-    setSatelite(s);
-    return s;
-  }
-
   /** Base64 do PDF do SIGEF, com a mesma regra. */
   async function garantirSigef(): Promise<string | null> {
     if (sigefB64) return sigefB64;
@@ -780,7 +767,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         if (sv) setServico(sv as Servico);
         const g = await chamarFuncao<Gerado>("gerar-documentos", {
           servico_id: servico.id,
-          satelite_base64: satelite?.b64, satelite_tipo: satelite?.tipo,
           folha: folhaEfetiva,
           // opcional: se o PDF do SIGEF já foi enviado, as plantas exibem a área
           // e o perímetro certificados no lugar dos calculados. O desenho não muda.
@@ -803,52 +789,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     }
   }
 
-  async function carregarSatelite(file: File) {
-    const ehPng = /png$/i.test(file.type) || /\.png$/i.test(file.name);
-    if (!ehPng && !/jpe?g$/i.test(file.type) && !/\.jpe?g$/i.test(file.name)) {
-      setErro("Envie a imagem de satélite em PNG ou JPG");
-      return;
-    }
-    setErro(null);
-    const tipo = ehPng ? "png" : "jpg";
-    setSatelite({ b64: bufParaBase64(await file.arrayBuffer()), tipo, nome: file.name });
-    // guardada com nome fixo: trocar a imagem substitui a anterior em vez de
-    // deixar duas na pasta sem dizer qual vale
-    await guardarEntrada(`satelite.${tipo}`, file, ehPng ? "image/png" : "image/jpeg");
-    // só uma imagem do imóvel: a de outra extensão (a automática costuma ser
-    // JPG) sai, senão a listagem da próxima abertura pega a antiga
-    await supabase.storage.from("gerados").remove([`${PASTA_ENTRADA}/satelite.${ehPng ? "jpg" : "png"}`]);
-    setSalvo((s) => ({ ...s, satelite: { nome: `satelite.${tipo}`, tipo } }));
-    setVersaoSat((v) => v + 1);
-  }
-
-  /**
-   * Imagem de satélite PRÓPRIA da gleba `k` (1-based, a posição dela na lista —
-   * a mesma que nomeia a pasta `glebas/{k}-{nome}` da geração). Não passa pelo
-   * corpo da chamada: fica no Storage e o servidor a busca ao desenhar a A3 da
-   * gleba. Sem ela, a A3 sai com a imagem do imóvel, avisado.
-   */
-  async function carregarSateliteGleba(k: number, file: File) {
-    const ehPng = /png$/i.test(file.type) || /\.png$/i.test(file.name);
-    if (!ehPng && !/jpe?g$/i.test(file.type) && !/\.jpe?g$/i.test(file.name)) {
-      setErro("Envie a imagem de satélite da gleba em PNG ou JPG");
-      return;
-    }
-    setErro(null);
-    const tipo = ehPng ? "png" : "jpg";
-    // Aqui o Storage não é conveniência: a imagem da gleba NÃO viaja no corpo da
-    // geração, o servidor a lê de `entrada/`. Upload que falha = A3 com a imagem
-    // do imóvel, e o operador precisa saber disso agora, não ao abrir o PDF.
-    if (!await guardarEntrada(`satelite-gleba-${k}.${tipo}`, file, ehPng ? "image/png" : "image/jpeg")) {
-      setErro(`A imagem da gleba ${k} não foi guardada no servidor — sem ela a planta A3 sai com a imagem do imóvel inteiro.`);
-      return;
-    }
-    // só uma imagem por gleba: a de outra extensão, se existir, sai
-    await supabase.storage.from("gerados").remove([`${PASTA_ENTRADA}/satelite-gleba-${k}.${ehPng ? "jpg" : "png"}`]);
-    setSalvo((s) => ({ ...s, satelitesGlebas: { ...(s.satelitesGlebas ?? {}), [k]: { nome: `satelite-gleba-${k}.${tipo}`, tipo } } }));
-    avisar("ok", `Imagem da gleba ${k} guardada — entra na planta A3 dela na próxima geração.`);
-  }
-
   // ------- etapa 3A: planta (A1 matrícula / A3 posse) -------
   async function gerarPlanta() {
     setGerandoPlanta(true);
@@ -856,15 +796,14 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     try {
       const pdf = await garantirSigef();
       if (!pdf) { setGerandoPlanta(false); setErro("Envie o PDF do SIGEF na etapa anterior"); return; }
-      const sat = await garantirSatelite();
-      if (!sat) { setGerandoPlanta(false); setErro("Envie a imagem de satélite para gerar a planta"); return; }
       await salvar();
-      const r = await chamarFuncao<{ planta_pdf: string }>("gerar-planta", {
+      // a imagem de satélite é do servidor: a guardada, ou buscada pelas coordenadas
+      const r = await chamarFuncao<{ planta_pdf: string; avisos?: string[] }>("gerar-planta", {
         servico_id: servico.id, pdf_base64: pdf,
-        satelite_base64: sat.b64, satelite_tipo: sat.tipo,
         folha: folhaEfetiva,
       });
       setPlantaUrl(r.planta_pdf);
+      for (const a of r.avisos ?? []) avisar("alerta", a);
       avisar("ok", `Planta ${folhaEfetiva} gerada.`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
@@ -925,19 +864,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     setOcupado(true);
     setErro(null);
     try {
-      // a planta sai junto do memorial e da planilha, e o quadro PLANTA DE
-      // SITUAÇÃO é da imagem de satélite — a da sessão ou a guardada antes
-      const sat = await garantirSatelite();
-      if (!sat) {
-        setOcupado(false);
-        setErro("Envie a imagem de satélite: ela entra no quadro PLANTA DE SITUAÇÃO da planta.");
-        irParaCampo("bloco-satelite", true);
-        return;
-      }
+      // a planta sai junto do memorial e da planilha; o quadro PLANTA DE
+      // SITUAÇÃO é do servidor, que usa a imagem guardada ou busca pelas coordenadas
       await salvar();
       const r = await chamarFuncao<Gerado>("gerar-documentos", {
         servico_id: servico.id,
-        satelite_base64: sat.b64, satelite_tipo: sat.tipo,
         folha: folhaEfetiva,
         // opcional: com o PDF do SIGEF já enviado, as plantas saem com a área e o
         // perímetro certificados. Sem ele, com os do cálculo, como sempre.
@@ -1027,17 +958,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         onClick: () => irParaCampo("bloco-glebas"),
       };
     }
-    // a imagem de satélite agora é pedida ANTES da geração: a planta sai junto
-    // do memorial e da planilha, e o quadro PLANTA DE SITUAÇÃO vem dela
-    if (!temSatelite && !docsProntos) {
-      return {
-        tom: "neutro",
-        titulo: buscandoSat ? "Buscando a imagem de satélite pelas coordenadas…" : "Falta a imagem de satélite da área",
-        detalhe: "entra no quadro PLANTA DE SITUAÇÃO — busque pelas coordenadas ou envie a sua; a mesma imagem serve à planta desta etapa e à planta do SIGEF",
-        rotuloBotao: buscandoSat ? "Aguarde" : "Ver imagem",
-        onClick: () => irParaCampo("bloco-satelite"),
-      };
-    }
     if (!docsProntos) {
       return {
         tom: "neutro",
@@ -1064,15 +984,6 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         onClick: () => irParaCampo("bloco-sigef"),
       };
     }
-    if (!temSatelite) {
-      return {
-        tom: "neutro",
-        titulo: buscandoSat ? "Buscando a imagem de satélite pelas coordenadas…" : "Falta a imagem de satélite da área",
-        detalhe: "obrigatória para o quadro PLANTA DE SITUAÇÃO da planta do SIGEF — busque pelas coordenadas ou envie a sua",
-        rotuloBotao: buscandoSat ? "Aguarde" : "Ver imagem",
-        onClick: () => irParaCampo("bloco-satelite"),
-      };
-    }
     if (!plantaUrl) {
       return {
         tom: "neutro",
@@ -1090,7 +1001,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       };
     }
     return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, as duas plantas e as peças gerados — tudo disponível no histórico abaixo" };
-  }, [pendencias, docsProntos, temSigef, temSatelite, buscandoSat, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia, temGlebas, glebasOrdens.length, verticesFora]);
+  }, [pendencias, docsProntos, temSigef, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia, temGlebas, glebasOrdens.length, verticesFora]);
 
   // selos das seções recolhidas: dizem o que há dentro sem precisar abrir.
   // Na conferência, matrícula e CNS saem daqui: quem manda neles é a escolha
@@ -1835,52 +1746,36 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               <section className="bloco cartao" id="bloco-satelite">
                 <header>
                   <h3>Imagem de satélite</h3>
-                  <span className="desc">buscada automaticamente pelas coordenadas · entra no quadro Planta de Situação · a mesma imagem serve às duas plantas</span>
+                  <span className="desc">buscada automaticamente pelas coordenadas do levantamento · entra no quadro Planta de Situação das plantas · se ainda não existir, a geração busca sozinha</span>
                 </header>
                 {previaSat && (
                   <img src={previaSat} alt="Prévia da imagem de satélite do imóvel"
                     style={{ display: "block", maxWidth: "100%", maxHeight: 220, borderRadius: 6, marginBottom: 8 }} />
                 )}
-                <div className="acoes-linha" style={{ alignItems: "stretch" }}>
+                <div className="acoes-linha">
                   <button type="button" disabled={buscandoSat} onClick={() => buscarSatelite({ imovel: true })}
                     title="Pede ao Mapbox a imagem enquadrada no polígono do imóvel e substitui a atual">
                     {buscandoSat ? "Buscando imagem…" : salvo.satelite ? "Buscar de novo pelas coordenadas" : "Buscar pelas coordenadas"}
                   </button>
-                  <label className="dropzone compacta" style={{ flex: "1 1 240px" }}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
-                    {satelite
-                      ? <><b>{satelite.nome}</b><span>clique para trocar a imagem</span></>
-                      : salvo.satelite
-                        ? <><b>Imagem pronta</b><span>clique só se quiser trocar por uma sua (PNG/JPG)</span></>
-                        : buscandoSat
-                          ? <><b>Buscando pelas coordenadas…</b><span>ou envie uma imagem sua (PNG/JPG)</span></>
-                          : <><b>Enviar imagem (PNG/JPG)</b><span>ou use o botão ao lado para buscar pelas coordenadas</span></>}
-                    <input type="file" accept="image/png,image/jpeg" hidden
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
-                  </label>
+                  <span className="sub">
+                    {salvo.satelite ? "imagem pronta — busque de novo se o levantamento mudou" : buscandoSat ? "buscando…" : "ainda sem imagem — a geração busca sozinha"}
+                  </span>
                 </div>
                 {/* ---- Uma imagem POR GLEBA: cada planta A3 tem a sua Planta de Situação ---- */}
                 {temGlebas && glebas.filter((g) => g.anel.length >= 3).length > 0 && (
                   <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-                    <span className="sub">Imagem de cada gleba — buscada pelas coordenadas dela, entra na planta A3 da gleba. Sem a própria, a A3 usa a imagem do imóvel.</span>
+                    <span className="sub">Imagem de cada gleba — buscada pelas coordenadas dela, entra na planta A3 da gleba.</span>
                     {glebas.filter((g) => g.anel.length >= 3).map((g, i) => {
                       const k = i + 1;
                       const sg = salvo.satelitesGlebas?.[k];
                       return (
-                        <div key={g.id ?? k} className="acoes-linha" style={{ alignItems: "stretch" }}>
+                        <div key={g.id ?? k} className="acoes-linha">
+                          <b>{(g.nome ?? "").trim() || `GLEBA ${k}`}</b>
+                          <span className="sub">{sg ? "imagem pronta" : "ainda sem imagem — a geração busca sozinha"}</span>
                           <button type="button" disabled={buscandoSat} onClick={() => buscarSatelite({ glebas: [k] })}
                             title="Pede ao Mapbox a imagem enquadrada no polígono desta gleba">
                             {sg ? "Buscar de novo" : "Buscar pelas coordenadas"}
                           </button>
-                          <label className="dropzone compacta" style={{ padding: "8px 12px", flex: "1 1 240px" }}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSateliteGleba(k, f); }}>
-                            <b>{(g.nome ?? "").trim() || `GLEBA ${k}`}</b>
-                            <span>{sg ? `imagem pronta (${sg.nome}) — clique para trocar por uma sua` : "enviar imagem (PNG/JPG) desta gleba"}</span>
-                            <input type="file" accept="image/png,image/jpeg" hidden
-                              onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSateliteGleba(k, f); e.target.value = ""; }} />
-                          </label>
                         </div>
                       );
                     })}
@@ -2089,21 +1984,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                     </select>
                     <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
                   </label>
-                  <label className="dropzone linha" style={{ flex: "1 1 280px" }}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
-                    {satelite
-                      ? <b>{satelite.nome}</b>
-                      : salvo.satelite
-                        ? <><b>Imagem de satélite pronta</b><span>buscada pelas coordenadas — clique só se quiser trocar</span></>
-                        : buscandoSat
-                          ? <><b>Buscando imagem pelas coordenadas…</b><span>ou envie uma sua (PNG/JPG)</span></>
-                          : <><b>Enviar imagem de satélite (PNG/JPG)</b><span>obrigatória — entra no quadro Planta de Situação</span></>}
-                    <input type="file" accept="image/png,image/jpeg" hidden
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
-                  </label>
-                  <button className="principal" disabled={gerandoPlanta || !temSatelite} onClick={gerarPlanta}
-                    title={!temSatelite ? "Envie a imagem de satélite primeiro" : undefined}>
+                  <span className="sub" style={{ flex: "1 1 280px" }}>
+                    {salvo.satelite
+                      ? "imagem de satélite pronta — buscada pelas coordenadas"
+                      : buscandoSat ? "buscando a imagem de satélite pelas coordenadas…" : "a imagem de satélite é buscada pelas coordenadas ao gerar"}
+                  </span>
+                  <button className="principal" disabled={gerandoPlanta} onClick={gerarPlanta}>
                     {gerandoPlanta ? "Gerando planta…" : `Gerar Planta ${folhaEfetiva} do SIGEF (PDF)`}
                   </button>
                   {plantaUrl && (
@@ -2262,7 +2148,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             <button disabled={ocupado} className="principal" onClick={gerar}
               title={pendencias.length
                 ? `Pendências: ${pendencias.map((p) => p.msg).join("; ")}`
-                : temSatelite ? "Gerar Memorial DOCX + Planilha ODS + Planta PDF" : "Envie a imagem de satélite para gerar a planta junto"}>
+                : "Gerar Memorial DOCX + Planilha ODS + Planta PDF"}>
               {ocupado ? "Gerando…" : "Gerar documentos"}
             </button>
           </span>

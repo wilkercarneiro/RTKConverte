@@ -29,6 +29,8 @@ import {
 } from "../_shared/planta_dados.ts";
 import type { GlebaRow } from "../_shared/planta_dados.ts";
 import { parseSigefBlocos } from "../_shared/sigef_pdf.ts";
+import { anelLonLatDeEN, garantirImagemSatelite } from "../_shared/satelite.ts";
+import type { ImagemSatelite } from "../_shared/satelite.ts";
 import { numerosDoSigefPorAnel, numerosTotaisDoSigef } from "../_shared/sigef_glebas.ts";
 import type { NumerosSigef } from "../_shared/sigef_glebas.ts";
 
@@ -89,27 +91,6 @@ function partesDasGlebas(
   return partes;
 }
 
-/**
- * Imagem de satélite PRÓPRIA da gleba `k` (1-based, a posição dela na lista),
- * guardada pela tela em `gerados/{servico}/entrada/satelite-gleba-{k}.{png|jpg}`.
- * Null quando não há: quem chama decide o que usar no lugar.
- */
-async function baixarSateliteGleba(
-  // Só o Storage é usado aqui. `ReturnType<typeof createClient>` traz os
-  // genéricos do schema e não casa com o cliente já construído lá embaixo
-  // (TS2345); a função não precisa saber de tabela nenhuma.
-  supa: { storage: { from: (bucket: string) => { download: (path: string) => Promise<{ data: Blob | null; error: unknown }> } } },
-  servicoId: string,
-  k: number,
-): Promise<{ bytes: Uint8Array; tipo: "png" | "jpg" } | null> {
-  for (const tipo of ["png", "jpg"] as const) {
-    const dl = await supa.storage.from("gerados").download(`${servicoId}/entrada/satelite-gleba-${k}.${tipo}`);
-    if (dl.error || !dl.data) continue;
-    return { bytes: new Uint8Array(await dl.data.arrayBuffer()), tipo };
-  }
-  return null;
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -120,7 +101,10 @@ Deno.serve(async (req) => {
     // `pdf_base64`: a prévia do SIGEF, OPCIONAL. Ela não desenha nada — só
     // fornece a área e o perímetro certificados para as plantas exibirem no
     // lugar dos calculados. Sem ela, tudo sai como sempre saiu.
-    const { servico_id, satelite_base64, satelite_tipo, folha: folhaPedida, pdf_base64 } = await req.json();
+    const { servico_id, folha: folhaPedida, pdf_base64 } = await req.json();
+    // A imagem de satélite não vem mais da tela: o servidor usa a guardada em
+    // entrada/ ou busca no Mapbox pelo anel do imóvel (e de cada gleba).
+    const tokenMapbox = Deno.env.get("MAPBOX_TOKEN");
     if (!servico_id) return json({ erro: "servico_id ausente" }, 400);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -491,6 +475,8 @@ Deno.serve(async (req) => {
     // desenhada com a geometria que acabou de gerar o memorial e a planilha.
     // Uma falha aqui não derruba o DOCX/ODS: vira aviso e os dois seguem.
     let plantaBuf: Uint8Array | null = null;
+    // a imagem do imóvel também serve de reserva para a A3 de gleba sem a sua
+    let satImovelImg: ImagemSatelite | null = null;
 
     // A conferência circula impressa em mesa, não em prancheta: sai em A3 por
     // padrão, ou na folha que o operador escolheu na tela. Serviço completo usa a
@@ -559,6 +545,15 @@ Deno.serve(async (req) => {
 
     try {
       const geometriaGeral = dp ? dp.geometria : geometriaDoCalculo(calc);
+      // com glebas, o imóvel é o conjunto delas (partes separadas por estrada
+      // saem cada uma com o seu contorno); sem glebas, o anel dos vértices
+      const fusoSat = servico.fuso_utm ?? 24;
+      const aneisImovel = glebaRows.filter((g) => (g.anel?.length ?? 0) >= 3).length
+        ? glebaRows.filter((g) => (g.anel?.length ?? 0) >= 3).map((g) => anelLonLatDeEN(g.anel!.map(([e, n]) => ({ e, n })), fusoSat, proj4))
+        : [anelLonLatDeEN(geometriaGeral.vertices, fusoSat, proj4)];
+      const satImovel = await garantirImagemSatelite(supa.storage, servico_id, "satelite", aneisImovel, tokenMapbox, "Planta do imóvel");
+      if (satImovel.aviso) avisosGeracao.push(satImovel.aviso);
+      satImovelImg = satImovel.imagem;
       const dadosPlanta = montarDadosPlanta({
         servico, rt, cred,
         desenhista: cfgDes?.value ?? "",
@@ -575,9 +570,7 @@ Deno.serve(async (req) => {
         trt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
         dataStr: dataHojeBR(),
         logo,
-        satelite: satelite_base64
-          ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" }
-          : null,
+        satelite: satImovel.imagem,
         folha, glebas: glebasPlanta, conferencia,
         partes: dp?.partes,
         // Só a prévia pode esconder campo: num serviço que vai ao SIGEF a
@@ -592,9 +585,6 @@ Deno.serve(async (req) => {
           }
           : undefined,
       });
-      if (!dadosPlanta.satelite) {
-        avisosGeracao.push("Planta gerada sem imagem de satélite — o quadro PLANTA DE SITUAÇÃO ficou vazio. Envie a imagem e gere os documentos de novo.");
-      }
       plantaBuf = await gerarPlantaPdf(dadosPlanta);
     } catch (e) {
       avisosGeracao.push(`Memorial e planilha gerados, mas a planta falhou: ${e instanceof Error ? e.message : String(e)}`);
@@ -667,23 +657,27 @@ Deno.serve(async (req) => {
         const saida = { nome: u.nome, planta_pdf: null as string | null, areaHa: u.calc.areaHa };
         // planta A3 da unidade: o modelo da gleba é a folha A3, com o anel dela e os confrontantes dela
         try {
-          // Cada gleba tem a SUA imagem de satélite (pedido do usuário): a tela
-          // guarda `entrada/satelite-gleba-{k}.{png|jpg}` pela posição da gleba.
-          // Sem a própria, entra a do imóvel, avisado — a planta da gleba não
-          // pode sair com o quadro vazio só porque a imagem dela ainda não veio.
-          const satGleba = await baixarSateliteGleba(supa, servico_id, posSatPorNome.get(u.nome) ?? k + 1);
-          if (!satGleba && satelite_base64) avisosGeracao.push(`${u.nome}: sem imagem de satélite própria — a planta A3 usou a imagem do imóvel.`);
+          // Cada gleba tem a SUA imagem de satélite: `entrada/satelite-gleba-{k}`
+          // pela posição da gleba — a guardada, ou a buscada agora pelo anel
+          // dela. Se nem assim vier, entra a do imóvel, avisado: a planta da
+          // gleba não sai com o quadro vazio.
+          const geomU = comNumerosSigef(geometriaDoCalculo(u.calc), numsPorUnidade[k]);
+          const satG = await garantirImagemSatelite(supa.storage, servico_id, `satelite-gleba-${posSatPorNome.get(u.nome) ?? k + 1}`,
+            [anelLonLatDeEN(geomU.vertices, servico.fuso_utm ?? 24, proj4)], tokenMapbox, u.nome);
+          if (satG.aviso) avisosGeracao.push(satG.aviso);
+          const satGleba = satG.imagem;
+          if (!satGleba && satImovelImg) avisosGeracao.push(`${u.nome}: sem imagem de satélite própria — a planta A3 usou a imagem do imóvel.`);
           const dadosPlantaU = montarDadosPlanta({
             servico: servicoU, rt, cred,
             desenhista: cfgDes?.value ?? "",
             // a A3 da gleba mostra a área e o perímetro DO MEMORIAL dela; a
             // forma continua sendo a que o sistema calculou
-            geometria: comNumerosSigef(geometriaDoCalculo(u.calc), numsPorUnidade[k]),
+            geometria: geomU,
             fuso: servico.fuso_utm,
             trt: (servico.trt ?? "").trim() || (rt?.trt ?? ""),
             dataStr: dataHojeBR(),
             logo,
-            satelite: satGleba ?? (satelite_base64 ? { bytes: bytesDeBase64(satelite_base64), tipo: satelite_tipo === "png" ? "png" : "jpg" } : null),
+            satelite: satGleba ?? satImovelImg,
             folha: "A3", conferencia,
             exibir: conferencia
               ? { matricula: servico.conf_exibir_matricula !== false, denominacao: servico.conf_exibir_denominacao !== false, trt: servico.conf_exibir_trt !== false }
