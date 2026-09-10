@@ -262,12 +262,21 @@ Deno.serve(async (req) => {
     // Vértice inserido à mão fica de fora da marca: o código dele foi digitado
     // pelo operador, não tirado do contador, e apagá-lo na promoção obrigaria a
     // redigitar o que já estava certo.
+    //
+    // A linha do banco é `v.conf.ordem`. `v.ordem` é a posição no anel calculado
+    // e, num serviço em PARTES, cada gleba conta do zero: gravar por ela punha o
+    // código da gleba 2 na linha da gleba 1 (a maior parte sobrescrevia todas
+    // as ordens baixas) e deixava sem código toda linha acima do tamanho da
+    // maior parte. O banco ficava com outros códigos que não os da planilha
+    // certificada, e as peças, que casam o memorial pelo código dos M, saíam
+    // com os confrontantes trocados — e cada regeração realocava tudo de novo.
     const manuais = new Set(vertRows.filter((v) => v.inserido_manual).map((v) => v.ordem));
     if (precisaAlocar) {
       for (const v of ringTodos) {
+        const ordemBanco = v.conf.ordem;
         await supa.from("vertices")
-          .update({ codigo: v.codigo, codigo_provisorio: conferencia && !manuais.has(v.ordem) })
-          .eq("servico_id", servico_id).eq("ordem", v.ordem);
+          .update({ codigo: v.codigo, codigo_provisorio: conferencia && !manuais.has(ordemBanco) })
+          .eq("servico_id", servico_id).eq("ordem", ordemBanco);
       }
     } else if (!conferencia) {
       await supa.from("vertices").update({ codigo_provisorio: false }).eq("servico_id", servico_id);

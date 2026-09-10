@@ -84,6 +84,12 @@ export interface VerticeMontado extends VerticeCalc {
   tipo: "M" | "P" | "V";
   metodo: string;
   codigo: string;
+  /**
+   * O vértice como veio do banco. `ordem` (herdada de VerticeCalc) é a POSIÇÃO
+   * dentro do anel calculado — num serviço em partes, cada parte conta do zero.
+   * Quem precisa da linha da tabela `vertices` usa `conf.ordem`, nunca `ordem`.
+   */
+  conf: VerticeServico;
   trecho: TrechoServico;         // trecho a que o vértice pertence
   iniciaTrecho: TrechoServico | null;
 }
