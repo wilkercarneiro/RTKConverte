@@ -234,8 +234,60 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         else if (f.name === "sigef.pdf") achados.sigef = f.name;
       }
       setSalvo(achados);
+      // O que falta, o servidor busca sozinho pelas coordenadas (Mapbox): a
+      // imagem do imóvel e a de cada gleba. Serviço sem vértices não tem o que
+      // enquadrar — e é o caso do serviço só-PDF, que nem passa por aqui.
+      if (inicial.vertices.length >= 3 && (!achados.satelite || inicial.servico.tem_glebas)) {
+        buscarSatelite({ faltantes: true });
+      }
     });
   }, [inicial.servico.id]);
+
+  // Busca a imagem de satélite pelas coordenadas e guarda em `entrada/`, no
+  // mesmo nome que o upload usa — a geração não distingue as duas origens.
+  const [buscandoSat, setBuscandoSat] = useState(false);
+  async function buscarSatelite(pedido: { imovel?: boolean; glebas?: number[]; faltantes?: boolean }) {
+    setBuscandoSat(true);
+    try {
+      const r = await chamarFuncao<{ gerados: { alvo: "imovel" | number; nome: string; tipo: "png" | "jpg" }[]; avisos: string[] }>(
+        "buscar-satelite", { servico_id: inicial.servico.id, ...pedido });
+      if (r.gerados.length) {
+        setSalvo((s) => {
+          const n = { ...s, satelitesGlebas: { ...(s.satelitesGlebas ?? {}) } };
+          for (const g of r.gerados) {
+            if (g.alvo === "imovel") n.satelite = { nome: g.nome, tipo: g.tipo };
+            else n.satelitesGlebas[g.alvo] = { nome: g.nome, tipo: g.tipo };
+          }
+          return n;
+        });
+        // a cópia da sessão era a imagem antiga: a próxima geração baixa a nova
+        if (r.gerados.some((g) => g.alvo === "imovel")) { setSatelite(null); setVersaoSat((v) => v + 1); }
+        avisar("ok", pedido.faltantes
+          ? "Imagem de satélite buscada automaticamente pelas coordenadas."
+          : "Imagem de satélite atualizada pelas coordenadas.");
+      }
+      for (const a of r.avisos) avisar("alerta", `${a} — você ainda pode enviar a imagem manualmente.`);
+    } catch (e) {
+      avisar("alerta", `Não foi possível buscar a imagem de satélite pelas coordenadas: ${e instanceof Error ? e.message : String(e)}. Você ainda pode enviar a imagem manualmente.`);
+    } finally {
+      setBuscandoSat(false);
+    }
+  }
+
+  // Prévia da imagem guardada (URL assinada, curta): o operador vê o
+  // enquadramento antes de gerar, e troca se não gostar.
+  const [previaSat, setPreviaSat] = useState<string | null>(null);
+  // o nome é fixo (satelite.png); trocar a imagem não muda o nome, então um
+  // contador força a prévia a recarregar
+  const [versaoSat, setVersaoSat] = useState(0);
+  useEffect(() => {
+    const nome = salvo.satelite?.nome;
+    if (!nome) { setPreviaSat(null); return; }
+    let vivo = true;
+    supabase.storage.from("gerados").createSignedUrl(`${inicial.servico.id}/entrada/${nome}`, 600)
+      .then(({ data }) => { if (vivo) setPreviaSat(data?.signedUrl ? `${data.signedUrl}&v=${versaoSat}` : null); });
+    return () => { vivo = false; };
+  }, [salvo.satelite?.nome, inicial.servico.id, versaoSat]);
 
   // Glebas só são consultadas quando o serviço as tem: um serviço completo
   // comum não faz esta ida ao banco nem carrega estado que não vai usar.
@@ -763,7 +815,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     // guardada com nome fixo: trocar a imagem substitui a anterior em vez de
     // deixar duas na pasta sem dizer qual vale
     await guardarEntrada(`satelite.${tipo}`, file, ehPng ? "image/png" : "image/jpeg");
+    // só uma imagem do imóvel: a de outra extensão (a automática costuma ser
+    // JPG) sai, senão a listagem da próxima abertura pega a antiga
+    await supabase.storage.from("gerados").remove([`${PASTA_ENTRADA}/satelite.${ehPng ? "jpg" : "png"}`]);
     setSalvo((s) => ({ ...s, satelite: { nome: `satelite.${tipo}`, tipo } }));
+    setVersaoSat((v) => v + 1);
   }
 
   /**
@@ -976,9 +1032,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     if (!temSatelite && !docsProntos) {
       return {
         tom: "neutro",
-        titulo: "Envie a imagem de satélite da área",
-        detalhe: "entra no quadro PLANTA DE SITUAÇÃO — a mesma imagem serve à planta desta etapa e à planta do SIGEF",
-        rotuloBotao: "Enviar imagem",
+        titulo: buscandoSat ? "Buscando a imagem de satélite pelas coordenadas…" : "Falta a imagem de satélite da área",
+        detalhe: "entra no quadro PLANTA DE SITUAÇÃO — busque pelas coordenadas ou envie a sua; a mesma imagem serve à planta desta etapa e à planta do SIGEF",
+        rotuloBotao: buscandoSat ? "Aguarde" : "Ver imagem",
         onClick: () => irParaCampo("bloco-satelite"),
       };
     }
@@ -1011,9 +1067,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
     if (!temSatelite) {
       return {
         tom: "neutro",
-        titulo: "Envie a imagem de satélite da área",
-        detalhe: "obrigatória para o quadro PLANTA DE SITUAÇÃO da planta do SIGEF",
-        rotuloBotao: "Enviar imagem",
+        titulo: buscandoSat ? "Buscando a imagem de satélite pelas coordenadas…" : "Falta a imagem de satélite da área",
+        detalhe: "obrigatória para o quadro PLANTA DE SITUAÇÃO da planta do SIGEF — busque pelas coordenadas ou envie a sua",
+        rotuloBotao: buscandoSat ? "Aguarde" : "Ver imagem",
         onClick: () => irParaCampo("bloco-satelite"),
       };
     }
@@ -1034,7 +1090,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       };
     }
     return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, as duas plantas e as peças gerados — tudo disponível no histórico abaixo" };
-  }, [pendencias, docsProntos, temSigef, temSatelite, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia, temGlebas, glebasOrdens.length, verticesFora]);
+  }, [pendencias, docsProntos, temSigef, temSatelite, buscandoSat, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia, temGlebas, glebasOrdens.length, verticesFora]);
 
   // selos das seções recolhidas: dizem o que há dentro sem precisar abrir.
   // Na conferência, matrícula e CNS saem daqui: quem manda neles é a escolha
@@ -1779,35 +1835,53 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
               <section className="bloco cartao" id="bloco-satelite">
                 <header>
                   <h3>Imagem de satélite</h3>
-                  <span className="desc">entra no quadro Planta de Situação · a mesma imagem serve às duas plantas</span>
+                  <span className="desc">buscada automaticamente pelas coordenadas · entra no quadro Planta de Situação · a mesma imagem serve às duas plantas</span>
                 </header>
-                <label className="dropzone compacta"
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
-                  {satelite
-                    ? <><b>{satelite.nome}</b><span>clique para trocar a imagem</span></>
-                    : salvo.satelite
-                      ? <><b>Imagem guardada da geração anterior</b><span>não precisa reenviar — clique só se quiser trocar</span></>
-                      : <><b>Enviar imagem (PNG/JPG)</b><span>necessária para gerar a planta junto do memorial e da planilha</span></>}
-                  <input type="file" accept="image/png,image/jpeg" hidden
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
-                </label>
+                {previaSat && (
+                  <img src={previaSat} alt="Prévia da imagem de satélite do imóvel"
+                    style={{ display: "block", maxWidth: "100%", maxHeight: 220, borderRadius: 6, marginBottom: 8 }} />
+                )}
+                <div className="acoes-linha" style={{ alignItems: "stretch" }}>
+                  <button type="button" disabled={buscandoSat} onClick={() => buscarSatelite({ imovel: true })}
+                    title="Pede ao Mapbox a imagem enquadrada no polígono do imóvel e substitui a atual">
+                    {buscandoSat ? "Buscando imagem…" : salvo.satelite ? "Buscar de novo pelas coordenadas" : "Buscar pelas coordenadas"}
+                  </button>
+                  <label className="dropzone compacta" style={{ flex: "1 1 240px" }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSatelite(f); }}>
+                    {satelite
+                      ? <><b>{satelite.nome}</b><span>clique para trocar a imagem</span></>
+                      : salvo.satelite
+                        ? <><b>Imagem pronta</b><span>clique só se quiser trocar por uma sua (PNG/JPG)</span></>
+                        : buscandoSat
+                          ? <><b>Buscando pelas coordenadas…</b><span>ou envie uma imagem sua (PNG/JPG)</span></>
+                          : <><b>Enviar imagem (PNG/JPG)</b><span>ou use o botão ao lado para buscar pelas coordenadas</span></>}
+                    <input type="file" accept="image/png,image/jpeg" hidden
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
+                  </label>
+                </div>
                 {/* ---- Uma imagem POR GLEBA: cada planta A3 tem a sua Planta de Situação ---- */}
                 {temGlebas && glebas.filter((g) => g.anel.length >= 3).length > 0 && (
                   <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-                    <span className="sub">Imagem de cada gleba — entra na planta A3 dela. Sem a própria, a A3 usa a imagem do imóvel.</span>
+                    <span className="sub">Imagem de cada gleba — buscada pelas coordenadas dela, entra na planta A3 da gleba. Sem a própria, a A3 usa a imagem do imóvel.</span>
                     {glebas.filter((g) => g.anel.length >= 3).map((g, i) => {
                       const k = i + 1;
                       const sg = salvo.satelitesGlebas?.[k];
                       return (
-                        <label key={g.id ?? k} className="dropzone compacta" style={{ padding: "8px 12px" }}
-                          onDragOver={(e) => e.preventDefault()}
-                          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSateliteGleba(k, f); }}>
-                          <b>{(g.nome ?? "").trim() || `GLEBA ${k}`}</b>
-                          <span>{sg ? `imagem guardada (${sg.nome}) — clique para trocar` : "enviar imagem (PNG/JPG) desta gleba"}</span>
-                          <input type="file" accept="image/png,image/jpeg" hidden
-                            onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSateliteGleba(k, f); e.target.value = ""; }} />
-                        </label>
+                        <div key={g.id ?? k} className="acoes-linha" style={{ alignItems: "stretch" }}>
+                          <button type="button" disabled={buscandoSat} onClick={() => buscarSatelite({ glebas: [k] })}
+                            title="Pede ao Mapbox a imagem enquadrada no polígono desta gleba">
+                            {sg ? "Buscar de novo" : "Buscar pelas coordenadas"}
+                          </button>
+                          <label className="dropzone compacta" style={{ padding: "8px 12px", flex: "1 1 240px" }}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSateliteGleba(k, f); }}>
+                            <b>{(g.nome ?? "").trim() || `GLEBA ${k}`}</b>
+                            <span>{sg ? `imagem pronta (${sg.nome}) — clique para trocar por uma sua` : "enviar imagem (PNG/JPG) desta gleba"}</span>
+                            <input type="file" accept="image/png,image/jpeg" hidden
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSateliteGleba(k, f); e.target.value = ""; }} />
+                          </label>
+                        </div>
                       );
                     })}
                   </div>
@@ -2021,8 +2095,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
                     {satelite
                       ? <b>{satelite.nome}</b>
                       : salvo.satelite
-                        ? <><b>Imagem guardada da geração anterior</b><span>clique só se quiser trocar</span></>
-                        : <><b>Enviar imagem de satélite (PNG/JPG)</b><span>obrigatória — entra no quadro Planta de Situação</span></>}
+                        ? <><b>Imagem de satélite pronta</b><span>buscada pelas coordenadas — clique só se quiser trocar</span></>
+                        : buscandoSat
+                          ? <><b>Buscando imagem pelas coordenadas…</b><span>ou envie uma sua (PNG/JPG)</span></>
+                          : <><b>Enviar imagem de satélite (PNG/JPG)</b><span>obrigatória — entra no quadro Planta de Situação</span></>}
                     <input type="file" accept="image/png,image/jpeg" hidden
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSatelite(f); e.target.value = ""; }} />
                   </label>
