@@ -16,7 +16,7 @@ import { ehCodigoDeConferencia } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { buildDocumentXml, buildDocxSkeleton, extrairTimbre } from "../_shared/docx.ts";
 import type { TimbreModelo } from "../_shared/docx.ts";
-import { gerarMemorialDescritivoXml, gerarPecasPosseXml, gerarPecasXml } from "../_shared/pecas.ts";
+import { gerarMemorialDescritivoXml } from "../_shared/pecas.ts";
 import { montarDadosPecasDoCalculo } from "../_shared/pecas_dados.ts";
 import type { ServicoCalculado } from "../_shared/servico.ts";
 import type { DadosMemorial } from "../_shared/memorial.ts";
@@ -279,7 +279,8 @@ Deno.serve(async (req) => {
     // Em PARTES as "glebas" são as próprias partes (dadosDasPartes); fora disso,
     // sub-polígonos desenhados dentro do perímetro.
     // UNIDADES: cada parte, ou cada gleba, calculada como o anel que é. Delas
-    // saem a aba da planilha, o memorial, o tabular e a planta A3 de cada uma.
+    // saem a aba da planilha e a planta A3 de cada uma (memorial e tabular por
+    // gleba são de gerar-pecas).
     const avisosGlebas: string[] = [];
     const unidades: { nome: string; calc: ServicoCalculado }[] = calcPartes ? calcPartes.partes : [];
     if (!calcPartes && servico.tem_glebas) {
@@ -630,24 +631,15 @@ Deno.serve(async (req) => {
       }
     }
     // ------------------------- por gleba / por parte -------------------------
-    // Memorial descritivo e tabular (modelos das peças 1 e 2) e planta A3 de CADA
-    // unidade — a planta A1 acima é a geral, com todas. Os modelos são baixados
-    // uma vez; gerarPecasXml lê o conjunto inteiro, então o conjunto inteiro desce.
-    const saidasUnidades: { nome: string; memorial_docx: string | null; tabular_docx: string | null; planta_pdf: string | null; areaHa: number }[] = [];
+    // Planta A3 de CADA unidade — a planta A1 acima é a geral, com todas.
+    //
+    // O memorial descritivo e o tabular de cada gleba NÃO saem daqui: eles são
+    // o jogo por gleba de gerar-pecas (peças 1 e 2, lidas do PDF do SIGEF, com
+    // os códigos certificados). Emiti-los também aqui, do cálculo, dobrava a
+    // pasta de cada gleba no histórico com dois memoriais de origens diferentes
+    // — e o do cartório é o certificado.
+    const saidasUnidades: { nome: string; planta_pdf: string | null; areaHa: number }[] = [];
     if (unidades.length) {
-      const pastaPecas = posse ? "pecas-posse" : "pecas";
-      const TPLS: [string, string][] = posse
-        ? [["1", "1-memorial-descritivo"], ["2", "2-memorial-tabular"], ["3", "3-cartas-anuencia"], ["7", "4-declaracao-faixa-dominio"]]
-        : [["1", "1-memorial-descritivo"], ["2", "2-memorial-tabular"], ["3", "3-cartas-anuencia"], ["4", "4-declaracao-tecnico"], ["5", "5-declaracao-proprietario"], ["6", "6-requerimento"], ["7", "7-declaracao-faixa-dominio"]];
-      const tplBytes: Record<string, Uint8Array> = {};
-      const tplXml: Record<string, string> = {};
-      let modelosOk = true;
-      for (const [num, arquivo] of TPLS) {
-        const dl = await supa.storage.from("templates").download(`${pastaPecas}/${arquivo}.docx`);
-        if (dl.error || !dl.data) { modelosOk = false; avisosGeracao.push(`Modelo ${pastaPecas}/${arquivo}.docx não está no Storage: memorial e tabular por gleba não saíram.`); break; }
-        tplBytes[num] = new Uint8Array(await dl.data.arrayBuffer());
-        tplXml[num] = await (await JSZip.loadAsync(tplBytes[num])).file("word/document.xml")!.async("string");
-      }
       const slug = (s: string) => s.replace(/[\\/:*?"<>|]/g, "-").trim();
       // A tela numera a imagem de cada gleba pela posição na lista de glebas com
       // anel fechado (`entrada/satelite-gleba-{k}`), e é dessa MESMA lista que
@@ -663,39 +655,7 @@ Deno.serve(async (req) => {
       for (const [k, u] of unidades.entries()) {
         const pastaU = `${servico_id}/v${versao}/glebas/${k + 1}-${slug(u.nome)}`;
         const servicoU = { ...servico, denominacao: `${servico.denominacao} - ${u.nome}` };
-        const saida = { nome: u.nome, memorial_docx: null as string | null, tabular_docx: null as string | null, planta_pdf: null as string | null, areaHa: u.calc.areaHa };
-        if (modelosOk) {
-          try {
-            // O memorial e o tabular DESTA gleba levam o mesmo par de números
-            // que a A3 dela: uma pasta de gleba em que a planta diz 550,5523 ha
-            // e o memorial ao lado diz outro valor é papel que o cartório
-            // devolve. Continua valendo a regra: do SIGEF vêm só os NÚMEROS —
-            // o texto do memorial segue descrevendo o anel calculado.
-            const nU = numsPorUnidade[k];
-            const dadosU = {
-              ...montarDadosPecasDoCalculo({ servico: servicoU, rt, cred, calc: u.calc, dataStr: dataHojeBR() }),
-              ...(nU ? { areaHa: nU.areaFmt, perimetro: nU.perimetroFmt } : {}),
-            };
-            const xmlsU = posse ? gerarPecasPosseXml(tplXml, dadosU) : gerarPecasXml(tplXml, dadosU);
-            for (const [num, arquivo, rotulo] of [["1", "memorial", "Memorial Descritivo"], ["2", "tabular", "Memorial Tabular"]] as const) {
-              const xml = xmlsU[num];
-              if (!xml) continue;
-              const zip = await JSZip.loadAsync(tplBytes[num]);
-              zip.file("word/document.xml", xml);
-              const buf = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
-              const path = `${pastaU}/${arquivo}.docx`;
-              const up = await supa.storage.from("gerados").upload(path, buf, {
-                upsert: true, contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-              });
-              if (up.error) throw up.error;
-              docs.push({ servico_id, versao, tipo: `gleba_${arquivo}`, titulo: `${rotulo} · ${u.nome}${selo}`, path });
-              const sg = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `${rotulo} - ${nomeBaseDe(servico)} - ${u.nome}.docx` });
-              if (arquivo === "memorial") saida.memorial_docx = sg.data?.signedUrl ?? null; else saida.tabular_docx = sg.data?.signedUrl ?? null;
-            }
-          } catch (e) {
-            avisosGeracao.push(`${u.nome}: memorial/tabular falharam: ${e instanceof Error ? e.message : String(e)}`);
-          }
-        }
+        const saida = { nome: u.nome, planta_pdf: null as string | null, areaHa: u.calc.areaHa };
         // planta A3 da unidade: o modelo da gleba é a folha A3, com o anel dela e os confrontantes dela
         try {
           // Cada gleba tem a SUA imagem de satélite (pedido do usuário): a tela
@@ -753,7 +713,7 @@ Deno.serve(async (req) => {
       : null;
     return json({
       ok: true,
-      // memorial, tabular e planta A3 de cada gleba/parte (vazio sem glebas)
+      // planta A3 de cada gleba/parte (vazio sem glebas)
       glebas: saidasUnidades,
       avisos: avisosGeracao,
       memorial_docx: s1.data?.signedUrl,
