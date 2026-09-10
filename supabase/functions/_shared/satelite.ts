@@ -224,3 +224,69 @@ export async function garantirImagemSatelite(
     return { imagem: null, aviso: `${rotulo}: a imagem de satélite não pôde ser buscada (${e instanceof Error ? e.message : String(e)}) — o quadro PLANTA DE SITUAÇÃO saiu vazio.` };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Mapa da TELA (conferência de vértices e confrontantes)
+//
+// Para desenhar os pontos por cima da imagem é preciso saber onde cada
+// coordenada cai nela. O enquadramento `auto` do Mapbox não diz; por isso o
+// mapa da tela é pedido com centro e zoom EXPLÍCITOS (Web Mercator, tiles de
+// 512 px), sem overlay — os pontos e as divisas são do SVG. A imagem fica em
+// `entrada/mapa.jpg` e a georreferência em `entrada/mapa.json`.
+
+export interface GeorefMapa {
+  /** centro da imagem */
+  lon: number;
+  lat: number;
+  /** zoom Web Mercator (fracionário) */
+  zoom: number;
+  /** tamanho LÓGICO em pixels (a imagem @2x tem o dobro) */
+  largura: number;
+  altura: number;
+}
+
+/** Pixel Web Mercator global (origem no canto NW do mundo) para o zoom dado, tiles de 512 px. */
+export function mercatorPx(lon: number, lat: number, zoom: number): [number, number] {
+  const mundo = 512 * Math.pow(2, zoom);
+  const x = ((lon + 180) / 360) * mundo;
+  const fi = (lat * Math.PI) / 180;
+  const y = ((1 - Math.log(Math.tan(fi) + 1 / Math.cos(fi)) / Math.PI) / 2) * mundo;
+  return [x, y];
+}
+
+/**
+ * Centro e zoom que enquadram todos os anéis numa imagem largura×altura com
+ * `margem` px de folga. O zoom sai fracionário, como o Mapbox aceita.
+ */
+export function enquadrar(aneis: LonLat[][], largura: number, altura: number, margem: number): GeorefMapa {
+  const pts = aneis.flat();
+  if (pts.length === 0) throw new Error("Nada para enquadrar");
+  // extremos no zoom 0 e escala necessária
+  const px0 = pts.map(([lon, lat]) => mercatorPx(lon, lat, 0));
+  const minX = Math.min(...px0.map((p) => p[0])), maxX = Math.max(...px0.map((p) => p[0]));
+  const minY = Math.min(...px0.map((p) => p[1])), maxY = Math.max(...px0.map((p) => p[1]));
+  const dx = Math.max(maxX - minX, 1e-9), dy = Math.max(maxY - minY, 1e-9);
+  const escala = Math.min((largura - 2 * margem) / dx, (altura - 2 * margem) / dy);
+  let zoom = Math.log2(escala);
+  zoom = Math.max(0, Math.min(20, Math.round(zoom * 1000) / 1000));
+  // centro: desfaz o Mercator no ponto médio
+  const mundo = 512;
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  const lon = (cx / mundo) * 360 - 180;
+  const n = Math.PI - (2 * Math.PI * cy) / mundo;
+  const lat = (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+  return { lon, lat, zoom, largura, altura };
+}
+
+/** Posição (px) de uma coordenada DENTRO da imagem descrita por `g`, em pixels lógicos. */
+export function pontoNoMapa(lon: number, lat: number, g: GeorefMapa): [number, number] {
+  const [x, y] = mercatorPx(lon, lat, g.zoom);
+  const [cx, cy] = mercatorPx(g.lon, g.lat, g.zoom);
+  return [x - cx + g.largura / 2, y - cy + g.altura / 2];
+}
+
+/** URL da imagem LIMPA (sem overlay) no enquadramento dado. */
+export function urlMapaSatelite(g: GeorefMapa, token: string, estilo = ESTILO_PADRAO): string {
+  return `https://api.mapbox.com/styles/v1/${estilo}/static/${g.lon.toFixed(6)},${g.lat.toFixed(6)},${g.zoom},0/` +
+    `${g.largura}x${g.altura}@2x?access_token=${encodeURIComponent(token)}`;
+}

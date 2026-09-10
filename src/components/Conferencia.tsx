@@ -26,6 +26,8 @@ import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux"
 import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
 import type { ResultadoParse } from "./Upload";
 import { CORES, MapaSVG } from "./MapaSVG";
+import type { FundoSatelite } from "./MapaSVG";
+import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { Avisos, BotaoPerigo, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 
@@ -172,7 +174,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // glebas do serviço (só carregadas e salvas quando o serviço as tem)
   const [glebas, setGlebas] = useState<Gleba[]>([]);
   // o que ficou guardado no Storage de gerações anteriores (só os nomes)
-  const [salvo, setSalvo] = useState<{ satelite?: { nome: string; tipo: "png" | "jpg" }; sigef?: string; satelitesGlebas?: Record<number, { nome: string; tipo: "png" | "jpg" }> }>({});
+  const [salvo, setSalvo] = useState<{ satelite?: { nome: string; tipo: "png" | "jpg" }; sigef?: string; satelitesGlebas?: Record<number, { nome: string; tipo: "png" | "jpg" }>; mapa?: boolean }>({});
   const [tabular, setTabular] = useState<{ titulo: string; url: string }[] | null>(null);
   const [gerandoTabular, setGerandoTabular] = useState(false);
 
@@ -231,25 +233,44 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         else if (f.name === "satelite.jpg") achados.satelite = { nome: f.name, tipo: "jpg" };
         else if (mg) achados.satelitesGlebas![Number(mg[1])] = { nome: f.name, tipo: mg[2] as "png" | "jpg" };
         else if (f.name === "sigef.pdf") achados.sigef = f.name;
+        else if (f.name === "mapa.json") achados.mapa = true;
       }
       setSalvo(achados);
+      if (achados.mapa) carregarMapaSat();
       // O que falta, o servidor busca sozinho pelas coordenadas (Mapbox): a
-      // imagem do imóvel e a de cada gleba. Serviço sem vértices não tem o que
-      // enquadrar — e é o caso do serviço só-PDF, que nem passa por aqui.
-      if (inicial.vertices.length >= 3 && (!achados.satelite || inicial.servico.tem_glebas)) {
+      // imagem do imóvel, a de cada gleba e o mapa da tela. Serviço sem
+      // vértices não tem o que enquadrar — e é o caso do serviço só-PDF, que
+      // nem passa por aqui.
+      if (inicial.vertices.length >= 3 && (!achados.satelite || !achados.mapa || inicial.servico.tem_glebas)) {
         buscarSatelite({ faltantes: true });
       }
     });
   }, [inicial.servico.id]);
 
+  // Fundo de satélite do mapa de vértices: a imagem limpa (entrada/mapa.jpg)
+  // e a georreferência (mapa.json) que posiciona cada ponto sobre ela.
+  const [mapaSat, setMapaSat] = useState<FundoSatelite | null>(null);
+  const [fundoMapa, setFundoMapa] = useState<"satelite" | "esquema">("satelite");
+  async function carregarMapaSat() {
+    const dl = await supabase.storage.from("gerados").download(`${inicial.servico.id}/entrada/mapa.json`);
+    if (dl.error || !dl.data) { setMapaSat(null); return; }
+    let georef: GeorefMapa;
+    try { georef = JSON.parse(await dl.data.text()) as GeorefMapa; } catch { setMapaSat(null); return; }
+    // URL longa: a tela fica aberta bastante tempo durante a conferência
+    const { data } = await supabase.storage.from("gerados").createSignedUrl(`${inicial.servico.id}/entrada/mapa.jpg`, 4 * 3600);
+    if (!data?.signedUrl) { setMapaSat(null); return; }
+    setMapaSat({ url: `${data.signedUrl}&v=${Date.now()}`, georef, fuso: inicial.servico.fuso_utm ?? 24 });
+  }
+
   // Busca a imagem de satélite pelas coordenadas e guarda em `entrada/`, no
   // mesmo nome que o upload usa — a geração não distingue as duas origens.
   const [buscandoSat, setBuscandoSat] = useState(false);
-  async function buscarSatelite(pedido: { imovel?: boolean; glebas?: number[]; faltantes?: boolean }) {
+  async function buscarSatelite(pedido: { imovel?: boolean; glebas?: number[]; faltantes?: boolean; mapa?: boolean }) {
     setBuscandoSat(true);
     try {
-      const r = await chamarFuncao<{ gerados: { alvo: "imovel" | number; nome: string; tipo: "png" | "jpg" }[]; avisos: string[] }>(
+      const r = await chamarFuncao<{ gerados: { alvo: "imovel" | number; nome: string; tipo: "png" | "jpg" }[]; mapa: GeorefMapa | null; avisos: string[] }>(
         "buscar-satelite", { servico_id: inicial.servico.id, ...pedido });
+      if (r.mapa) { setSalvo((s) => ({ ...s, mapa: true })); carregarMapaSat(); }
       if (r.gerados.length) {
         setSalvo((s) => {
           const n = { ...s, satelitesGlebas: { ...(s.satelitesGlebas ?? {}) } };
@@ -1554,7 +1575,20 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
             </div>
               </div>{/* coluna-esq */}
               <div className="mapa">
-                <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={aneisMapa ?? undefined} />
+                <div className="mapa-fundo-toggle" role="group" aria-label="Fundo do mapa">
+                  <button type="button" className={fundoMapa === "satelite" ? "ativo" : ""} onClick={() => setFundoMapa("satelite")}
+                    disabled={!mapaSat} title={!mapaSat ? (buscandoSat ? "buscando a imagem de satélite…" : "imagem de satélite ainda não disponível") : undefined}>
+                    Satélite
+                  </button>
+                  <button type="button" className={fundoMapa === "esquema" ? "ativo" : ""} onClick={() => setFundoMapa("esquema")}>Esquema</button>
+                  {!mapaSat && buscandoSat && <span className="sub">buscando satélite…</span>}
+                  {mapaSat && (
+                    <button type="button" className="discreto" disabled={buscandoSat} onClick={() => buscarSatelite({ mapa: true })}
+                      title="Busca de novo a imagem de fundo pelas coordenadas atuais">atualizar</button>
+                  )}
+                </div>
+                <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={aneisMapa ?? undefined}
+                  fundo={fundoMapa === "satelite" ? mapaSat : null} />
                 {partesOrdens ? (
                   <p className="sub" style={{ margin: 0 }}>
                     <b>Imóvel em {partesOrdens.length} partes</b> — cada bloco de numeração do TXT é um anel próprio

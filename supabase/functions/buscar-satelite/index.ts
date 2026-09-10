@@ -5,19 +5,23 @@
 // gerar-documentos e gerar-planta não sabem se a imagem veio da API ou da mão
 // do operador; e o upload continua valendo como troca.
 //
-// Corpo: { servico_id, imovel?: boolean, glebas?: number[], faltantes?: boolean }
-//   imovel     → (re)busca a do imóvel inteiro
+// Corpo: { servico_id, imovel?: boolean, glebas?: number[], faltantes?: boolean, mapa?: boolean }
+//   imovel     → (re)busca a do imóvel inteiro (e o mapa da tela junto)
 //   glebas     → (re)busca as das glebas k (1-based, posição entre as fechadas)
 //   faltantes  → só o que ainda não existe em entrada/ (é o que a tela chama ao abrir)
-// Resposta: { gerados: [{ alvo: "imovel" | k, nome, tipo }], avisos: string[] }
+//   mapa       → (re)busca só o mapa da tela (entrada/mapa.jpg + mapa.json)
+// Resposta: { gerados: [{ alvo: "imovel" | k, nome, tipo }], mapa: GeorefMapa | null, avisos: string[] }
+//
+// O MAPA DA TELA é a imagem limpa, com centro e zoom conhecidos (mapa.json),
+// para a conferência desenhar os vértices por cima no lugar certo.
 //
 // Segredo: MAPBOX_TOKEN (Mapbox Static Images).
 import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import { GEO_DEF, gmsToDeg, parseGmsPlanilha, utmDef } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
-import { buscarImagemMapbox, guardarImagem } from "../_shared/satelite.ts";
-import type { LonLat } from "../_shared/satelite.ts";
+import { buscarImagemMapbox, enquadrar, guardarImagem, urlMapaSatelite } from "../_shared/satelite.ts";
+import type { GeorefMapa, LonLat } from "../_shared/satelite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -63,7 +67,7 @@ function anelDaGleba(anel: [number, number][], fuso: number): LonLat[] {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { servico_id, imovel, glebas: glebasPedidas, faltantes } = await req.json();
+    const { servico_id, imovel, glebas: glebasPedidas, faltantes, mapa: mapaPedido } = await req.json();
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
     const token = Deno.env.get("MAPBOX_TOKEN");
     if (!token) return json({ erro: "MAPBOX_TOKEN não configurado no servidor" }, 500);
@@ -116,6 +120,27 @@ Deno.serve(async (req) => {
 
     const gerados: { alvo: "imovel" | number; nome: string; tipo: "png" | "jpg" }[] = [];
     const avisos: string[] = [];
+
+    // mapa da tela: junto com a do imóvel, sozinho (`mapa`), ou quando falta
+    let mapa: GeorefMapa | null = null;
+    const querMapa = mapaPedido || querImovel || (faltantes && !existentes.has("mapa.json"));
+    if (querMapa) {
+      try {
+        const aneis = glebas.length ? glebas.map((g) => anelDaGleba(g.anel!, fuso)) : [anelDosVertices(verts, fuso)];
+        const g = enquadrar(aneis, 640, 640, 44);
+        const resp = await fetch(urlMapaSatelite(g, token));
+        if (!resp.ok) throw new Error(`Mapbox respondeu ${resp.status}: ${(await resp.text().catch(() => "")).slice(0, 200)}`);
+        const bytes = new Uint8Array(await resp.arrayBuffer());
+        const upImg = await supa.storage.from("gerados").upload(`${pasta}/mapa.jpg`, bytes, { upsert: true, contentType: "image/jpeg" });
+        if (upImg.error) throw new Error(`mapa não ficou guardado: ${upImg.error.message}`);
+        const upJson = await supa.storage.from("gerados").upload(`${pasta}/mapa.json`, new TextEncoder().encode(JSON.stringify(g)),
+          { upsert: true, contentType: "application/json" });
+        if (upJson.error) throw new Error(`georreferência não ficou guardada: ${upJson.error.message}`);
+        mapa = g;
+      } catch (e) {
+        avisos.push(`Mapa de satélite da tela: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     for (const a of alvos) {
       try {
         const img = await buscarImagemMapbox(a.aneis, token);
@@ -126,7 +151,7 @@ Deno.serve(async (req) => {
         avisos.push(`Imagem de satélite do ${rotulo}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    return json({ gerados, avisos });
+    return json({ gerados, mapa, avisos });
   } catch (e) {
     return json({ erro: e instanceof Error ? e.message : String(e) }, 500);
   }

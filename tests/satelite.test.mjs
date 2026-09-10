@@ -100,3 +100,28 @@ test("garantir: sem token ou com falha do Mapbox devolve aviso, nunca lança", a
     assert.match(r.aviso, /401/);
   } finally { globalThis.fetch = fetchOriginal; }
 });
+
+import { enquadrar, mercatorPx, pontoNoMapa, urlMapaSatelite } from "../supabase/functions/_shared/satelite.ts";
+
+test("mercator: origem do mundo e centro (0,0)", () => {
+  assert.deepEqual(mercatorPx(-180, 85.0511287798, 0).map((v) => Math.round(v)), [0, 0]);
+  assert.deepEqual(mercatorPx(0, 0, 0), [256, 256]);
+  assert.deepEqual(mercatorPx(0, 0, 1), [512, 512]);
+});
+
+test("enquadrar: todos os pontos caem dentro da imagem, respeitando a margem", () => {
+  const anel = [[-39.0, -11.0], [-39.02, -11.0], [-39.02, -11.015], [-39.0, -11.015]];
+  const g = enquadrar([anel], 640, 640, 40);
+  for (const [lon, lat] of anel) {
+    const [x, y] = pontoNoMapa(lon, lat, g);
+    assert.ok(x >= 39 && x <= 601, `x=${x}`);
+    assert.ok(y >= 39 && y <= 601, `y=${y}`);
+  }
+  // o lado maior encosta na margem
+  const xs = anel.map(([lon, lat]) => pontoNoMapa(lon, lat, g)[0]);
+  assert.ok(Math.max(...xs) - Math.min(...xs) > 540);
+  // o centro da imagem é o centro do polígono
+  const [cx, cy] = pontoNoMapa(g.lon, g.lat, g);
+  assert.ok(Math.abs(cx - 320) < 1e-6 && Math.abs(cy - 320) < 1e-6);
+  assert.match(urlMapaSatelite(g, "tok"), /static\/-39\.010000,-11\.0075\d\d,\d+(\.\d+)?,0\/640x640@2x\?access_token=tok$/);
+});

@@ -3,9 +3,20 @@
 //
 // Imóvel em PARTES (TXT em blocos de numeração, cortado por estradas): cada
 // parte é um anel fechado por si. Sem `partes`, um anel só, como sempre.
+//
+// Com `fundo`, a imagem de satélite georreferenciada (entrada/mapa.jpg +
+// mapa.json, buscada pelo servidor) fica por baixo e os pontos são projetados
+// no MESMO referencial dela (E/N → lon/lat → Web Mercator), então cada vértice
+// cai no lugar certo da foto. Sem `fundo`, o esquema em E/N de sempre.
 import { useMemo } from "react";
+import proj4mod from "proj4";
 import type { Trecho, Vertice } from "../lib/types";
 import { ehRioPorLimite, trechoDoVertice } from "../lib/trechos";
+import { GEO_DEF, utmDef } from "../../supabase/functions/_shared/geo.ts";
+import { pontoNoMapa } from "../../supabase/functions/_shared/satelite.ts";
+import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
+
+const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
 
 // paleta dos trechos, a mesma da legenda e da coluna de vértices (protótipo Vértice)
 export const CORES = ["#E11D48", "#16A34A", "#2563EB", "#F97316", "#7C3AED", "#0F766E", "#92400E", "#65A30D", "#B45309", "#DB2777", "#059669"];
@@ -15,31 +26,54 @@ export const CORES = ["#E11D48", "#16A34A", "#2563EB", "#F97316", "#7C3AED", "#0
 export const COR_VIA = "#E11D48";
 export const COR_RIO = "#2563EB";
 
+export interface FundoSatelite {
+  /** URL (assinada) de entrada/mapa.jpg */
+  url: string;
+  georef: GeorefMapa;
+  /** fuso UTM em que E/N estão */
+  fuso: number;
+}
+
 interface Props {
   vertices: Vertice[];
   trechos: Trecho[];
   verticeInicial: number;
   /** Ordens de cada parte (anel próprio). Ausente = um anel com todos os vértices. */
   partes?: number[][];
+  /** Imagem de satélite por baixo, com a georreferência que posiciona os pontos. */
+  fundo?: FundoSatelite | null;
 }
 
-export function MapaSVG({ vertices, trechos, verticeInicial, partes }: Props) {
+export function MapaSVG({ vertices, trechos, verticeInicial, partes, fundo }: Props) {
   const dados = useMemo(() => {
     const vs = [...vertices].sort((a, b) => a.ordem - b.ordem);
     // V inseridos não têm E/N: interpola visualmente entre vizinhos
-    const pts = vs.map((v, i) => {
+    const brutos = vs.map((v, i) => {
       if (v.e !== null && v.n !== null) return { v, x: Number(v.e), y: Number(v.n) };
       const prev = vs[(i - 1 + vs.length) % vs.length];
       const next = vs[(i + 1) % vs.length];
       return { v, x: (Number(prev.e ?? 0) + Number(next.e ?? 0)) / 2, y: (Number(prev.n ?? 0) + Number(next.n ?? 0)) / 2 };
     });
-    const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const W = 420, H = 420, PAD = 28;
-    const esc = Math.min((W - 2 * PAD) / (maxX - minX || 1), (H - 2 * PAD) / (maxY - minY || 1));
-    const px = (x: number) => PAD + (x - minX) * esc;
-    const py = (y: number) => H - PAD - (y - minY) * esc; // N cresce p/ cima
+    // Projeção para a tela: com fundo, o referencial da foto; sem, o esquema
+    // E/N enquadrado num quadrado.
+    let W: number, H: number;
+    let pts: { v: Vertice; sx: number; sy: number }[];
+    if (fundo) {
+      W = fundo.georef.largura; H = fundo.georef.altura;
+      pts = brutos.map((p) => {
+        const [lon, lat] = proj(utmDef(fundo.fuso), GEO_DEF, [p.x, p.y]);
+        const [sx, sy] = pontoNoMapa(lon, lat, fundo.georef);
+        return { v: p.v, sx, sy };
+      });
+    } else {
+      const xs = brutos.map((p) => p.x), ys = brutos.map((p) => p.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      W = 420; H = 420;
+      const PAD = 28;
+      const esc = Math.min((W - 2 * PAD) / (maxX - minX || 1), (H - 2 * PAD) / (maxY - minY || 1));
+      pts = brutos.map((p) => ({ v: p.v, sx: PAD + (p.x - minX) * esc, sy: H - PAD - (p.y - minY) * esc })); // N cresce p/ cima
+    }
     const tOrd = [...trechos].sort((a, b) => a.vertice_inicio_ordem - b.vertice_inicio_ordem);
     const trechoDe = (ordem: number): Trecho | null => trechoDoVertice(tOrd, ordem);
     const corDoVertice = (ordem: number): string => {
@@ -58,14 +92,14 @@ export function MapaSVG({ vertices, trechos, verticeInicial, partes }: Props) {
     // centroide de cada anel em coordenadas de tela, para jogar a linha da via para FORA
     const centro = new Map<number, { cx: number; cy: number }>();
     for (const a of aneis) {
-      const cx = a.reduce((s, i) => s + px(pts[i].x), 0) / a.length;
-      const cy = a.reduce((s, i) => s + py(pts[i].y), 0) / a.length;
+      const cx = a.reduce((s, i) => s + pts[i].sx, 0) / a.length;
+      const cy = a.reduce((s, i) => s + pts[i].sy, 0) / a.length;
       for (const i of a) centro.set(i, { cx, cy });
     }
-    return { pts, px, py, W, H, corDoVertice, trechoDe, arestas, centro };
-  }, [vertices, trechos, partes]);
+    return { pts, W, H, corDoVertice, trechoDe, arestas, centro };
+  }, [vertices, trechos, partes, fundo]);
 
-  const { pts, px, py, W, H, corDoVertice, trechoDe, arestas, centro } = dados;
+  const { pts, W, H, corDoVertice, trechoDe, arestas, centro } = dados;
   if (pts.length < 3) return null;
 
   // Mesma construção da planta (planta.ts): duas paralelas deslocadas na normal
@@ -78,7 +112,7 @@ export function MapaSVG({ vertices, trechos, verticeInicial, partes }: Props) {
     if (!cor) return null;
     const a = pts[i], b = pts[j];
     const { cx, cy } = centro.get(i) ?? { cx: 0, cy: 0 };
-    const ax = px(a.x), ay = py(a.y), bx = px(b.x), by = py(b.y);
+    const ax = a.sx, ay = a.sy, bx = b.sx, by = b.sy;
     const dx = bx - ax, dy = by - ay;
     const len = Math.hypot(dx, dy) || 1;
     let nx = -dy / len, ny = dx / len;
@@ -89,13 +123,19 @@ export function MapaSVG({ vertices, trechos, verticeInicial, partes }: Props) {
     return { ax, ay, bx, by, nx, ny, cor };
   };
 
+  // sobre a foto o texto precisa de halo; no esquema, o cinza de sempre
+  const rotulo = fundo
+    ? { fill: "#FFFFFF", stroke: "#12201A", strokeWidth: 2.5, paintOrder: "stroke" as const }
+    : { fill: "#5B6B63" };
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="mapa-svg" role="img" aria-label="Mapa do perímetro">
+    <svg viewBox={`0 0 ${W} ${H}`} className={`mapa-svg${fundo ? " com-satelite" : ""}`} role="img" aria-label="Mapa do perímetro">
+      {fundo && <image href={fundo.url} x={0} y={0} width={W} height={H} preserveAspectRatio="none" />}
       <g strokeWidth={3} fill="none" strokeLinecap="round">
         {arestas.map(([i, j], k) => {
           const p = pts[i], q = pts[j];
           return (
-            <line key={`s${k}`} x1={px(p.x)} y1={py(p.y)} x2={px(q.x)} y2={py(q.y)}
+            <line key={`s${k}`} x1={p.sx} y1={p.sy} x2={q.sx} y2={q.sy}
               stroke={corDoVertice(p.v.ordem)} />
           );
         })}
@@ -119,12 +159,12 @@ export function MapaSVG({ vertices, trechos, verticeInicial, partes }: Props) {
         const inicial = p.v.ordem === verticeInicial;
         return (
           <g key={`v${p.v.ordem}`}>
-            <circle cx={px(p.x)} cy={py(p.y)}
+            <circle cx={p.sx} cy={p.sy}
               r={inicial ? 6 : p.v.tipo === "M" ? 3.5 : 2.5}
-              fill={inicial ? "#7BD3A6" : p.v.tipo === "V" ? "#B7791F" : "#12201A"}
-              stroke={inicial ? "#0E3B2B" : "none"} strokeWidth={2} />
+              fill={inicial ? "#7BD3A6" : p.v.tipo === "V" ? "#B7791F" : fundo ? "#FFFFFF" : "#12201A"}
+              stroke={inicial ? "#0E3B2B" : fundo ? "#12201A" : "none"} strokeWidth={inicial ? 2 : 1} />
             {(p.v.tipo !== "P" || p.v.num_txt !== null && p.v.num_txt % 5 === 0) && (
-              <text x={px(p.x) + 7} y={py(p.y) - 5} fontSize={9} fill="#5B6B63"
+              <text x={p.sx + 7} y={p.sy - 5} fontSize={9} {...rotulo}
                 fontFamily="Fira Code, monospace">{p.v.num_txt ?? "V"}</text>
             )}
           </g>
