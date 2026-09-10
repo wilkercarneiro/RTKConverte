@@ -156,3 +156,39 @@ test("reconciliação por proximidade casa o mais próximo, e uma vez só", () =
   const out = reconciliarVerticesBancoComSigef("s2", banco, [sigefLinhas[0]], 24, proj4);
   assert.equal(out[0].descritivo, "VIZINHO CERTO", "o par tem de ser o vértice mais próximo");
 });
+
+// --- vizinho certificado: o marco M do vizinho não é confrontação nossa ---
+//
+// FAZENDA SANTA BARBARA (2026-09-09): o perímetro foi unido a duas parcelas
+// certificadas (ONDE e DJ9) e o operador cadastrou 4 confrontantes. A prévia
+// do SIGEF devolve os códigos do vizinho tal qual ("DJ9-M-2491"), e a
+// reconciliação lia esse -M- como M NOSSO: 6 trechos vazios entraram na
+// planta, cada um com marco verde, e a FAZENDA GUAIBA encolheu a um lado só.
+test("marco M do vizinho certificado, sem confrontação nossa, não vira M", () => {
+  const banco = [
+    // marco do vizinho, unido pelo CSV: certificados.ts já grava como P
+    { servico_id: "s3", ordem: 0, num_txt: null, rotulo_txt: null, codigo: "DJ9-M-2491", e: 480500, n: 8717900, h: 1, sigma_pos: 0.05, sigma_h: 0.05, tipo: "P", metodo: "PG2", inserido_manual: true, lat_gms: null, lon_gms: null, descritivo: null, tipo_limite: null, eh_via: false, cns: null, matricula: null, apelido_txt: null },
+    // marco do vizinho onde o operador cadastrou um confrontante: continua M
+    { servico_id: "s3", ordem: 1, num_txt: null, rotulo_txt: null, codigo: "DJ9-M-2490", e: 480600, n: 8717800, h: 1, sigma_pos: 0.05, sigma_h: 0.05, tipo: "M", metodo: "PG2", inserido_manual: true, lat_gms: null, lon_gms: null, descritivo: "(MATR.325\\CNS.1) FAZENDA ENGENHO NOVO\\ GERALDO\\ CPF: 1", tipo_limite: "LA1", eh_via: false, cns: null, matricula: null, apelido_txt: "" },
+    { servico_id: "s3", ordem: 2, num_txt: 5, rotulo_txt: null, codigo: "DSBN-P-16865", e: 480700, n: 8717700, h: 1, sigma_pos: 0.05, sigma_h: 0.05, tipo: "P", metodo: "PG6", inserido_manual: false, lat_gms: null, lon_gms: null, descritivo: null, tipo_limite: null, eh_via: false, cns: null, matricula: null, apelido_txt: null },
+  ];
+  const linhas = [
+    { codigo: "DJ9-M-2491", lat: "-11°23'44,344\"", lon: "-39°04'47,198\"", alt: "1,00", confrontacao: "" },
+    { codigo: "DJ9-M-2490", lat: "-11°23'47,000\"", lon: "-39°04'44,000\"", alt: "1,00", confrontacao: "" },
+    { codigo: "DSBN-P-16865", lat: "-11°23'50,000\"", lon: "-39°04'41,000\"", alt: "1,00", confrontacao: "" },
+    // marco do vizinho que só existe no PDF (ponto de terceiro)
+    { codigo: "DJ9-M-2455", lat: "-11°24'00,000\"", lon: "-39°05'00,000\"", alt: "1,00", confrontacao: "" },
+    { codigo: "DJ9-V-0001", lat: "-11°24'05,000\"", lon: "-39°05'05,000\"", alt: "1,00", confrontacao: "" },
+  ];
+  const out = reconciliarVerticesBancoComSigef("s3", banco, linhas, 24, proj4);
+  assert.deepEqual(out.map((v) => [v.codigo, v.tipo]), [
+    ["DJ9-M-2491", "P"],
+    ["DJ9-M-2490", "M"],
+    ["DSBN-P-16865", "P"],
+    ["DJ9-M-2455", "P"],
+    ["DJ9-V-0001", "V"],
+  ]);
+  // e a planta do SIGEF só abre trecho no confrontante cadastrado
+  const trechos = montarTrechosDoSigef([], out, linhas, { usarTextoDoPdf: false });
+  assert.deepEqual(trechos.map((t) => [t.idx, t.descritivo.split("\\")[0]]), [[1, "(MATR.325"]]);
+});

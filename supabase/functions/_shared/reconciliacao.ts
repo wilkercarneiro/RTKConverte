@@ -200,10 +200,22 @@ function gmsPdfParaDeg(s: string): number {
   return m[1] === "-" ? -v : v;
 }
 
-function tipoDoCodigo(codigo: string): "M" | "P" | "V" {
-  if (/-M-/.test(codigo)) return "M";
-  if (/-V-/.test(codigo)) return "V";
-  return "P";
+/**
+ * Tipo de um vértice que NÃO carrega confrontação nossa, a partir do código.
+ *
+ * M nunca sai daqui: no sistema, M é "aqui começa uma confrontação", e todo M
+ * abre um trecho na planta (marco verde + rótulo) e no memorial. O código do
+ * SIGEF diz outra coisa — "DJ9-M-2491" é o marco do VIZINHO, que na parcela
+ * dele troca de confrontante ali, não na nossa. Ler esse M como nosso
+ * fatiava a divisa cadastrada em pedaços vazios: na FAZENDA SANTA BARBARA
+ * (2026-09-09) os 6 marcos da parcela DJ9 viraram trechos sem nome, a
+ * FAZENDA GUAIBA encolheu a um lado de 14 m e a tabela de vértices apareceu
+ * com 10 "confrontantes" onde o operador cadastrou 4. Mesma regra da união de
+ * certificados (certificados.ts): vértice do vizinho sem confrontação nossa é
+ * P (ou V, se o código disser V).
+ */
+function tipoSemConfrontacao(codigo: string): "P" | "V" {
+  return /-V-/.test(codigo) ? "V" : "P";
 }
 
 /**
@@ -283,8 +295,10 @@ export function reconciliarVerticesBancoComSigef(
         sigma_pos: Number(correspondente.sigma_pos) || 0.05,
         sigma_h: Number(correspondente.sigma_h) || 0.08,
         // um vértice que carrega confrontação é M por definição, mesmo que o código
-        // do SIGEF diga outra coisa — senão o trecho desaparecia do desenho
-        tipo: temConfrontacao ? "M" : tipoDoCodigo(l.codigo),
+        // do SIGEF diga outra coisa — senão o trecho desaparecia do desenho. E o
+        // contrário também: sem confrontação nossa não é M, mesmo com código -M-
+        // do vizinho (ver tipoSemConfrontacao).
+        tipo: temConfrontacao ? "M" : tipoSemConfrontacao(l.codigo),
         metodo: correspondente.metodo || "PG6",
         inserido_manual: correspondente.inserido_manual,
         lat_gms: fmtGmsPlanilha(degToGmsCanonical(latDeg), "lat"),
@@ -311,7 +325,7 @@ export function reconciliarVerticesBancoComSigef(
         h,
         sigma_pos: 0.1,
         sigma_h: 0.1,
-        tipo: tipoDoCodigo(l.codigo),
+        tipo: tipoSemConfrontacao(l.codigo),
         metodo: "PG6",
         inserido_manual: false,
         lat_gms: fmtGmsPlanilha(degToGmsCanonical(latDeg), "lat"),
