@@ -8,14 +8,14 @@
 // prefixo (parcela_co, nome_area, municipio_, uf_id, status, codigo_imo...).
 //
 // Uso:
-//   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/importar-sigef.mjs <arquivo> [--uf GO] [--fonte shapefile]
+//   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/importar-sigef.mjs <arquivo ou pasta> [--uf GO] [--fonte shapefile]
 //
 // Onde baixar: https://certificacao.incra.gov.br/csv_shp/export_shp.py (exige
 // login gov.br) → "Sigef Privado"/"Sigef Público" por UF, ou o acervo fundiário
 // (https://acervofundiario.incra.gov.br). Rode de novo quando baixar uma versão
 // mais nova: a gravação é upsert por código de parcela.
-import { readFileSync } from "node:fs";
-import { basename, extname } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, extname, join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import * as shapefile from "shapefile";
@@ -79,7 +79,7 @@ function campo(props, ...prefixos) {
   return null;
 }
 
-function paraParcela(f) {
+function paraParcela(f, ufArquivo) {
   const p = f.properties ?? {};
   const g = f.geometry;
   if (!g || (g.type !== "Polygon" && g.type !== "MultiPolygon")) return null;
@@ -88,7 +88,7 @@ function paraParcela(f) {
   return {
     codigo,
     nome: campo(p, "nome_area", "nome", "nome_imove", "denominac"),
-    uf: ufFixa ?? campo(p, "uf_id", "uf", "sigla_uf"),
+    uf: ufFixa ?? campo(p, "uf_id", "uf", "sigla_uf") ?? ufArquivo ?? null,
     municipio: campo(p, "municipio_", "municipio", "nm_municip"),
     codigo_imovel: campo(p, "codigo_imo", "cod_imovel", "codigo_imovel", "imovel"),
     registro: campo(p, "registro_m", "matricula", "registro"),
@@ -99,17 +99,35 @@ function paraParcela(f) {
 }
 
 // ---- envio ----
+// Uma pasta importa todos os .zip/.shp/.geojson dentro dela (o Brasil inteiro
+// de uma vez: um arquivo por UF e tipo). A UF, quando não vem no atributo, é
+// lida do nome do arquivo ("Sigef Privado_BA.zip", "sigef_go.zip"...).
+const UFS = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"];
+const ufDoNome = (n) => { const m = basename(n).toUpperCase().match(/(?:^|[^A-Z])([A-Z]{2})(?=[^A-Z]|$)/g); const c = (m ?? []).map((x) => x.replace(/[^A-Z]/g, "")).find((x) => UFS.includes(x)); return c; };
+const arquivos = statSync(arquivo).isDirectory()
+  ? readdirSync(arquivo).filter((n) => /\.(zip|shp|geojson|json)$/i.test(n)).sort().map((n) => join(arquivo, n))
+  : [arquivo];
+if (!arquivos.length) { console.error("nenhum .zip/.shp/.geojson na pasta"); process.exit(1); }
+
 const t0 = Date.now();
-const features = await lerFeatures(arquivo);
-console.log(`${basename(arquivo)}: ${features.length} feições lidas`);
-const parcelas = features.map(paraParcela).filter(Boolean);
-console.log(`${parcelas.length} parcelas com código e polígono`);
-let gravadas = 0;
-for (let i = 0; i < parcelas.length; i += LOTE) {
-  const lote = parcelas.slice(i, i + LOTE);
-  const { data, error } = await supabase.rpc("sigef_guardar", { parcelas: lote });
-  if (error) { console.error(`lote ${i / LOTE + 1}: ${error.message}`); process.exitCode = 1; continue; }
-  gravadas += Number(data ?? 0);
-  process.stdout.write(`\r${Math.min(i + LOTE, parcelas.length)}/${parcelas.length} enviadas · ${gravadas} gravadas`);
+let totalGravadas = 0;
+for (const caminho of arquivos) {
+  const features = await lerFeatures(caminho);
+  const ufArquivo = ufFixa ?? ufDoNome(caminho);
+  const parcelas = features.map((f) => paraParcela(f, ufArquivo)).filter(Boolean);
+  console.log(`${basename(caminho)}: ${features.length} feições lidas, ${parcelas.length} parcelas com código e polígono${ufArquivo ? ` (UF ${ufArquivo})` : ""}`);
+  let gravadas = 0;
+  for (let i = 0; i < parcelas.length; i += LOTE) {
+    const lote = parcelas.slice(i, i + LOTE);
+    let tentativa = 0, ok = false;
+    while (!ok && tentativa < 3) {
+      const { data, error } = await supabase.rpc("sigef_guardar", { parcelas: lote });
+      if (error) { tentativa++; console.error(`\nlote ${i / LOTE + 1}: ${error.message}${tentativa < 3 ? " — tentando de novo" : ""}`); if (tentativa >= 3) process.exitCode = 1; continue; }
+      gravadas += Number(data ?? 0); ok = true;
+    }
+    process.stdout.write(`\r  ${Math.min(i + LOTE, parcelas.length)}/${parcelas.length} enviadas · ${gravadas} gravadas`);
+  }
+  console.log();
+  totalGravadas += gravadas;
 }
-console.log(`\nconcluído em ${((Date.now() - t0) / 1000).toFixed(0)} s · ${gravadas} parcelas gravadas/atualizadas`);
+console.log(`concluído em ${((Date.now() - t0) / 1000).toFixed(0)} s · ${totalGravadas} parcelas gravadas/atualizadas em ${arquivos.length} arquivo(s)`);
