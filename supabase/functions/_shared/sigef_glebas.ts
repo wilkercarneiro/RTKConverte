@@ -51,6 +51,31 @@ export function anelDoBloco(linhas: LinhaSigef[], fusoUtm: number, proj4: Proj4)
  */
 const RAIO_BLOCO_M = 1.0;
 
+/**
+ * O código do vértice do PDF que está a menos de `raio` do ponto (e, n), ou null.
+ *
+ * Serve para ancorar a confrontação de um M do banco cujo CÓDIGO não aparece no
+ * PDF — o SIGEF troca o nosso vértice pelo do vizinho certificado (código dele),
+ * ou os códigos foram realocados depois da prévia. Antes, esse M era pulado em
+ * silêncio e a divisa dele se fundia à anterior nas peças. Mesmo raio (1 m) e
+ * mesmo motivo do casamento gleba↔memorial: decidir QUAL vértice é, entre
+ * vizinhos que distam dezenas de metros.
+ */
+export function codigoMaisProximoNoPdf(
+  anelPdf: [number, number][],
+  linhas: LinhaSigef[],
+  e: number,
+  n: number,
+  raio = RAIO_BLOCO_M,
+): string | null {
+  let melhor = -1, melhorDist = raio;
+  anelPdf.forEach(([pe, pn], i) => {
+    const d = Math.hypot(pe - e, pn - n);
+    if (d < melhorDist) { melhor = i; melhorDist = d; }
+  });
+  return melhor >= 0 ? linhas[melhor].codigo : null;
+}
+
 /** Quantos pontos do anel da gleba têm um vértice do bloco a menos de `raio`. */
 function pontosEmComum(anelGleba: [number, number][], anelBloco: [number, number][], raio = RAIO_BLOCO_M): number {
   let n = 0;

@@ -1,6 +1,8 @@
 // Edge Function gerar-planta: gera a PLANTA (PDF) do imóvel.
 //   matrícula → folha A1 com quadro analítico · posse → folha A3 sem quadro
-//   serviço 'geo'  : usa os dados do próprio sistema (códigos já alocados)
+//   serviço 'geo'  : desenha pelos dados do próprio sistema (códigos já
+//                    alocados, confrontantes da conferência); do PDF do SIGEF,
+//                    se enviado, aproveita SÓ área, perímetro e TRT
 //   serviço 'pecas': usa o PDF do SIGEF (azimutes/distâncias SGL) + projeção
 // A logo da empresa vem de templates/logo-empresa.(png|jpg) no Storage.
 import { createClient } from "@supabase/supabase-js";
@@ -28,6 +30,9 @@ const CORS = {
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+
+/** PDF que esta função não aceita (prévia de glebas): vira 422, nunca aviso. */
+class RecusaSigef extends Error {}
 
 // "-39°05'04,737\"" → graus decimais
 function gmsPdfParaDeg(s: string): number {
@@ -71,27 +76,42 @@ Deno.serve(async (req) => {
     // anel em [lon, lat] para a imagem de satélite (buscada pelo servidor)
     let anelSat: LonLat[] = [];
 
-    if (servico.tipo === "pecas" || pdf_base64) {
-      // -------- fluxo via PDF do SIGEF (valores SGL) --------
-      if (!pdf_base64) return json({ erro: "Envie o PDF do SIGEF para gerar a planta deste serviço" }, 422);
-      const proxy = await getDocumentProxy(bytesDeBase64(pdf_base64));
+    const avisos: string[] = [];
+    const ehPecas = servico.tipo === "pecas";
+
+    /**
+     * Lê a prévia do SIGEF. Esta função é de imóvel de ANEL ÚNICO: a prévia de
+     * um serviço de glebas traz um memorial por gleba e é recusada — a planta
+     * do imóvel em glebas é a de gerar-documentos (A1 geral + A3 por gleba).
+     * No fluxo 'pecas' a recusa também protege o banco: `persistirReconciliados`
+     * apaga os vértices do serviço e grava os do PDF, e em 09/09/2026 um PDF de
+     * 3 glebas levou a FAZENDA LAMEIRO DA BOA VISTA de 176 vértices para 29.
+     */
+    const lerSigef = async (b64: string) => {
+      const proxy = await getDocumentProxy(bytesDeBase64(b64));
       const { text } = await extractText(proxy, { mergePages: true });
-      // Esta função é de imóvel de ANEL ÚNICO. A prévia de um serviço de glebas
-      // traz um memorial por gleba, e aceitá-la aqui não desenha só a primeira:
-      // mais abaixo, `persistirReconciliados` APAGA os vértices do serviço e
-      // grava os do PDF no lugar. Em 09/09/2026 isso levou a FAZENDA LAMEIRO DA
-      // BOA VISTA de 176 vértices para 29 — as glebas 2 e 3 sumiram da tabela.
-      // A planta do imóvel em glebas é a de gerar-documentos (A1 geral + A3 por
-      // gleba); aqui o PDF multi-memorial é recusado antes de tocar em nada.
       const blocos = parseSigefBlocos(text as string);
       if (blocos.length > 1) {
-        return json({
-          erro: `Este PDF do SIGEF traz ${blocos.length} memoriais (um por gleba): ` +
+        throw new RecusaSigef(
+          `Este PDF do SIGEF traz ${blocos.length} memoriais (um por gleba): ` +
             `ele é a prévia de um serviço de glebas, e esta planta é a de imóvel com um perímetro só. ` +
             `Gere a planta pelo botão de documentos — de lá saem a A1 do imóvel inteiro e a A3 de cada gleba.`,
-        }, 422);
+        );
       }
-      const sigef = blocos[0];
+      return blocos[0];
+    };
+
+    if (ehPecas) {
+      // -------- serviço 'pecas': fluxo via PDF do SIGEF (valores SGL) --------
+      // Este serviço não tem levantamento próprio: o perímetro É o do PDF.
+      if (!pdf_base64) return json({ erro: "Envie o PDF do SIGEF para gerar a planta deste serviço" }, 422);
+      let sigef: Awaited<ReturnType<typeof lerSigef>>;
+      try {
+        sigef = await lerSigef(pdf_base64);
+      } catch (e) {
+        if (e instanceof RecusaSigef) return json({ erro: e.message }, 422);
+        throw e;
+      }
       const lon0 = gmsPdfParaDeg(sigef.linhas[0].lon);
       latMedia = gmsPdfParaDeg(sigef.linhas[0].lat);
       if (!servico.fuso_utm) fuso = Math.floor((lon0 + 180) / 6) + 1;
@@ -125,28 +145,26 @@ Deno.serve(async (req) => {
         };
       });
 
-      // onde cada confrontação começa (ver montarTrechosDoSigef p/ a precedência).
-      // No serviço completo quem define confrontante é o sistema: nem a tabela
-      // `trechos_confrontantes` (âncora do fluxo 'pecas', que pode ter sobrado de
-      // uma geração antiga) nem o texto do PDF entram — do SIGEF ficam só a área
-      // e o perímetro, logo abaixo.
-      const ehPecas = servico.tipo === "pecas";
-      const starts = montarTrechosDoSigef(
-        ehPecas ? (trechoRows ?? []) : [],
-        verticesReconciliados,
-        sigef.linhas,
-        { usarTextoDoPdf: ehPecas },
-      );
-      if (!ehPecas && starts.length === 0) {
-        return json({ erro: "Nenhum confrontante definido no sistema: marque os confrontantes na conferência antes de gerar a planta" }, 422);
-      }
+      // onde cada confrontação começa (ver montarTrechosDoSigef p/ a precedência):
+      // `trechos_confrontantes` ancorados pelo código do SIGEF e, sem eles, a
+      // mudança de confrontação no texto do PDF.
+      const starts = montarTrechosDoSigef(trechoRows ?? [], verticesReconciliados, sigef.linhas);
       // conversão compartilhada: leva estrada, rio E a marca de numerado
       trechosPlanta = trechosPlantaDoSigef(starts);
       areaFmt = sigef.cabecalho.areaHa;
       perimetroFmt = sigef.cabecalho.perimetroM;
       if (!trtSistema) trt = sigef.cabecalho.documentoRt.split(" ")[0] || trt;
     } else {
-      // -------- fluxo 'geo': dados do próprio sistema --------
+      // -------- serviço completo ('geo'): dados do próprio sistema --------
+      // O desenho, os vértices e os confrontantes são os que o operador digitou
+      // na conferência — a MESMA regra do serviço de glebas (gerar-documentos):
+      // o SIGEF é fonte de NÚMEROS, não de desenho. Até 10/09/2026 o PDF entrava
+      // aqui pela reconciliação: casava vértice por proximidade (< 10 m),
+      // inseria os marcos do vizinho certificado como pontos nossos, ancorava
+      // as confrontações pela posição deles na sequência do PDF e, no fim,
+      // APAGAVA e regravava a tabela `vertices`. Resultado: divisas fatiadas
+      // no lugar errado, confrontantes trocados de lado e o cadastro do
+      // operador reescrito a cada planta. Nada disso acontece mais neste fluxo.
       if (!vertRows?.length) return json({ erro: "Serviço sem vértices" }, 422);
       if (vertRows.some((v) => !v.codigo)) return json({ erro: "Gere os documentos (memorial/planilha) antes da planta — os códigos dos vértices são alocados na geração" }, 422);
       if (!cred) return json({ erro: "Credenciado não definido" }, 422);
@@ -175,13 +193,28 @@ Deno.serve(async (req) => {
       areaFmt = g.areaFmt;
       anelSat = anelLonLatDeEN(g.vertices, fuso, proj4);
       perimetroFmt = g.perimetroFmt;
+
+      // Do PDF do SIGEF, quando vem, só a área e o perímetro certificados (e o
+      // TRT, se o sistema não tiver) substituem os calculados na folha. Um PDF
+      // que não é lido não derruba a planta: ela sai com os números do cálculo,
+      // avisada — o mesmo tratamento de gerar-documentos.
+      if (pdf_base64) {
+        try {
+          const sigef = await lerSigef(pdf_base64);
+          areaFmt = sigef.cabecalho.areaHa;
+          perimetroFmt = sigef.cabecalho.perimetroM;
+          if (!trtSistema) trt = sigef.cabecalho.documentoRt.split(" ")[0] || trt;
+        } catch (e) {
+          if (e instanceof RecusaSigef) return json({ erro: e.message }, 422);
+          avisos.push(`PDF do SIGEF não foi lido (${e instanceof Error ? e.message : String(e)}): a planta saiu com a área e o perímetro calculados.`);
+        }
+      }
     }
 
     const posse = servico.tipo_imovel === "posse";
     const folhaSaida: Folha = folha === "A1" || folha === "A3" ? folha : (posse ? "A3" : "A1");
     // A imagem de satélite é do servidor: a guardada em entrada/, ou a que o
     // Mapbox devolve agora pelo anel do imóvel. Sem ela a planta sai, avisada.
-    const avisos: string[] = [];
     const sat = await garantirImagemSatelite(supa.storage, servico_id, "satelite", [anelSat], Deno.env.get("MAPBOX_TOKEN"), "Planta");
     if (sat.aviso) avisos.push(sat.aviso);
     const dados = montarDadosPlanta({

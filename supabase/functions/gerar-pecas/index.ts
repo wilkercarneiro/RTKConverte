@@ -7,9 +7,9 @@ import proj4mod from "proj4";
 import { extractText, getDocumentProxy } from "unpdf";
 import { parseSigefBlocos } from "../_shared/sigef_pdf.ts";
 import type { DadosSigef } from "../_shared/sigef_pdf.ts";
-import { areaTotalHa, avisosDoCasamento, casarBlocosComGlebas } from "../_shared/sigef_glebas.ts";
+import { anelDoBloco, areaTotalHa, avisosDoCasamento, casarBlocosComGlebas, codigoMaisProximoNoPdf } from "../_shared/sigef_glebas.ts";
 import type { BlocoDaGleba } from "../_shared/sigef_glebas.ts";
-import { fmtBR } from "../_shared/geo.ts";
+import { GEO_DEF, fmtBR, gmsToDeg, parseGmsPlanilha, utmDef } from "../_shared/geo.ts";
 import type { GlebaRow } from "../_shared/planta_dados.ts";
 import { cartasDe, gerarPecasPosseXml, gerarPecasXml, montarTrechosPecas, rotuloVia, viasDaPlanta } from "../_shared/pecas.ts";
 import type { DadosPecas, Requerente } from "../_shared/pecas.ts";
@@ -206,7 +206,20 @@ Deno.serve(async (req) => {
     // PDF do SIGEF só se aproveitam área, perímetro e a tabela de coordenadas:
     // o texto de confrontação dele vem truncado ("...") e cortava o CPF do
     // vizinho nas peças de todo serviço 'geo'.
-    interface FonteConf { codigo: string | null; descritivo: string; tipoLimite: string; ehVia: boolean }
+    interface FonteConf { codigo: string | null; descritivo: string; tipoLimite: string; ehVia: boolean; e: number | null; n: number | null }
+    const avisos: string[] = [];
+    const fusoServico = servico.fuso_utm ?? 24;
+    // E/N do vértice do banco: a coluna, ou a projeção do GMS do inserido à mão.
+    const enDoVertice = (v: { e: unknown; n: unknown; lat_gms: unknown; lon_gms: unknown }): [number | null, number | null] => {
+      if (v.e !== null && v.e !== undefined && v.n !== null && v.n !== undefined) return [Number(v.e), Number(v.n)];
+      if (typeof v.lat_gms === "string" && typeof v.lon_gms === "string" && v.lat_gms && v.lon_gms) {
+        try {
+          const [e, n] = proj4(GEO_DEF, utmDef(fusoServico), [gmsToDeg(parseGmsPlanilha(v.lon_gms)), gmsToDeg(parseGmsPlanilha(v.lat_gms))]);
+          return [e, n];
+        } catch { return [null, null]; }
+      }
+      return [null, null];
+    };
     const fontes: FonteConf[] = iniciosDoCalculo ? [] : [
       ...(trechoRows ?? []).map((t) => ({
         codigo: (t.codigo_inicio || (vertices ?? []).find((x) => x.ordem === t.vertice_inicio_ordem)?.codigo || null) as string | null,
@@ -215,26 +228,50 @@ Deno.serve(async (req) => {
         // faixa de domínio marcada na planta manda; sem marca, o rótulo do
         // trecho ainda é reconhecido pelo texto (ESTRADA, CORREDOR, BA 408…)
         ehVia: !!t.eh_via,
+        e: null, n: null,
       })),
-      ...(vertices ?? []).filter((v) => v.tipo === "M").map((v) => ({
-        codigo: (v.codigo ?? null) as string | null,
-        descritivo: String(v.descritivo || v.apelido_txt || ""),
-        tipoLimite: String(v.tipo_limite ?? "LA1"),
-        ehVia: !!v.eh_via || ehViaPorLimite(v.tipo_limite),
-      })),
+      ...(vertices ?? []).filter((v) => v.tipo === "M").map((v) => {
+        const [e, n] = enDoVertice(v);
+        return {
+          codigo: (v.codigo ?? null) as string | null,
+          descritivo: String(v.descritivo || v.apelido_txt || ""),
+          tipoLimite: String(v.tipo_limite ?? "LA1"),
+          ehVia: !!v.eh_via || ehViaPorLimite(v.tipo_limite),
+          e, n,
+        };
+      }),
     ];
+    // Num serviço de glebas o casamento tem de correr TODOS os memoriais: os
+    // códigos do banco podem casar só com a segunda gleba.
+    const linhasDeTodos = blocos.length > 1 ? blocos.flatMap((b) => b.linhas) : sigef.linhas;
+    const codigosPdf = new Set(linhasDeTodos.map((l) => l.codigo));
+    // Serviço completo: a confrontação é a que o operador digitou no vértice M,
+    // e o PDF entra só com a tabela de coordenadas. O M é ancorado no PDF pelo
+    // CÓDIGO; quando o código não está lá (o SIGEF trocou o nosso vértice pelo
+    // do vizinho certificado, ou os códigos foram realocados depois da prévia),
+    // pela GEOMETRIA — o vértice do PDF a menos de 1 m dele. Antes, esse M era
+    // pulado em silêncio e a divisa dele se fundia à do vizinho anterior: o
+    // confrontante sumia das peças sem aviso nenhum.
+    let anelPdf: [number, number][] | null = null;
     for (const f of fontes) {
-      if (f.codigo && !inicios.has(f.codigo)) {
-        inicios.set(f.codigo, { descritivo: f.descritivo, tipoLimite: f.tipoLimite, ehVia: f.ehVia });
+      let cod = f.codigo && codigosPdf.has(f.codigo) ? f.codigo : null;
+      if (!cod && f.e !== null && f.n !== null) {
+        anelPdf ??= anelDoBloco(linhasDeTodos, fusoServico, proj4);
+        cod = codigoMaisProximoNoPdf(anelPdf, linhasDeTodos, f.e, f.n);
+      }
+      if (!cod) {
+        if (f.descritivo.trim()) {
+          avisos.push(`Confrontante "${f.descritivo.split(/[\\\n]/)[0].trim()}" (vértice ${f.codigo ?? "sem código"}) não foi encontrado no PDF do SIGEF nem pelo código nem pela posição: confira a divisa dele nas peças.`);
+        }
+        continue;
+      }
+      if (!inicios.has(cod)) {
+        inicios.set(cod, { descritivo: f.descritivo, tipoLimite: f.tipoLimite, ehVia: f.ehVia });
       }
     }
     // fallback: PDF de outra geração (códigos diferentes) → detecta trechos pela
     // mudança da confrontação e tenta casar com o descritivo completo do banco.
     // Não se aplica à origem 'calculo': lá os códigos são os mesmos por construção.
-    // Num serviço de glebas o teste tem de correr TODOS os memoriais: os códigos
-    // do banco podem casar só com a segunda gleba, e olhar apenas a primeira
-    // jogava o serviço inteiro no fallback textual (confrontação truncada do PDF).
-    const linhasDeTodos = blocos.length > 1 ? blocos.flatMap((b) => b.linhas) : sigef.linhas;
     if (!iniciosDoCalculo && !linhasDeTodos.some((l) => inicios.has(l.codigo))) {
       inicios.clear();
       let ultima = "";
@@ -259,7 +296,6 @@ Deno.serve(async (req) => {
     // e somam as áreas; além delas, cada gleba ganha o seu jogo completo. Foi o
     // que o operador pediu: o cartório recebe o conjunto e a parcela.
     let casados: BlocoDaGleba[] = [];
-    const avisos: string[] = [];
     if (blocos.length > 1) {
       const { data: glebaRows } = await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem");
       casados = casarBlocosComGlebas(blocos, (glebaRows ?? []) as GlebaRow[], servico.denominacao ?? "", servico.fuso_utm ?? 24, proj4);

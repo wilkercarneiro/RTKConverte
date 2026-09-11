@@ -41,12 +41,25 @@ function ehInvisivel(cp: number): boolean {
  * comum não deixa o texto "um pouco errado": derruba a planta e junta as linhas
  * do memorial. É o mesmo campo com a mesma intenção do operador — uma linha por
  * pedaço da confrontação.
+ *
+ * Dentro da etiqueta entre parênteses o separador NÃO separa. O operador digita
+ * `(MATR.325\CNS.00.701-3) FAZENDA ENGENHO NOVO\ …` com contrabarra no lugar da
+ * barra (FAZENDA SANTA BARBARA, 2026-09-11), e partir ali dava as partes
+ * "(MATR.325" e "CNS.00.701-3) FAZENDA ENGENHO NOVO": as peças liam as duas como
+ * pessoas, o vizinho de verdade ficava sem imóvel e saíam cartas de anuência
+ * para "(MATR.325". A contrabarra interna vira a barra da forma canônica
+ * `(MATR.x/CNS.y)`, que é como o resto do sistema escreve a etiqueta.
  */
 export function partesDescritivo(descritivo: string): string[] {
   const partes: string[] = [];
   let atual = "";
+  let dentroDaEtiqueta = false;
   for (const ch of descritivo) {
-    if (ch === "\\" || ehQuebra(ch.codePointAt(0)!)) { partes.push(atual); atual = ""; }
+    const separador = ch === "\\" || ehQuebra(ch.codePointAt(0)!);
+    if (ch === "(" && atual.trim() === "") dentroDaEtiqueta = true;
+    else if (ch === ")") dentroDaEtiqueta = false;
+    if (separador && dentroDaEtiqueta) atual += "/";
+    else if (separador) { partes.push(atual); atual = ""; }
     else atual += ch;
   }
   partes.push(atual);

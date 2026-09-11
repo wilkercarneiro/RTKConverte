@@ -103,12 +103,13 @@ export interface TrechoBanco {
  * Pular o item 2 era o motivo de a estrada aparecer certa na tela e sem a linha
  * vermelha no PDF. Ver ARQUITETURA-TRECHOS.md.
  *
- * No serviço completo (fluxo 'geo') o item 3 NÃO vale: quem manda na
- * confrontação é o sistema, e do SIGEF só se aproveita área e perímetro. O
- * texto do PDF vinha truncado ("FULANO DE T...") e ainda por cima apagava a
- * marcação de estrada/rio e a numeração feitas na conferência. Passe
- * `usarTextoDoPdf: false` nesse fluxo — sem confrontação no sistema, a lista
- * volta vazia de propósito, para quem chamou avisar em vez de desenhar o PDF.
+ * Desde 11/09/2026 o serviço completo (fluxo 'geo') NÃO passa mais por aqui:
+ * gerar-planta desenha pelos dados do sistema e do PDF só aproveita área e
+ * perímetro (mesma regra de gerar-documentos). O texto do PDF vinha truncado
+ * ("FULANO DE T...") e apagava a marcação de estrada/rio e a numeração feitas
+ * na conferência. `usarTextoDoPdf: false` continua disponível para quem
+ * precisar da lista sem o item 3 — vazia de propósito quando o sistema não tem
+ * confrontação, para quem chamou avisar em vez de desenhar o PDF.
  */
 export function montarTrechosDoSigef(
   trechoRows: TrechoBanco[],
