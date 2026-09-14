@@ -4,12 +4,17 @@
 //     base; cada interseção sai listada e pintada de vermelho no mapa.
 //   - Área certificada (modo "vizinhanca"): ainda não há TXT; o mapa mostra os
 //     CSVs do vizinho sobre o satélite e as parcelas da base ao redor.
-// A consulta é refeita (com atraso) sempre que o polígono muda.
-import { useEffect, useMemo, useState } from "react";
+// A consulta é refeita (com atraso) sempre que o polígono muda. Antes dela, as
+// parcelas ao redor são trazidas do INCRA na hora (consultar-sigef); se o INCRA
+// não responder, vale a cópia da base local — e a tela diz isso.
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MapaInterativo } from "./MapaInterativo";
 import type { PontoMapa } from "./MapaInterativo";
-import { coberturaSigef, consultarSigef, fmtArea } from "../lib/sigef";
+import { coberturaSigef, consultarSigef, fmtArea, sincronizarSigef } from "../lib/sigef";
 import type { LonLat, ResultadoSigef } from "../lib/sigef";
+
+/** Resultado da consulta ao INCRA: "ok" = base atualizada agora; "falhou" = só a cópia local; "sem-uf" = não dá para consultar. */
+type Online = { estado: "ok" | "falhou" | "sem-uf"; detalhe?: string } | null;
 
 interface Props {
   modo: "sobreposicao" | "vizinhanca";
@@ -39,10 +44,10 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
   const [foco, setFoco] = useState<string | null>(null);
   const [cobertura, setCobertura] = useState<Record<string, number> | null>(null);
   const [versao, setVersao] = useState(0);
-
-  useEffect(() => {
-    coberturaSigef().then(setCobertura).catch(() => setCobertura({}));
-  }, [versao]);
+  const [online, setOnline] = useState<Online>(null);
+  // "verificar de novo" consulta o INCRA mesmo com a caixa já sincronizada há pouco
+  const forcarRef = useRef(false);
+  const raio = modo === "sobreposicao" ? 300 : 800;
 
   useEffect(() => {
     if (!busca.length) { setResultado(null); return; }
@@ -50,7 +55,21 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
     setCarregando(true);
     const t = setTimeout(async () => {
       try {
-        const r = await consultarSigef(busca, { raioM: modo === "sobreposicao" ? 300 : 800, ignorar: ignorar ?? [] });
+        if (uf) {
+          try {
+            const forcar = forcarRef.current;
+            forcarRef.current = false;
+            const s = await sincronizarSigef(busca, uf, forcar);
+            if (vivo) setOnline(s.ok ? { estado: "ok", detalhe: s.avisos.join(" · ") || undefined } : { estado: "falhou", detalhe: s.avisos.join(" · ") });
+          } catch (e) {
+            if (vivo) setOnline({ estado: "falhou", detalhe: e instanceof Error ? e.message : String(e) });
+          }
+        } else if (vivo) {
+          setOnline({ estado: "sem-uf" });
+        }
+        if (!vivo) return;
+        coberturaSigef().then((c) => vivo && setCobertura(c)).catch(() => vivo && setCobertura({}));
+        const r = await consultarSigef(busca, { raioM: raio, ignorar: ignorar ?? [] });
         if (!vivo) return;
         setResultado(r); setErro(null);
         if (!r.sobreposicoes.some((s) => s.codigo === foco)) setFoco(null);
@@ -62,16 +81,32 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
     }, 600);
     return () => { vivo = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chave, chaveIgnorar, modo, versao]);
+  }, [chave, chaveIgnorar, modo, versao, uf]);
 
-  const sobre = resultado?.sobreposicoes ?? [];
+  const todas = resultado?.sobreposicoes ?? [];
+  // a própria parcela (serviço já certificado) não é conflito: sai à parte e não pinta de vermelho
+  const sobre = todas.filter((s) => !s.mesma_parcela);
+  const proprias = todas.filter((s) => s.mesma_parcela);
+  const encostos = resultado?.encostos ?? [];
   const nParcelas = resultado?.parcelas.features.length ?? 0;
   const totalBase = cobertura ? Object.values(cobertura).reduce((s, n) => s + n, 0) : null;
   const naUf = uf && cobertura ? (cobertura[uf.toUpperCase()] ?? 0) : null;
   const areaImovel = resultado?.area_imovel_m2 ?? 0;
   const somaSobre = sobre.reduce((s, x) => s + x.area_m2, 0);
+  const tolerancia = String(resultado?.largura_min_m ?? 0.5).replace(".", ",");
+  // "sem sobreposição" só vale se o INCRA respondeu agora ou a base local tem parcelas por perto
+  const naoVerificado = modo === "sobreposicao" && resultado && !sobre.length && online?.estado !== "ok" && nParcelas === 0;
 
-  const classe = modo === "sobreposicao" && resultado ? (sobre.length ? "perigo" : "ok") : "";
+  const classe = modo === "sobreposicao" && resultado ? (sobre.length ? "perigo" : naoVerificado ? "aviso" : "ok") : "";
+  const titulo = modo === "sobreposicao"
+    ? (carregando && !resultado ? "Consultando o SIGEF (INCRA) e verificando sobreposição…"
+      : !resultado ? "Sobreposição com parcelas certificadas (SIGEF)"
+      : sobre.length ? `⚠ ${sobre.length} sobreposição(ões) com parcela certificada`
+      : naoVerificado ? "Sobreposição NÃO verificada: sem dados do SIGEF para esta região"
+      : proprias.length ? `✓ Imóvel já certificado no SIGEF, sem sobreposição com outras parcelas${online?.estado === "ok" ? "" : " (base local)"}`
+      : online?.estado === "ok" ? "✓ Sem sobreposição com parcelas certificadas (SIGEF consultado agora)"
+      : "✓ Sem sobreposição com as parcelas da base local (SIGEF não consultado agora)")
+    : "Parcelas certificadas ao redor (SIGEF)";
 
   return (
     <div className="mapa-cert">
@@ -79,14 +114,10 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
         destaques={destaques} foco={foco} altura={altura} />
       <div className={`sobreposicao-painel ${classe}`}>
         <header>
-          {modo === "sobreposicao"
-            ? (carregando && !resultado ? "Verificando sobreposição com parcelas certificadas…"
-              : !resultado ? "Sobreposição com parcelas certificadas (SIGEF)"
-              : sobre.length ? `⚠ ${sobre.length} sobreposição(ões) com parcela certificada` : "✓ Sem sobreposição com as parcelas certificadas da base")
-            : "Parcelas certificadas ao redor (base local do SIGEF)"}
+          {titulo}
           <span className="esticar" />
           {carregando && resultado && <span className="sub">atualizando…</span>}
-          <button type="button" className="fantasma" style={{ padding: 0, fontSize: 12.5 }} onClick={() => setVersao((v) => v + 1)} disabled={carregando}>
+          <button type="button" className="fantasma" style={{ padding: 0, fontSize: 12.5 }} onClick={() => { forcarRef.current = true; setVersao((v) => v + 1); }} disabled={carregando}>
             verificar de novo
           </button>
         </header>
@@ -114,14 +145,26 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
             </ul>
           </>
         )}
+        {modo === "sobreposicao" && proprias.length > 0 && (
+          <p className="sub">
+            <b>Já certificado:</b> {proprias.length === 1 ? "o contorno coincide" : `${proprias.length} partes coincidem`} com parcela certificada
+            ({proprias.map((s) => `${s.codigo}${s.situacao ? ` · ${s.situacao}` : ""}, ${(s.percentual_parcela ?? 100).toFixed(2).replace(".", ",")}% da parcela`).join("; ")}) —
+            é o próprio imóvel, não conta como sobreposição.
+          </p>
+        )}
+        {modo === "sobreposicao" && encostos.length > 0 && (
+          <p className="sub">
+            {encostos.length} confrontante(s) certificado(s) só encosta(m) na divisa — faixa com menos de {tolerancia} m de largura, desprezada
+            ({encostos.map((e) => `${e.codigo.slice(0, 8)}…: ${fmtArea(e.area_m2)}, até ${e.largura_max_m.toFixed(2).replace(".", ",")} m`).join("; ")}).
+          </p>
+        )}
         {resultado && (
           <p className="sub">
-            {nParcelas} parcela(s) certificada(s) num raio de {modo === "sobreposicao" ? 300 : 800} m na base local
-            {totalBase !== null && <> · base com {totalBase} parcela(s){uf ? `, ${naUf ?? 0} em ${uf.toUpperCase()}` : ""}</>}.
-            {(naUf === 0 || totalBase === 0) && (
-              <> <b>A base ainda não cobre esta região</b>: importe o shapefile do SIGEF da UF (<span className="mono">node scripts/importar-sigef.mjs</span>) —
-              enquanto isso, só os CSVs enviados na etapa de área certificada entram na verificação.</>
-            )}
+            {nParcelas} parcela(s) certificada(s) num raio de {raio} m
+            {online?.estado === "ok" && <> · <b>SIGEF consultado agora</b>{online.detalhe ? ` (${online.detalhe})` : ""}</>}
+            {online?.estado === "falhou" && <> · <b>o INCRA não respondeu</b>, valendo a cópia da base local{online.detalhe ? ` (${online.detalhe})` : ""}</>}
+            {online?.estado === "sem-uf" && <> · <b>informe a UF</b> para consultar o SIGEF na hora</>}
+            {totalBase !== null && <> · base local com {totalBase} parcela(s){uf ? `, ${naUf ?? 0} em ${uf.toUpperCase()}` : ""}</>}.
           </p>
         )}
       </div>

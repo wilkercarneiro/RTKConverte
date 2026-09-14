@@ -2,7 +2,7 @@
 // sobreposição, e gravação das parcelas que chegam por CSV. O trabalho
 // geométrico é do PostGIS (migration 0018); aqui só se monta o GeoJSON.
 import proj4mod from "proj4";
-import { supabase } from "./supabase";
+import { chamarFuncao, supabase } from "./supabase";
 import { GEO_DEF, gmsToDeg, parseGmsPlanilha, utmDef } from "../../supabase/functions/_shared/geo.ts";
 import type { Vertice } from "./types";
 
@@ -40,13 +40,35 @@ export interface Sobreposicao {
   area_m2: number;
   /** quanto do imóvel está dentro dessa parcela */
   percentual_imovel: number;
+  /** quanto da parcela está dentro do imóvel */
+  percentual_parcela?: number;
+  /** a própria parcela: o imóvel (ou uma parte/gleba) já está certificado com esse contorno */
+  mesma_parcela?: boolean;
   geometria: GeoJSON.MultiPolygon | GeoJSON.Polygon;
+}
+
+/** Confrontante certificado que só encosta: a faixa na divisa é mais estreita que a tolerância. */
+export interface Encosto {
+  codigo: string;
+  area_m2: number;
+  largura_max_m: number;
 }
 
 export interface ResultadoSigef {
   parcelas: { type: "FeatureCollection"; features: FeatureParcela[] };
   sobreposicoes: Sobreposicao[];
+  encostos?: Encosto[];
   area_imovel_m2?: number;
+  largura_min_m?: number;
+}
+
+export interface SincroniaSigef {
+  ok: boolean;
+  uf: string;
+  camadas: { tema: string; parcelas: number; erro?: string }[];
+  guardadas: number;
+  removidas: number;
+  avisos: string[];
 }
 
 /** Fecha o anel (primeiro == último), como o GeoJSON exige. */
@@ -93,6 +115,26 @@ export async function consultarSigef(aneis: LonLat[][], opcoes?: { raioM?: numbe
   });
   if (error) throw new Error(error.message);
   return (data as ResultadoSigef) ?? vazio;
+}
+
+// caixas já sincronizadas nesta aba: evita bater no INCRA a cada vértice mexido
+const sincronizadas = new Map<string, number>();
+const VALIDADE_MS = 10 * 60 * 1000;
+
+/**
+ * Traz do INCRA (WFS, pela edge function consultar-sigef) as parcelas certificadas
+ * ao redor dos anéis e atualiza a base local. `forcar` ignora o cache da aba.
+ */
+export async function sincronizarSigef(aneis: LonLat[][], uf: string, forcar = false): Promise<SincroniaSigef> {
+  const mp = multiPoligono(aneis);
+  const chave = `${uf}|${JSON.stringify(mp.coordinates.map((p) => p[0].map(([x, y]) => [Math.round(x * 1e4), Math.round(y * 1e4)])))}`;
+  const t = sincronizadas.get(chave);
+  if (!forcar && t && Date.now() - t < VALIDADE_MS) {
+    return { ok: true, uf, camadas: [], guardadas: 0, removidas: 0, avisos: [] };
+  }
+  const r = await chamarFuncao<SincroniaSigef>("consultar-sigef", { imovel: mp, uf });
+  if (r.ok) sincronizadas.set(chave, Date.now());
+  return r;
 }
 
 export interface ParcelaParaGuardar {

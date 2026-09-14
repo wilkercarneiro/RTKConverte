@@ -826,6 +826,7 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .sobreposicao-painel { display: grid; gap: 8px; border: 1px solid var(--borda); border-radius: 10px; padding: 12px 14px; background: #F8FAF9; }
 .sobreposicao-painel.perigo { border-color: #FCA5A5; background: #FEF2F2; }
 .sobreposicao-painel.ok { border-color: #A7F3D0; background: #ECFDF5; }
+.sobreposicao-painel.aviso { border-color: #FCD34D; background: #FFFBEB; }
 .sobreposicao-painel > header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 700; font-size: 13.5px; }
 .sobreposicao-painel > header .esticar { flex: 1; }
 .sobreposicao-painel .sub { font-size: 12.5px; line-height: 1.5; margin: 0; }
