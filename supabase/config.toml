@@ -1,0 +1,10 @@
+# Configuração lida pelo Supabase CLI no deploy das edge functions
+# (`bash scripts/deploy-functions.sh`). Só o necessário para o deploy remoto:
+# não há stack local configurada aqui.
+project_id = "rtkconverte-geo"
+
+# Todas as funções exigem o JWT do usuário logado (padrão do CLI), menos a
+# admin-setup, que é chamada pelo script de upload dos templates e se protege
+# com o segredo guardado em `config_setup`.
+[functions.admin-setup]
+verify_jwt = false

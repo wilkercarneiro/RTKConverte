@@ -1,0 +1,22 @@
+# Testes do motor/geradores e build do frontend em todo push e pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  testes-e-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # o build não precisa das chaves reais: sem elas o app só mostra a tela
+      # de "configuração ausente"
+      - run: npm run build
