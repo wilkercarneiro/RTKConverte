@@ -15,6 +15,11 @@ export type Rota =
   | { t: "servicos" }
   | { t: "config" }
   | { t: "marca" }
+  | { t: "ajuda" }
+  // públicas (abrem sem login)
+  | { t: "cadastro" }
+  | { t: "termos" }
+  | { t: "privacidade" }
   | { t: "cliente"; id: string }
   | { t: "servico"; id: string }
   | { t: "novo"; chave: string; clienteId?: string };
@@ -35,6 +40,10 @@ export function hashParaRota(hash: string): Rota {
     case "servicos": return { t: "servicos" };
     case "config": return { t: "config" };
     case "marca": return { t: "marca" };
+    case "ajuda": return { t: "ajuda" };
+    case "cadastro": return { t: "cadastro" };
+    case "termos": return { t: "termos" };
+    case "privacidade": return { t: "privacidade" };
     case "cliente": return p[1] ? { t: "cliente", id: p[1] } : { t: "clientes" };
     case "servico": return p[1] ? { t: "servico", id: p[1] } : { t: "servicos" };
     // sem cliente na URL a chave nem aparece: um `clienteId: undefined`

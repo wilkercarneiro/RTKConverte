@@ -11,6 +11,15 @@ import { PecasServico } from "./components/PecasServico";
 import { Configuracoes } from "./components/Configuracoes";
 import { ClientePage } from "./components/ClientePage";
 import { Marca } from "./components/Marca";
+import { Cadastro } from "./components/Cadastro";
+import { Ajuda } from "./components/Ajuda";
+import { PaginaDocumento } from "./components/Documento";
+import { Logo } from "./components/Logo";
+import termos from "../docs/legal/termos-de-uso.md?raw";
+import privacidade from "../docs/legal/politica-de-privacidade.md?raw";
+import { CADASTRO_ABERTO } from "./lib/config";
+import { carregarEscritorio } from "./lib/escritorio";
+import type { EstadoEscritorio } from "./lib/escritorio";
 import { definicaoDe } from "./lib/modalidades";
 import type { ChaveServico } from "./lib/modalidades";
 import { useRota } from "./lib/rota";
@@ -25,6 +34,8 @@ export default function App() {
   const [aberto, setAberto] = useState<ResultadoParse | null>(null);
   const [carregandoServico, setCarregandoServico] = useState(false);
   const [erroServico, setErroServico] = useState<string | null>(null);
+  // escritório do usuário (null = carregando). Ver lib/escritorio.ts.
+  const [escritorio, setEscritorio] = useState<EstadoEscritorio | null>(null);
 
   useEffect(() => {
     if (!configOk) return;
@@ -32,6 +43,13 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, sess) => { setLogado(!!sess); setUsuario(sess?.user.email ?? null); });
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!logado) { setEscritorio(null); return; }
+    let cancelado = false;
+    carregarEscritorio().then((e) => { if (!cancelado) setEscritorio(e); });
+    return () => { cancelado = true; };
+  }, [logado, usuario]);
 
   // A rota é a fonte da verdade da navegação: o serviço da URL é carregado aqui,
   // e não empurrado por quem clicou. É isso que faz atualizar a página (F5) e o
@@ -65,6 +83,10 @@ export default function App() {
     return () => { cancelado = true; };
   }, [servicoIdRota, logado]);
 
+  // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
+  if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vértice", href: "#/" }} />;
+  if (rota.t === "privacidade") return <PaginaDocumento texto={privacidade} voltar={{ rotulo: "Vértice", href: "#/" }} />;
+
   if (!configOk) {
     return (
       <div className="centro">
@@ -77,7 +99,12 @@ export default function App() {
     );
   }
   if (logado === null) return <div className="centro">Carregando...</div>;
-  if (!logado) return <Login onOk={() => setLogado(true)} />;
+  if (!logado) {
+    if (rota.t === "cadastro" && CADASTRO_ABERTO) return <Cadastro />;
+    return <Login onOk={() => setLogado(true)} cadastroAberto={CADASTRO_ABERTO} />;
+  }
+  if (escritorio === null) return <div className="centro">Carregando...</div>;
+  if (escritorio.estado === "sem-escritorio") return <SemEscritorio email={usuario} />;
 
   /** Serviço criado a partir de um cliente: vincula e pré-preenche o detentor. */
   async function vincularCliente(parse: ResultadoParse, clienteId?: string): Promise<ResultadoParse> {
@@ -113,7 +140,10 @@ export default function App() {
   }
 
   const abrirServico = (s: Servico) => ir({ t: "servico", id: s.id });
-  const casca = { rota, ir, usuario: usuario ? { nome: usuario, papel: "Operador" } : undefined };
+  const papel = escritorio.estado === "ok"
+    ? `${escritorio.escritorio.papel === "dono" ? "Dono" : "Operador"} · ${escritorio.escritorio.nome}`
+    : "Operador";
+  const casca = { rota, ir, usuario: usuario ? { nome: usuario, papel } : undefined };
 
   switch (rota.t) {
     case "novo": {
@@ -185,10 +215,13 @@ export default function App() {
       return <AppShell {...casca}><Servicos onAbrir={abrirServico} onNovo={() => ir({ t: "inicio" })} /></AppShell>;
 
     case "config":
-      return <AppShell {...casca}><Configuracoes /></AppShell>;
+      return <AppShell {...casca}><Configuracoes escritorio={escritorio} /></AppShell>;
 
     case "marca":
       return <AppShell {...casca}><Marca /></AppShell>;
+
+    case "ajuda":
+      return <AppShell {...casca}><Ajuda /></AppShell>;
 
     default:
       return (
@@ -198,6 +231,24 @@ export default function App() {
         </AppShell>
       );
   }
+}
+
+/** Conta confirmada, mas fora de qualquer escritório: espera o dono adicioná-la. */
+function SemEscritorio({ email }: { email: string | null }) {
+  return (
+    <div className="centro">
+      <div className="login-box" style={{ textAlign: "left" }}>
+        <Logo size={28} />
+        <h2 style={{ marginTop: 14 }}>Falta entrar num escritório</h2>
+        <p>Sua conta{email ? <> (<b>{email}</b>)</> : null} está ativa, mas ainda não faz parte de nenhum escritório.</p>
+        <p>Peça ao dono do escritório para adicionar este e-mail em <b>Configurações → Equipe</b> e depois clique em “Já fui adicionado”.</p>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button className="principal" onClick={() => location.reload()}>Já fui adicionado</button>
+          <button onClick={() => supabase.auth.signOut()}>Sair</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /**

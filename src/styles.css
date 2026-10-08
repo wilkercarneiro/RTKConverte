@@ -838,3 +838,23 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .sobreposicao-lista li .area { font-family: var(--mono); font-size: 12.5px; color: #B91C1C; font-weight: 700; text-align: right; }
 .sobreposicao-lista li .pct { font-size: 11.5px; color: var(--texto-3); text-align: right; }
 .mapa-cert { display: grid; gap: 10px; }
+
+/* ===== Cadastro, páginas públicas (termos/privacidade) e Ajuda ===== */
+.escolha-cadastro { display: grid; gap: 8px; }
+.escolha-cadastro label, .login-box label.aceite { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; }
+.escolha-cadastro input, .login-box label.aceite input { height: auto; width: auto; margin-top: 3px; }
+.legal-links { margin-top: 18px; font-size: 12.5px; }
+.pagina-publica { min-height: 100vh; background: var(--bg); padding: 40px 16px 80px; }
+.pagina-publica-conteudo { max-width: 780px; margin: 0 auto; background: var(--card); border: 1px solid var(--borda); border-radius: var(--raio-g); padding: 32px clamp(18px, 4vw, 48px); }
+.pagina-publica .voltar { display: inline-block; margin-bottom: 16px; font-size: 13.5px; }
+.documento { line-height: 1.6; font-size: 15px; color: var(--texto); }
+.documento h1 { font-size: 26px; margin: 0 0 14px; }
+.documento h2 { font-size: 18px; margin: 26px 0 8px; }
+.documento h3 { font-size: 16px; margin: 20px 0 6px; }
+.documento p, .documento ul, .documento ol { margin: 0 0 12px; }
+.documento ul, .documento ol { padding-left: 22px; }
+.documento li { margin: 4px 0; }
+.documento blockquote { margin: 0 0 16px; padding: 10px 14px; border-left: 3px solid var(--alerta, #D97706); background: var(--alerta-claro, #FEF3C7); border-radius: 8px; font-size: 14px; }
+.documento .tabela-wrap { margin: 0 0 14px; }
+.documento td, .documento th { vertical-align: top; }
+.canais-suporte { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }

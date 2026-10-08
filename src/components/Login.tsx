@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
 import { Logo } from "./Logo";
+import { TERMOS_PUBLICADOS } from "../lib/config";
 
-export function Login({ onOk }: { onOk: () => void }) {
+export function Login({ onOk, cadastroAberto = false }: { onOk: () => void; cadastroAberto?: boolean }) {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState<string | null>(null);
@@ -46,7 +47,7 @@ export function Login({ onOk }: { onOk: () => void }) {
       <div className="login-form">
         <div className="login-box">
           <h2>Entrar</h2>
-          <p>Use o e-mail de operador cadastrado.</p>
+          <p>{cadastroAberto ? <>Ainda não tem conta? <a href="#/cadastro">Criar conta</a></> : "Use o e-mail de operador cadastrado."}</p>
           <form onSubmit={entrar}>
             <label>E-mail<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="username" /></label>
             <label>Senha<input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} required autoComplete="current-password" /></label>
@@ -55,6 +56,7 @@ export function Login({ onOk }: { onOk: () => void }) {
             {aviso && <div className="ok" style={{ margin: 0 }}>{aviso}</div>}
             {erro && <div className="erro" style={{ margin: 0 }}>{erro}</div>}
           </form>
+          {TERMOS_PUBLICADOS && <p className="sub legal-links"><a href="#/termos">Termos de Uso</a> · <a href="#/privacidade">Privacidade</a></p>}
         </div>
       </div>
     </div>
