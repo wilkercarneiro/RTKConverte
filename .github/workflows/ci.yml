@@ -17,6 +17,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # isolamento entre escritórios (RLS) num Postgres descartável; o runner
+      # traz o PostgreSQL instalado, só fora do PATH
+      - name: Testes de RLS
+        run: |
+          export PATH="/usr/lib/postgresql/$(ls /usr/lib/postgresql | sort -V | tail -1)/bin:$PATH"
+          npm run test:rls
       # o build não precisa das chaves reais: sem elas o app só mostra a tela
       # de "configuração ausente"
       - run: npm run build

@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "node --test tests/*.test.mjs",
     "test:engine": "node --test tests/engine.test.mjs",
+    "test:rls": "bash scripts/testar-rls.sh",
     "deploy:functions": "bash scripts/deploy-functions.sh",
     "make:docx-template": "node scripts/make-docx-template.mjs",
     "upload:templates": "node scripts/upload-templates.mjs",
