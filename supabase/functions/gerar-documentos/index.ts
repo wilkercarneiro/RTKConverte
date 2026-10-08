@@ -33,8 +33,18 @@ import { anelLonLatDeEN, garantirImagemSatelite } from "../_shared/satelite.ts";
 import type { ImagemSatelite } from "../_shared/satelite.ts";
 import { numerosDoSigefPorAnel, numerosTotaisDoSigef } from "../_shared/sigef_glebas.ts";
 import type { NumerosSigef } from "../_shared/sigef_glebas.ts";
+import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
+import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
+
+/** Cliente no nome de quem chamou (RLS vale): só para conferir acesso. */
+const clienteDoUsuario = (req: Request) =>
+  createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  }) as unknown as ClienteUsuario;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -106,6 +116,8 @@ Deno.serve(async (req) => {
     // entrada/ ou busca no Mapbox pelo anel do imóvel (e de cada gleba).
     const tokenMapbox = Deno.env.get("MAPBOX_TOKEN");
     if (!servico_id) return json({ erro: "servico_id ausente" }, 400);
+    const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
+    if (recusa) return json({ erro: recusa.erro }, recusa.status);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -140,7 +152,12 @@ Deno.serve(async (req) => {
       ? (await supa.from("responsaveis_tecnicos").select().eq("id", servico.rt_id).single()).data
       : null;
     // desenhista do carimbo da planta (Configurações)
-    const { data: cfgDes } = await supa.from("config_empresa").select("value").eq("key", "desenhista").maybeSingle();
+    // (com escritórios, cada um tem o seu: filtra pelo do serviço)
+    let qDes = supa.from("config_empresa").select("value").eq("key", "desenhista");
+    if (servico.escritorio_id) qDes = qDes.eq("escritorio_id", servico.escritorio_id);
+    const { data: cfgDes } = await qDes.maybeSingle();
+    // modelos e logo do escritório do serviço (ver _shared/modelos.ts)
+    const esc = await escritorioDoServico(supa, servico);
 
     // Conferência de área é PRÉVIA: não vai ao SIGEF, então não pode queimar a
     // numeração oficial do credenciado. Os contadores do Anexo A só andam para
@@ -399,17 +416,16 @@ Deno.serve(async (req) => {
     // Sem o modelo, o memorial ainda sai: monta-se o pacote mínimo com a logo
     // como marca d'água. É pior — não tem rodapé nem logo no topo — mas é melhor
     // do que não gerar.
-    const logo = await carregarLogoPlanta(supa);
+    const logo = await carregarLogoPlanta(supa, esc);
     const zipDocx = new JSZip();
     // O modelo é o da PEÇA 1 — o mesmo arquivo que as sete peças usam. Não há
     // "modelo do memorial da geração" e "modelo do memorial das peças": é um só,
     // e é por isso que os dois saem idênticos.
-    const tplMemorial = await supa.storage.from("templates")
-      .download(`${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx`);
+    const tplMemorial = await baixarModelo(supa, esc, `${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx`);
     let doModelo = false;
     // O modelo da peça 1 descreve UM anel; em partes o memorial sai montado em
     // código, uma descrição por parte, com o timbre do memorial-template.
-    if (!memorialPartes && !tplMemorial.error && tplMemorial.data) {
+    if (!memorialPartes && tplMemorial.data) {
       const tz = await JSZip.loadAsync(await tplMemorial.data.arrayBuffer());
       for (const name of Object.keys(tz.files)) {
         if (tz.files[name].dir) continue;
@@ -425,9 +441,9 @@ Deno.serve(async (req) => {
     // Sem o modelo o memorial ainda sai, montado em código: não é o documento da
     // empresa, mas é melhor do que não gerar — e o aviso diz o que aconteceu.
     if (!doModelo) {
-      const tplDocx = await supa.storage.from("templates").download("memorial-template.docx");
+      const tplDocx = await baixarModelo(supa, esc, "memorial-template.docx");
       let timbre: TimbreModelo | null = null;
-      if (!tplDocx.error && tplDocx.data) {
+      if (tplDocx.data) {
         const tz = await JSZip.loadAsync(await tplDocx.data.arrayBuffer());
         for (const name of Object.keys(tz.files)) {
           if (tz.files[name].dir) continue;
@@ -444,8 +460,8 @@ Deno.serve(async (req) => {
     const docxBuf = await zipDocx.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 
     // ------------------------- ODS -------------------------
-    const tplOds = await supa.storage.from("templates").download("planta-template.ods");
-    if (tplOds.error || !tplOds.data) return json({ erro: "Template planta-template.ods não encontrado no Storage" }, 500);
+    const tplOds = await baixarModelo(supa, esc, "planta-template.ods");
+    if (!tplOds.data) return json({ erro: "Template planta-template.ods não encontrado no Storage" }, 500);
     const zipIn = await JSZip.loadAsync(await tplOds.data.arrayBuffer());
     const contentXml = await zipIn.file("content.xml")!.async("string");
     const patched = patchOdsContent(contentXml, {

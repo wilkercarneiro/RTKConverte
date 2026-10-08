@@ -27,8 +27,17 @@ import {
   blocosPorNumeracao, fusoPelosCertificados, montarVerticesUnidos, parseCsvSigef, unirEmBlocos,
 } from "../_shared/certificados.ts";
 import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts";
+import { ehRecusa, escritorioDoUsuario } from "../_shared/acesso.ts";
+import type { ClienteUsuario } from "../_shared/acesso.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
+
+/** Cliente no nome de quem chamou (RLS vale): descobre o escritório dele. */
+const clienteDoUsuario = (req: Request) =>
+  createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  }) as unknown as ClienteUsuario;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -49,6 +58,9 @@ Deno.serve(async (req) => {
   try {
     const { nome_arquivo, conteudo, uf, fuso, certificados, tolerancia_certificados, tolerancia_linha } = await req.json();
     if (typeof conteudo !== "string" || !conteudo.trim()) return json({ erro: "Conteúdo do TXT ausente" }, 400);
+    // o serviço nasce no escritório de quem enviou (null = banco ainda sem escritórios)
+    const acesso = await escritorioDoUsuario(clienteDoUsuario(req));
+    if (ehRecusa(acesso)) return json({ erro: acesso.erro }, acesso.status);
     const nomeArquivo = typeof nome_arquivo === "string" && nome_arquivo ? nome_arquivo : "pontos.txt";
 
     // ---- confrontantes com área certificada (opcional) ----
@@ -139,6 +151,7 @@ Deno.serve(async (req) => {
       // várias partes só existem como serviço com glebas: uma aba, uma poligonal
       // e um bloco de identificação por parte
       ...(emPartes ? { tem_glebas: true } : {}),
+      ...(acesso.escritorioId ? { escritorio_id: acesso.escritorioId } : {}),
     }).select().single();
     if (eServ) throw eServ;
 

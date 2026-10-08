@@ -22,8 +22,17 @@ import { GEO_DEF, gmsToDeg, parseGmsPlanilha, utmDef } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { buscarImagemMapbox, enquadrar, guardarImagem, urlMapaSatelite } from "../_shared/satelite.ts";
 import type { GeorefMapa, LonLat } from "../_shared/satelite.ts";
+import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
+import type { ClienteUsuario } from "../_shared/acesso.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
+
+/** Cliente no nome de quem chamou (RLS vale): só para conferir acesso. */
+const clienteDoUsuario = (req: Request) =>
+  createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  }) as unknown as ClienteUsuario;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -69,6 +78,8 @@ Deno.serve(async (req) => {
   try {
     const { servico_id, imovel, glebas: glebasPedidas, faltantes, mapa: mapaPedido } = await req.json();
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
+    const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
+    if (recusa) return json({ erro: recusa.erro }, recusa.status);
     const token = Deno.env.get("MAPBOX_TOKEN");
     if (!token) return json({ erro: "MAPBOX_TOKEN não configurado no servidor" }, 500);
 

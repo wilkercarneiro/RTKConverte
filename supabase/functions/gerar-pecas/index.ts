@@ -16,8 +16,18 @@ import type { DadosPecas, Requerente } from "../_shared/pecas.ts";
 import { ehViaPorLimite, montarServico } from "../_shared/servico.ts";
 import { geometriaDoCalculo, sigefDoCalculo } from "../_shared/planta_dados.ts";
 import type { Proj4 } from "../_shared/geo.ts";
+import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
+import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
+
+/** Cliente no nome de quem chamou (RLS vale): só para conferir acesso. */
+const clienteDoUsuario = (req: Request) =>
+  createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  }) as unknown as ClienteUsuario;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -118,6 +128,8 @@ Deno.serve(async (req) => {
     }
 
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
+    const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
+    if (recusa) return json({ erro: recusa.erro }, recusa.status);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -405,9 +417,17 @@ Deno.serve(async (req) => {
     // objeto faria o jogo da gleba 2 sair com o memorial da gleba 1.
     const tplBytes: Record<string, ArrayBuffer> = {};
     const tplXml: Record<string, string> = {};
+    // modelos do escritório do serviço (ver _shared/modelos.ts)
+    const esc = await escritorioDoServico(supa, servico);
     for (const [num, arquivo] of TODAS) {
-      const dl = await supa.storage.from("templates").download(`${pasta}/${arquivo}.docx`);
-      if (dl.error || !dl.data) return json({ erro: `Template ${pasta}/${arquivo}.docx não encontrado no Storage` }, 500);
+      const dl = await baixarModelo(supa, esc, `${pasta}/${arquivo}.docx`);
+      if (!dl.data) {
+        return json({
+          erro: esc.compartilhados
+            ? `Template ${pasta}/${arquivo}.docx não encontrado no Storage`
+            : `Modelo ${pasta}/${arquivo}.docx não encontrado: envie os modelos do escritório em Configurações → Modelos.`,
+        }, 500);
+      }
       const bytes = await dl.data.arrayBuffer();
       tplBytes[num] = bytes;
       tplXml[num] = await (await JSZip.loadAsync(bytes)).file("word/document.xml")!.async("string");

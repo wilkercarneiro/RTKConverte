@@ -21,8 +21,18 @@ import {
 } from "../_shared/planta_dados.ts";
 import { anelLonLatDeEN, garantirImagemSatelite } from "../_shared/satelite.ts";
 import type { LonLat } from "../_shared/satelite.ts";
+import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
+import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { escritorioDoServico } from "../_shared/modelos.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
+
+/** Cliente no nome de quem chamou (RLS vale): só para conferir acesso. */
+const clienteDoUsuario = (req: Request) =>
+  createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  }) as unknown as ClienteUsuario;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -49,6 +59,8 @@ Deno.serve(async (req) => {
     // (posse → A3, matrícula → A1)
     const { servico_id, pdf_base64, folha } = await req.json();
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
+    const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
+    if (recusa) return json({ erro: recusa.erro }, recusa.status);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { data: servico } = await supa.from("servicos").select().eq("id", servico_id).single();
@@ -57,7 +69,10 @@ Deno.serve(async (req) => {
     const { data: trechoRows } = await supa.from("trechos_confrontantes").select().eq("servico_id", servico_id).order("vertice_inicio_ordem");
     const rt = servico.rt_id ? (await supa.from("responsaveis_tecnicos").select().eq("id", servico.rt_id).single()).data : null;
     const cred = servico.credenciado_id ? (await supa.from("credenciados").select().eq("id", servico.credenciado_id).single()).data : null;
-    const { data: cfgDes } = await supa.from("config_empresa").select("value").eq("key", "desenhista").maybeSingle();
+    let qDes = supa.from("config_empresa").select("value").eq("key", "desenhista");
+    if (servico.escritorio_id) qDes = qDes.eq("escritorio_id", servico.escritorio_id);
+    const { data: cfgDes } = await qDes.maybeSingle();
+    const esc = await escritorioDoServico(supa, servico);
 
     if (!servico.denominacao || !servico.municipio || !servico.uf) {
       return json({ erro: "Complete denominação e município/UF antes de gerar a planta" }, 422);
@@ -224,7 +239,7 @@ Deno.serve(async (req) => {
       fuso, trt,
       folha: folhaSaida,
       dataStr: dataHojeBR(),
-      logo: await carregarLogoPlanta(supa),
+      logo: await carregarLogoPlanta(supa, esc),
       satelite: sat.imagem,
     });
 

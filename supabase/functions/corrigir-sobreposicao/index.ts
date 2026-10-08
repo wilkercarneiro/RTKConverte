@@ -20,8 +20,17 @@ import {
 import type { Proj4 } from "../_shared/geo.ts";
 import { corrigirSobreposicao, parseCsvSigef } from "../_shared/sobreposicao.ts";
 import type { ParcelaSigef, VerticeSigef } from "../_shared/sobreposicao.ts";
+import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
+import type { ClienteUsuario } from "../_shared/acesso.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
+
+/** Cliente no nome de quem chamou (RLS vale): só para conferir acesso. */
+const clienteDoUsuario = (req: Request) =>
+  createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  }) as unknown as ClienteUsuario;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -40,6 +49,8 @@ Deno.serve(async (req) => {
       usar_vertices_certificados?: boolean; tolerancia_igualar?: number;
     };
     if (!servico_id) return json({ erro: "servico_id ausente" }, 400);
+    const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
+    if (recusa) return json({ erro: recusa.erro }, recusa.status);
     if (!csvs?.length) return json({ erro: "Envie ao menos um CSV de exportação do SIGEF" }, 400);
     const afastamentoM = Number(afastamento) || 0.5;
     // ausente = ligado: a divisa com o vizinho certificado é descrita pelos vértices dele

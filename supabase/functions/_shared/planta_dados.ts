@@ -14,6 +14,8 @@ import type { ServicoCalculado, VerticeMontado, VerticeServico } from "./servico
 import type { DadosPlanta, Folha, GlebaPlanta, ParteDaPlanta, TrechoPlanta, VerticePlanta } from "./planta.ts";
 import type { DadosSigef } from "./sigef_pdf.ts";
 import type { LinhaVertice } from "./ods.ts";
+import { SEM_ESCRITORIO, caminhosDaLogo } from "./modelos.ts";
+import type { EscritorioModelos } from "./modelos.ts";
 
 /** Linha da tabela `glebas` como vem do banco. */
 export interface GlebaRow {
@@ -686,10 +688,13 @@ interface StorageLike {
   storage: { from: (b: string) => { download: (n: string) => Promise<{ error: unknown; data: Blob | null }> } };
 }
 
-/** Logo da empresa em templates/logo-empresa.(png|jpg); null quando não há. */
-export async function carregarLogoPlanta(supa: StorageLike): Promise<DadosPlanta["logo"]> {
-  for (const [nome, tipo] of [["logo-empresa.png", "png"], ["logo-empresa.jpg", "jpg"]] as const) {
-    const dl = await supa.storage.from("templates").download(nome);
+/**
+ * Logo da empresa em templates/logo-empresa.(png|jpg) — ou, num escritório
+ * novo, em templates/escritorios/{id}/ (ver _shared/modelos.ts). null quando não há.
+ */
+export async function carregarLogoPlanta(supa: StorageLike, esc: EscritorioModelos = SEM_ESCRITORIO): Promise<DadosPlanta["logo"]> {
+  for (const { caminho, tipo } of caminhosDaLogo(esc)) {
+    const dl = await supa.storage.from("templates").download(caminho);
     if (!dl.error && dl.data) return { bytes: new Uint8Array(await dl.data.arrayBuffer()), tipo };
   }
   return null;

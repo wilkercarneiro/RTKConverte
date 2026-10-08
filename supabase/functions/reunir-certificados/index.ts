@@ -16,8 +16,17 @@ import type { Proj4 } from "../_shared/geo.ts";
 import { sugerirTrechos } from "../_shared/servico.ts";
 import { blocosPorNumeracao, montarVerticesUnidos, parseCsvSigef, unirEmBlocos } from "../_shared/certificados.ts";
 import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts";
+import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
+import type { ClienteUsuario } from "../_shared/acesso.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
+
+/** Cliente no nome de quem chamou (RLS vale): só para conferir acesso. */
+const clienteDoUsuario = (req: Request) =>
+  createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  }) as unknown as ClienteUsuario;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -41,7 +50,9 @@ Deno.serve(async (req) => {
   try {
     const { servico_id, fuso, tolerancia, tolerancia_linha } = await req.json();
     if (typeof servico_id !== "string" || !servico_id) return json({ erro: "servico_id ausente" }, 400);
-    const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
+    if (recusa) return json({ erro: recusa.erro }, recusa.status);
+    const supa =createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
     const { data: servico, error: eS } = await supa.from("servicos").select().eq("id", servico_id).single();
     if (eS || !servico) return json({ erro: "Serviço não encontrado" }, 404);
