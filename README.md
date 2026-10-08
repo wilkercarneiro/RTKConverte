@@ -44,8 +44,8 @@ npm run e2e                # teste end-to-end contra o backend implantado
 ```
 
 O GitHub Actions roda testes, RLS e build em todo push (`.github/workflows/ci.yml`)
-e publica as edge functions quando `supabase/functions/` muda na `main`
-(precisa do secret `SUPABASE_ACCESS_TOKEN`).
+e publica as edge functions sob demanda (Actions → "Deploy das edge functions";
+precisa do secret `SUPABASE_ACCESS_TOKEN`).
 
 ## Variáveis de ambiente
 

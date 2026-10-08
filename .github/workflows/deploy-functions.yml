@@ -1,15 +1,15 @@
-# Publica as edge functions a partir do repositório quando algo em
-# supabase/functions/ muda na main (ou sob demanda, pela aba Actions).
+# Publica as edge functions a partir do repositório, sob demanda
+# (GitHub → Actions → "Deploy das edge functions" → Run workflow).
 #
 # Precisa do secret SUPABASE_ACCESS_TOKEN (token pessoal do dono do projeto,
-# Supabase → Account → Access Tokens). Sem o secret o job só avisa e termina
-# sem erro, para não deixar a main vermelha.
+# Supabase → Account → Access Tokens). Sem o secret o job só avisa e termina.
+#
+# Para publicar sozinho a cada mudança na main, acrescente em `on:`
+#   push: { branches: [main], paths: ["supabase/functions/**", "supabase/config.toml"] }
+# — começa manual de propósito: produção só muda quando o dono aperta o botão.
 name: Deploy das edge functions
 
 on:
-  push:
-    branches: [main]
-    paths: ["supabase/functions/**", "supabase/config.toml"]
   workflow_dispatch:
 
 concurrency:
