@@ -1,6 +1,7 @@
-// Barra lateral medida pelo conteúdo (pedido de 2026-09-10): quadro analítico
-// com no máximo 10 linhas por tabela no corpo de sempre, sem seção de carimbo
-// (a logo foi para o canto do desenho), rodapé com uma linha por gleba.
+// Barra lateral medida pelo conteúdo (pedido de 2026-09-10), no arranjo da
+// planta de referência da D'Prol (2026-10-14): quadro analítico com linha fixa
+// que mostra tudo o que couber (mínimo de 10 por tabela), carimbo com a logo
+// depois da situação, legenda no planimétrico, rodapé com uma linha por gleba.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import proj4lib from "proj4";
@@ -19,20 +20,31 @@ async function textoDe(pdf) {
 }
 const idx = (a, b) => Array.from({ length: b - a }, (_, i) => a + i);
 
-test("A1 sem glebas: 10 vértices no quadro e o resto remetido ao memorial tabular", async () => {
+// PNG 1×1 válido: basta para a seção do carimbo existir
+const PNG_1PX = Uint8Array.from(Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"));
+
+test("A1 sem glebas: com espaço, o quadro traz todos os vértices e não há nota", async () => {
   const g = geo();
   const t = await textoDe(await gerarPlantaPdf(dadosPlantaDe(g, { folha: "A1" })));
-  const n = g.vertices.length;
-  assert.ok(n > 10, "a fixture precisa ter mais de 10 vértices");
-  assert.match(t, new RegExp(`Demais ${n - 10} vértices: ver MEMORIAL TABULAR`));
+  assert.ok(g.vertices.length > 10, "a fixture precisa ter mais de 10 vértices");
+  assert.doesNotMatch(t, /MEMORIAL TABULAR/);
+  // sem logo, a seção do carimbo não sai vazia
   assert.doesNotMatch(t, /CARIMBO DA EMPRESA/);
-  // o 11º vértice não está no quadro; como o desenho usa códigos curtos, o
-  // código completo (DSBN-…) só aparece no quadro
-  const cod = (v) => v.codigo;
-  for (const v of g.vertices.slice(0, 10)) assert.ok(t.includes(cod(v)), `${cod(v)} deveria estar no quadro`);
+  // o desenho usa códigos curtos: o código completo (DSBN-…) só aparece no quadro
+  for (const v of g.vertices) assert.ok(t.includes(v.codigo), `${v.codigo} deveria estar no quadro`);
 });
 
-test("A1 com 3 glebas: cada tabela mostra até 10 linhas, e o rodapé lista área e perímetro por gleba", async () => {
+test("A1 com logo: a seção CARIMBO DA EMPRESA volta à barra lateral, depois da situação", async () => {
+  const g = geo();
+  const t = await textoDe(await gerarPlantaPdf(dadosPlantaDe(g, { folha: "A1", logo: { bytes: PNG_1PX, tipo: "png" } })));
+  assert.match(t, /CARIMBO DA EMPRESA/);
+  const ordem = ["QUADRO ANALÍTICO", "PLANTA DE SITUAÇÃO", "CARIMBO DA EMPRESA", "PLANIMÉTRICO DO IMÓVEL", "LEGENDAS / ABREVIATURAS", "RESPONSÁVEL TÉCNICO"]
+    .map((s) => t.indexOf(s));
+  assert.ok(ordem.every((i) => i >= 0), `seções ausentes: ${ordem}`);
+});
+
+test("A1 com 3 glebas: uma tabela por gleba, e o rodapé lista área e perímetro por gleba", async () => {
   const g = geo();
   const n = g.vertices.length;
   const glebas = [
@@ -41,11 +53,21 @@ test("A1 com 3 glebas: cada tabela mostra até 10 linhas, e o rodapé lista áre
     glebaDe(g, idx(20, n), "GLEBA 3"),
   ];
   const t = await textoDe(await gerarPlantaPdf(dadosPlantaDe(g, { folha: "A1", glebas })));
-  const cortadas = Math.max(0, 12 - 10) + Math.max(0, 8 - 10) + Math.max(0, (n - 20) - 10);
-  assert.ok(t.includes(`Demais ${cortadas} vértices: ver MEMORIAL TABULAR (aqui só os 10 primeiros de cada gleba)`), "nota do quadro");
+  assert.doesNotMatch(t, /MEMORIAL TABULAR/);
   assert.match(t, /GLEBA 1: 1,0000 HA/);
   assert.match(t, /GLEBA 3: 1,0000 HA/);
   assert.match(t, /GLEBA 2: 400,00 m/);
+});
+
+test("quadro grande demais: ao menos 10 linhas por gleba e o resto remetido ao memorial tabular", async () => {
+  const g = geo();
+  const n = g.vertices.length;
+  // 5 glebas com o anel inteiro: ~160 linhas, mais do que a barra comporta
+  const glebas = Array.from({ length: 5 }, (_, k) => glebaDe(g, idx(0, n), `GLEBA ${k + 1}`));
+  const t = await textoDe(await gerarPlantaPdf(dadosPlantaDe(g, { folha: "A1", glebas })));
+  const m = t.match(/Demais (\d+) vértices: ver MEMORIAL TABULAR \(aqui só os primeiros de cada gleba\)/);
+  assert.ok(m, "nota do quadro");
+  assert.ok(Number(m[1]) <= 5 * (n - 10), `cortou demais: ${m[1]}`);
 });
 
 test("com muitas glebas o quadro não passa da metade da barra e a página continua uma só", async () => {

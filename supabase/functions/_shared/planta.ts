@@ -4,7 +4,7 @@
 // assinatura, carimbo com a logo, bloco planimétrico, RT e rodapé.
 //   matrícula → folha A1 paisagem, COM quadro analítico e selos de cartório
 //   posse     → folha A3 paisagem, SEM quadro analítico, assinatura do posseiro
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, degrees, rgb } from "pdf-lib";
+import { PDFDocument, PDFFont, PDFPage, StandardFonts, concatTransformationMatrix, degrees, popGraphicsState, pushGraphicsState, rgb } from "pdf-lib";
 import { partesDescritivo, textoWinAnsi } from "./texto.ts";
 
 // ---------------------------------------------------------------------------
@@ -244,13 +244,14 @@ function caixa(c: Ctx, x: number, y: number, w: number, h: number, esp = 1) {
   c.page.drawRectangle({ x, y, width: w, height: h, borderWidth: esp, borderColor: PRETO });
 }
 
-function caixaTitulo(c: Ctx, x: number, y: number, w: number, h: number, titulo: string): number {
+function caixaTitulo(c: Ctx, x: number, y: number, w: number, h: number, titulo: string, th = 46, tamMax = 30): number {
   caixa(c, x, y, w, h);
-  const th = 46;
-  // título grande auto-ajustado à largura, sem caixinha em volta — só uma
-  // linha separadora de largura total abaixo dele
-  const tam = Math.min(30, (w - 28) / c.fb.widthOfTextAtSize(titulo, 1));
-  texto(c, titulo, x + w / 2, y + h - th + 14, tam, { bold: true, center: true });
+  // título auto-ajustado à largura, sem caixinha em volta — só uma linha
+  // separadora de largura total abaixo dele. A faixa inferior do A4 usa o
+  // título grande (46/30); a barra lateral do A1/A3, o pequeno do modelo.
+  const tam = Math.min(tamMax, (w - 28) / c.fb.widthOfTextAtSize(titulo, 1));
+  const base = th === 46 ? 14 : (th - tam * 0.72) / 2;
+  texto(c, titulo, x + w / 2, y + h - th + base, tam, { bold: true, center: true });
   linha(c, x, y + h - th, x + w, y + h - th, 1);
   return y + h - th; // topo útil
 }
@@ -763,8 +764,20 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // ------------------- área de desenho e barra lateral -------------------
   // No arranjo simples a barra lateral não existe: o que era coluna à direita
   // vira faixa no rodapé, e o desenho fica com a folha inteira acima dela.
-  const SB_W = simples ? 0 : 720;
-  const sbX = W - 20 - SB_W;
+  // 540 pt ≈ 22% da largura do A1, a proporção da planta de referência da
+  // D'Prol (pedido de 2026-10-14). Com 720 a barra comia 30% da folha e os
+  // textos dela saíam enormes na impressão.
+  //
+  // A barra é desenhada em coordenadas próprias, de largura lógica SB_W, e
+  // ampliada por SB_K na folha. A A3 é a A1 reduzida à metade: com os corpos
+  // do modelo (7,5–12 pt) a barra dela imprimiria a 4 pt. Na A3 ela é desenhada
+  // com 405 de largura e ampliada em 4/3 — a MESMA largura física da A1, para
+  // que o desenho continue idêntico (a A3 não tem quadro analítico, a seção
+  // larga), e os textos saem a 5–8 pt.
+  const SB_FIS = simples ? 0 : 540;
+  const SB_K = folha === "A1" ? 1 : 4 / 3;
+  const SB_W = SB_FIS / SB_K;
+  const sbX = W - 20 - SB_FIS;
   const SELO_H = simples ? 156 : 0;    // proprietário/RT/escala/município/folha
   const FAIXA_H = simples ? 380 : 0;   // carimbo da empresa | planta de situação
   const dAreaCheia = simples
@@ -1045,22 +1058,34 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // cliente procura na planta o que a legenda promete. (ESTRADA é herança da
   // planta de referência e continua fixa.)
   const temRio = d.trechos.some((t) => t.isRio) || glebas.some((g) => (g.riosIdx?.length ?? 0) > 0);
+  // Gleba NÃO ganha entrada na legenda: ela sai como POLIGONAL DO TERRENO,
+  // que já está listada. Foi assim que a planta de referência resolveu, e é
+  // coerente — a gleba é o imóvel dividido, não um traço de outro tipo.
+  const itensLegenda: [ReturnType<typeof rgb>, string][] = [
+    [VERMELHO, "ESTRADA"],
+    ...(temRio ? [[AZUL_RIO, "RIO / CURSO D'ÁGUA"] as [ReturnType<typeof rgb>, string]] : []),
+    [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
+  ];
+  // a abreviatura só se explica se ela aparecer em algum lugar da folha
+  const abrevLegenda = exibe.matricula ? (posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA") : null;
+  // a estrada é a vermelha SOBRE a azul — a amostra mostra o mesmo par
+  const amostraLegenda = (cor: ReturnType<typeof rgb>, x: number, y: number, comp: number) => {
+    if (cor === VERMELHO) {
+      linha(c, x, y, x + comp, y, 3.4, AZUL);
+      linha(c, x, y, x + comp, y, LARG_ESTRADA, VERMELHO);
+    } else {
+      linha(c, x, y, x + comp, y, 3.4, cor);
+    }
+  };
   const legendaRet: Ret = {
     x1: dArea.x + 6, y1: dArea.y + 2,
     x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124 + (temRio ? 20 : 0),
   };
-  ocupado.push(legendaRet);
-  // A logo da empresa mora no canto SUPERIOR DIREITO da área de desenho,
-  // espelhando a bússola (que prefere o superior esquerdo) — pedido de
-  // 2026-09-10, no lugar da seção "CARIMBO DA EMPRESA" da barra lateral. O
-  // espaço é reservado agora pelo mesmo motivo da legenda: nenhum rótulo pode
-  // cair por baixo dela.
-  const LOGO_W = 210, LOGO_H = 120, LOGO_MARGEM = 22;
-  const logoRet: Ret = {
-    x1: dArea.x + dArea.w - LOGO_MARGEM - LOGO_W, y1: dArea.y + dArea.h - LOGO_MARGEM - LOGO_H,
-    x2: dArea.x + dArea.w - LOGO_MARGEM, y2: dArea.y + dArea.h - LOGO_MARGEM,
-  };
-  if (d.logo && !simples) ocupado.push(logoRet);
+  // Só no arranjo simples (A4) a legenda fica no desenho: no A1/A3 ela mora no
+  // PLANIMÉTRICO da barra lateral, como na planta de referência (2026-10-14),
+  // e o canto fica livre para o polígono. Pelo mesmo pedido a logo voltou à
+  // seção CARIMBO DA EMPRESA da barra e saiu do canto do desenho.
+  if (simples) ocupado.push(legendaRet);
   // Os nomes das glebas já estão na folha: reservá-los agora impede que um
   // código de vértice caia por cima — o código cede, como cede para a legenda.
   ocupado.push(...rotulosGleba);
@@ -1471,12 +1496,14 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // as bordas), e maior p/ acompanhar a nova escala dos textos
     const R = 58;
     // canto livre: preferência pelo superior esquerdo (padrão da planta de
-    // referência), caindo p/ o inferior direito se lá já houver polígono ou
-    // rótulo — o inferior esquerdo é da legenda e o superior direito, da logo
+    // referência), depois os outros cantos se lá já houver polígono ou rótulo
+    // — o inferior esquerdo só existe fora do A4, onde a legenda não está nele
     const margem = R + 22;
     const cantos: [number, number][] = [
       [dArea.x + margem, dArea.y + dArea.h - margem],
+      [dArea.x + dArea.w - margem, dArea.y + dArea.h - margem],
       [dArea.x + dArea.w - margem, dArea.y + margem],
+      ...(simples ? [] : [[dArea.x + margem, dArea.y + margem] as [number, number]]),
     ];
     const livre = ([qx, qy]: [number, number]) => {
       const cx0 = { x1: qx - R - 8, y1: qy - R - 8, x2: qx + R + 8, y2: qy + R + 18 };
@@ -1515,97 +1542,115 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     texto(c, "N", bx, by + R + 10, 22, { bold: true, center: true });
   }
 
-  // ------------------- logo da empresa (canto superior direito) -------------------
-  // Sem título nem caixa: só a marca, no tamanho que a bússola tem do outro
-  // lado. O arranjo simples (A4) continua com o carimbo na faixa inferior.
-  if (d.logo && !simples) {
-    const img = d.logo.tipo === "png" ? await pdf.embedPng(d.logo.bytes) : await pdf.embedJpg(d.logo.bytes);
-    const sc = Math.min(LOGO_W / img.width, LOGO_H / img.height);
-    const lw = img.width * sc, lh = img.height * sc;
-    // encostada à direita e ao topo da reserva, como a bússola encosta no canto dela
-    page.drawImage(img, { x: logoRet.x2 - lw, y: logoRet.y2 - lh, width: lw, height: lh });
-  }
 
   // ============================ BARRA LATERAL ============================
   // Só existe no arranjo completo (A1/A3). No simples, cada seção abaixo se
   // desliga e o que sobrevive — carimbo, planta de situação e os campos do selo
   // — reaparece na FAIXA INFERIOR, logo depois desta seção.
-  const sbTop = H - 20, sbBot = 20;
+  //
+  // Arranjo e corpos da planta de referência da D'Prol (pedido de 2026-10-14):
+  // QUADRO ANALÍTICO · PLANTA DE SITUAÇÃO · CARIMBO DA EMPRESA (a logo, grande)
+  // · PLANIMÉTRICO (legenda + campos do imóvel) · RT e selos · rodapé. A folha
+  // é A1: um texto de 9–12 pt já se lê na prancheta; os 20–26 pt de antes
+  // saíam desproporcionais na impressão e roubavam espaço da situação.
+  const sbBot = 20, sbTop = sbBot + (H - 40) / SB_K;
+  // x' = sbX + (x − sbX)·K, y' = sbBot + (y − sbBot)·K: a barra cresce a partir
+  // do canto inferior esquerdo dela, e tudo abaixo desenha como se K fosse 1
+  if (!simples && SB_K !== 1) {
+    page.pushOperators(pushGraphicsState(), concatTransformationMatrix(SB_K, 0, 0, SB_K, sbX * (1 - SB_K), sbBot * (1 - SB_K)));
+  }
   // A1 e A3 são dois MODELOS, não só dois tamanhos (pedido de 2026-09-03): o A1
-  // leva o quadro analítico; o A3 não — as demais seções ganham o espaço dele,
-  // com a Planta de Situação grande no topo. Quem decide é a folha escolhida,
-  // não o tipo do imóvel: posse continua caindo em A3 por padrão (regra de
-  // `folha` acima), mas posse em A1 ganha o quadro, e matrícula em A3 sai sem.
-  // A conferência segue o modelo sem quadro em qualquer folha: é a prévia — o
-  // quadro é a tabela que o SIGEF confere, e a prévia ainda não passou por ele.
-  // Sem o quadro, os blocos que ficam herdam o espaço dele, e a ordem resultante
-  // (situação · carimbo · planimétrico · RT · rodapé) é a do modelo.
+  // leva o quadro analítico; o A3 não — as demais seções ganham o espaço dele.
+  // Quem decide é a folha escolhida, não o tipo do imóvel: posse continua
+  // caindo em A3 por padrão (regra de `folha` acima), mas posse em A1 ganha o
+  // quadro, e matrícula em A3 sai sem. A conferência segue o modelo sem quadro
+  // em qualquer folha: é a prévia — o quadro é a tabela que o SIGEF confere, e
+  // a prévia ainda não passou por ele.
   const semQuadro = folha !== "A1" || !!d.conferencia;
   const sbH = sbTop - sbBot;
+  const SEC_TIT = 28;
+  const secao = (yBase: number, h: number, titulo: string) => caixaTitulo(c, sbX, yBase, SB_W, h, titulo, SEC_TIT, 16);
 
-  // As seções são medidas pelo CONTEÚDO, e a Planta de Situação fica com o
-  // que sobra (pedido de 2026-09-10). Antes cada seção tinha uma fração fixa
-  // da barra: com 3 glebas o quadro encolhia as linhas a 5 pt, a imagem de
-  // situação ficava num quadradinho e a ÁREA/PERÍMETRO por gleba do rodapé
-  // caía por cima da linha de baixo. Não há mais seção "CARIMBO DA EMPRESA":
-  // a logo foi para o canto superior direito do desenho.
+  // As seções são medidas pelo CONTEÚDO (pedido de 2026-09-10). Fixas:
+  // carimbo, planimétrico e rodapé. A Planta de Situação recebe a altura da
+  // imagem na largura inteira da barra, e o quadro analítico fica com o resto
+  // — mostrando mais vértices quando há espaço, como a referência, que lista o
+  // imóvel inteiro.
   //
-  // QUADRO ANALÍTICO: no máximo QUADRO_MAX_LINHAS por tabela (uma por gleba,
-  // ou uma do imóvel), no corpo de sempre (QUADRO_ROW_H); o resto é remetido ao
-  // memorial tabular numa nota. Ele ainda tem um teto (metade da barra) para o
-  // caso de muitas glebas — aí o corte é proporcional entre elas.
-  const QUADRO_MAX_LINHAS = 10, QUADRO_ROW_H = 18, QUADRO_HEAD_H = 22, QUADRO_TIT_H = 15;
+  // QUADRO ANALÍTICO: linha fixa (QUADRO_ROW_H) no corpo legível; o mínimo
+  // garantido é QUADRO_MIN_LINHAS por tabela (uma por gleba, ou uma do imóvel)
+  // e o que não couber é remetido ao memorial tabular numa nota. Antes da
+  // linha fixa o quadro encolhia até 5,5 pt para caber tudo — ilegível.
+  const QUADRO_MIN_LINHAS = 10, QUADRO_ROW_H = 13, QUADRO_HEAD_H = 16, QUADRO_TIT_H = 13, QUADRO_NOTA_H = 14;
   const blocosQuadro = glebas.length ? glebas.map((g) => g.vertices.length) : [vs.length];
-  const linhasMostradas = blocosQuadro.map((n) => Math.min(n, QUADRO_MAX_LINHAS));
-  const haCortadas = blocosQuadro.some((n) => n > QUADRO_MAX_LINHAS);
-  const precisaQuadro = 46 + 6
-    + linhasMostradas.reduce((a, n) => a + n * QUADRO_ROW_H + QUADRO_HEAD_H + 8, 0)
-    + (glebas.length ? blocosQuadro.length * QUADRO_TIT_H : 0)
-    + (haCortadas ? 22 : 0) + 10;
-  let hQuadro = semQuadro ? 0 : Math.min(precisaQuadro, sbH * 0.5);
+  // `medirQuadro` e `dispTotal` (no desenho) fazem a MESMA conta: uma diferença
+  // de 2 pt já comia a última linha por arredondamento.
+  const medirQuadro = (linhas: number[], nota: boolean) => SEC_TIT + 6
+    + linhas.reduce((a, n) => a + n * QUADRO_ROW_H + QUADRO_HEAD_H + 6, 0)
+    + (glebas.length ? linhas.length * QUADRO_TIT_H : 0)
+    + (nota ? QUADRO_NOTA_H : 0) + 8;
+  const quadroTodas = medirQuadro(blocosQuadro, false);
+  const quadroMin = medirQuadro(blocosQuadro.map((n) => Math.min(n, QUADRO_MIN_LINHAS)), blocosQuadro.some((n) => n > QUADRO_MIN_LINHAS));
+
+  // CARIMBO DA EMPRESA: só com logo. Sem ela a seção não sai vazia — a
+  // situação herda o espaço.
+  const hCarimbo = d.logo ? 190 : 0;
 
   // RODAPÉ: duas linhas de células; a de cima cresce com o número de glebas
   // (ÁREA e PERÍMETRO listam uma linha por gleba), a de baixo tem 2 linhas
-  // (DATUM). Nunca mais do que cabe: a altura vem de quantas linhas há.
-  const RODAPE_PASSO = 22;
+  // (DATUM).
+  const RODAPE_PASSO = 12;
   const linhasRod1 = Math.max(2, glebas.length || 2);
-  const hRod1 = 30 + linhasRod1 * RODAPE_PASSO + 8;
-  const hRod2 = 30 + 2 * RODAPE_PASSO + 8;
+  const hRod1 = 14 + linhasRod1 * RODAPE_PASSO + 6;
+  const hRod2 = 14 + 2 * RODAPE_PASSO + 6;
   const hRodape = hRod1 + hRod2;
 
-  // PLANIMÉTRICO: campos em duas colunas (passo 50) + faixa do RT (192) + título.
-  const PLANI_BAND_H = 192;
+  // PLANIMÉTRICO: legenda em duas colunas, campos em duas colunas (passo 25) e
+  // a faixa do RT e dos selos.
+  const PLANI_BAND_H = 100, CAMPO_PASSO = 25;
+  const nLegenda = itensLegenda.length + (abrevLegenda ? 1 : 0);
+  const hLegenda = 16 + Math.ceil(nLegenda / 2) * 13 + 6;
   const nCamposDir = (exibe.trt ? 1 : 0) + (exibe.matricula ? (posse ? 1 : 2) : 0) + 2;
-  const altPropr = 24 + d.proprietarios.reduce((a, p) => a + 46 + (p.isEspolio && p.inventarianteNome ? 48 : 0), 0);
-  const altEsq = (exibe.denominacao ? 50 : 0) + altPropr;
-  const precisaPlani = 46 + 32 + Math.max(nCamposDir * 50, altEsq) + 16 + PLANI_BAND_H;
-  // piso: os campos da direita ainda cabem com passo 40 (o desenho adapta o passo)
-  const pisoPlani = 46 + 32 + Math.max(nCamposDir * 40, altEsq) + 16 + PLANI_BAND_H;
-  let hPlani = Math.min(precisaPlani, sbH * 0.42);
+  const altPropr = 13 + d.proprietarios.reduce((a, p) => a + 24 + (p.isEspolio && p.inventarianteNome ? 24 : 0), 0);
+  const altEsq = (exibe.denominacao ? CAMPO_PASSO : 0) + altPropr;
+  const medirPlani = (passo: number) => SEC_TIT + hLegenda + 14 + Math.max(nCamposDir * passo, altEsq) + 8 + PLANI_BAND_H;
+  let hPlani = Math.min(medirPlani(CAMPO_PASSO), sbH * 0.4);
+  // piso: os campos da direita ainda cabem com passo 20 (o desenho adapta o passo)
+  const pisoPlani = Math.min(hPlani, medirPlani(20));
 
-  // PLANTA DE SITUAÇÃO: o que sobra, com um mínimo — se nem o mínimo sobrar,
-  // o planimétrico aperta o passo dos campos até o piso; só depois o quadro
-  // cede (e aí as linhas são cortadas com a nota). Com 3 glebas e o corpo
-  // legível, a barra fecha em: quadro ~44%, planimétrico ~30%, rodapé ~11%,
-  // situação ~15%.
+  // PLANTA DE SITUAÇÃO: a imagem ocupa a largura da barra; a seção pede a
+  // altura correspondente, com um mínimo. Se nem o mínimo sobrar, o
+  // planimétrico aperta o passo dos campos até o piso; só depois o quadro cede
+  // (e aí as linhas são cortadas com a nota).
+  const satImg = d.satelite
+    ? (d.satelite.tipo === "png" ? await pdf.embedPng(d.satelite.bytes) : await pdf.embedJpg(d.satelite.bytes))
+    : null;
   const SITUACAO_MIN = sbH * 0.14;
-  let hSituacao = sbH - hQuadro - hPlani - hRodape;
+  const situacaoAlvo = Math.max(SITUACAO_MIN, SEC_TIT + 12 + (satImg ? (SB_W - 12) * satImg.height / satImg.width : 200));
+  const fixos = hCarimbo + hPlani + hRodape;
+  let hQuadro = 0;
+  if (!semQuadro) {
+    const livre = sbH - fixos - situacaoAlvo;
+    hQuadro = Math.min(quadroTodas, sbH * 0.6, Math.max(livre, Math.min(quadroMin, sbH * 0.5)));
+  }
+  let hSituacao = sbH - fixos - hQuadro;
   if (hSituacao < SITUACAO_MIN) {
     const falta = SITUACAO_MIN - hSituacao;
     const cedePlani = Math.min(falta, Math.max(0, hPlani - pisoPlani));
     hPlani -= cedePlani;
     const cedeQuadro = Math.min(falta - cedePlani, Math.max(0, hQuadro - sbH * 0.30));
     hQuadro -= cedeQuadro;
-    hSituacao = sbH - hQuadro - hPlani - hRodape;
+    hSituacao = sbH - hCarimbo - hPlani - hRodape - hQuadro;
   }
   let yCursor = sbTop;
 
   // ---- QUADRO ANALÍTICO (tabela com grade, colunas centradas) ----
   if (!semQuadro && !simples) {
     const h = hQuadro;
-    const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "QUADRO ANALÍTICO");
+    const base = yCursor - h;
+    const topoUtil = secao(base, h, "QUADRO ANALÍTICO");
     const heads = ["VÉRTICE", "LADO", "LONGITUDE", "LATITUDE", "AZIMUTE", "DIST.(m)", "ALTIT."];
-    const cols = [90, 190, 105, 105, 85, 75, 60];
+    const cols = [68, 136, 80, 80, 62, 54, 44];
     const tw = cols.reduce((a, b) => a + b, 0);
     const tx0 = sbX + (SB_W - tw) / 2;
     const headH = QUADRO_HEAD_H;
@@ -1613,70 +1658,63 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // Com glebas, o quadro vira UMA TABELA POR GLEBA, cada uma com o seu
     // cabeçalho — é o que a planta de referência faz. Sem glebas, uma tabela só
     // com o anel do imóvel.
-    //
-    // Cada tabela mostra no máximo QUADRO_MAX_LINHAS vértices, no corpo de
-    // sempre (linha de 20 pt, texto 11). O que passa disso está no memorial
-    // tabular, e a nota no fim do quadro diz isso. Antes o quadro tentava
-    // trazer todos os vértices encolhendo a linha até 5,5 pt — na LAMEIRO (3
-    // glebas, 175 vértices) saía um borrão que ninguém lia.
     const blocos: { titulo: string | null; linhas: VerticePlanta[] }[] = glebas.length
       ? glebas.map((g) => ({ titulo: g.nome, linhas: g.vertices }))
       : [{ titulo: null, linhas: vs }];
     const TIT_H = QUADRO_TIT_H;
     const rowH = QUADRO_ROW_H;
-    const tamCel = 10.5;
-    // Se nem com o limite tudo cabe (muitas glebas), o corte é PROPORCIONAL:
-    // cada tabela perde a mesma fração, e todas aparecem.
-    // (a mesma conta de `precisaQuadro`, senão o arredondamento come uma linha)
-    const rodapeNota = haCortadas ? 22 : 0;
-    const dispTotal = tableTop - (yCursor - h) - 10 - rodapeNota
-      - blocos.length * (headH + 8) - blocos.filter((b) => b.titulo).length * TIT_H;
-    const totalLimitado = blocos.reduce((s2, b) => s2 + Math.min(b.linhas.length, QUADRO_MAX_LINHAS), 0);
-    const fatorCabe = Math.min(1, dispTotal / Math.max(1, totalLimitado * rowH));
+    const tamCel = 7.5;
+    // Se nem tudo cabe, o corte é PROPORCIONAL: cada tabela perde a mesma
+    // fração, e todas aparecem.
+    const rodapeNota = h < quadroTodas - 0.5 ? QUADRO_NOTA_H : 0;
+    const dispTotal = tableTop - base - 8 - rodapeNota
+      - blocos.length * (headH + 6) - blocos.filter((b) => b.titulo).length * TIT_H;
+    const totalLinhas = blocos.reduce((s2, b) => s2 + b.linhas.length, 0);
+    const fatorCabe = Math.min(1, dispTotal / Math.max(1, totalLinhas * rowH));
 
     let cursorQ = tableTop;
     let cortadas = 0;
     for (const bloco of blocos) {
       // Sem espaço nem para o cabeçalho e uma linha, a tabela NÃO é desenhada:
       // o que ficou de fora entra na nota de cortadas.
-      const espacoBloco = cursorQ - (bloco.titulo ? TIT_H : 0) - headH - (yCursor - h) - 10 - rodapeNota;
+      const espacoBloco = cursorQ - (bloco.titulo ? TIT_H : 0) - headH - base - 8 - rodapeNota;
       if (espacoBloco < rowH) { cortadas += bloco.linhas.length; continue; }
       if (bloco.titulo) {
-        texto(c, bloco.titulo, tx0, cursorQ - 11, 11, { bold: true });
+        texto(c, bloco.titulo, tx0, cursorQ - 9, 8.5, { bold: true });
         cursorQ -= TIT_H;
       }
-      const espaco = cursorQ - headH - (yCursor - h) - 10 - rodapeNota;
-      const limite = Math.min(bloco.linhas.length, QUADRO_MAX_LINHAS);
-      const cabem = Math.min(Math.max(1, Math.floor(espaco / rowH)), Math.max(1, Math.floor(limite * fatorCabe)));
+      const espaco = cursorQ - headH - base - 8 - rodapeNota;
+      const cabem = Math.min(bloco.linhas.length, Math.max(1, Math.floor(espaco / rowH + 1e-6)),
+        Math.max(1, Math.floor(bloco.linhas.length * fatorCabe + 1e-6)));
       const linhasQ = bloco.linhas.slice(0, cabem);
       cortadas += bloco.linhas.length - linhasQ.length;
       const topo = cursorQ;
       const bot = topo - headH - linhasQ.length * rowH;
 
-      caixa(c, tx0, bot, tw, topo - bot, 1);
-      linha(c, tx0, topo - headH, tx0 + tw, topo - headH, 1);
+      caixa(c, tx0, bot, tw, topo - bot, 0.8);
+      linha(c, tx0, topo - headH, tx0 + tw, topo - headH, 0.8);
       let vx = tx0;
-      for (const w of cols.slice(0, -1)) { vx += w; linha(c, vx, bot, vx, topo, 0.6); }
+      for (const w of cols.slice(0, -1)) { vx += w; linha(c, vx, bot, vx, topo, 0.5); }
       for (let r = 1; r < linhasQ.length; r++) {
         const ly = topo - headH - r * rowH;
-        linha(c, tx0, ly, tx0 + tw, ly, 0.35, CINZA);
+        linha(c, tx0, ly, tx0 + tw, ly, 0.3, CINZA);
       }
       let hx = tx0;
       for (const [i, hh] of heads.entries()) {
-        texto(c, hh, hx + cols[i] / 2, topo - headH + 7, 10, { bold: true, center: true });
+        texto(c, hh, hx + cols[i] / 2, topo - headH + 5, 7, { bold: true, center: true });
         hx += cols[i];
       }
       for (const [r, v] of linhasQ.entries()) {
         const vals = [v.codigo, `${v.codigo}-${v.vante}`, v.lonFmt, v.latFmt, v.azFmt, v.distFmt, v.alt];
         const ty = topo - headH - (r + 1) * rowH + (rowH - tamCel) / 2 + 1;
         let cx2 = tx0;
-        for (const [i, val] of vals.entries()) { textoFit(c, val, cx2 + cols[i] / 2, ty, tamCel, cols[i] - 6, { center: true }); cx2 += cols[i]; }
+        for (const [i, val] of vals.entries()) { textoFit(c, val, cx2 + cols[i] / 2, ty, tamCel, cols[i] - 4, { center: true }); cx2 += cols[i]; }
       }
-      cursorQ = bot - 8;
+      cursorQ = bot - 6;
     }
     if (cortadas > 0) {
-      texto(c, `Demais ${cortadas} vértices: ver MEMORIAL TABULAR (aqui só os ${QUADRO_MAX_LINHAS} primeiros${glebas.length ? " de cada gleba" : ""})`,
-        tx0, Math.max(cursorQ - 6, yCursor - h + 10), 11, { cor: CINZA });
+      texto(c, `Demais ${cortadas} vértices: ver MEMORIAL TABULAR (aqui só os primeiros${glebas.length ? " de cada gleba" : ""})`,
+        tx0, Math.max(cursorQ - 4, base + 8), 7.5, { cor: CINZA });
     }
     yCursor -= h;
   }
@@ -1684,45 +1722,79 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // ---- PLANTA DE SITUAÇÃO (imagem de satélite enviada na geração) ----
   if (!simples) {
     const h = hSituacao;
-    const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "PLANTA DE SITUAÇÃO");
-    if (d.satelite) {
-      const img = d.satelite.tipo === "png" ? await pdf.embedPng(d.satelite.bytes) : await pdf.embedJpg(d.satelite.bytes);
-      const maxW = SB_W - 12, maxH = topoUtil - (yCursor - h) - 10;
-      const sc = Math.min(maxW / img.width, maxH / img.height);
-      // encostada ao topo da seção: no A3 (sem quadro) a seção é alta e a
-      // imagem centrada deixava um vão acima dela
-      page.drawImage(img, {
-        x: sbX + (SB_W - img.width * sc) / 2,
-        y: topoUtil - 5 - img.height * sc,
-        width: img.width * sc, height: img.height * sc,
+    const topoUtil = secao(yCursor - h, h, "PLANTA DE SITUAÇÃO");
+    if (satImg) {
+      const maxW = SB_W - 12, maxH = topoUtil - (yCursor - h) - 12;
+      const sc = Math.min(maxW / satImg.width, maxH / satImg.height);
+      // centrada na altura: quando o quadro já mostra todos os vértices (ou no
+      // A3, sem quadro) a seção fica mais alta que a imagem na largura cheia, e
+      // encostada no topo deixava um vão branco embaixo
+      page.drawImage(satImg, {
+        x: sbX + (SB_W - satImg.width * sc) / 2,
+        y: (yCursor - h) + 6 + (maxH - satImg.height * sc) / 2,
+        width: satImg.width * sc, height: satImg.height * sc,
       });
     } else {
-      texto(c, "(imagem de satélite indisponível — veja o aviso da geração)", sbX + SB_W / 2, yCursor - h / 2, 20, { cor: CINZA, center: true });
+      textoFit(c, "(imagem de satélite indisponível — veja o aviso da geração)", sbX + SB_W / 2, yCursor - h / 2, 11, SB_W - 24, { cor: CINZA, center: true });
     }
+    yCursor -= h;
+  }
+
+  // ---- CARIMBO DA EMPRESA (logo grande, centrada) ----
+  if (!simples && d.logo) {
+    const h = hCarimbo;
+    const base = yCursor - h;
+    const topoUtil = secao(base, h, "CARIMBO DA EMPRESA");
+    const img = d.logo.tipo === "png" ? await pdf.embedPng(d.logo.bytes) : await pdf.embedJpg(d.logo.bytes);
+    const maxW = SB_W - 80, maxH = topoUtil - base - 24;
+    const sc = Math.min(maxW / img.width, maxH / img.height);
+    page.drawImage(img, {
+      x: sbX + (SB_W - img.width * sc) / 2,
+      y: base + (topoUtil - base - img.height * sc) / 2,
+      width: img.width * sc, height: img.height * sc,
+    });
     yCursor -= h;
   }
 
   // ---- PLANIMÉTRICO ----
   if (!simples) {
     const h = hPlani;
-    const topoUtil = caixaTitulo(c, sbX, yCursor - h, SB_W, h, "PLANIMÉTRICO DO IMÓVEL GEORREFERENCIADO");
-    const colEsq = sbX + 14, colDir = sbX + SB_W / 2 + 12;
-    const colW = SB_W / 2 - 26;
-    let py = topoUtil - 32;
-    // rótulo pequeno em cinza + valor grande logo abaixo, encolhendo se preciso
+    const base = yCursor - h;
+    const topoUtil = secao(base, h, "PLANIMÉTRICO DO IMÓVEL GEORREFERENCIADO");
+    const colEsq = sbX + 12, colDir = sbX + SB_W / 2 + 8;
+    const colW = SB_W / 2 - 20;
+
+    // legenda em duas colunas, logo abaixo do título (como na referência, a
+    // legenda é parte do planimétrico)
+    texto(c, "LEGENDAS / ABREVIATURAS", colEsq, topoUtil - 12, 8, { bold: true });
+    const legW = (SB_W - 24) / 2;
+    const legItens: [ReturnType<typeof rgb> | null, string][] = [...itensLegenda, ...(abrevLegenda ? [[null, abrevLegenda] as [null, string]] : [])];
+    for (const [i, [cor, nome]] of legItens.entries()) {
+      const lx = colEsq + (i % 2) * legW;
+      const ly = topoUtil - 16 - (Math.floor(i / 2) + 1) * 13 + 3;
+      if (cor) {
+        amostraLegenda(cor, lx, ly + 2.5, 26);
+        texto(c, nome, lx + 32, ly, 7.5);
+      } else {
+        texto(c, nome, lx, ly, 7.5);
+      }
+    }
+    linha(c, sbX, topoUtil - hLegenda, sbX + SB_W, topoUtil - hLegenda, 0.5);
+
+    // rótulo pequeno em cinza + valor logo abaixo, encolhendo se preciso
     const campo = (rot: string, val: string, x: number, y: number) => {
-      texto(c, rot, x, y, 13, { bold: true, cor: CINZA });
-      textoFit(c, val, x, y - 22, 21, colW);
+      texto(c, rot, x, y, 7.5, { bold: true, cor: CINZA });
+      textoFit(c, val, x, y - 11, 10.5, colW);
     };
     // Cada campo omitido não deixa buraco: some da lista e os de baixo sobem.
     // A coluna da direita mede a partir do topo fixo, não do cursor da esquerda
     // — senão esconder a denominação empurraria os campos do imóvel para baixo.
-    const pyTopo = py;
+    const pyTopo = topoUtil - hLegenda - 14;
+    let py = pyTopo;
     // Passo entre campos proporcional ao que sobra acima da faixa do RT: com o
-    // quadro analítico crescido (muitas glebas) o bloco encolhe, e a 50 pt fixos
-    // o "Código INCRA" e o "Município/UF" caíam por cima do selo do cartório.
-    const nDir = (exibe.trt ? 1 : 0) + (exibe.matricula ? (posse ? 1 : 2) : 0) + 2;
-    const passo = Math.max(36, Math.min(50, (pyTopo - (yCursor - h + 192) - 16) / nDir));
+    // quadro crescido o bloco encolhe, e a passo fixo o "Município/UF" caía
+    // por cima do selo do cartório.
+    const passo = Math.max(20, Math.min(CAMPO_PASSO, (pyTopo - (base + PLANI_BAND_H) - 8) / nCamposDir));
     if (exibe.denominacao) { campo("Denominação:", d.denominacao.toUpperCase(), colEsq, pyTopo); py -= passo; }
     // coluna direita: TRT + campos do imóvel (na posse não há matrícula nem
     // cartório: o campo indica POSSE e o CNS sai)
@@ -1737,64 +1809,55 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       ["Município/UF:", d.municipioUf.toUpperCase()],
     ];
     for (const [i, [rot, val]] of camposDir.entries()) campo(rot, val, colDir, pyTopo - i * passo);
-    texto(c, posse ? "Posseiro(s):" : "Proprietário(s):", colEsq, py, 13, { bold: true, cor: CINZA });
-    let ppy = py - 24;
+    texto(c, posse ? "Posseiro(s):" : "Proprietário(s):", colEsq, py, 7.5, { bold: true, cor: CINZA });
+    let ppy = py - 12;
     for (const p of d.proprietarios) {
-      textoFit(c, p.nome.toUpperCase(), colEsq, ppy, 19, colW, { bold: true });
-      textoFit(c, `CPF: ${p.cpf}`, colEsq, ppy - 20, 16, colW);
-      ppy -= 46;
+      textoFit(c, p.nome.toUpperCase(), colEsq, ppy, 10, colW, { bold: true });
+      textoFit(c, `CPF: ${p.cpf}`, colEsq, ppy - 11, 9, colW);
+      ppy -= 24;
       if (p.isEspolio && p.inventarianteNome) {
-        textoFit(c, `REP. P/ INV.: ${p.inventarianteNome.toUpperCase()}`, colEsq, ppy, 17, colW, { bold: true });
-        textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, colEsq, ppy - 20, 16, colW);
-        ppy -= 48;
+        textoFit(c, `REP. P/ INV.: ${p.inventarianteNome.toUpperCase()}`, colEsq, ppy, 9.5, colW, { bold: true });
+        textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, colEsq, ppy - 11, 9, colW);
+        ppy -= 24;
       }
     }
     // faixa inferior em duas colunas: RESPONSÁVEL TÉCNICO à esquerda e o(s)
-    // quadro(s) de assinatura encaixado(s) na metade direita, lado a lado
+    // quadro(s) de assinatura encaixado(s) na metade direita
     const bandH = PLANI_BAND_H;
-    const bandTop = yCursor - h + bandH;
+    const bandTop = base + bandH;
     linha(c, sbX, bandTop, sbX + SB_W, bandTop, 0.8);
-    linha(c, sbX + SB_W / 2, yCursor - h, sbX + SB_W / 2, bandTop, 0.8);
-    const rtW = SB_W / 2 - 28;
-    texto(c, "RESPONSÁVEL TÉCNICO", colEsq, bandTop - 28, 15, { bold: true, cor: CINZA });
-    textoFit(c, d.rt.nome.toUpperCase(), colEsq, bandTop - 58, 26, rtW, { bold: true });
-    textoFit(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, bandTop - 84, 16, rtW);
-    textoFit(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}`, colEsq, bandTop - 108, 16, rtW);
-    if (exibe.trt) textoFit(c, `TRT: ${d.trt}`, colEsq, bandTop - 132, 16, rtW);
+    linha(c, sbX + SB_W / 2, base, sbX + SB_W / 2, bandTop, 0.8);
+    const rtW = SB_W / 2 - 24;
+    texto(c, "RESPONSÁVEL TÉCNICO", colEsq, bandTop - 14, 7.5, { bold: true, cor: CINZA });
+    textoFit(c, d.rt.nome.toUpperCase(), colEsq, bandTop - 30, 12, rtW, { bold: true });
+    textoFit(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, bandTop - 45, 8.5, rtW);
+    textoFit(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}`, colEsq, bandTop - 58, 8.5, rtW);
+    if (exibe.trt) textoFit(c, `TRT: ${d.trt}`, colEsq, bandTop - 71, 8.5, rtW);
     // quadros de assinatura: cartório (matrícula) ou posseiro (posse),
     // empilhados e centralizados verticalmente na metade direita da faixa
     const assinantes = d.proprietarios.slice(0, 2);
-    const seloX = sbX + SB_W / 2 + 12;
-    const seloW = SB_W / 2 - 24;
-    const seloH = assinantes.some((p) => p.isEspolio && p.inventarianteNome) ? 120 : (assinantes.length > 1 ? 88 : 108);
-    const gap = Math.max(8, (bandH - assinantes.length * seloH) / (assinantes.length + 1));
+    const seloX = sbX + SB_W / 2 + 10;
+    const seloW = SB_W / 2 - 20;
+    const seloH = assinantes.some((p) => p.isEspolio && p.inventarianteNome) ? (assinantes.length > 1 ? 46 : 66) : (assinantes.length > 1 ? 44 : 58);
+    const gap = Math.max(3, (bandH - assinantes.length * seloH) / (assinantes.length + 1));
     for (const [i, p] of assinantes.entries()) {
-      const syBot = bandTop - (i + 1) * (gap + seloH);
-      caixa(c, seloX, syBot, seloW, seloH, 0.8);
+      const syTop = bandTop - gap - i * (gap + seloH);
+      caixa(c, seloX, syTop - seloH, seloW, seloH, 0.6);
       const cx = seloX + seloW / 2;
-      if (posse) {
-        texto(c, "POSSEIRO", cx, syBot + seloH - 18, 14, { bold: true, center: true, cor: CINZA });
-        linha(c, seloX + 20, syBot + seloH - 42, seloX + seloW - 20, syBot + seloH - 42, 1);
-        if (p.isEspolio && p.inventarianteNome) {
-          textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 58, 15, seloW - 16, { center: true, bold: true });
-          textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 72, 14, seloW - 16, { center: true });
-          textoFit(c, `REP. P/ INVENTARIANTE: ${p.inventarianteNome.toUpperCase()}`, cx, syBot + seloH - 88, 14, seloW - 16, { center: true, bold: true });
-          textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, cx, syBot + seloH - 104, 14, seloW - 16, { center: true });
-        } else {
-          textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 65, 18, seloW - 16, { center: true });
-          textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 88, 16, seloW - 16, { center: true });
-        }
-      } else {
-        textoFit(c, "SELO DE RECONHECIMENTO — CARTÓRIO", cx, syBot + seloH - 20, 14, seloW - 16, { bold: true, center: true, cor: CINZA });
-        if (p.isEspolio && p.inventarianteNome) {
-          textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 42, 15, seloW - 16, { center: true, bold: true });
-          textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 56, 14, seloW - 16, { center: true });
-          textoFit(c, `REP. P/ INVENTARIANTE: ${p.inventarianteNome.toUpperCase()}`, cx, syBot + seloH - 76, 14, seloW - 16, { center: true, bold: true });
-          textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, cx, syBot + seloH - 92, 14, seloW - 16, { center: true });
-        } else {
-          textoFit(c, p.nome.toUpperCase(), cx, syBot + seloH - 50, 18, seloW - 16, { center: true });
-          textoFit(c, `CPF: ${p.cpf}`, cx, syBot + seloH - 74, 16, seloW - 16, { center: true });
-        }
+      const mw = seloW - 12;
+      const espolio = !!(p.isEspolio && p.inventarianteNome);
+      // linhas de baixo para cima, para nunca passar da caixa
+      const corpo: [string, number, boolean][] = espolio
+        ? [[p.nome.toUpperCase(), 8, true], [`CPF: ${p.cpf}`, 7.5, false],
+          [`REP. P/ INVENTARIANTE: ${p.inventarianteNome!.toUpperCase()}`, 7.5, true], [`CPF: ${p.inventarianteCpf ?? ""}`, 7.5, false]]
+        : [[p.nome.toUpperCase(), 9.5, false], [`CPF: ${p.cpf}`, 8.5, false]];
+      texto(c, posse ? "POSSEIRO" : "SELO DE RECONHECIMENTO — CARTÓRIO", cx, syTop - 10, 7, { bold: true, center: true, cor: CINZA });
+      const espLinha = espolio && assinantes.length > 1 ? 8.5 : (espolio ? 11 : 11.5);
+      let ty = syTop - seloH + 5 + (corpo.length - 1) * espLinha;
+      if (posse) linha(c, seloX + 16, ty + corpo[0][1] + 3, seloX + seloW - 16, ty + corpo[0][1] + 3, 0.8);
+      for (const [t, tam, bold] of corpo) {
+        textoFit(c, t, cx, ty, espolio && assinantes.length > 1 ? Math.min(tam, 7) : tam, mw, { center: true, bold });
+        ty -= espLinha;
       }
     }
     yCursor -= h;
@@ -1808,8 +1871,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     // referência faz ("GLEBA 1: 502,2827 HA/1.153,08 TAREFAS", "PERÍMETRO
     // GLEBA 1: 11.147,32 m"). Um total só não serve: cada gleba é certificada
     // e negociada por si. A linha de cima é medida por quantas glebas há
-    // (hRod1) e as colunas de ÁREA e PERÍMETRO alargam, para o texto não ter
-    // de encolher nem descer por cima da linha de baixo.
+    // (hRod1) e as colunas de ÁREA e PERÍMETRO alargam.
     const gl = glebas;
     const linha1: [string, string[]][] = [
       ["ESCALA", [`1:${fmtMilhar(escala)}`]],
@@ -1834,9 +1896,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       for (const [i, [rot, vals]] of itens.entries()) {
         const cw = SB_W * larguras[i];
         if (i > 0) linha(c, ix0, topo - alt, ix0, topo, 0.5);
-        texto(c, rot, ix0 + 8, topo - 26, 15, { bold: true, cor: CINZA });
-        const corpo = vals.length > 2 ? 15 : 20;
-        for (const [k, val] of vals.entries()) textoFit(c, val, ix0 + 8, topo - 26 - (k + 1) * RODAPE_PASSO + 4, corpo, cw - 16);
+        texto(c, rot, ix0 + 6, topo - 11, 7.5, { bold: true, cor: CINZA });
+        const corpo = vals.length > 2 ? 8.5 : 10;
+        for (const [k, val] of vals.entries()) textoFit(c, val, ix0 + 6, topo - 11 - (k + 1) * RODAPE_PASSO + 1, corpo, cw - 12);
         ix0 += cw;
       }
     };
@@ -1844,6 +1906,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     linha(c, sbX, yCursor - hRod1, sbX + SB_W, yCursor - hRod1, 0.5);
     desenharLinha(linha2, larguras2, yCursor - hRod1, hRod2);
   }
+  if (!simples && SB_K !== 1) page.pushOperators(popGraphicsState());
 
   // ==================== FAIXA INFERIOR (arranjo simples) ====================
   // O que a barra lateral tem de essencial, deitado no rodapé: carimbo e planta
@@ -1986,36 +2049,21 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     }
   }
 
-  // legenda no canto inferior esquerdo da área de desenho — caixa compacta
-  // (a anterior tinha 640×258pt e comia um quarto do desenho)
-  {
+  // legenda no canto inferior esquerdo da área de desenho — só no A4; no A1/A3
+  // ela é desenhada dentro do PLANIMÉTRICO da barra lateral
+  if (simples) {
     // mesma caixa reservada lá em cima em `legendaRet` — nenhum rótulo caiu aqui
     const lx = legendaRet.x1 + 6, boxW = legendaRet.x2 - legendaRet.x1, boxH = legendaRet.y2 - legendaRet.y1;
     page.drawRectangle({ x: legendaRet.x1, y: legendaRet.y1, width: boxW, height: boxH, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 0.8 });
     const lyTop = legendaRet.y2;
     texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 17, 11, { bold: true });
-    const itens: [ReturnType<typeof rgb>, string][] = [
-      [VERMELHO, "ESTRADA"],
-      ...(temRio ? [[AZUL_RIO, "RIO / CURSO D'ÁGUA"] as [ReturnType<typeof rgb>, string]] : []),
-      [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
-    ];
-    // Gleba NÃO ganha entrada na legenda: ela sai como POLIGONAL DO TERRENO,
-    // que já está listada. Foi assim que a planta de referência resolveu, e é
-    // coerente — a gleba é o imóvel dividido, não um traço de outro tipo.
     let lyy = lyTop - 38;
-    for (const [cor, nome] of itens) {
-      // a estrada é a vermelha SOBRE a azul — a amostra mostra o mesmo par
-      if (cor === VERMELHO) {
-        linha(c, lx, lyy + 3, lx + 38, lyy + 3, 3.4, AZUL);
-        linha(c, lx, lyy + 3, lx + 38, lyy + 3, LARG_ESTRADA, VERMELHO);
-      } else {
-        linha(c, lx, lyy + 3, lx + 38, lyy + 3, 3.4, cor);
-      }
+    for (const [cor, nome] of itensLegenda) {
+      amostraLegenda(cor, lx, lyy + 3, 38);
       texto(c, nome, lx + 46, lyy, 9.5);
       lyy -= 20;
     }
-    // a abreviatura só se explica se ela aparecer em algum lugar da folha
-    if (exibe.matricula) texto(c, posse ? "POSSE = IMÓVEL SEM MATRÍCULA" : "MATR. = MATRÍCULA", lx, lyy, 9.5);
+    if (abrevLegenda) texto(c, abrevLegenda, lx, lyy, 9.5);
   }
 
   // ---- QUADRO CONFRONTANTES (faixa reservada no rodapé do desenho) ----

@@ -79,8 +79,8 @@ test("A3 da conferência segue a organização da planta de posse", async () => 
   // confere, e a prévia ainda não passou por ele
   assert.doesNotMatch(t, /QUADRO ANALÍTICO/);
   assert.match(t, /PLANTA DE SITUAÇÃO/);
-  // a seção "CARIMBO DA EMPRESA" saiu da barra em 2026-09-10: a logo vive no
-  // canto superior direito do desenho, sem título
+  // a seção "CARIMBO DA EMPRESA" só sai quando há logo (2026-10-14) — este
+  // fixture não tem, e a seção não aparece vazia
   assert.doesNotMatch(t, /CARIMBO DA EMPRESA/);
   assert.match(t, /PLANIMÉTRICO DO IMÓVEL/);
   assert.match(t, /RESPONSÁVEL TÉCNICO/);
