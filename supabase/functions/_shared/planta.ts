@@ -1596,18 +1596,28 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // situação herda o espaço.
   const hCarimbo = d.logo ? 190 : 0;
 
-  // RODAPÉ: duas linhas de células; a de cima cresce com o número de glebas
-  // (ÁREA e PERÍMETRO listam uma linha por gleba), a de baixo tem 2 linhas
-  // (DATUM).
-  const RODAPE_PASSO = 12;
-  const linhasRod1 = Math.max(2, glebas.length || 2);
-  const hRod1 = 14 + linhasRod1 * RODAPE_PASSO + 6;
-  const hRod2 = 14 + 2 * RODAPE_PASSO + 6;
-  const hRodape = hRod1 + hRod2;
+  // RODAPÉ: UMA linha de células, corpo pequeno (pedido de 2026-10-14 — quase
+  // tudo ali já está em outro ponto da folha). Com glebas a célula de ÁREA e a
+  // de PERÍMETRO listam uma linha por gleba, e só aí a linha cresce.
+  const RODAPE_PASSO = 9;
+  const linhasRodape = Math.max(2, glebas.length);
+  const hRodape = 11 + linhasRodape * RODAPE_PASSO + 5;
+
+  // ASSINATURAS E SELOS (fim do planimétrico): o RT e o(s) proprietário(s)
+  // assinam sobre a linha, e embaixo de cada assinatura há uma caixa SELO DE
+  // RECONHECIMENTO em branco, alta o bastante para o carimbo do cartório —
+  // como na planta de referência (pedido de 2026-10-14: antes eram caixinhas
+  // com o nome dentro, sem lugar para carimbar).
+  const assinantes = d.proprietarios.slice(0, 2);
+  const ASSIN_CAP = 30, ASSIN_BLOCO = 28, ASSIN_ENTRE = 20, ASSIN_ESPOLIO = 18;
+  const altAssinProp = ASSIN_CAP + assinantes.reduce((a, p, i) =>
+    a + ASSIN_BLOCO + (p.isEspolio && p.inventarianteNome ? ASSIN_ESPOLIO : 0) + (i > 0 ? ASSIN_ENTRE : 0), 0);
+  const ASSIN_H = Math.max(ASSIN_CAP + 44, altAssinProp) + 6;
+  const SELO_CART_H = 118;
 
   // PLANIMÉTRICO: legenda em duas colunas, campos em duas colunas (passo 25) e
-  // a faixa do RT e dos selos.
-  const PLANI_BAND_H = 100, CAMPO_PASSO = 25;
+  // a faixa das assinaturas e dos selos.
+  const PLANI_BAND_H = ASSIN_H + SELO_CART_H, CAMPO_PASSO = 25;
   const nLegenda = itensLegenda.length + (abrevLegenda ? 1 : 0);
   const hLegenda = 16 + Math.ceil(nLegenda / 2) * 13 + 6;
   const nCamposDir = (exibe.trt ? 1 : 0) + (exibe.matricula ? (posse ? 1 : 2) : 0) + 2;
@@ -1821,59 +1831,62 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
         ppy -= 24;
       }
     }
-    // faixa inferior em duas colunas: RESPONSÁVEL TÉCNICO à esquerda e o(s)
-    // quadro(s) de assinatura encaixado(s) na metade direita
-    const bandH = PLANI_BAND_H;
-    const bandTop = base + bandH;
+    // ---- assinaturas (RT | proprietários) e, embaixo, os selos do cartório ----
+    const bandTop = base + PLANI_BAND_H;
+    const seloTop = base + SELO_CART_H;
+    const meio = sbX + SB_W / 2;
     linha(c, sbX, bandTop, sbX + SB_W, bandTop, 0.8);
-    linha(c, sbX + SB_W / 2, base, sbX + SB_W / 2, bandTop, 0.8);
-    const rtW = SB_W / 2 - 24;
-    texto(c, "RESPONSÁVEL TÉCNICO", colEsq, bandTop - 14, 7.5, { bold: true, cor: CINZA });
-    textoFit(c, d.rt.nome.toUpperCase(), colEsq, bandTop - 30, 12, rtW, { bold: true });
-    textoFit(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, colEsq, bandTop - 45, 8.5, rtW);
-    textoFit(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}`, colEsq, bandTop - 58, 8.5, rtW);
-    if (exibe.trt) textoFit(c, `TRT: ${d.trt}`, colEsq, bandTop - 71, 8.5, rtW);
-    // quadros de assinatura: cartório (matrícula) ou posseiro (posse),
-    // empilhados e centralizados verticalmente na metade direita da faixa
-    const assinantes = d.proprietarios.slice(0, 2);
-    const seloX = sbX + SB_W / 2 + 10;
-    const seloW = SB_W / 2 - 20;
-    const seloH = assinantes.some((p) => p.isEspolio && p.inventarianteNome) ? (assinantes.length > 1 ? 46 : 66) : (assinantes.length > 1 ? 44 : 58);
-    const gap = Math.max(3, (bandH - assinantes.length * seloH) / (assinantes.length + 1));
+    linha(c, meio, seloTop, meio, bandTop, 0.5);
+    const colAssW = SB_W / 2 - 24;
+    // RT: legenda, espaço para assinar, linha e os dados embaixo dela
+    const rtCx = sbX + SB_W / 4;
+    texto(c, "RESPONSÁVEL TÉCNICO", rtCx, bandTop - 9, 6.5, { bold: true, center: true, cor: CINZA });
+    linha(c, rtCx - colAssW / 2, bandTop - ASSIN_CAP, rtCx + colAssW / 2, bandTop - ASSIN_CAP, 0.6);
+    textoFit(c, d.rt.nome.toUpperCase(), rtCx, bandTop - ASSIN_CAP - 10, 9, colAssW, { bold: true, center: true });
+    textoFit(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, rtCx, bandTop - ASSIN_CAP - 20, 7, colAssW, { center: true });
+    textoFit(c, `CÓDIGO DO CREDENCIADO - ${d.rt.codigoCredenciado}`, rtCx, bandTop - ASSIN_CAP - 29, 7, colAssW, { center: true });
+    if (exibe.trt) textoFit(c, `TRT: ${d.trt}`, rtCx, bandTop - ASSIN_CAP - 38, 7, colAssW, { center: true });
+    // proprietário(s) / posseiro(s): uma linha de assinatura para cada um
+    const prCx = sbX + SB_W * 3 / 4;
+    texto(c, posse ? (assinantes.length > 1 ? "POSSEIROS" : "POSSEIRO") : (assinantes.length > 1 ? "PROPRIETÁRIOS" : "PROPRIETÁRIO"),
+      prCx, bandTop - 9, 6.5, { bold: true, center: true, cor: CINZA });
+    let ay = bandTop - ASSIN_CAP;
     for (const [i, p] of assinantes.entries()) {
-      const syTop = bandTop - gap - i * (gap + seloH);
-      caixa(c, seloX, syTop - seloH, seloW, seloH, 0.6);
-      const cx = seloX + seloW / 2;
-      const mw = seloW - 12;
-      const espolio = !!(p.isEspolio && p.inventarianteNome);
-      // linhas de baixo para cima, para nunca passar da caixa
-      const corpo: [string, number, boolean][] = espolio
-        ? [[p.nome.toUpperCase(), 8, true], [`CPF: ${p.cpf}`, 7.5, false],
-          [`REP. P/ INVENTARIANTE: ${p.inventarianteNome!.toUpperCase()}`, 7.5, true], [`CPF: ${p.inventarianteCpf ?? ""}`, 7.5, false]]
-        : [[p.nome.toUpperCase(), 9.5, false], [`CPF: ${p.cpf}`, 8.5, false]];
-      texto(c, posse ? "POSSEIRO" : "SELO DE RECONHECIMENTO — CARTÓRIO", cx, syTop - 10, 7, { bold: true, center: true, cor: CINZA });
-      const espLinha = espolio && assinantes.length > 1 ? 8.5 : (espolio ? 11 : 11.5);
-      let ty = syTop - seloH + 5 + (corpo.length - 1) * espLinha;
-      if (posse) linha(c, seloX + 16, ty + corpo[0][1] + 3, seloX + seloW - 16, ty + corpo[0][1] + 3, 0.8);
-      for (const [t, tam, bold] of corpo) {
-        textoFit(c, t, cx, ty, espolio && assinantes.length > 1 ? Math.min(tam, 7) : tam, mw, { center: true, bold });
-        ty -= espLinha;
+      if (i > 0) ay -= ASSIN_ENTRE;
+      linha(c, prCx - colAssW / 2, ay, prCx + colAssW / 2, ay, 0.6);
+      textoFit(c, p.nome.toUpperCase(), prCx, ay - 10, 8.5, colAssW, { bold: true, center: true });
+      textoFit(c, `CPF: ${p.cpf}`, prCx, ay - 19, 7, colAssW, { center: true });
+      ay -= ASSIN_BLOCO;
+      if (p.isEspolio && p.inventarianteNome) {
+        textoFit(c, `REP. P/ INVENTARIANTE: ${p.inventarianteNome.toUpperCase()}`, prCx, ay, 7, colAssW, { bold: true, center: true });
+        textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, prCx, ay - 9, 7, colAssW, { center: true });
+        ay -= ASSIN_ESPOLIO;
       }
+    }
+    // Selos: um por quem assina (RT + até 2 proprietários), lado a lado, em
+    // branco — o cartório carimba ali o reconhecimento de firma.
+    linha(c, sbX, seloTop, sbX + SB_W, seloTop, 0.8);
+    const nSelos = 1 + assinantes.length;
+    const seloW = SB_W / nSelos;
+    for (let i = 0; i < nSelos; i++) {
+      const sx = sbX + i * seloW;
+      if (i > 0) linha(c, sx, base, sx, seloTop, 0.5);
+      texto(c, "SELO DE RECONHECIMENTO", sx + seloW / 2, seloTop - 10, 6.5, { bold: true, center: true, cor: CINZA });
     }
     yCursor -= h;
   }
 
-  // ---- RODAPÉ (escala/datum/folha) ----
+  // ---- RODAPÉ (escala/área/perímetro/desenhista/datum/data/folha) ----
   if (!simples) {
     const h = hRodape;
-    caixa(c, sbX, yCursor - h, SB_W, h);
+    const topo = yCursor;
+    caixa(c, sbX, topo - h, SB_W, h);
     // Com glebas, área e perímetro saem POR GLEBA — é o que a planta de
-    // referência faz ("GLEBA 1: 502,2827 HA/1.153,08 TAREFAS", "PERÍMETRO
-    // GLEBA 1: 11.147,32 m"). Um total só não serve: cada gleba é certificada
-    // e negociada por si. A linha de cima é medida por quantas glebas há
-    // (hRod1) e as colunas de ÁREA e PERÍMETRO alargam.
+    // referência faz ("GLEBA 1: 502,2827 HA/1.153,08 TAREFAS"). Um total só não
+    // serve: cada gleba é certificada e negociada por si. A linha cresce com o
+    // número de glebas (hRodape) e as células de ÁREA e PERÍMETRO alargam.
     const gl = glebas;
-    const linha1: [string, string[]][] = [
+    const itens: [string, string[]][] = [
       ["ESCALA", [`1:${fmtMilhar(escala)}`]],
       ["ÁREA", gl.length
         ? gl.map((g) => `${g.nome}: ${g.areaFmt} HA/${g.tarefasFmt} TAREFAS`)
@@ -1882,29 +1895,21 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
         ? gl.map((g) => `${g.nome}: ${g.perimetroFmt} m`)
         : [`${d.perimetroFmt} m`]],
       ["DESENHISTA", [d.desenhista || "—"]],
-    ];
-    const linha2: [string, string[]][] = [
-      ["COORDENADA", ["UTM"]],
-      ["DATUM", ["SIRGAS2000", `M.C -${d.mcAbs}Wgr Fuso: ${d.fuso}${letraFuso(d.latMediaDeg)}`]],
+      ["DATUM", ["SIRGAS2000 - UTM", `M.C -${d.mcAbs}Wgr Fuso: ${d.fuso}${letraFuso(d.latMediaDeg)}`]],
       ["DATA", [d.dataStr]],
       ["FOLHA", [`01 001 ${folha}`]],
     ];
-    const larguras1 = gl.length ? [0.15, 0.37, 0.28, 0.20] : [0.25, 0.25, 0.25, 0.25];
-    const larguras2 = [0.25, 0.25, 0.25, 0.25];
-    const desenharLinha = (itens: [string, string[]][], larguras: number[], topo: number, alt: number) => {
-      let ix0 = sbX;
-      for (const [i, [rot, vals]] of itens.entries()) {
-        const cw = SB_W * larguras[i];
-        if (i > 0) linha(c, ix0, topo - alt, ix0, topo, 0.5);
-        texto(c, rot, ix0 + 6, topo - 11, 7.5, { bold: true, cor: CINZA });
-        const corpo = vals.length > 2 ? 8.5 : 10;
-        for (const [k, val] of vals.entries()) textoFit(c, val, ix0 + 6, topo - 11 - (k + 1) * RODAPE_PASSO + 1, corpo, cw - 12);
-        ix0 += cw;
-      }
-    };
-    desenharLinha(linha1, larguras1, yCursor, hRod1);
-    linha(c, sbX, yCursor - hRod1, sbX + SB_W, yCursor - hRod1, 0.5);
-    desenharLinha(linha2, larguras2, yCursor - hRod1, hRod2);
+    const larguras = gl.length
+      ? [0.09, 0.25, 0.19, 0.14, 0.13, 0.10, 0.10]
+      : [0.11, 0.17, 0.14, 0.20, 0.16, 0.11, 0.11];
+    let ix0 = sbX;
+    for (const [i, [rot, vals]] of itens.entries()) {
+      const cw = SB_W * larguras[i];
+      if (i > 0) linha(c, ix0, topo - h, ix0, topo, 0.5);
+      texto(c, rot, ix0 + 4, topo - 8, 6, { bold: true, cor: CINZA });
+      for (const [k, val] of vals.entries()) textoFit(c, val, ix0 + 4, topo - 8 - (k + 1) * RODAPE_PASSO, 7.5, cw - 8);
+      ix0 += cw;
+    }
   }
   if (!simples && SB_K !== 1) page.pushOperators(popGraphicsState());
 

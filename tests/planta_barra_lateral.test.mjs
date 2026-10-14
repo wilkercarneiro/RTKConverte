@@ -81,3 +81,19 @@ test("com muitas glebas o quadro não passa da metade da barra e a página conti
   assert.match(t, /PLANTA DE SITUAÇÃO/);
   assert.match(t, /GLEBA 7: 1,0000 HA/);
 });
+
+test("selos do cartório: uma caixa SELO DE RECONHECIMENTO em branco por quem assina", async () => {
+  const g = geo();
+  const um = await textoDe(await gerarPlantaPdf(dadosPlantaDe(g, { folha: "A1" })));
+  assert.equal(um.match(/SELO DE RECONHECIMENTO/g)?.length, 2, "RT + proprietário");
+  const dois = await textoDe(await gerarPlantaPdf(dadosPlantaDe(g, {
+    folha: "A1",
+    proprietarios: [{ nome: "JOSE DA SILVA", cpf: "111.111.111-11" }, { nome: "MARIA", cpf: "222.222.222-22" }],
+  })));
+  assert.equal(dois.match(/SELO DE RECONHECIMENTO/g)?.length, 3, "RT + 2 proprietários");
+  assert.match(dois, /PROPRIETÁRIOS/);
+  // o rodapé é uma linha só: DATUM e DATA ao lado de ESCALA, sem a antiga
+  // segunda linha de COORDENADA
+  assert.doesNotMatch(dois, /COORDENADA UTM/);
+  assert.match(dois, /SIRGAS2000 - UTM/);
+});
