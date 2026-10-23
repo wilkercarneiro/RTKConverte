@@ -39,11 +39,15 @@ export interface Progresso {
  * peças" a ela seria mentira. Quem decide isso é `vaiAoSigef`, a mesma função
  * que a tela do serviço usa para esconder os blocos do SIGEF.
  */
-export function progressoDe(s: Pick<Servico, "modalidade" | "tipo">, p?: DocsDoServico): Progresso {
+export function progressoDe(s: Pick<Servico, "modalidade" | "tipo" | "status">, p?: DocsDoServico): Progresso {
   const d = p ?? { docs: false, planta: false, pecas: false };
   if (s.tipo === "pecas") {
     const etapas = [d.pecas, d.planta];
     return montar(etapas, [!d.pecas ? "gerar as peças técnicas" : "gerar a planta"]);
+  }
+  if (s.modalidade === "loteamento") {
+    // o loteamento é desenhado na tela; "gerado" = já saíram planta e locação
+    return montar([s.status === "gerado"], ["projetar o loteamento e exportar"]);
   }
   if (!vaiAoSigef(s)) {
     return montar([d.docs], ["gerar memorial e planta"]);

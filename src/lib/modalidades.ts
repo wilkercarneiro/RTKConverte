@@ -11,7 +11,7 @@
 import type { Modalidade, Servico } from "./types";
 
 /** Chave do cartão na tela — não é coluna do banco. */
-export type ChaveServico = "completo" | "conferencia" | "gleba" | "pecas";
+export type ChaveServico = "completo" | "conferencia" | "gleba" | "loteamento" | "pecas";
 
 export interface DefinicaoServico {
   chave: ChaveServico;
@@ -65,6 +65,17 @@ export const SERVICOS: DefinicaoServico[] = [
     principal: true,
   },
   {
+    chave: "loteamento",
+    titulo: "Loteamento",
+    icone: "M3 3h18v18H3zM3 9h18M3 15h18M9 3v6M15 9v6M9 15v6",
+    resumo: "Divide a gleba em quadras, lotes, ruas e áreas públicas a partir do perímetro levantado. Ajuste na tela; o resto se recalcula.",
+    requisitos: ["TXT do perímetro da gleba", "regras do município (lote mínimo, rua, áreas públicas)"],
+    entrega: ["Planta do loteamento", "Arquivo de locação para a coletora", "Memoriais dos lotes", "DXF e KML"],
+    cta: "Enviar TXT",
+    campos: { tipo: "geo", modalidade: "loteamento", tem_glebas: false },
+    principal: true,
+  },
+  {
     chave: "pecas",
     titulo: "Peças a partir do PDF do SIGEF",
     icone: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6",
@@ -87,6 +98,7 @@ export const definicaoDe = (chave: ChaveServico): DefinicaoServico =>
 export function chaveDoServico(s: Pick<Servico, "tipo" | "modalidade" | "tem_glebas">): ChaveServico {
   if (s.tipo === "pecas") return "pecas";
   if (s.modalidade === "conferencia") return "conferencia";
+  if (s.modalidade === "loteamento") return "loteamento";
   return s.tem_glebas ? "gleba" : "completo";
 }
 
@@ -95,6 +107,7 @@ export const rotuloCurto: Record<ChaveServico, string> = {
   completo: "Completo",
   conferencia: "Conferência",
   gleba: "Gleba",
+  loteamento: "Loteamento",
   pecas: "Peças",
 };
 
@@ -103,7 +116,7 @@ export const rotuloCurto: Record<ChaveServico, string> = {
  * Uma função só, usada pela trilha de etapas e pelos blocos da tela, para que
  * não exista uma segunda definição de "até onde vai a conferência".
  */
-export const vaiAoSigef = (s: Pick<Servico, "modalidade">): boolean => s.modalidade !== "conferencia";
+export const vaiAoSigef = (s: Pick<Servico, "modalidade">): boolean => s.modalidade === "completo";
 
 // ---------------------------------------------------------------------------
 // Situação do imóvel na CONFERÊNCIA: matrícula, posse ou ainda sem documento

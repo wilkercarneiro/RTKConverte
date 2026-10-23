@@ -36,6 +36,9 @@ insert into servicos (id, credenciado_id, rt_id, cliente_id)
 insert into vertices (servico_id, ordem) values (:s1, 0), (:s1, 1);
 insert into trechos_confrontantes (servico_id, vertice_inicio_ordem) values (:s1, 0);
 insert into glebas (servico_id) values (:s1);
+-- projeto de loteamento (0021): a tabela já existe antes da migração de escritórios
+update servicos set modalidade = 'loteamento' where id = :s1;
+insert into loteamentos (servico_id, projeto) values (:s1, '{"versao": 1}');
 insert into documentos_gerados (servico_id, versao, tipo, titulo, path) values (:s1, 1, 'memorial_docx', 'Memorial', 'x');
 insert into storage.buckets (id, name) values ('gerados', 'gerados'), ('templates', 'templates'), ('uploads-txt', 'uploads-txt')
   on conflict do nothing;
@@ -114,6 +117,9 @@ select pg_temp.ok((select count(*) from config_empresa) = 0, 'B não vê configu
 select pg_temp.ok((select count(*) from vertices) = 0 and (select count(*) from trechos_confrontantes) = 0
               and (select count(*) from glebas) = 0 and (select count(*) from documentos_gerados) = 0, 'B não vê tabelas filhas de A');
 select pg_temp.ok((select count(*) from storage.objects) = 0, 'B não vê arquivos de A no Storage');
+select pg_temp.ok((select count(*) from loteamentos) = 0, 'B não vê o projeto de loteamento de A');
+select pg_temp.ok(pg_temp.afetadas(format('update loteamentos set projeto = %L where servico_id = %L', '{}', '51000000-0000-0000-0000-000000000001')) = 0,
+                  'B não altera o loteamento de A');
 select pg_temp.ok((select count(*) from escritorios) = 1, 'B vê só o próprio escritório');
 select pg_temp.ok((select nome from meu_escritorio()) = 'Escritório Novo', 'meu_escritorio() de B');
 
@@ -175,6 +181,7 @@ set role authenticated;
 select pg_temp.ok((select count(*) from servicos) = 2, 'A vê os próprios serviços (inclusive o da função antiga)');
 select pg_temp.ok(not exists (select 1 from servicos where id = :sb), 'A não vê o serviço de B');
 select pg_temp.ok((select count(*) from vertices) = 2, 'A vê os vértices dele, não os de B');
+select pg_temp.ok((select count(*) from loteamentos) = 1, 'A continua vendo o próprio loteamento');
 select pg_temp.ok((select value from config_empresa where key = 'desenhista') = 'FULANO', 'config de A intacta');
 -- 2 do serviço + a logo da raiz; memorial-template.docx segue só para a service_role, como hoje
 select pg_temp.ok((select count(*) from storage.objects) = 3, 'A vê os arquivos do serviço e a logo da raiz');

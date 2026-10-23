@@ -231,6 +231,14 @@ begin
          using (servico_do_escritorio(servico_id))
          with check (servico_do_escritorio(servico_id))', t || '_do_escritorio', t);
   end loop;
+  -- loteamentos (0021) pode ter sido aplicada antes desta: troca a policy aberta
+  if to_regclass('loteamentos') is not null then
+    drop policy if exists loteamentos_autenticado on loteamentos;
+    drop policy if exists loteamentos_do_escritorio on loteamentos;
+    create policy loteamentos_do_escritorio on loteamentos for all to authenticated
+      using (servico_do_escritorio(servico_id))
+      with check (servico_do_escritorio(servico_id));
+  end if;
 end $$;
 
 -- escritorios: vê o próprio; o dono só renomeia (coluna `nome`). Quem decide

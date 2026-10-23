@@ -8,6 +8,8 @@ import { Servicos } from "./components/Servicos";
 import { Upload, type ResultadoParse } from "./components/Upload";
 import { Conferencia } from "./components/Conferencia";
 import { PecasServico } from "./components/PecasServico";
+import { Loteamento } from "./components/loteamento/Loteamento";
+import { Laboratorio } from "./components/loteamento/Laboratorio";
 import { Configuracoes } from "./components/Configuracoes";
 import { ClientePage } from "./components/ClientePage";
 import { Marca } from "./components/Marca";
@@ -82,6 +84,9 @@ export default function App() {
     })();
     return () => { cancelado = true; };
   }, [servicoIdRota, logado]);
+
+  // Laboratório do loteamento: só no servidor de desenvolvimento (some do build).
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/loteamento")) return <Laboratorio />;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vértice", href: "#/" }} />;
@@ -191,7 +196,9 @@ export default function App() {
         <AppShell {...casca}>
           {aberto.servico.tipo === "pecas"
             ? <PecasServico servicoId={aberto.servico.id} onVoltar={() => ir({ t: "servicos" })} />
-            : <Conferencia inicial={aberto} onVoltar={() => ir({ t: "servicos" })} />}
+            : aberto.servico.modalidade === "loteamento"
+              ? <Loteamento key={aberto.servico.id} servico={aberto.servico} vertices={aberto.vertices} onVoltar={() => ir({ t: "servicos" })} />
+              : <Conferencia inicial={aberto} onVoltar={() => ir({ t: "servicos" })} />}
         </AppShell>
       );
     }

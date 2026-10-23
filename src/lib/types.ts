@@ -31,8 +31,10 @@ export interface DocumentoGerado {
  *   completo    — memorial + planilha + planta → SIGEF → planta oficial + peças
  *   conferencia — prévia de área: memorial (pontos numerados P-1, P-2…), tabular e
  *                 planta opcionais, sem SIGEF e sem peças
+ *   loteamento  — projeto de parcelamento da gleba: quadras, lotes, ruas e áreas
+ *                 públicas, planta do loteamento e arquivo de locação para o campo
  */
-export type Modalidade = "completo" | "conferencia";
+export type Modalidade = "completo" | "conferencia" | "loteamento";
 
 /** Folha da planta. `undefined` mantém a regra histórica: posse → A3, resto → A1. */
 export type Folha = "A1" | "A3" | "A4";

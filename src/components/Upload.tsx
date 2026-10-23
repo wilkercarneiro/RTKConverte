@@ -13,6 +13,7 @@ import { Icone, ICONE } from "./Icone";
 import { PlantaCertificada } from "./PlantaCertificada";
 import { PainelSigef } from "./PainelSigef";
 import { guardarParcelasSigef } from "../lib/sigef";
+import { loteamentoDisponivel } from "../lib/loteamento/persistencia";
 import type { LonLat } from "../lib/sigef";
 
 export interface ResultadoParse {
@@ -43,7 +44,7 @@ export function Upload({ definicao, onParsed, onVoltar }: {
 }) {
   // A pergunta cabe ao serviço que vai ao SIGEF (completo e com glebas). A
   // conferência de área é prévia sem certificação: segue direto para o TXT.
-  const perguntaCabe = definicao.chave !== "conferencia";
+  const perguntaCabe = definicao.chave !== "conferencia" && definicao.chave !== "loteamento";
   const [fase, setFase] = useState<Fase>(perguntaCabe ? "pergunta" : "txt");
   const [confronta, setConfronta] = useState<boolean | null>(null);
   const [grupos, setGrupos] = useState<GrupoCsv[]>([]);
@@ -124,6 +125,11 @@ export function Upload({ definicao, onParsed, onVoltar }: {
     setCarregando(true);
     setErro(null);
     try {
+      // o loteamento grava o projeto numa tabela própria (migração 0021): sem
+      // ela, o serviço seria criado e a tela não teria onde salvar o desenho
+      if (definicao.chave === "loteamento" && !(await loteamentoDisponivel())) {
+        throw new Error("O banco ainda não tem a atualização do loteamento (migração 0021_loteamento). Peça para aplicá-la e tente de novo.");
+      }
       const conteudo = await file.text();
       const r = await chamarFuncao<ResultadoParse>("parse-txt", {
         nome_arquivo: file.name, conteudo, uf: uf || undefined,
@@ -145,8 +151,9 @@ export function Upload({ definicao, onParsed, onVoltar }: {
   const passos: { rotulo: string; estado: "feita" | "ativa" | "" }[] = [
     ...(perguntaCabe ? [{ rotulo: "Área certificada", estado: fase === "txt" ? "feita" as const : "ativa" as const }] : []),
     { rotulo: "Upload do TXT", estado: fase === "txt" ? "ativa" : "" },
-    { rotulo: "Conferência", estado: "" },
-    { rotulo: "Documentos", estado: "" },
+    ...(definicao.chave === "loteamento"
+      ? [{ rotulo: "Perguntas", estado: "" as const }, { rotulo: "Projeto", estado: "" as const }, { rotulo: "Entregas", estado: "" as const }]
+      : [{ rotulo: "Conferência", estado: "" as const }, { rotulo: "Documentos", estado: "" as const }]),
   ];
   const stepper = (
     <div className="stepper">
