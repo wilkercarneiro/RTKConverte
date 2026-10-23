@@ -29,9 +29,22 @@ export const ROTULO_BORDA: Record<TipoBorda, string> = {
   divisa: "Divisa",
   via: "Rua/estrada existente",
   rio: "Rio / córrego (APP)",
-  rodovia: "Rodovia (non aedificandi)",
-  ferrovia: "Ferrovia (non aedificandi)",
+  rodovia: "Rodovia (acesso + faixa non aedificandi)",
+  ferrovia: "Ferrovia (faixa non aedificandi)",
 };
+
+/**
+ * Lado por onde se entra no loteamento: estrada existente ou rodovia. É frente
+ * de lote (o mais valorizado) e é onde as ruas novas podem se ligar.
+ */
+export const ehAcesso = (t: TipoBorda): boolean => t === "via" || t === "rodovia";
+
+/**
+ * Faixa non aedificandi de rodovia/ferrovia (Lei 6.766, art. 4º, III) é
+ * RESTRIÇÃO de construir dentro do lote, não área pública: a terra continua
+ * sendo lote. Só a APP de rio sai do loteamento.
+ */
+export const faixaDentroDoLote = (t: TipoBorda): boolean => t === "rodovia" || t === "ferrovia";
 
 /** Faixa sugerida por tipo de borda (Lei 6.766 art. 4º III; Código Florestal art. 4º I a). */
 export const FAIXA_SUGERIDA: Record<TipoBorda, number> = { divisa: 0, via: 0, rio: 30, rodovia: 15, ferrovia: 15 };

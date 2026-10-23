@@ -15,7 +15,7 @@ import {
 import type { Anel, Poligono, Pt } from "./geom.ts";
 import { criarPlano, paraPlano } from "./plano.ts";
 import type { Plano } from "./plano.ts";
-import { ROTULO_AREA } from "./modelo.ts";
+import { ROTULO_AREA, ehAcesso, faixaDentroDoLote } from "./modelo.ts";
 import type { AjusteLote, ModoDivisao, Parametros, Projeto, QuadraCfg, Sobra, TipoArea, TipoBorda } from "./modelo.ts";
 
 // ---------------------------------------------------------------------------
@@ -140,6 +140,8 @@ export interface RuaCalc {
   eixo: Pt[];
   /** pedaço da rua dentro da gleba */
   pols: Poligono[];
+  /** faixa inteira da rua (antes do recorte pela gleba) */
+  corpo: Poligono[];
   area: number;
   comprimento: number;
 }
@@ -174,6 +176,8 @@ export interface Resultado {
   quadras: Quadra[];
   lotes: Lote[];
   areas: AreaPublica[];
+  /** faixa non aedificandi dentro dos lotes (rodovia/ferrovia): linha a N m da divisa */
+  faixasRestricao: { linha: Pt[]; largura: number; lado: number; nome: string }[];
   /** áreas públicas numeradas para a planta e o quadro (ÁREA VERDE 01, 02…) */
   publicas: AreaConsolidada[];
   sobras: Poligono[];
@@ -220,6 +224,7 @@ const item = (pol: Poligono, tipo: TipoLado, ref: string, nome: string): Item =>
 interface Contexto {
   /** profundidade padrão do lote (para reconhecer faixa de uma fileira) */
   prof: number;
+  areaMin: number;
   gleba: Poligono;
   ladosGleba: Resultado["ladosGleba"];
   confrontantes: (string | null)[];
@@ -241,7 +246,7 @@ function classificar(ctx: Contexto, a: Pt, b: Pt, lotes: Indice | null, proprio?
     let melhor = 0, dm = Infinity;
     ctx.ladosGleba.forEach((l, i) => { const dd = distSegmento(m, l.a, l.b).d; if (dd < dm) { dm = dd; melhor = i; } });
     const lado = ctx.ladosGleba[melhor];
-    if (lado.tipo === "via") return { tipo: "via", ref: `borda${melhor}`, nome: lado.nome || "estrada existente" };
+    if (ehAcesso(lado.tipo)) return { tipo: "via", ref: `borda${melhor}`, nome: lado.nome || (lado.tipo === "rodovia" ? "Rodovia" : "estrada existente") };
     return { tipo: "divisa", ref: `borda${melhor}`, nome: ctx.confrontantes[melhor] || lado.nome || "divisa da gleba" };
   }
   const f = ctx.fixos.achar(p, proprio);
@@ -427,7 +432,26 @@ function partirEmL(ctx: Contexto, pol: Poligono): Poligono[] {
     const partes = cortarPelaCorda(pecas[i], P, Q);
     if (partes) pecas.splice(i, 1, ...partes);
   }
-  return pecas.filter((pc) => pc.length >= 3).map((ext) => ({ ext: antiHorario(limparAnel(ext, 0.005)), furos: [] }));
+  let out: Poligono[] = pecas.filter((pc) => pc.length >= 3).map((ext) => ({ ext: antiHorario(limparAnel(ext, 0.005)), furos: [] }));
+  // lasca pequena demais para lote (canto entre dois cortes) volta para a
+  // peça vizinha: vira o lote de ponta um pouco maior em vez de um lote nanico
+  for (let guarda = 0; guarda < 6; guarda++) {
+    const i = out.findIndex((pc) => areaPol(pc) < 1.5 * ctx.areaMin);
+    if (i < 0 || out.length < 2) break;
+    let feito = false;
+    for (let j = 0; j < out.length && !feito; j++) {
+      if (j === i) continue;
+      const u2 = uniao([out[i]], [out[j]]);
+      if (u2.length === 1 && !u2[0].furos.length) {
+        const novo = { ext: limparAnel(u2[0].ext, 0.005), furos: [] };
+        out = out.filter((_, k) => k !== i && k !== j);
+        out.push(novo);
+        feito = true;
+      }
+    }
+    if (!feito) break;
+  }
+  return out;
 }
 
 /** Parte um anel simples em dois pela corda PQ (P e Q sobre a borda). */
@@ -730,7 +754,10 @@ function dividirQuadra(
   const vs = pol.ext.map((q) => proj(q)[1]);
   const vMax = Math.max(...vs);
 
-  const opostas = fs.filter((f) => f !== principal && dot(f.dir, u) < -0.85 && f.comp >= 0.3 * principal.comp);
+  // frente oposta: a rua (ou estrada) do outro lado da quadra. Até 60° fora
+  // do paralelo — a estrada antiga não é paralela à rua nova, e a quadra
+  // entre as duas tem de ter duas fileiras, uma de frente para cada uma
+  const opostas = fs.filter((f) => f !== principal && dot(f.dir, u) < -0.5 && f.comp >= 0.3 * principal.comp);
   const oposta = opostas.length ? opostas.reduce((m, f) => (f.comp > m.comp ? f : m), opostas[0]) : null;
   const D = oposta ? (proj(oposta.maior.a)[1] + proj(oposta.maior.b)[1]) / 2 : vMax;
 
@@ -740,7 +767,10 @@ function dividirQuadra(
 
   const problemas: string[] = [];
   const sobras: Poligono[] = [];
-  const fileirasPol: { pol: Poligono; sentido: 1 | -1 }[] = [];
+  // `dir`/`org`: fileira de trás voltada para uma frente que não é paralela à
+  // principal — os cortes dela ficam perpendiculares à SUA rua
+  const fileirasPol: { pol: Poligono; sentido: 1 | -1; dir?: Pt; org?: Pt }[] = [];
+  const paralela = !oposta || dot(oposta.dir, u) < -0.95;
   let fundo: Quadra["fundo"] = null;
   // limites dos cortadores: só um pouco além da própria quadra. Retângulo de
   // 100 km tira o clipper da faixa de inteiros "rápida" e ele passa a errar
@@ -749,7 +779,9 @@ function dividirQuadra(
   if (duas) {
     const f = Math.max(0.2 * D, Math.min(0.8 * D, cfg?.fundo ?? D / 2));
     for (const pp of intersecao([pol], [faixaReferencial(o, u, v, -GR, GR, -GR, f)])) fileirasPol.push({ pol: pp, sentido: 1 });
-    for (const pp of intersecao([pol], [faixaReferencial(o, u, v, -GR, GR, f, GR)])) fileirasPol.push({ pol: pp, sentido: -1 });
+    for (const pp of intersecao([pol], [faixaReferencial(o, u, v, -GR, GR, f, GR)])) {
+      fileirasPol.push(paralela ? { pol: pp, sentido: -1 } : { pol: pp, sentido: -1, dir: oposta!.dir, org: oposta!.maior.a });
+    }
     const us = pol.ext.map((q) => proj(q)[0]);
     const a = soma(o, soma(mult(u, Math.min(...us)), mult(v, f)));
     const b = soma(o, soma(mult(u, Math.max(...us)), mult(v, f)));
@@ -784,27 +816,28 @@ function dividirQuadra(
   let ruins = 0;
   fileirasPol.sort((a, b) => b.sentido - a.sentido);
   const exts = fileirasPol.map((fp) => {
-    const uf: Pt = fp.sentido === 1 ? u : mult(u, -1);
+    const uf: Pt = fp.dir ?? (fp.sentido === 1 ? u : mult(u, -1));
+    const org: Pt = fp.org ?? o;
     let ini = Infinity, fim = -Infinity;
     const anel = fp.pol.ext;
     for (let i = 0; i < anel.length; i++) {
       const a = anel[i], b = anel[(i + 1) % anel.length];
       if (!naFrente(a, b)) continue;
-      for (const q of [a, b]) { const s = dot(sub(q, o), uf); ini = Math.min(ini, s); fim = Math.max(fim, s); }
+      for (const q of [a, b]) { const s = dot(sub(q, org), uf); ini = Math.min(ini, s); fim = Math.max(fim, s); }
     }
-    return { uf, ini, fim };
+    return { uf, org, ini, fim };
   });
   // Quadra de duas fileiras: a de frente mais longa manda e a outra segue os
   // mesmos cortes (fundo com fundo alinhado). No referencial da outra fileira o
   // eixo é invertido, por isso o corte s vira −s.
   let mestre = -1;
-  if (fileirasPol.length === 2 && fileirasPol[0].sentido !== fileirasPol[1].sentido && exts.every((e) => Number.isFinite(e.ini))) {
+  if (fileirasPol.length === 2 && fileirasPol[0].sentido !== fileirasPol[1].sentido && !fileirasPol.some((f) => f.dir) && exts.every((e) => Number.isFinite(e.ini))) {
     mestre = exts[0].fim - exts[0].ini >= exts[1].fim - exts[1].ini ? 0 : 1;
   }
   let cortesMestre: number[] | undefined;
   (mestre === 1 ? [1, 0] : fileirasPol.map((_, i) => i)).forEach((fi) => {
     const fp = fileirasPol[fi];
-    const { uf, ini, fim } = exts[fi];
+    const { uf, org: o, ini, fim } = exts[fi];
     if (!Number.isFinite(ini)) {
       sobras.push(fp.pol);
       problemas.push("parte da quadra sem frente para rua");
@@ -946,7 +979,28 @@ function dividirQuadra(
       if (dest) destinos.set(`9:${idx}`, dest);
     }
   }
-  return { lotes, destinos, cortes, fundo, sobras: restantes, origem: o, u, v, fileiras: fileirasPol.length, problemas, ruins, nFaces: candidatas.length };
+  // retalho sem frente que encosta num lote é somado a ele (o lote da ponta
+  // fica maior, como nas plantas da equipe); só sobra o que passaria de 3× o
+  // lote padrão — esse vira área verde lá na reserva
+  const finais: Poligono[] = [];
+  for (const sb of restantes) {
+    const aSb = areaPol(sb);
+    const cb = caixa(sb.ext);
+    let melhor: { i: number; pol: Poligono; area: number } | null = null;
+    for (let i = 0; i < lotes.length; i++) {
+      const l = lotes[i];
+      if (l.area + aSb > 3 * padrao || destinos.has(`${l.fileira}:${l.indice}`)) continue;
+      const cl = caixa(l.pol.ext);
+      if (cl.min[0] > cb.max[0] + 0.01 || cl.max[0] < cb.min[0] - 0.01 || cl.min[1] > cb.max[1] + 0.01 || cl.max[1] < cb.min[1] - 0.01) continue;
+      const u2 = uniao([l.pol], [sb]);
+      if (u2.length !== 1 || u2[0].furos.length) continue; // não encostam (ou só num ponto)
+      const area = areaPol(u2[0]);
+      if (!melhor || l.area < lotes[melhor.i].area) melhor = { i, pol: { ext: limparAnel(u2[0].ext, 0.005), furos: [] }, area };
+    }
+    if (melhor) { lotes[melhor.i] = { ...lotes[melhor.i], pol: melhor.pol, area: melhor.area }; continue; }
+    finais.push(sb);
+  }
+  return { lotes, destinos, cortes, fundo, sobras: finais, origem: o, u, v, fileiras: fileirasPol.length, problemas, ruins, nFaces: candidatas.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -998,7 +1052,20 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
 
   // --- faixas das bordas (APP, non aedificandi)
   const areas: AreaPublica[] = [];
-  const bordasComFaixa = projeto.bordas.map((b, i) => ({ b, i })).filter(({ b }) => b.faixa > 0 && b.tipo !== "divisa");
+  // só a APP de rio sai do loteamento; a faixa de rodovia/ferrovia fica dentro
+  // dos lotes, desenhada como restrição (linha tracejada a N m da divisa)
+  const bordasComFaixa = projeto.bordas.map((b, i) => ({ b, i })).filter(({ b }) => b.faixa > 0 && b.tipo === "rio");
+  const faixasRestricao: Resultado["faixasRestricao"] = [];
+  projeto.bordas.forEach((b, i) => {
+    if (!faixaDentroDoLote(b.tipo) || !(b.faixa > 0)) return;
+    const l = ladosGleba[i];
+    const d = unit(sub(l.b, l.a));
+    let nrm = esquerda(d);
+    // para dentro da gleba (o anel do levantamento pode estar em qualquer sentido)
+    if (!dentroPol(soma(lerp(l.a, l.b, 0.5), mult(nrm, 0.5)), gleba)) nrm = mult(nrm, -1);
+    const linha: Pt[] = [soma(l.a, mult(nrm, b.faixa)), soma(l.b, mult(nrm, b.faixa))];
+    faixasRestricao.push({ linha, largura: b.faixa, lado: i, nome: b.nome || (b.tipo === "rodovia" ? "Rodovia" : "Ferrovia") });
+  });
   if (bordasComFaixa.length) {
     // lados vizinhos com o mesmo tipo e faixa viram uma polilinha só (sem dente na dobra)
     const grupos: { tipo: TipoBorda; faixa: number; pts: Pt[]; nome: string }[] = [];
@@ -1024,9 +1091,12 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     const pols = intersecao([gleba], corpo);
     let comp = 0;
     for (let i = 0; i + 1 < eixo.length; i++) comp += dist(eixo[i], eixo[i + 1]);
-    return { id: r.id, nome: r.nome, largura: r.largura, eixo, pols, area: 0, comprimento: comp };
+    return { id: r.id, nome: r.nome, largura: r.largura, eixo, pols, area: 0, comprimento: comp, corpo };
   });
-  const viarioBruto = ruas.length ? uniao(ruas.flatMap((r) => r.pols)) : [];
+  // as quadras saem da gleba menos o corpo INTEIRO das ruas: subtrair a rua já
+  // recortada pela gleba deixa uma fresta de décimo de milímetro na divisa que
+  // emenda quadras vizinhas numa só
+  const viarioBruto = ruas.length ? uniao(ruas.flatMap((r) => r.corpo)) : [];
 
   // --- áreas desenhadas (o que estiver sob rua continua sendo rua)
   for (const a of projeto.areas) {
@@ -1044,7 +1114,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
 
   const fixos = new Indice();
   for (const a of areas) for (const pol of a.pols) fixos.add(item(pol, a.tipo === "app" ? "faixa" : "area", a.id, a.nome));
-  const ctx: Contexto = { prof: p.profundidade, gleba, ladosGleba, confrontantes: perimetro.confrontantes, ruas, fixos };
+  const ctx: Contexto = { prof: p.profundidade, areaMin: p.areaMin, gleba, ladosGleba, confrontantes: perimetro.confrontantes, ruas, fixos };
 
   // configs: cada quadra pega a config cuja âncora cai dentro dela
   const cfgs = projeto.quadras.map((c) => ({ c, pt: P(c.ancora) }));
@@ -1055,7 +1125,8 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     destino?: TipoArea; modo: ModoDivisao; valor: number; sobra: Sobra;
   }
   const tmp: QuadraTmp[] = [];
-  const minQuadra = Math.max(p.areaMin * 0.6, 40);
+  // pedaço menor que um lote mínimo não é quadra (não cabe lote nele)
+  const minQuadra = Math.max(p.areaMin, 40);
   const pecasQuadra = pedacos.flatMap((pp) => partirEmL(ctx, pp));
   ctx.pecas = new Indice();
   pecasQuadra.forEach((pp, i) => ctx.pecas!.add(item(pp, "lote", `peca${i}`, "lote vizinho")));
@@ -1065,7 +1136,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       // nesga na beira da estrada fica como passeio (viário), nunca área verde
       const naEstrada = bruto.ext.some((q, i) => {
         const r = bruto.ext[(i + 1) % bruto.ext.length];
-        return dist(q, r) > 1 && ladosGleba.some((l) => l.tipo === "via" && distSegmento(q, l.a, l.b).d < 0.05 && distSegmento(r, l.a, l.b).d < 0.05);
+        return dist(q, r) > 1 && ladosGleba.some((l) => ehAcesso(l.tipo) && distSegmento(q, l.a, l.b).d < 0.05 && distSegmento(r, l.a, l.b).d < 0.05);
       });
       if (!naEstrada) sobras.push(bruto);
       continue;
@@ -1100,9 +1171,13 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       });
       continue;
     }
-    const nome = q.cfg?.nome || (p.numeracaoQuadras === "letras" ? letraQuadra(nQuadra) : String(nQuadra + 1).padStart(2, "0"));
-    nQuadra++;
     const { pol: polEsq, curvas } = tratarEsquinas(ctx, q.pol, p);
+    // depois de arredondar as esquinas, pedaço menor que um lote não é quadra:
+    // na beira da estrada vira passeio; no resto, retalho
+    if (areaPol(polEsq) < p.areaMin) {
+      if (!ladosDe(ctx, polEsq, null).some((l) => l.tipo === "via")) sobras.push(polEsq);
+      continue;
+    }
     // lotes da divisa: mesma frente, ou áreas iguais absorvendo a irregularidade
     const naDivisa = ladosDe(ctx, polEsq, null).some((l) => l.tipo === "divisa");
     let modo: ModoDivisao = q.cfg?.modo ?? "frente";
@@ -1115,7 +1190,8 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     let res = dividirQuadra(ctx, polEsq, q.cfg, p, modo, valor, sobra, ancFrente);
     // frente mais longa deixou lote torto/nanico (quadra com um lado diagonal):
     // tenta lotear pelas outras frentes e fica com a que dá mais lote bom
-    if (!ancFrente && res.ruins > 0 && res.nFaces > 1) {
+    // (na busca rápida do gerador pula: a contagem de lotes quase não muda e custa o triplo)
+    if (!op.rapido && !ancFrente && res.ruins > 0 && res.nFaces > 1) {
       const nota = (r: ResultadoQuadra) => r.lotes.length - 3 * r.ruins - r.sobras.reduce((s2, x) => s2 + areaPol(x), 0) / Math.max(1, p.frente * p.profundidade);
       for (let k = 1; k < Math.min(3, res.nFaces); k++) {
         const alt = dividirQuadra(ctx, polEsq, q.cfg, p, modo, valor, sobra, null, k);
@@ -1143,6 +1219,10 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       else if (dist(cs[cs.length - 1], no) < dist(cs[0], no)) seq = [...seq].reverse();
     }
 
+    // quadra que virou toda área pública não leva letra nem entra na lista
+    const temLote = seq.some((x) => !x.dest);
+    const nome = q.cfg?.nome || (p.numeracaoQuadras === "letras" ? letraQuadra(nQuadra) : String(nQuadra + 1).padStart(2, "0"));
+    if (temLote) nQuadra++;
     const quadra: Quadra = {
       cfg: q.cfgIdx, nome, pol: polEsq, area: areaPol(polEsq), lotes: [], origem: res.origem, u: res.u, v: res.v,
       fundo: res.fundo, cortes: res.cortes, modo, valor, sobra, fileiras: res.fileiras, centro: q.centro,
@@ -1174,7 +1254,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       lotesIdx.add(item(lote.pol, "lote", lote.id, `Lote ${String(num).padStart(2, "0")} da Quadra ${nome}`));
     }
     void nAreaLotes;
-    quadras.push(quadra);
+    if (temLote) quadras.push(quadra);
   }
 
   // --- retalho minúsculo (canto de esquina, ponta de rua) é calçada: some no viário
@@ -1258,7 +1338,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
 
   const ms = quadras.length ? Math.atan2(quadras[0].u[1], quadras[0].u[0]) : 0;
   const publicas = op.rapido ? [] : consolidar(areas);
-  return { plano, gleba, ladosGleba, ruas, quadras, lotes, areas, publicas, sobras, quadro, problemas, ms };
+  return { plano, gleba, ladosGleba, ruas, quadras, lotes, areas, faixasRestricao, publicas, sobras, quadro, problemas, ms };
 }
 
 const cacheViario = new WeakMap<Resultado, Poligono[]>();
@@ -1308,7 +1388,7 @@ function consolidar(areas: AreaPublica[]): AreaConsolidada[] {
  * marcou ao menos uma via existente no perímetro.
  */
 function problemasDeAcesso(ruas: RuaCalc[], lados: Resultado["ladosGleba"]): Problema[] {
-  const vias = lados.filter((l) => l.tipo === "via");
+  const vias = lados.filter((l) => ehAcesso(l.tipo));
   const out: Problema[] = [];
   // rua que encosta no perímetro fora de uma estrada existente leva para a
   // terra do vizinho (ou para o rio): sem acesso, não pode abrir ali
@@ -1318,7 +1398,7 @@ function problemasDeAcesso(ruas: RuaCalc[], lados: Resultado["ladosGleba"]): Pro
       lados.forEach((l, i) => { const d = distSegmento(ponta, l.a, l.b).d; if (d < dm) { dm = d; melhor = i; } });
       if (melhor < 0 || dm > r.largura / 2 + 1) continue;
       const l = lados[melhor];
-      if (l.tipo === "via") continue;
+      if (ehAcesso(l.tipo)) continue;
       if (vias.some((v) => distSegmento(ponta, v.a, v.b).d < r.largura / 2 + 1)) continue;
       out.push({
         nivel: "aviso", alvo: { ponto: ponta },

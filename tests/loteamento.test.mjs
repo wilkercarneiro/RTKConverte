@@ -237,7 +237,9 @@ test("quadra de duas fileiras: lotes fundo com fundo alinhados", () => {
   // linha de fundo; nas pontas (ângulo de rua, divisa torta) os lotes podem
   // ser redistribuídos para não ficarem desproporcionais
   let conferidas = 0;
-  for (const q of r0.quadras.filter((x) => x.fileiras === 2 && x.fundo)) {
+  // (quadra com parte virada área pública fica de fora: ali a fileira foi cortada de propósito)
+  const inteira = (q) => Math.abs(q.area - q.lotes.reduce((s, l) => s + l.area, 0)) < 1;
+  for (const q of r0.quadras.filter((x) => x.fileiras === 2 && x.fundo && inteira(x))) {
     const L = Math.hypot(q.fundo.b[0] - q.fundo.a[0], q.fundo.b[1] - q.fundo.a[1]);
     const s = (p) => ((p[0] - q.fundo.a[0]) * (q.fundo.b[0] - q.fundo.a[0]) + (p[1] - q.fundo.a[1]) * (q.fundo.b[1] - q.fundo.a[1])) / L;
     const miolo = (p) => s(p) > 3.5 * pr0.params.frente && s(p) < L - 3.5 * pr0.params.frente;
