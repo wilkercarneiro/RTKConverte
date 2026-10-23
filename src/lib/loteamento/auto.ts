@@ -215,7 +215,7 @@ function malha(
  * profundidade) e a duas da estrada (quadra de duas fileiras entre a estrada e
  * o contorno). APP/faixa non aedificandi entram na distância.
  */
-export function anelInterno(ptsPl: Pt[], distancias: number[], glebaPl: Poligono): Pt[] | null {
+export function anelInterno(ptsPl: Pt[], distancias: number[], glebaPl: Poligono, cortarAgudo = 0): Pt[] | null {
   let pts = ptsPl, ds = distancias;
   const n = pts.length;
   if (areaAssinada(pts) < 0) {
@@ -237,8 +237,26 @@ export function anelInterno(ptsPl: Pt[], distancias: number[], glebaPl: Poligono
     const t = (w0[0] * l1.d[1] - w0[1] * l1.d[0]) / den;
     vert.push(soma(l0.p, mult(l0.d, t)));
   }
-  const limpo = intersecaoAnel(vert, glebaPl);
+  let limpo = intersecaoAnel(vert, glebaPl);
   if (!limpo) return null;
+  // Canto muito agudo (ponta da gleba): as duas ruas de contorno se
+  // encontrariam longe da ponta e deixariam uma cunha enorme sem frente. O
+  // encontro é antecipado com um trecho de rua de `cortarAgudo` metros — a
+  // cunha que sobra cabe em lotes de ponta (como nas plantas da equipe).
+  if (cortarAgudo > 0) {
+    const n2 = limpo.length;
+    const novo: Pt[] = [];
+    for (let i = 0; i < n2; i++) {
+      const V = limpo[i], A = limpo[(i - 1 + n2) % n2], B = limpo[(i + 1) % n2];
+      const dA = unit(sub(A, V)), dB = unit(sub(B, V));
+      const ang = Math.acos(Math.max(-1, Math.min(1, dot(dA, dB))));
+      const convexo = (B[0] - V[0]) * (A[1] - V[1]) - (B[1] - V[1]) * (A[0] - V[0]) < 0;
+      if (ang > (55 * Math.PI) / 180 || !convexo) { novo.push(V); continue; }
+      const sCorte = Math.min(cortarAgudo / (2 * Math.sin(ang / 2)), 0.45 * dist(A, V), 0.45 * dist(B, V));
+      novo.push(soma(V, mult(dA, sCorte)), soma(V, mult(dB, sCorte)));
+    }
+    limpo = novo;
+  }
   const a = Math.abs(areaAssinada(limpo));
   if (a < 0.2 * Math.abs(areaAssinada(glebaPl.ext))) return null;
   return limpo;
@@ -422,8 +440,10 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
   // ruas internas saem do contorno e chegam nela — o padrão das plantas
   // aprovadas da equipe (LOTEAMENTO NOVO, out/2026).
   const distDivisa = (b: (typeof base.bordas)[number]) => p.profundidade + w / 2 + (b.tipo === "rio" ? b.faixa : 0);
-  const anelEstrada = anelInterno(ptsPl, base.bordas.map((b) => (ehAcesso(b.tipo) ? 0 : distDivisa(b))), glebaPl);
-  const variantes: (Pt[] | null)[] = [null, ...(anelEstrada ? [anelEstrada] : [])];
+  const anelEstrada = anelInterno(ptsPl, base.bordas.map((b) => (ehAcesso(b.tipo) ? 0 : distDivisa(b))), glebaPl, 2 * p.profundidade);
+  // com contorno sempre que ele existir (a malha solta, aparada nos
+  // cruzamentos, deixa faixa funda demais junto à divisa e miolo sem acesso)
+  const variantes: (Pt[] | null)[] = anelEstrada ? [anelEstrada] : [null];
 
   const porAngulo: { ang: number; eixos: EixoAuto[]; nota: number; res: Resultado }[] = [];
   for (const ang of angs) {

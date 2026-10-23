@@ -16,6 +16,7 @@ import type { FormatoLocacao, OpcoesLocacao } from "../../lib/loteamento/saidas.
 import { escalaPara, gerarPlantaPdf } from "../../lib/loteamento/planta.ts";
 import type { DadosCarimbo, Folha } from "../../lib/loteamento/planta.ts";
 import { gerarDocx } from "../../lib/loteamento/docx.ts";
+import { imagemSituacao } from "../../lib/loteamento/situacao.ts";
 import type { SecaoDocx } from "../../lib/loteamento/docx.ts";
 import { fmtAzimute } from "../../../supabase/functions/_shared/geo.ts";
 import { dist } from "../../lib/loteamento/geom.ts";
@@ -52,10 +53,11 @@ async function carregarCarimbo(s: Servico): Promise<DadosCarimbo> {
 }
 
 async function lerCarimbo(s: Servico): Promise<DadosCarimbo> {
-  const [{ data: cfg }, rt, esc] = await Promise.all([
+  const [{ data: cfg }, rt, esc, cred] = await Promise.all([
     supabase.from("config_empresa").select("key, value").in("key", ["razao_social", "cnpj", "desenhista"]),
     s.rt_id ? supabase.from("responsaveis_tecnicos").select().eq("id", s.rt_id).maybeSingle() : Promise.resolve({ data: null }),
     carregarEscritorio(),
+    s.credenciado_id ? supabase.from("credenciados").select("prefixo_vertice").eq("id", s.credenciado_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   const c = Object.fromEntries(((cfg ?? []) as { key: string; value: string }[]).map((x) => [x.key, x.value]));
   const r = (rt as { data: RT | null }).data;
@@ -69,7 +71,9 @@ async function lerCarimbo(s: Servico): Promise<DadosCarimbo> {
     empresa: c.razao_social ?? "", cnpj: c.cnpj ?? "", desenhista: c.desenhista ?? "",
     proprietario: s.detentor_nome ?? "", cpfProprietario: s.detentor_cpf ?? "",
     imovel: s.denominacao ?? "", municipio: s.municipio ?? "", uf: s.uf ?? "", matricula: s.matricula ?? "",
-    rt: r?.nome ?? "", rtRegistro: r ? [r.conselho_sigla || "CREA", r.conselho_numero || r.crea].filter(Boolean).join(" ") : "",
+    rt: r?.nome ?? "", rtTitulo: (r?.formacao ?? "").toUpperCase(),
+    rtRegistro: r ? [r.conselho_sigla || "CREA", r.conselho_numero || r.crea].filter(Boolean).join(": ") : "",
+    credenciado: (cred as { data: { prefixo_vertice: string } | null }).data?.prefixo_vertice ?? "",
     trt: s.trt ?? r?.trt ?? "", fuso: s.fuso_utm ?? 24, logo,
   };
 }
@@ -107,7 +111,9 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou }: Props
 
   const planta = () => fazer("planta", async () => {
     const c = carimbo ?? await carregarCarimbo(servico);
-    const bytes = await gerarPlantaPdf(res, projeto, perimetro, c, folha);
+    // planta de situação: satélite com o loteamento por cima (sem rede, sai sem)
+    const situacao = await imagemSituacao(res, fuso);
+    const bytes = await gerarPlantaPdf(res, projeto, perimetro, { ...c, situacao }, folha);
     baixar(bytes as unknown as BlobPart, `PLANTA_LOTEAMENTO_${base}_${folha}.pdf`, "application/pdf");
   });
 
@@ -220,7 +226,7 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou }: Props
             <div className="lot-item">
               <div>
                 <b>Planta do loteamento (PDF)</b>
-                <span>Lotes cotados e numerados, quadras, ruas, áreas públicas, quadro de áreas e carimbo; quadro de lotes nas folhas seguintes. Escala 1:{fmt(den, 0)}.</span>
+                <span>No padrão das plantas da equipe: legendas, convenções, quadro de áreas, planta de situação com satélite, carimbo com a logo, seção da rua e detalhe de esquina; lotes cotados e quadro de lotes nas folhas seguintes. Escala 1:{den}.</span>
               </div>
               <select value={folha} onChange={(e) => setFolha(e.target.value as Folha)}>
                 {(["A0", "A1", "A2", "A3"] as Folha[]).map((f) => <option key={f} value={f}>{f}</option>)}
