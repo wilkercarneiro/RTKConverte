@@ -35,6 +35,28 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
    - **O que entra na locação:** cantos de lote e de quadra, PC/meio/PT das curvas de esquina, estacas do eixo das ruas (a cada 20 m, configurável) e, se pedido, os marcos do perímetro.
    - **Nome dos pontos:** curto, sem acento e o mesmo da planta e dos memoriais (A-07 = ponto 7 da quadra A). O código do ponto traz os lotes que ele divide (`QA L03/04`).
 
+## Regras de projeto que o gerador segue
+
+- **Acesso.**
+  - Rua só encosta no perímetro onde há estrada existente (lado marcado como "rua/estrada existente").
+  - Na divisa com vizinho, rio ou rodovia, a rua termina num cruzamento ou num balão de retorno.
+  - O gerador testa duas soluções: a malha simples aparada nos cruzamentos e a malha com **rua de contorno**, a uma profundidade de lote da divisa (e a duas da estrada). Fica com a que rende mais lote bom.
+  - Rua desenhada à mão contra a divisa vira pendência, e só sobra a malha ligada a algum acesso.
+- **Fundo com fundo.**
+  - Na quadra de duas fileiras, a fileira de frente mais longa manda e a outra segue os mesmos cortes, de modo que as divisas laterais se encontram na linha de fundo.
+  - As pontas são a exceção, quando o ângulo exige redistribuir.
+- **Ângulo e divisa torta.**
+  - Numa fileira em que a profundidade varia, o lote raso fica mais largo até atingir a área de referência.
+  - As pontas desproporcionais (menos de 80% ou mais de 145% do padrão, ou frente curta) são refeitas em áreas iguais, com até 3 lotes vizinhos dividindo a diferença.
+  - Retalho com frente e área de lote vira lote; retalho grande é dividido.
+- **Faixa da beirada.** A faixa entre o contorno e a divisa é partida nos cantos, pela bissetriz, e cada trecho reto é loteado na direção da sua rua.
+- **Área verde.**
+  - Vai para a terra menos valorizada.
+  - O relevo vem do modelo digital de elevação (tiles terrarium da AWS), calibrado pelas cotas do TXT e guardado no projeto. Contam cota baixa, declividade, depressão (buraco) e distância do acesso.
+  - Lote de frente para a estrada **nunca** vira área pública. Retalho nessa posição é somado ao lote vizinho ou vira passeio.
+  - A escolha é sempre um trecho contínuo de lotes em volta da quadra.
+- **Institucional.** Fica na quadra mais central e, se ela não bastar, continua na vizinha.
+
 ## Como funciona por dentro
 
 - **Projeto = intenção.** A tabela `loteamentos` (migração 0021) guarda só parâmetros, ruas, áreas e ajustes. Quadras e lotes **nunca** são gravados: `calcular()` (`src/lib/loteamento/calculo.ts`) refaz tudo a cada mudança, em cerca de 10 ms para 200 lotes e 130 ms para 2.000. É isso que faz o resto se ajustar quando um lote, uma rua ou um parâmetro muda.

@@ -11,6 +11,8 @@ import type { Selecao } from "../../lib/loteamento/acoes.ts";
 import { ROTULO_AREA } from "../../lib/loteamento/modelo.ts";
 import type { ModoDivisao, Projeto, Sobra, TipoArea } from "../../lib/loteamento/modelo.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
+import { paraUtm } from "../../lib/loteamento/plano.ts";
+import { cotaEm, declividadeEm } from "../../lib/loteamento/terreno.ts";
 
 interface Props {
   projeto: Projeto;
@@ -96,6 +98,10 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
               <div><b>{l.esquina ? "Esquina" : l.naDivisa ? "Divisa" : "Meio"}</b><span>{l.rua || "—"}</span></div>
             </div>
             {l.problemas.map((x) => <p key={x} className="lot-erro">⚠ {x}</p>)}
+            {projeto.terreno && (() => {
+              const u = paraUtm(res.plano, centroLote(l));
+              return <p className="lot-dica">Cota {fmt(cotaEm(projeto.terreno, u), 1)} m · declividade {fmt(declividadeEm(projeto.terreno, u), 1)}%</p>;
+            })()}
             <div className="lot-linha">
               <label>Frente</label>
               <CampoNum valor={l.travaFrente ?? (l.travaArea ? undefined : undefined)} sufixo="m" titulo="Trava a frente; os lotes seguintes se ajustam"

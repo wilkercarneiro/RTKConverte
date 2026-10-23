@@ -196,6 +196,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   }
   // áreas públicas
   for (const a of res.publicas) {
+    if (a.area < 100) continue; // nesga: conta no quadro, não ganha rótulo
     const c = P(centroide(a.pol.ext));
     textoCentrado(page, negrito, T(a.nome), c[0], c[1] + 3, 7.5, CINZA(0.1));
     textoCentrado(page, fonte, `${fmt(a.area)} m²`, c[0], c[1] - 7, 6.5, CINZA(0.2));

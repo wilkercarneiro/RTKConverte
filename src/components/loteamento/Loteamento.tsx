@@ -180,7 +180,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
 
       {etapa === "perguntas" && (
         <div className="conferencia-corpo fade">
-          <Assistente projeto={projeto} perimetro={perimetro} onMudar={(p) => mudar(p)}
+          <Assistente projeto={projeto} perimetro={perimetro} fuso={fuso} onMudar={(p) => mudar(p)}
             onPronto={(p) => { mudar({ ...p, gerado: true }); setSel(null); setEtapa("projeto"); mostrar("Proposta aplicada. Clique num lote para ajustar; duplo clique seleciona a quadra; digite comandos aqui embaixo."); }} />
         </div>
       )}
@@ -205,6 +205,8 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
             <button title="Imagem de satélite" className={vista.satelite ? "ativo" : ""} onClick={() => setVista({ ...vista, satelite: !vista.satelite })}>🛰</button>
             <button title="Medidas dos lados" className={vista.medidas ? "ativo" : ""} onClick={() => setVista({ ...vista, medidas: !vista.medidas })}>↔</button>
             <button title="Colorir pelo tamanho do lote" className={vista.cores === "area" ? "ativo" : ""} onClick={() => setVista({ ...vista, cores: vista.cores === "area" ? "situacao" : "area" })}>▦</button>
+            <button title={projeto.terreno ? "Colorir pelo relevo (cota)" : "Relevo ainda não lido (gere pelas Perguntas)"} disabled={!projeto.terreno}
+              className={vista.cores === "relevo" ? "ativo" : ""} onClick={() => setVista({ ...vista, cores: vista.cores === "relevo" ? "situacao" : "relevo" })}>⛰</button>
             <span className="sep" />
             <button title="Ver comandos e atalhos" onClick={() => setAjuda(true)}>?</button>
           </nav>

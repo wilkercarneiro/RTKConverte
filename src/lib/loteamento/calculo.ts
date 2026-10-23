@@ -8,7 +8,7 @@
 // automático chama a mesma função para comparar propostas — não existe uma
 // segunda definição de "lote válido" em lugar nenhum.
 import {
-  antiHorario, areaAssinada, areaPol, areaPolAteCorte, bufferLinha, caixa, centroide, circulo, cross, dentroPol,
+  antiHorario, areaAssinada, areaPol, areaPolAteCorte, dentroAnel, bufferLinha, caixa, centroide, circulo, cross, dentroPol,
   diferenca, dist, distSegmento, dot, esquerda, faixaReferencial, intersecao, lerp, limparAnel, mult, offsetPols, soma, sub,
   uniao, unit,
 } from "./geom.ts";
@@ -118,7 +118,7 @@ export interface AreaPublica {
   pols: Poligono[];
   area: number;
   /** de onde veio: desenhada, quadra inteira, lotes ou faixa de borda */
-  origem: "desenho" | "quadra" | "lotes" | "borda";
+  origem: "desenho" | "quadra" | "lotes" | "borda" | "sobra";
   /** índice da config da quadra (origem quadra/lotes) */
   cfg?: number;
 }
@@ -218,12 +218,16 @@ class Indice {
 const item = (pol: Poligono, tipo: TipoLado, ref: string, nome: string): Item => ({ pol, caixa: caixa(pol.ext), tipo, ref, nome });
 
 interface Contexto {
+  /** profundidade padrão do lote (para reconhecer faixa de uma fileira) */
+  prof: number;
   gleba: Poligono;
   ladosGleba: Resultado["ladosGleba"];
   confrontantes: (string | null)[];
   ruas: RuaCalc[];
   /** áreas, faixas e sobras — tudo que não é lote nem rua */
   fixos: Indice;
+  /** peças de quadra (para a borda entre duas quadras vizinhas não virar "rua") */
+  pecas?: Indice;
 }
 
 /** Sonda um ponto logo do lado de fora da aresta e diz o que tem lá. */
@@ -245,6 +249,11 @@ function classificar(ctx: Contexto, a: Pt, b: Pt, lotes: Indice | null, proprio?
   if (lotes) {
     const l = lotes.achar(p, proprio);
     if (l) return { tipo: l.tipo, ref: l.ref, nome: l.nome };
+  }
+  // quadra vizinha sem rua no meio (a faixa partida no canto): não é frente
+  if (ctx.pecas) {
+    const q = ctx.pecas.achar(p, proprio);
+    if (q) return { tipo: "lote", ref: q.ref, nome: q.nome };
   }
   // dentro da gleba e fora de tudo: é rua (inclusive o canto cortado da esquina)
   let rua: RuaCalc | null = null, dm = Infinity;
@@ -317,6 +326,7 @@ function tratarEsquinas(ctx: Contexto, pol: Poligono, p: Parametros): { pol: Pol
     const ang = Math.acos(Math.max(-1, Math.min(1, dot(dA, dB)))); // ângulo interno
     if (!ehFrente(tAnt) || !ehFrente(tProx) || giro <= 0 || ang > (150 * Math.PI) / 180) { novo.push(V); continue; }
     const lMax = 0.4 * Math.min(dist(A, V), dist(B, V));
+    if (lMax < 0.3) { novo.push(V); continue; } // lado minúsculo: um arco aqui seria um enxame de pontos no mesmo lugar
     if (p.esquina === "chanfro") {
       const c = Math.min(p.esquinaValor, lMax);
       const pc = soma(V, mult(dA, c)), pt = soma(V, mult(dB, c));
@@ -328,6 +338,13 @@ function tratarEsquinas(ctx: Contexto, pol: Poligono, p: Parametros): { pol: Pol
     let r = p.esquinaValor;
     let t = r / Math.tan(ang / 2);
     if (t > lMax) { t = lMax; r = t * Math.tan(ang / 2); }
+    if (r < 0.5) {
+      // canto muito agudo: o arco que cabe é um ponto — vira chanfro
+      const pc = soma(V, mult(dA, t)), pt = soma(V, mult(dB, t));
+      novo.push(pc, pt);
+      curvas.push({ pc, pt, meio: null, centro: null, raio: 0, desenvolvimento: dist(pc, pt), intermediarios: [] });
+      continue;
+    }
     const T1 = soma(V, mult(dA, t)), T2 = soma(V, mult(dB, t));
     const bis = unit(soma(dA, dB));
     const C = soma(V, mult(bis, r / Math.sin(ang / 2)));
@@ -349,7 +366,92 @@ function tratarEsquinas(ctx: Contexto, pol: Poligono, p: Parametros): { pol: Pol
       desenvolvimento: Math.abs(giroArco) * r, intermediarios: arco.slice(1, -1).filter((_, k) => k + 1 !== passos / 2),
     });
   }
-  return { pol: { ext: novo, furos: pol.furos }, curvas };
+  return { pol: { ext: limparAnel(novo, 0.005), furos: pol.furos }, curvas };
+}
+
+// ---------------------------------------------------------------------------
+// Quadra em L / C
+// ---------------------------------------------------------------------------
+
+/**
+ * Quadra que dobra a esquina (a faixa entre a rua de contorno e a divisa, que
+ * dá a volta no loteamento) não pode ser loteada numa direção só: os lotes
+ * da dobra saem tortos e compridos. Ela é partida em cada canto interno onde
+ * as duas frentes são rua, pela bissetriz do canto até o outro lado — cada
+ * trecho reto vira uma quadra própria, dividida na direção da sua rua.
+ */
+function partirEmL(ctx: Contexto, pol: Poligono): Poligono[] {
+  const anel = pol.ext;
+  const n = anel.length;
+  if (n < 5) return [pol];
+  const lados = anel.map((a, i) => classificar(ctx, a, anel[(i + 1) % n], null).tipo);
+  const cortes: [Pt, Pt][] = [];
+  for (let i = 0; i < n; i++) {
+    const V = anel[i], A = anel[(i - 1 + n) % n], B = anel[(i + 1) % n];
+    if (!ehFrente(lados[(i - 1 + n) % n]) || !ehFrente(lados[i])) continue;
+    const giro = cross(sub(V, A), sub(B, V));
+    const convexo = giro > 0;
+    const a = unit(sub(A, V)), b = unit(sub(B, V));
+    const ang = Math.acos(Math.max(-1, Math.min(1, dot(a, b))));
+    if (ang > (160 * Math.PI) / 180) continue; // dobra suave de rua, não é canto
+    // canto interno: bissetriz para dentro é −(a+b); canto externo (a rua dobra
+    // em volta da quadra): +(a+b) — este só parte faixa de uma fileira, cuja
+    // bissetriz bate na divisa logo ali (numa quadra comum ela bate em outra rua)
+    const r = unit(convexo ? soma(a, b) : mult(soma(a, b), -1));
+    // até onde o raio atravessa a quadra
+    let tMin = Infinity, ladoHit = -1;
+    for (let k = 0; k < n; k++) {
+      if (k === i || (k + 1) % n === i) continue;
+      const p = anel[k], q = anel[(k + 1) % n];
+      const s2 = sub(q, p);
+      const den = cross(r, s2);
+      if (Math.abs(den) < 1e-12) continue;
+      const w = sub(p, V);
+      const t = cross(w, s2) / den, u2 = cross(w, r) / den;
+      // a bissetriz do contorno passa exatamente pelo vértice da gleba: tolerância nas pontas
+      if (t > 0.05 && u2 >= -1e-6 && u2 <= 1 + 1e-6 && t < tMin) { tMin = t; ladoHit = k; }
+    }
+    if (!Number.isFinite(tMin) || tMin > 120) continue;
+    // só parte FAIXA de uma fileira (a bissetriz bate na divisa logo ali); quadra
+    // interna em L, cuja bissetriz bate noutra rua, é loteada inteira
+    if (ehFrente(lados[ladoHit]) || tMin > 2.2 * ctx.prof) continue;
+    cortes.push([V, soma(V, mult(r, tMin))]);
+  }
+  if (!cortes.length) return [pol];
+  // corta pela corda, uma de cada vez, na peça que a contém (exato, sem clipper)
+  let pecas: Anel[] = [anel];
+  for (const [P, Q] of cortes) {
+    const meio = lerp(P, Q, 0.5);
+    const i = pecas.findIndex((pc) => dentroAnel(meio, pc));
+    if (i < 0) continue;
+    const partes = cortarPelaCorda(pecas[i], P, Q);
+    if (partes) pecas.splice(i, 1, ...partes);
+  }
+  return pecas.filter((pc) => pc.length >= 3).map((ext) => ({ ext: antiHorario(limparAnel(ext, 0.005)), furos: [] }));
+}
+
+/** Parte um anel simples em dois pela corda PQ (P e Q sobre a borda). */
+function cortarPelaCorda(anel: Anel, P: Pt, Q: Pt): [Anel, Anel] | null {
+  const n = anel.length;
+  const ondeEsta = (X: Pt): { i: number; t: number } | null => {
+    let melhor: { i: number; t: number; d: number } | null = null;
+    for (let i = 0; i < n; i++) {
+      const { d, t } = distSegmento(X, anel[i], anel[(i + 1) % n]);
+      if (!melhor || d < melhor.d) melhor = { i, t, d };
+    }
+    return melhor && melhor.d < 0.01 ? { i: melhor.i, t: melhor.t } : null;
+  };
+  const a = ondeEsta(P), b = ondeEsta(Q);
+  if (!a || !b || a.i === b.i) return null;
+  const caminho = (de: { i: number }, ate: { i: number }): Pt[] => {
+    const out: Pt[] = [];
+    for (let k = (de.i + 1) % n; ; k = (k + 1) % n) { out.push(anel[k]); if (k === ate.i) break; }
+    return out;
+  };
+  const r1 = [P, ...caminho(a, b), Q];
+  const r2 = [Q, ...caminho(b, a), P];
+  if (Math.abs(areaAssinada(r1)) < 1 || Math.abs(areaAssinada(r2)) < 1) return null;
+  return [r1, r2];
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +507,7 @@ interface EspecLote { w?: number; area?: number; indice: number; fixo: boolean }
  */
 function distribuir(
   fil: FileiraCalc, o: Pt, u: Pt, modo: ModoDivisao, valor: number, sobra: Sobra,
-  ajustes: Map<number, AjusteLote>, p: Parametros,
+  ajustes: Map<number, AjusteLote>, p: Parametros, alinhar?: number[],
 ): { cortes: number[]; specs: EspecLote[] } {
   const L = fil.fim - fil.ini;
   const areaTotal = areaPol(fil.pol);
@@ -413,6 +515,52 @@ function distribuir(
   if (L < p.frenteMin * 0.5) return { cortes: [], specs: [{ indice: 0, fixo: false }] };
 
   const fixos = [...ajustes.values()].filter((a) => a.frente || a.area);
+  const areaAte = (s: number) => areaPolAteCorte(fil.pol, o, u, s);
+  const livres = (n: number): EspecLote[] => Array.from({ length: n }, (_, i) => ({ indice: i, fixo: false }));
+
+  // Perfil de profundidade ao longo da rua: numa fileira que encosta numa
+  // divisa torta (ou num ângulo de rua) a profundidade varia, e lote de frente
+  // fixa sai desproporcional — raso e pequeno de um lado, um triângulo no fim.
+  const profEm = (s: number) => areaAte(s + 0.5) - areaAte(s - 0.5);
+  const amostras: number[] = [];
+  for (let k = 0; k < 11; k++) amostras.push(profEm(fil.ini + 0.5 + ((L - 1) * k) / 10));
+  const ordenadas = [...amostras].sort((a, b) => a - b);
+  const profMed = ordenadas[5];
+  const irregular = modo === "frente" && L > 2 * valor && ordenadas[0] < 0.88 * ordenadas[10];
+  const aref = Math.max(p.areaMin, (modo === "frente" ? valor : L / Math.max(1, valor)) * profMed);
+
+  // fundo com fundo: a fileira de trás segue os cortes da da frente, para as
+  // divisas laterais dos lotes se encontrarem na linha de fundo
+  if (alinhar && modo !== "area" && !fixos.length) {
+    const cs = alinhar.filter((x) => x > fil.ini + p.frenteMin * 0.5 && x < fil.fim - p.frenteMin * 0.5).sort((a, b) => a - b);
+    const final = suavizarPontas(cs, fil, areaAte, areaTotal, aref, p);
+    return { cortes: final, specs: livres(final.length + 1) };
+  }
+
+  // fileira irregular sem trava: lote raso fica mais largo até chegar à área de
+  // referência, e as pontas são redistribuídas em áreas iguais
+  if (irregular && !fixos.length) {
+    const f = valor;
+    const cortes: number[] = [];
+    let pos = fil.ini;
+    for (let guarda = 0; guarda < 2000; guarda++) {
+      const base = cortes.length ? areaAte(pos) : 0; // o 1º lote leva o que fica antes da frente
+      let w = f;
+      if (areaAte(pos + w) - base < 0.92 * aref) {
+        let lo = f, hi = 2.5 * f;
+        if (areaAte(pos + hi) - base < aref) w = hi;
+        else {
+          for (let it = 0; it < 40; it++) { const m = (lo + hi) / 2; if (areaAte(pos + m) - base < aref) lo = m; else hi = m; }
+          w = (lo + hi) / 2;
+        }
+      }
+      if (pos + w > fil.fim - 0.5 * f) break;
+      pos += w;
+      cortes.push(pos);
+    }
+    const final = suavizarPontas(cortes, fil, areaAte, areaTotal, aref, p);
+    return { cortes: final, specs: livres(final.length + 1) };
+  }
   let usado = 0;
   for (const a of fixos) usado += a.frente ?? (a.area! / prof);
   const livre = Math.max(0, L - usado);
@@ -463,7 +611,6 @@ function distribuir(
   const cortes: number[] = [];
   let pos = fil.ini;
   let areaAcum = 0;
-  const areaAte = (s: number) => areaPolAteCorte(fil.pol, o, u, s);
   for (let i = 0; i < specs.length - 1; i++) {
     const s = specs[i];
     let prox: number;
@@ -482,7 +629,60 @@ function distribuir(
     pos = prox;
     areaAcum = areaAte(pos);
   }
+  // fileira regular também pode terminar num triângulo (canto da divisa): só
+  // o que passa muito do padrão é redistribuído — o lote de esquina um pouco
+  // maior (sobra nas esquinas) é de propósito e fica
+  if (!fixos.length && modo === "frente" && cortes.length >= 2) {
+    const final = suavizarPontas(cortes, fil, areaAte, areaTotal, aref, p, 1.9);
+    if (final.length !== cortes.length || final.some((x, i) => Math.abs(x - cortes[i]) > 1e-6)) return { cortes: final, specs: livres(final.length + 1) };
+  }
   return { cortes, specs: specs.slice(0, cortes.length + 1) };
+}
+
+/**
+ * Pontas desproporcionais (lote muito menor ou muito maior que o de
+ * referência, ou de frente curta) são refeitas: os últimos lotes da ponta
+ * dividem a área deles em partes iguais. Em vez de um triângulo de 60 m² ou
+ * de um lote de 700 m² ao lado de outros de 250, saem lotes parecidos.
+ */
+function suavizarPontas(
+  cortes: number[], fil: FileiraCalc, areaAte: (s: number) => number, total: number, aref: number, p: Parametros,
+  limiteMaior = 1.45,
+): number[] {
+  let cs = [...cortes];
+  const area = (i: number) => (i >= cs.length ? total : areaAte(cs[i])) - (i === 0 ? 0 : areaAte(cs[i - 1]));
+  const frente = (i: number) => (i >= cs.length ? fil.fim : cs[i]) - (i === 0 ? fil.ini : cs[i - 1]);
+  const ruim = (i: number) => {
+    const a = area(i);
+    return a < 0.8 * aref || a > limiteMaior * aref || frente(i) < p.frenteMin - 0.005;
+  };
+  const dividirIgual = (aIni: number, aFim: number, m: number): number[] => {
+    const out: number[] = [];
+    for (let j = 1; j < m; j++) {
+      const alvo = aIni + ((aFim - aIni) * j) / m;
+      let lo = fil.ini - 1e3, hi = fil.fim + 1e3;
+      for (let it = 0; it < 50; it++) { const mid = (lo + hi) / 2; if (areaAte(mid) < alvo) lo = mid; else hi = mid; }
+      out.push((lo + hi) / 2);
+    }
+    return out;
+  };
+  const n = () => cs.length + 1;
+  // fim da fileira: os últimos k lotes viram m lotes de área igual
+  if (n() >= 2 && ruim(n() - 1)) {
+    const k = Math.min(3, n());
+    const fica = n() - k - 1; // índice do último corte mantido (-1 = começo da fileira)
+    const aIni = fica >= 0 ? areaAte(cs[fica]) : 0;
+    const m = Math.max(1, Math.min(k + 1, Math.round((total - aIni) / aref)));
+    cs = [...cs.slice(0, fica + 1), ...dividirIgual(aIni, total, m)];
+  }
+  // começo da fileira
+  if (n() >= 2 && ruim(0)) {
+    const k = Math.min(3, n());
+    const aFim = k - 1 < cs.length ? areaAte(cs[k - 1]) : total;
+    const m = Math.max(1, Math.min(k + 1, Math.round(aFim / aref)));
+    cs = [...dividirIgual(0, aFim, m), ...cs.slice(Math.min(k - 1, cs.length))];
+  }
+  return cs.filter((x) => x > fil.ini + 0.3 && x < fil.fim - 0.3);
 }
 
 interface ResultadoQuadra {
@@ -494,21 +694,28 @@ interface ResultadoQuadra {
   origem: Pt; u: Pt; v: Pt;
   fileiras: number;
   problemas: string[];
+  /** lotes que nasceram fora do mínimo (área ou frente) — mede se a frente escolhida foi boa */
+  ruins: number;
+  /** quantas frentes candidatas a quadra tem */
+  nFaces: number;
 }
 
 function dividirQuadra(
   ctx: Contexto, pol: Poligono, cfg: QuadraCfg | null, p: Parametros, modo: ModoDivisao, valor: number, sobra: Sobra,
-  ancoraFrente: Pt | null,
+  ancoraFrente: Pt | null, opcaoFace = 0,
 ): ResultadoQuadra {
   const lados = ladosDe(ctx, pol, null);
   const fs = faces(lados).filter((f) => f.comp >= Math.min(p.frenteMin, 3));
   const vazio = (msg: string): ResultadoQuadra => ({
     lotes: [], destinos: new Map(), cortes: [], fundo: null, sobras: [pol], origem: pol.ext[0], u: [1, 0], v: [0, 1],
-    fileiras: 0, problemas: [msg],
+    fileiras: 0, problemas: [msg], ruins: 0, nFaces: 0,
   });
   if (!fs.length) return vazio("quadra sem frente para rua");
 
-  let principal = fs.reduce((m, f) => (f.comp > m.comp ? f : m), fs[0]);
+  // frentes candidatas, da mais longa para a mais curta (a 2ª e a 3ª só são
+  // tentadas quando a mais longa deixa lote fora do mínimo)
+  const candidatas = [...fs].filter((f) => f.comp >= 2 * p.frenteMin).sort((a, b) => b.comp - a.comp);
+  let principal = candidatas[Math.min(opcaoFace, Math.max(0, candidatas.length - 1))] ?? fs.reduce((m, f) => (f.comp > m.comp ? f : m), fs[0]);
   if (ancoraFrente) {
     let dm = Infinity;
     for (const f of fs) for (const l of f.lados) {
@@ -574,8 +781,9 @@ function dividirQuadra(
   const lotes: ResultadoQuadra["lotes"] = [];
   const destinos = new Map<string, TipoArea>();
   const cortes: Corte[] = [];
+  let ruins = 0;
   fileirasPol.sort((a, b) => b.sentido - a.sentido);
-  fileirasPol.forEach((fp, fi) => {
+  const exts = fileirasPol.map((fp) => {
     const uf: Pt = fp.sentido === 1 ? u : mult(u, -1);
     let ini = Infinity, fim = -Infinity;
     const anel = fp.pol.ext;
@@ -584,22 +792,38 @@ function dividirQuadra(
       if (!naFrente(a, b)) continue;
       for (const q of [a, b]) { const s = dot(sub(q, o), uf); ini = Math.min(ini, s); fim = Math.max(fim, s); }
     }
+    return { uf, ini, fim };
+  });
+  // Quadra de duas fileiras: a de frente mais longa manda e a outra segue os
+  // mesmos cortes (fundo com fundo alinhado). No referencial da outra fileira o
+  // eixo é invertido, por isso o corte s vira −s.
+  let mestre = -1;
+  if (fileirasPol.length === 2 && fileirasPol[0].sentido !== fileirasPol[1].sentido && exts.every((e) => Number.isFinite(e.ini))) {
+    mestre = exts[0].fim - exts[0].ini >= exts[1].fim - exts[1].ini ? 0 : 1;
+  }
+  let cortesMestre: number[] | undefined;
+  (mestre === 1 ? [1, 0] : fileirasPol.map((_, i) => i)).forEach((fi) => {
+    const fp = fileirasPol[fi];
+    const { uf, ini, fim } = exts[fi];
     if (!Number.isFinite(ini)) {
       sobras.push(fp.pol);
       problemas.push("parte da quadra sem frente para rua");
       return;
     }
     const aj = ajustesPorFil.get(fi) ?? new Map<number, AjusteLote>();
-    const { cortes: cs, specs } = distribuir({ pol: fp.pol, sentido: fp.sentido, ini, fim }, o, uf, modo, valor, sobra, aj, p);
+    const alinhar = mestre >= 0 && fi !== mestre && cortesMestre ? cortesMestre.map((x) => -x) : undefined;
+    const { cortes: cs, specs } = distribuir({ pol: fp.pol, sentido: fp.sentido, ini, fim }, o, uf, modo, valor, sobra, aj, p, alinhar);
+    if (fi === mestre) cortesMestre = cs;
 
     // une (pula o corte) e divide (acrescenta cortes) — sobre as posições já calculadas
     const lim = [-GR, ...cs, GR];
-    const intervalos: { a: number; b: number; indice: number }[] = [];
+    const intervalos: { a: number; b: number; indice: number; unido?: boolean }[] = [];
     for (let i = 0; i < lim.length - 1; i++) intervalos.push({ a: lim[i], b: lim[i + 1], indice: specs[i]?.indice ?? i });
     const finais: typeof intervalos = [];
     for (const it of intervalos) {
       const ult = finais[finais.length - 1];
-      if (ult && aj.get(ult.indice)?.unir) { ult.b = it.b; continue; }
+      // une UMA vez: o lote unido guarda o índice do primeiro, que tem a marca "unir"
+      if (ult && !ult.unido && aj.get(ult.indice)?.unir) { ult.b = it.b; ult.unido = true; continue; }
       finais.push({ ...it });
     }
 
@@ -653,6 +877,7 @@ function dividirQuadra(
     }
 
     pedacos.forEach((x, i) => {
+      if (x.area < p.areaMin - 0.01 || x.frente < p.frenteMin - 0.005) ruins++;
       const a = x.aj;
       lotes.push({
         pol: x.pol, area: x.area, fileira: fi, indice: x.indice,
@@ -672,7 +897,56 @@ function dividirQuadra(
       }
     });
   });
-  return { lotes, destinos, cortes, fundo, sobras, origem: o, u, v, fileiras: fileirasPol.length, problemas };
+  // retalho que ficou com frente e área de lote (canto da quadra, ponta além
+  // do fundo) é lote, não sobra — sobretudo na beira da estrada, onde a terra
+  // vale mais e área pública não pode ficar
+  const restantes: Poligono[] = [];
+  const padrao = Math.max(p.areaMin, p.frente * p.profundidade);
+  let extra = 0;
+  for (const sb of sobras) {
+    let fr = 0, maior: [Pt, Pt] | null = null;
+    for (let i = 0; i < sb.ext.length; i++) {
+      const a = sb.ext[i], b = sb.ext[(i + 1) % sb.ext.length];
+      if (!naFrente(a, b)) continue;
+      fr += dist(a, b);
+      if (!maior || dist(a, b) > dist(maior[0], maior[1])) maior = [a, b];
+    }
+    const area = areaPol(sb);
+    if (!maior || fr < p.frenteMin - 0.005 || area < p.areaMin - 0.01) { restantes.push(sb); continue; }
+    // retalho grande: divide em lotes de área parecida com a do padrão,
+    // cortando perpendicular à frente dele
+    const m = Math.max(1, Math.min(Math.floor(fr / p.frenteMin), Math.round(area / padrao)));
+    const d = unit(sub(maior[1], maior[0]));
+    const o2 = maior[0];
+    const us = sb.ext.map((q) => dot(sub(q, o2), d));
+    const lo0 = Math.min(...us) - 1, hi0 = Math.max(...us) + 1;
+    const cortesR: number[] = [];
+    for (let j = 1; j < m; j++) {
+      const alvo = (area * j) / m;
+      let lo = lo0, hi = hi0;
+      for (let it = 0; it < 50; it++) { const mid = (lo + hi) / 2; if (areaPolAteCorte(sb, o2, d, mid) < alvo) lo = mid; else hi = mid; }
+      cortesR.push((lo + hi) / 2);
+    }
+    const lim = [lo0 - 10, ...cortesR, hi0 + 10];
+    const ajR = ajustesPorFil.get(9);
+    for (let j = 0; j < m; j++) {
+      const pedacos = intersecao([sb], [faixaReferencial(o2, d, esquerda(d), lim[j], lim[j + 1], -GR, GR)]).sort((x, y) => areaPol(y) - areaPol(x));
+      if (!pedacos.length) continue;
+      for (const r of pedacos.slice(1)) restantes.push(r);
+      // cada pedaço precisa da própria frente; o que não tem volta a ser retalho
+      let frP = 0;
+      for (let i = 0; i < pedacos[0].ext.length; i++) {
+        const a = pedacos[0].ext[i], b = pedacos[0].ext[(i + 1) % pedacos[0].ext.length];
+        if (naFrente(a, b)) frP += dist(a, b);
+      }
+      if (frP < p.frenteMin - 0.005 || areaPol(pedacos[0]) < p.areaMin - 0.01) { restantes.push(pedacos[0]); continue; }
+      const idx = extra++;
+      lotes.push({ pol: pedacos[0], area: areaPol(pedacos[0]), fileira: 9, indice: idx, ajustado: false });
+      const dest = ajR?.get(idx)?.destino;
+      if (dest) destinos.set(`9:${idx}`, dest);
+    }
+  }
+  return { lotes, destinos, cortes, fundo, sobras: restantes, origem: o, u, v, fileiras: fileirasPol.length, problemas, ruins, nFaces: candidatas.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -770,7 +1044,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
 
   const fixos = new Indice();
   for (const a of areas) for (const pol of a.pols) fixos.add(item(pol, a.tipo === "app" ? "faixa" : "area", a.id, a.nome));
-  const ctx: Contexto = { gleba, ladosGleba, confrontantes: perimetro.confrontantes, ruas, fixos };
+  const ctx: Contexto = { prof: p.profundidade, gleba, ladosGleba, confrontantes: perimetro.confrontantes, ruas, fixos };
 
   // configs: cada quadra pega a config cuja âncora cai dentro dela
   const cfgs = projeto.quadras.map((c) => ({ c, pt: P(c.ancora) }));
@@ -782,9 +1056,20 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
   }
   const tmp: QuadraTmp[] = [];
   const minQuadra = Math.max(p.areaMin * 0.6, 40);
-  for (const bruto of pedacos) {
+  const pecasQuadra = pedacos.flatMap((pp) => partirEmL(ctx, pp));
+  ctx.pecas = new Indice();
+  pecasQuadra.forEach((pp, i) => ctx.pecas!.add(item(pp, "lote", `peca${i}`, "lote vizinho")));
+  for (const bruto of pecasQuadra) {
     const a = areaPol(bruto);
-    if (a < minQuadra) { sobras.push(bruto); continue; }
+    if (a < minQuadra) {
+      // nesga na beira da estrada fica como passeio (viário), nunca área verde
+      const naEstrada = bruto.ext.some((q, i) => {
+        const r = bruto.ext[(i + 1) % bruto.ext.length];
+        return dist(q, r) > 1 && ladosGleba.some((l) => l.tipo === "via" && distSegmento(q, l.a, l.b).d < 0.05 && distSegmento(r, l.a, l.b).d < 0.05);
+      });
+      if (!naEstrada) sobras.push(bruto);
+      continue;
+    }
     let cfgIdx = -1;
     for (let i = cfgs.length - 1; i >= 0; i--) {
       if (!usadas.has(i) && dentroPol(cfgs[i].pt, bruto)) { cfgIdx = i; break; }
@@ -827,7 +1112,16 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     if (modo === "quantidade" && !q.cfg?.valor) valor = 10;
     const sobra = q.cfg?.sobra ?? p.sobra;
     const ancFrente = q.cfg?.frentePrincipal ? P(q.cfg.frentePrincipal) : null;
-    const res = dividirQuadra(ctx, polEsq, q.cfg, p, modo, valor, sobra, ancFrente);
+    let res = dividirQuadra(ctx, polEsq, q.cfg, p, modo, valor, sobra, ancFrente);
+    // frente mais longa deixou lote torto/nanico (quadra com um lado diagonal):
+    // tenta lotear pelas outras frentes e fica com a que dá mais lote bom
+    if (!ancFrente && res.ruins > 0 && res.nFaces > 1) {
+      const nota = (r: ResultadoQuadra) => r.lotes.length - 3 * r.ruins - r.sobras.reduce((s2, x) => s2 + areaPol(x), 0) / Math.max(1, p.frente * p.profundidade);
+      for (let k = 1; k < Math.min(3, res.nFaces); k++) {
+        const alt = dividirQuadra(ctx, polEsq, q.cfg, p, modo, valor, sobra, null, k);
+        if (nota(alt) > nota(res)) res = alt;
+      }
+    }
     for (const s of res.sobras) sobras.push(s);
 
     // numeração: fileira 0 no sentido dela, fileira 1 voltando — dá a volta na quadra
@@ -885,6 +1179,15 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
 
   // --- retalho minúsculo (canto de esquina, ponta de rua) é calçada: some no viário
   for (let i = sobras.length - 1; i >= 0; i--) if (areaPol(sobras[i]) < 30) sobras.splice(i, 1);
+  // --- retalho marcado como área pública (ponto dentro dele) sai das sobras
+  (projeto.sobrasPublicas ?? []).forEach((m, k) => {
+    const pt = P(m.ponto);
+    const i = sobras.findIndex((sb) => dentroPol(pt, sb));
+    if (i < 0) return;
+    const [sb] = sobras.splice(i, 1);
+    areas.push({ id: `sp${k}`, tipo: m.tipo, nome: "", pols: [sb], area: areaPol(sb), origem: "sobra", cfg: k });
+    fixos.add(item(sb, m.tipo === "app" ? "faixa" : "area", `sp${k}`, ROTULO_AREA[m.tipo]));
+  });
   // --- sobras entram no índice (para o lado do lote dizer "área remanescente")
   for (const [i, s] of sobras.entries()) fixos.add(item(s, "sobra", `sobra${i}`, "área remanescente"));
 
@@ -936,9 +1239,19 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     for (const q of quadras) {
       const us = q.pol.ext.map((x) => dot(sub(x, q.origem), q.u));
       const comp = Math.max(...us) - Math.min(...us);
-      if (comp > p.quadraCompMax + 0.5) problemas.push({ nivel: "aviso", texto: `Quadra ${q.nome} com ${fmt(comp)} m de comprimento — o máximo é ${fmt(p.quadraCompMax)} m`, alvo: { quadra: q.nome } });
+      if (comp > p.quadraCompMax + 1) {
+        // quadra encostada na divisa não pode ser cortada por rua (a rua iria
+        // para a terra do vizinho): o caminho é viela de pedestre ou a prefeitura
+        const lindeira = q.lotes.some((l) => l.naDivisa);
+        problemas.push({
+          nivel: "aviso", alvo: { quadra: q.nome },
+          texto: lindeira
+            ? `Quadra ${q.nome} (lindeira à divisa) com ${fmt(comp)} m — o máximo é ${fmt(p.quadraCompMax)} m; rua não pode seguir até a divisa sem acesso: avalie viela de pedestre ou dispensa da prefeitura`
+            : `Quadra ${q.nome} com ${fmt(comp)} m de comprimento — o máximo é ${fmt(p.quadraCompMax)} m`,
+        });
+      }
     }
-    if (areaSobras > 1) problemas.push({ nivel: "aviso", texto: `${fmt(areaSobras)} m² de sobras sem destino (retalhos sem frente para rua) — transforme em área verde ou ajuste as ruas` });
+    if (areaSobras > 50) problemas.push({ nivel: "aviso", texto: `${fmt(areaSobras)} m² de sobras sem destino (retalhos sem frente para rua) — transforme em área verde ou ajuste as ruas` });
     for (const r of ruas) if (r.largura < 8) problemas.push({ nivel: "aviso", texto: `${r.nome} com ${fmt(r.largura)} m de largura` });
     problemas.push(...problemasDeAcesso(ruas, ladosGleba));
   }
@@ -996,7 +1309,28 @@ function consolidar(areas: AreaPublica[]): AreaConsolidada[] {
  */
 function problemasDeAcesso(ruas: RuaCalc[], lados: Resultado["ladosGleba"]): Problema[] {
   const vias = lados.filter((l) => l.tipo === "via");
-  if (!vias.length || !ruas.length) return [];
+  const out: Problema[] = [];
+  // rua que encosta no perímetro fora de uma estrada existente leva para a
+  // terra do vizinho (ou para o rio): sem acesso, não pode abrir ali
+  for (const r of ruas) {
+    for (const ponta of [r.eixo[0], r.eixo[r.eixo.length - 1]]) {
+      let melhor = -1, dm = Infinity;
+      lados.forEach((l, i) => { const d = distSegmento(ponta, l.a, l.b).d; if (d < dm) { dm = d; melhor = i; } });
+      if (melhor < 0 || dm > r.largura / 2 + 1) continue;
+      const l = lados[melhor];
+      if (l.tipo === "via") continue;
+      if (vias.some((v) => distSegmento(ponta, v.a, v.b).d < r.largura / 2 + 1)) continue;
+      out.push({
+        nivel: "aviso", alvo: { ponto: ponta },
+        texto: `${r.nome} termina no lado ${melhor + 1} do perímetro (${l.tipo === "divisa" ? "divisa com vizinho" : l.tipo}), sem acesso — termine num cruzamento, faça balão ou marque o lado como estrada existente`,
+      });
+    }
+  }
+  if (!vias.length) {
+    if (ruas.length) out.push({ nivel: "aviso", texto: "Nenhum lado do perímetro está marcado como rua/estrada existente: o loteamento fica sem acesso. Marque o acesso nas Perguntas." });
+    return out;
+  }
+  if (!ruas.length) return out;
   const pai = ruas.map((_, i) => i);
   const raiz = (i: number): number => (pai[i] === i ? i : (pai[i] = raiz(pai[i])));
   const toca = (r: RuaCalc, s: RuaCalc) => {
@@ -1015,9 +1349,9 @@ function problemasDeAcesso(ruas: RuaCalc[], lados: Resultado["ladosGleba"]): Pro
       if (vias.some((v) => cruza(a, b, v.a, v.b) || [a, b].some((q) => distSegmento(q, v.a, v.b).d < tol))) ligadas.add(raiz(i));
     }
   });
-  return ruas.filter((_, i) => !ligadas.has(raiz(i))).map((r) => ({
+  return [...out, ...ruas.filter((_, i) => !ligadas.has(raiz(i))).map((r) => ({
     nivel: "aviso" as const, texto: `${r.nome} não chega a nenhuma via de acesso existente`, alvo: { ponto: r.eixo[0] },
-  }));
+  }))];
 }
 
 function cruza(a: Pt, b: Pt, c: Pt, d: Pt): boolean {

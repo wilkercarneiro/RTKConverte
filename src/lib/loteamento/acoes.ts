@@ -4,7 +4,7 @@
 // desfazer/refazer de graça.
 import { dot, sub } from "./geom.ts";
 import type { Pt } from "./geom.ts";
-import { pontoInterno } from "./auto.ts";
+import { ancoraDaQuadra } from "./auto.ts";
 import { fmt } from "./calculo.ts";
 import type { Corte, Lote, Quadra, Resultado } from "./calculo.ts";
 import { paraUtm } from "./plano.ts";
@@ -35,7 +35,7 @@ export const quadraDe = (res: Resultado, nome: string): Quadra | undefined => re
 /** Garante uma config para a quadra (âncora num ponto interno) e devolve o índice. */
 function garantirCfg(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: number } {
   if (q.cfg >= 0 && pr.quadras[q.cfg]) return { pr, i: q.cfg };
-  const ancora = paraUtm(res.plano, pontoInterno(q.pol));
+  const ancora = paraUtm(res.plano, ancoraDaQuadra(q));
   const quadras = [...pr.quadras, { ancora, ajustes: [] } as QuadraCfg];
   return { pr: { ...pr, quadras }, i: quadras.length - 1 };
 }
@@ -126,6 +126,11 @@ export function mudarArea(pr: Projeto, res: Resultado, id: string, tipo: TipoAre
     return tipo === null
       ? { ...pr, areas: pr.areas.filter((x) => x.id !== id) }
       : { ...pr, areas: pr.areas.map((x) => (x.id === id ? { ...x, tipo } : x)) };
+  }
+  if (a.origem === "sobra" && a.cfg !== undefined) {
+    const lista = (pr.sobrasPublicas ?? []).slice();
+    if (tipo === null) lista.splice(a.cfg, 1); else lista[a.cfg] = { ...lista[a.cfg], tipo };
+    return { ...pr, sobrasPublicas: lista };
   }
   if (a.origem === "quadra" && a.cfg !== undefined && a.cfg >= 0) {
     const quadras = pr.quadras.slice();

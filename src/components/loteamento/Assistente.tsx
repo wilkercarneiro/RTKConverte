@@ -4,6 +4,7 @@
 // não com um formulário preenchido.
 import { useMemo, useState } from "react";
 import { gerarPropostasEmSegundoPlano } from "../../lib/loteamento/auto.ts";
+import { buscarTerreno, faixaDeCotas } from "../../lib/loteamento/terreno.ts";
 import type { Proposta } from "../../lib/loteamento/auto.ts";
 import { fmt } from "../../lib/loteamento/calculo.ts";
 import type { Perimetro, Resultado } from "../../lib/loteamento/calculo.ts";
@@ -20,6 +21,7 @@ interface Props {
   onMudar: (pr: Projeto) => void;
   /** proposta escolhida (ou projeto sem ruas, para desenhar à mão) */
   onPronto: (pr: Projeto) => void;
+  fuso: number;
 }
 
 /** Perfis prontos: o ponto de partida mais comum de cada tipo de loteamento. */
@@ -53,7 +55,7 @@ export function Miniatura({ res, largura = 300, altura = 210 }: { res: Resultado
   );
 }
 
-export function Assistente({ projeto, perimetro, onMudar, onPronto }: Props) {
+export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Props) {
   const p = projeto.params;
   const setP = (patch: Partial<Parametros>) => onMudar({ ...projeto, params: { ...p, ...patch } });
   const [ladoAtivo, setLadoAtivo] = useState<number | null>(null);
@@ -61,6 +63,7 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto }: Props) {
   const [ladoRef, setLadoRef] = useState(0);
   const [propostas, setPropostas] = useState<Proposta[] | null>(null);
   const [gerando, setGerando] = useState(false);
+  const [etapaGerar, setEtapaGerar] = useState<"relevo" | "malha">("relevo");
   const [erro, setErro] = useState<string | null>(null);
 
   // perímetro no plano, para o mapa dos lados
@@ -89,12 +92,20 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto }: Props) {
     if (modoRuas === "mao") { onPronto({ ...projeto, ruas: projeto.ruas.filter((r) => r.id.startsWith("m")), gerado: true }); return; }
     setGerando(true);
     setPropostas(null);
+    setEtapaGerar("relevo");
     let angulo: number | undefined;
     if (modoRuas === "lado") {
       const a = pts[ladoRef], b = pts[(ladoRef + 1) % pts.length];
       angulo = Math.atan2(b[1] - a[1], b[0] - a[0]);
     }
-    gerarPropostasEmSegundoPlano(projeto, perimetro, { quantas: angulo === undefined ? 3 : 1, angulo })
+    // o relevo decide onde ficam as áreas verdes: busca uma vez e guarda no projeto
+    (projeto.terreno ? Promise.resolve(projeto.terreno) : buscarTerreno(perimetro.pts, perimetro.altitudes, fuso))
+      .then((terreno) => {
+        const comRelevo = terreno && !projeto.terreno ? { ...projeto, terreno } : projeto;
+        if (comRelevo !== projeto) onMudar(comRelevo);
+        setEtapaGerar("malha");
+        return gerarPropostasEmSegundoPlano(comRelevo, perimetro, { quantas: angulo === undefined ? 3 : 1, angulo });
+      })
       .then((ps) => {
         if (!ps.length || !ps[0].lotes) setErro("Não coube nenhum lote com esses parâmetros. Diminua a frente/profundidade ou a largura das ruas.");
         setPropostas(ps);
@@ -211,9 +222,14 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto }: Props) {
           <label>Comprimento máximo da quadra<CampoNum valor={p.quadraCompMax} sufixo="m" casas={0} onAplicar={(v) => v && setP({ quadraCompMax: v })} /></label>
         </div>
         <p className="lot-dica">Calçada de {fmt(Math.max(0, (p.ruaLargura - p.ruaPista) / 2))} m de cada lado. Leis municipais costumam pedir via de 12 a 14 m e quadra de 100 a 250 m.</p>
+        <p className="lot-dica">
+          <b>Acesso:</b> rua só encosta no perímetro onde existe estrada (lado marcado na pergunta 1). Na divisa com vizinho, no rio
+          ou na rodovia ela termina num cruzamento — em geral numa rua de contorno a uma profundidade de lote da divisa, que deixa
+          os lotes da beirada com o fundo na divisa — ou num balão de retorno. Rua desenhada à mão contra a divisa vira pendência.
+        </p>
         <div className="lot-opcoes-ruas">
           <label className={modoRuas === "auto" ? "ativo" : ""}><input type="radio" checked={modoRuas === "auto"} onChange={() => setModoRuas("auto")} />
-            <b>O sistema traça</b><span>testa as direções do terreno e mostra as 3 que rendem mais lotes</span></label>
+            <b>O sistema traça</b><span>testa as direções do terreno, com e sem rua de contorno, e mostra as 3 que rendem mais lotes</span></label>
           <label className={modoRuas === "lado" ? "ativo" : ""}><input type="radio" checked={modoRuas === "lado"} onChange={() => setModoRuas("lado")} />
             <b>Paralelas a um lado</b>
             <span>ruas acompanhando o lado <select value={ladoRef} onClick={(e) => e.stopPropagation()} onChange={(e) => setLadoRef(Number(e.target.value))}>
@@ -231,7 +247,21 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto }: Props) {
           <label>Institucional (mín.)<CampoNum valor={p.pctInstitucionalMin} sufixo="% da gleba" casas={1} onAplicar={(v) => v !== undefined && setP({ pctInstitucionalMin: v })} /></label>
           <label>Públicas no total (mín.)<CampoNum valor={p.pctPublicasMin} sufixo="%" casas={1} onAplicar={(v) => v !== undefined && setP({ pctPublicasMin: v })} /></label>
         </div>
-        <p className="lot-dica">O sistema reserva a área verde onde custa menos lote (retalhos e quadras irregulares) e a institucional numa ponta da quadra mais central. No desenho, qualquer lote ou quadra vira área pública com um clique — e volta.</p>
+        <p className="lot-dica">
+          A área verde vai para a terra menos valorizada: retalhos sem frente, baixadas (cota mais baixa), encostas íngremes, buracos e o
+          que fica longe do acesso. Lote de frente para a estrada <b>nunca</b> vira área verde. A institucional fica numa ponta da quadra mais
+          central. No desenho, qualquer lote ou quadra vira área pública com um clique — e volta.
+        </p>
+        {projeto.terreno && (() => {
+          const f = faixaDeCotas(projeto.terreno);
+          return (
+            <p className="lot-dica">
+              Relevo {projeto.terreno.fonte === "dem" ? "do modelo digital de elevação, calibrado pelas cotas do levantamento" : "estimado pelas cotas dos marcos do perímetro"}:
+              cotas de <b>{fmt(f.min, 1)}</b> a <b>{fmt(f.max, 1)} m</b> ({fmt(f.max - f.min, 1)} m de desnível).
+              <button className="fantasma" style={{ marginLeft: 8, padding: 0, height: "auto" }} onClick={() => onMudar({ ...projeto, terreno: undefined })}>ler de novo</button>
+            </p>
+          );
+        })()}
       </section>
 
       <section className="bloco">
@@ -254,7 +284,7 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto }: Props) {
 
       <div className="lot-gerar">
         <button className="principal grande" disabled={gerando} onClick={gerar}>
-          {gerando ? <><span className="spinner" /> Testando direções e defasagens…</> : modoRuas === "mao" ? "Ir para o desenho →" : propostas ? "Gerar de novo" : "Gerar o loteamento"}
+          {gerando ? <><span className="spinner" /> {etapaGerar === "relevo" ? "Lendo o relevo do terreno…" : "Testando direções, contorno e defasagens…"}</> : modoRuas === "mao" ? "Ir para o desenho →" : propostas ? "Gerar de novo" : "Gerar o loteamento"}
         </button>
         {erro && <p className="lot-erro">{erro}</p>}
       </div>

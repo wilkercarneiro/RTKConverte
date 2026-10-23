@@ -9,6 +9,7 @@
 // Geometria gravada em UTM (absoluta): o plano de projeto depende do fator de
 // escala, e um projeto salvo não pode andar se o operador trocar essa opção.
 import type { Pt } from "./geom.ts";
+import type { GradeTerreno } from "./terreno.ts";
 
 export type ModoDivisao = "frente" | "area" | "quantidade";
 /** Para onde vai o que sobra quando a fileira não dá um número inteiro de lotes. */
@@ -169,6 +170,13 @@ export interface Projeto {
   quadras: QuadraCfg[];
   /** etapa em que o operador parou (o assistente só aparece até gerar a 1ª proposta) */
   gerado: boolean;
+  /** relevo da gleba (modelo digital de elevação calibrado pelo levantamento) */
+  terreno?: GradeTerreno;
+  /**
+   * Retalhos sem frente que viraram área pública, marcados por um ponto (UTM)
+   * dentro deles — sem redesenhar nada, para não mexer nas quadras vizinhas.
+   */
+  sobrasPublicas?: { ponto: Pt; tipo: TipoArea }[];
 }
 
 export function projetoNovo(nome: string, ladosPerimetro: number): Projeto {

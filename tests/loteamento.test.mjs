@@ -62,7 +62,7 @@ test("lote padrão 10 × 25 sai com 250,00 m² exatos", () => {
 });
 
 test("travar a frente de um lote: a fileira se reorganiza e o comprimento se conserva", () => {
-  const q = r0.quadras.find((x) => x.lotes.length >= 30);
+  const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
   const fil = (r, nome) => r.quadras.find((x) => x.nome === nome).lotes.filter((l) => l.fileira === 0).sort((a, b) => a.indice - b.indice);
   const antes = fil(r0, q.nome);
   const alvo = antes[4];
@@ -107,7 +107,7 @@ test("largura da rua: mudar a largura refaz quadras e lotes", () => {
   const s = executar("largura 16", pr0, r0, null);
   const r = calcular(s.pr, perimetro);
   assert.ok(r.quadro.viario > r0.quadro.viario + 1000);
-  assert.ok(r.lotes.length < r0.lotes.length);
+  assert.ok(r.quadro.lotes.area < r0.quadro.lotes.area);
 });
 
 test("faixa de APP ao longo de um lado não vira lote", () => {
@@ -199,4 +199,105 @@ test("modalidade loteamento: cartão e chip", async () => {
   assert.equal(chaveDoServico(s), "loteamento");
   assert.equal(definicaoDe("loteamento").campos.modalidade, "loteamento");
   assert.equal(vaiAoSigef(s), false);
+});
+
+// ---------------------------------------------------------------------------
+// Regras pedidas na revisão (2026-10-23): acesso, fundos alinhados,
+// proporção nas pontas e área verde na terra menos valorizada
+// ---------------------------------------------------------------------------
+
+const dSeg = (p, a, b) => {
+  const ab = [b[0] - a[0], b[1] - a[1]];
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / (ab[0] ** 2 + ab[1] ** 2)));
+  return Math.hypot(p[0] - a[0] - ab[0] * t, p[1] - a[1] - ab[1] * t);
+};
+
+test("rua só chega ao perímetro pela estrada de acesso", () => {
+  for (const ru of r0.ruas) {
+    for (const ponta of [ru.eixo[0], ru.eixo[ru.eixo.length - 1]]) {
+      const perto = r0.ladosGleba.map((l, i) => ({ i, d: dSeg(ponta, l.a, l.b), l })).sort((a, b) => a.d - b.d)[0];
+      if (perto.d > ru.largura / 2 + 1) continue; // termina dentro, num cruzamento
+      assert.equal(perto.l.tipo, "via", `${ru.nome} termina no lado ${perto.i + 1} (${perto.l.tipo})`);
+    }
+  }
+  assert.equal(r0.problemas.filter((p) => /sem acesso|não chega/.test(p.texto)).length, 0);
+});
+
+test("rua desenhada contra a divisa vira aviso", () => {
+  const a = perimetro.pts[3], b = perimetro.pts[4];
+  const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const c = [(perimetro.pts[0][0] + perimetro.pts[3][0]) / 2, (perimetro.pts[0][1] + perimetro.pts[3][1]) / 2];
+  const pr = { ...pr0, ruas: [...pr0.ruas, { id: "mteste", nome: "Rua Teste", largura: 12, eixo: [c, m] }] };
+  const r = calcular(pr, perimetro);
+  assert.ok(r.problemas.some((p) => p.texto.startsWith("Rua Teste termina no lado 4")), "faltou o aviso de rua sem acesso");
+});
+
+test("quadra de duas fileiras: lotes fundo com fundo alinhados", () => {
+  // no miolo da quadra as divisas laterais das duas fileiras se encontram na
+  // linha de fundo; nas pontas (ângulo de rua, divisa torta) os lotes podem
+  // ser redistribuídos para não ficarem desproporcionais
+  let conferidas = 0;
+  for (const q of r0.quadras.filter((x) => x.fileiras === 2 && x.fundo)) {
+    const L = Math.hypot(q.fundo.b[0] - q.fundo.a[0], q.fundo.b[1] - q.fundo.a[1]);
+    const s = (p) => ((p[0] - q.fundo.a[0]) * (q.fundo.b[0] - q.fundo.a[0]) + (p[1] - q.fundo.a[1]) * (q.fundo.b[1] - q.fundo.a[1])) / L;
+    const miolo = (p) => s(p) > 3.5 * pr0.params.frente && s(p) < L - 3.5 * pr0.params.frente;
+    const naLinha = (fil) => new Set(q.lotes.filter((l) => l.fileira === fil).flatMap((l) => l.pol.ext)
+      .filter((p) => dSeg(p, q.fundo.a, q.fundo.b) < 0.02 && miolo(p)).map((p) => `${Math.round(p[0] * 10)},${Math.round(p[1] * 10)}`));
+    const a = naLinha(0), b = naLinha(1);
+    if (!a.size || !b.size) continue;
+    const comuns = [...a].filter((k) => b.has(k)).length;
+    assert.equal(comuns, Math.max(a.size, b.size), `quadra ${q.nome}: ${comuns} de ${Math.max(a.size, b.size)} divisas se encontram no fundo`);
+    conferidas++;
+  }
+  assert.ok(conferidas >= 3);
+});
+
+test("fileira com divisa torta: pontas proporcionais, sem lote nanico nem gigante", () => {
+  // quadra de uma fileira só com fundo inclinado
+  for (const q of r0.quadras) {
+    for (const fil of [0, 1]) {
+      const ls = q.lotes.filter((l) => l.fileira === fil);
+      if (ls.length < 4) continue;
+      const areas = ls.map((l) => l.area).sort((a, b) => a - b);
+      const med = areas[Math.floor(areas.length / 2)];
+      for (const l of ls) assert.ok(l.area < 2.6 * med, `${l.id} com ${l.area.toFixed(0)} m² numa fileira de ${med.toFixed(0)}`);
+    }
+  }
+});
+
+test("área verde: nunca na frente da estrada, e vai para a baixada", async () => {
+  const { valorDosLotes } = await import("../src/lib/loteamento/auto.ts");
+  const base0 = base();
+  // relevo: cai forte para o leste (e > 491300)
+  const E0 = 490900, N0 = 8738700, passo = 10, nx = 62, ny = 45, h = [];
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const e = E0 + i * passo;
+    h.push(330 - 0.02 * (e - 491000) - (e > 491300 ? (e - 491300) * 0.12 : 0));
+  }
+  base0.terreno = { e0: E0, n0: N0, passo, nx, ny, h, fonte: "dem", calibracao: 0 };
+  const prop = gerarPropostas(base0, perimetro, { quantas: 1 })[0];
+  const r = prop.resultado;
+  const via = r.ladosGleba[0];
+  // nenhuma área verde com lado sobre a estrada
+  for (const a of r.areas.filter((x) => x.tipo === "verde")) {
+    for (const pol of a.pols) {
+      const e = pol.ext;
+      for (let i = 0; i < e.length; i++) {
+        const p = e[i], q = e[(i + 1) % e.length];
+        const sobre = dSeg(p, via.a, via.b) < 0.3 && dSeg(q, via.a, via.b) < 0.3 && Math.hypot(q[0] - p[0], q[1] - p[1]) > 1;
+        assert.ok(!sobre, `área verde ${a.nome} encosta na estrada`);
+      }
+    }
+  }
+  // lote de frente para a estrada vale "infinito" (não entra na escolha)
+  const valor = valorDosLotes(r, prop.projeto, perimetro);
+  for (const l of r.lotes.filter((x) => x.lados.some((s) => s.tipo === "via"))) assert.equal(valor.get(l.id), Infinity);
+  // a verde (fora os retalhos de canto) fica mais baixa que a média dos lotes
+  const { cotaEm } = await import("../src/lib/loteamento/terreno.ts");
+  const { centroide } = await import("../src/lib/loteamento/geom.ts");
+  const cota = (p) => cotaEm(base0.terreno, paraUtm(r.plano, p));
+  const mediaLotes = r.lotes.reduce((s, l) => s + cota(centroide(l.pol.ext)), 0) / r.lotes.length;
+  const verdes = r.publicas.filter((a) => a.tipo === "verde").sort((a, b) => b.area - a.area);
+  assert.ok(cota(centroide(verdes[0].pol.ext)) < mediaLotes, "a maior área verde não está na parte baixa");
+  assert.ok((100 * (r.quadro.verde + r.quadro.lazer)) / r.quadro.gleba >= 10 - 0.01);
 });

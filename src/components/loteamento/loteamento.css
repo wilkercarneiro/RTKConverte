@@ -170,3 +170,5 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 }
 .lot-checks input[type="checkbox"], .lot-formatos input[type="radio"], .lot-opcoes-ruas input[type="radio"] { width: auto; height: auto; flex: none; margin: 0; }
 .lot-checks label { min-height: 0; height: auto; margin: 0; font-weight: 400; }
+.lot-legenda-relevo { position: absolute; right: 12px; bottom: 46px; display: flex; align-items: center; gap: 8px; font: 12px var(--mono); color: var(--texto-2); background: rgb(255 255 255 / 90%); padding: 4px 8px; border-radius: 6px; }
+.lot-legenda-relevo i { display: block; width: 120px; height: 10px; border-radius: 3px; background: linear-gradient(90deg, hsl(190 45% 78%), hsl(110 55% 69%), hsl(30 65% 60%)); }

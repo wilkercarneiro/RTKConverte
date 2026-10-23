@@ -14,6 +14,7 @@ import type { Anel, Poligono, Pt } from "../../lib/loteamento/geom.ts";
 import type { Corte, Lote, Quadra, Resultado } from "../../lib/loteamento/calculo.ts";
 import { fmt } from "../../lib/loteamento/calculo.ts";
 import { paraPlano, paraUtm } from "../../lib/loteamento/plano.ts";
+import { cotaEm } from "../../lib/loteamento/terreno.ts";
 import type { Projeto } from "../../lib/loteamento/modelo.ts";
 import {
   adicionarArea, adicionarRua, chaveDoLote, editarRua, lotesDaSelecao, moverCorte, moverFundo, quadraDe,
@@ -25,7 +26,7 @@ const proj = proj4mod as unknown as (from: string, to: string, c: [number, numbe
 export interface OpcoesVista {
   satelite: boolean;
   medidas: boolean;
-  cores: "situacao" | "area";
+  cores: "situacao" | "area" | "relevo";
 }
 
 interface Props {
@@ -60,6 +61,12 @@ const ultimoPonto = (d: Pt[], q: Pt, tol: number) => d.length > 0 && dist(d[d.le
 function pathPol(p: Poligono): string {
   const r = (a: Anel) => "M" + a.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join("L") + "Z";
   return r(p.ext) + p.furos.map(r).join("");
+}
+
+/** Cor hipsométrica: baixada em azul-esverdeado, alto em terra. */
+function corPorCota(h: number, min: number, max: number): string {
+  const t = max > min ? Math.max(0, Math.min(1, (h - min) / (max - min))) : 0.5;
+  return `hsl(${190 - 160 * t} ${45 + 20 * t}% ${78 - 18 * t}%)`;
 }
 
 /** Cor do lote pelo tamanho (do menor ao maior), para enxergar a variação de área. */
@@ -122,6 +129,15 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     return { min: Math.min(...as), max: Math.max(...as) };
   }, [res.lotes]);
   const pathsLotes = useMemo(() => res.lotes.map((l) => ({ l, d: pathPol(l.pol) })), [res.lotes]);
+  // cota no centro de cada lote (relevo do projeto), para a vista "relevo"
+  const cotas = useMemo(() => {
+    const g = projeto.terreno;
+    if (!g || vista.cores !== "relevo") return null;
+    const m = new Map<string, number>();
+    for (const l of res.lotes) m.set(l.id, cotaEm(g, paraUtm(res.plano, centroide(l.pol.ext))));
+    const vs = [...m.values()];
+    return { m, min: Math.min(...vs), max: Math.max(...vs) };
+  }, [projeto.terreno, vista.cores, res.lotes, res.plano]);
 
   // ---------------- satélite (tiles da Esri, sem chave) ----------------
   const tiles = useMemo(() => {
@@ -464,6 +480,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
             const fill = selecionado ? "#BFEBD2"
               : l.problemas.length ? "#FFD3D3"
               : vista.cores === "area" ? corPorArea(l.area, faixaArea.min, faixaArea.max)
+              : vista.cores === "relevo" && cotas ? corPorCota(cotas.m.get(l.id) ?? cotas.min, cotas.min, cotas.max)
               : l.ajustado ? "#FFF0BF" : COR_LOTE;
             return (
               <path key={l.id} d={d} fill={fill} fillOpacity={vista.satelite && !selecionado ? 0.8 : 1}
@@ -492,7 +509,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         })}
         {res.publicas.map((a, i) => {
           const c = tela(centroide(a.pol.ext));
-          if (!dentroTela(c) || Math.abs(c[0]) > 1e5) return null;
+          if (!dentroTela(c) || Math.abs(c[0]) > 1e5 || a.area < 100) return null;
           return (
             <text key={i} x={c[0]} y={c[1]} className="lot-area-nome">
               <tspan x={c[0]} dy="-0.2em">{a.nome}</tspan>
@@ -573,6 +590,13 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       </div>
       {mouse && <div className="lot-coord">{(() => { const u = paraUtm(res.plano, mouse); return `E ${fmt(u[0], 2)} · N ${fmt(u[1], 2)}`; })()}</div>}
       <div className="lot-norte" title="Norte da quadrícula UTM">N<span>▲</span></div>
+      {cotas && (
+        <div className="lot-legenda-relevo">
+          <span>{fmt(cotas.min, 1)} m</span>
+          <i />
+          <span>{fmt(cotas.max, 1)} m</span>
+        </div>
+      )}
       <div className="lot-zoom">
         <button onClick={() => setV({ ...vv, s: vv.s * 1.4 })} title="Aproximar">+</button>
         <button onClick={() => setV({ ...vv, s: vv.s / 1.4 })} title="Afastar">−</button>
