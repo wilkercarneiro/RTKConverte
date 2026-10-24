@@ -234,6 +234,15 @@ export function bufferLinha(linha: Pt[], largura: number, pontas: "reta" | "quad
 }
 
 /** Recuo (negativo) ou afastamento (positivo) de polígonos fechados. */
+/**
+ * União que fecha frestas: lotes vizinhos cortados em passos diferentes podem
+ * ficar com a divisa comum separada por frações de milímetro, e a união
+ * simples devolve os dois de novo. Expande 5 mm, une e contrai de volta.
+ */
+export function uniaoFechada(pols: Poligono[], folga = 0.005): Poligono[] {
+  return offsetPols(uniao(offsetPols(pols, folga)), -folga);
+}
+
 export function offsetPols(pols: Poligono[], delta: number, juncao: "reta" | "redonda" = "reta"): Poligono[] {
   if (!pols.length) return [];
   const co = new ClipperLib.ClipperOffset(4, 0.01 * ESC);

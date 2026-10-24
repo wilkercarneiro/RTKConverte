@@ -5,8 +5,8 @@
 // O critério é o mesmo `calcular()` da tela — o gerador não tem uma ideia
 // própria do que é um lote bom.
 import {
-  antiHorario, areaAssinada, caixa, centroide, dentroPol, dist, dot, esquerda, intersecao as intersecaoPols, limparAnel, mult,
-  recortarLinha, soma, sub, uniao, unit,
+  antiHorario, areaAssinada, areaPol, caixa, centroide, dentroPol, dist, dot, esquerda, intersecao as intersecaoPols, limparAnel, mult,
+  offsetPols, recortarLinha, soma, sub, uniao, uniaoFechada, unit,
 } from "./geom.ts";
 import type { Poligono, Pt } from "./geom.ts";
 import { calcular } from "./calculo.ts";
@@ -428,14 +428,15 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
       else if (viasPl.length) semSaida++; // rua interna que só liga contorno com contorno
     }
     acessos -= 0.75 * semSaida;
-    // quadrinha (menos de 6 lotes) é sinal de rua cruzando no lugar errado
+    // quadrinha (menos de 6 lotes) é sinal de rua cruzando no lugar errado — e
+    // na ponta da gleba ela vira triângulo: pesa mais que o par de lotes que rende
     const pequenas = r.quadras.filter((q) => q.lotes.length > 0 && q.lotes.length < 6).length;
     // a lógica das plantas aprovadas: UMA família de ruas, paralela a uma
     // divisa, do contorno até a estrada, sem cruzamento no meio da quadra
     const umaFamilia = tr ? 0 : 6;
     const paraleloDivisa = dirDivisas.filter((x) => Math.abs(Math.sin(x.ang - ang)) < 0.06).reduce((s2, x) => s2 + x.comp, 0);
     const orientacao = compDivisas ? 6 * Math.min(1, paraleloDivisa / (0.25 * compDivisas)) : 0;
-    return n - 3 * longas - 1.5 * pequenas + 4 * acessos + umaFamilia + orientacao + a / 1e7;
+    return n - 3 * longas - 5 * pequenas + 4 * acessos + umaFamilia + orientacao + a / 1e7;
   };
 
   // Rua de contorno: uma profundidade de lote da divisa (APP do rio entra na
@@ -446,7 +447,16 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
   const anelEstrada = anelInterno(ptsPl, base.bordas.map((b) => (ehAcesso(b.tipo) ? 0 : distDivisa(b))), glebaPl, 2 * p.profundidade);
   // com contorno sempre que ele existir (a malha solta, aparada nos
   // cruzamentos, deixa faixa funda demais junto à divisa e miolo sem acesso)
-  const variantes: (Pt[] | null)[] = anelEstrada ? [anelEstrada] : [null];
+  // Contorno completo: na estrada também corre uma rua paralela, a duas
+  // profundidades de lote — a faixa da estrada vira quadra de duas fileiras
+  // (uma de frente para a estrada, outra de costas para ela, de frente para a
+  // rua paralela). É a "via paralela" das leis de parcelamento junto a rodovia,
+  // e evita o triângulo picado quando a estrada corre torta em relação às ruas.
+  const anelCompleto = vias.length
+    ? anelInterno(ptsPl, base.bordas.map((b) => (ehAcesso(b.tipo) ? 2 * p.profundidade + w / 2 : distDivisa(b))), glebaPl, 2 * p.profundidade)
+    : null;
+  const variantes: (Pt[] | null)[] = [anelEstrada, anelCompleto].filter((x): x is Pt[] => !!x);
+  if (!variantes.length) variantes.push(null);
 
   const porAngulo: { ang: number; eixos: EixoAuto[]; nota: number; res: Resultado }[] = [];
   for (const ang of angs) {
@@ -464,8 +474,9 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
     // com e sem a segunda família de ruas (a equipe costuma usar uma só: as
     // ruas saem do contorno e vão até a estrada, sem cruzamento no meio)
     for (const va of variantes) for (const tr of [true, false]) for (const fy of fys) {
+      if (va === anelCompleto && tr) continue; // com via paralela à estrada, uma família de ruas basta
       const eixos = malha(glebaPl, ang, fy, passoU / 2, base, viasPl, va, tr);
-      const res = calcular(montar(eixos), perimetro, { rapido: true });
+      const res = calcular(montar(eixos), perimetro, { busca: true });
       const n = nota(res, tr, ang);
       if (!melhor || n > melhor.nota) melhor = { eixos, nota: n, res, fy, anel: va, tr };
     }
@@ -474,7 +485,7 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
     for (const fx of [passoU / 6, passoU / 3, (2 * passoU) / 3, (5 * passoU) / 6, 0]) {
       if (!melhor!.tr) break; // sem transversais a defasagem delas não importa
       const eixos = malha(glebaPl, ang, fyMelhor, fx, base, viasPl, melhor!.anel, true);
-      const res = calcular(montar(eixos), perimetro, { rapido: true });
+      const res = calcular(montar(eixos), perimetro, { busca: true });
       const n = nota(res, true, ang);
       if (n > melhor!.nota) melhor = { eixos, nota: n, res, fy: fyMelhor, anel: melhor!.anel, tr: true };
     }
@@ -524,6 +535,29 @@ function nomearRuas(projeto: Projeto, plano: ReturnType<typeof criarPlano>, ang:
 }
 
 /**
+ * Área verde de verdade: cabe um círculo de 10 m de raio em qualquer ponto
+ * dela (Lei 9.413/81 de SP, art. 2º, IV, b — o critério que exclui nesga e
+ * faixa estreita). Medido pela abertura: encolhe 10 m e expande de volta; o
+ * que volta tem de cobrir quase toda a área.
+ */
+export function verdeValida(pols: Poligono[], raio = 10): boolean {
+  const a = pols.reduce((s2, x) => s2 + areaPol(x), 0);
+  if (a < Math.PI * raio * raio) return false;
+  const ab = offsetPols(offsetPols(pols, -raio), raio, "redonda");
+  return ab.reduce((s2, x) => s2 + areaPol(x), 0) >= 0.7 * a;
+}
+
+/** Já há área pública cobrindo este retalho? (evita desenhar o mesmo verde de novo) */
+const coberto = (res: Resultado, s: Poligono) => {
+  const pt = pontoInterno(s);
+  return res.areas.some((a) => a.pols.some((pol) => dentroPol(pt, pol)));
+};
+
+/** O lote encosta numa área verde? (verde cresce colado, num perímetro só) */
+const encostaEmVerde = (res: Resultado, pol: Poligono) =>
+  res.areas.some((a) => (a.tipo === "verde" || a.tipo === "lazer") && a.pols.some((v) => uniaoFechada([v, pol]).length === 1));
+
+/**
  * Reserva área verde e institucional onde custa menos lote:
  *  1. retalhos sem frente para rua viram área verde (de graça);
  *  2. falta verde: quadras com a pior relação "lote perdido ÷ área ganha";
@@ -545,7 +579,8 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
   for (let rodada = 0; rodada < 5 && !semVerde; rodada++) {
     const novas: AreaDesenhada[] = [];
     for (const s of uniao(res.sobras.map((x) => ({ ext: x.ext, furos: [] })))) {
-      if (Math.abs(areaAssinada(s.ext)) < 50) continue;
+      // só o retalho que é praça de verdade; nesga não é área verde
+      if (!verdeValida([s]) || coberto(res, s)) continue;
       novas.push({ id: novoId("autov"), tipo: "verde", nome: "", anel: s.ext.map((q) => paraUtm(plano, q)) });
     }
     if (!novas.length) break;
@@ -621,7 +656,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
   //    — marcados por um ponto, sem redesenhar: assim nenhuma quadra muda de
   //    forma e as reservas já feitas (presas à posição do lote) continuam certas
   res = calcular(pr, perimetro, { rapido: true });
-  const marcas = semVerde ? [] : res.sobras.filter((s) => Math.abs(areaAssinada(s.ext)) >= 50).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
+  const marcas = semVerde ? [] : res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
   if (marcas.length) pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...marcas] };
 
   // 5. o que ainda ficou abaixo do mínimo (retalho com frente) vira área verde —
@@ -632,7 +667,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
     // o cálculo completo testa outras frentes nas quadras difíceis e pode
     // soltar retalho que o rápido não via: ele também vira área verde
     if (!semVerde) {
-      const novas = res.sobras.filter((s) => Math.abs(areaAssinada(s.ext)) >= 50).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
+      const novas = res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
       if (novas.length) { pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...novas] }; res = calcular(pr, perimetro); }
     }
     // só o que está ABAIXO das regras (área, frente, sem frente); o que passa do
@@ -659,8 +694,8 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
         if (cabe(indice - 1)) c.ajustes.push({ fileira: l.fileira, indice: indice - 1, unir: true });
         else if (cabe(indice + 1)) c.ajustes.push({ fileira: l.fileira, indice, unir: true });
         else if (q.lotes.length <= 3) { c.modo = "quantidade"; c.valor = Math.max(1, q.lotes.length - 1); } // quadrinha: um lote a menos
-        else if (!semVerde && !l.lados.some((x) => x.tipo === "via")) c.ajustes.push({ fileira: l.fileira, indice, destino: "verde" });
-      } else if (!semVerde) c.ajustes.push({ fileira: l.fileira, indice, destino: "verde" });
+        else if (!semVerde && !l.lados.some((x) => x.tipo === "via") && encostaEmVerde(res, l.pol)) c.ajustes.push({ fileira: l.fileira, indice, destino: "verde" });
+      } else if (!semVerde && encostaEmVerde(res, l.pol)) c.ajustes.push({ fileira: l.fileira, indice, destino: "verde" });
     }
     pr = { ...pr, quadras: cfgs };
   }
@@ -715,7 +750,9 @@ export function valorDosLotes(res: Resultado, pr: Projeto, perimetro: Perimetro)
  * o trecho (a área verde nunca encosta na estrada).
  */
 function melhorJanelaVerde(res: Resultado, valor: Map<string, number>, falta: number) {
-  let melhor: { quadra: Resultado["quadras"][number]; lotes: Resultado["lotes"]; nota: number } | null = null;
+  type Cand = { quadra: Resultado["quadras"][number]; lotes: Resultado["lotes"]; nota: number };
+  const cands: Cand[] = [];
+  const verdes = res.areas.filter((a) => a.tipo === "verde" || a.tipo === "lazer").flatMap((a) => a.pols);
   for (const q of res.quadras) {
     const seq = [...q.lotes].sort((a, b) => a.numero - b.numero);
     const n = seq.length;
@@ -737,15 +774,29 @@ function melhorJanelaVerde(res: Resultado, valor: Map<string, number>, falta: nu
         const v = valor.get(l.id) ?? Infinity;
         if (!Number.isFinite(v)) break;
         jan.push(l); area += l.area; soma += v * l.area;
-        if (area >= alvo) break;
+        // praça tem corpo: no mínimo 3 lotes, mesmo que a falta seja menor
+        if (area >= alvo && jan.length >= Math.min(3, n)) break;
       }
       if (area < alvo - 1) continue;
       // valor médio + leve preferência por não passar muito da falta
       const nota = soma / area + 0.15 * Math.max(0, area - falta) / Math.max(falta, 1);
-      if (!melhor || nota < melhor.nota) melhor = { quadra: q, lotes: jan, nota };
+      cands.push({ quadra: q, lotes: jan, nota });
     }
   }
-  return melhor;
+  // Área verde num perímetro só e com corpo (círculo de 10 m): o trecho que
+  // encosta no verde que já existe ganha preferência, e o que, somado a ele,
+  // não fecha uma praça de verdade é descartado
+  const avaliados = cands.map((c) => {
+    const pols = c.lotes.map((l) => l.pol);
+    const juntos = uniaoFechada(pols);
+    const viz = verdes.filter((v) => uniaoFechada([v, ...juntos]).length < 1 + juntos.length);
+    return { c, viz, nota: c.nota - (viz.length ? 0.2 : 0) };
+  }).sort((a, b) => a.nota - b.nota);
+  for (const a of avaliados.slice(0, 60)) {
+    const pols = a.c.lotes.map((l) => l.pol);
+    if (verdeValida(uniaoFechada([...pols, ...a.viz]))) return a.c;
+  }
+  return null;
 }
 
 /** Quadra que contém o ponto (plano). */

@@ -339,7 +339,9 @@ test("medidas do lote: a proposta automática não deixa lote fora das faixas", 
   for (const l of r0.lotes) {
     assert.ok(l.area <= p.areaMax * 1.03 + 0.5, `${l.id} com ${l.area.toFixed(0)} m² (máx. ${p.areaMax})`);
     assert.ok(l.profundidade <= p.profundidadeMax + 0.5, `${l.id} com ${l.profundidade.toFixed(1)} m de fundo`);
-    assert.deepEqual(foraDasFaixas(l, p, false, l.esquina || esquinaDe(l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via").map((x) => [x.a, x.b]))), [], l.id);
+    // lote de ponta (quadrinha da ponta da gleba virou um lote só) não tem frente máxima
+    const esq = l.esquina || esquinaDe(l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via").map((x) => [x.a, x.b]));
+    assert.deepEqual(foraDasFaixas(l, p, false, esq, l.ponta ? 0 : l.frente), [], l.id);
   }
 });
 
@@ -389,3 +391,32 @@ test("área verde 0%: nenhum retalho vira área verde nem institucional", () => 
   assert.ok(Math.abs(soma - r.quadro.gleba) < 0.5);
 });
 
+
+// ---------------------------------------------------------------------------
+// Regras de projetista (pesquisa: Lei 9.413/81 SP, Sherburne §11.1, Goiânia PLC 2014)
+// ---------------------------------------------------------------------------
+
+test("área verde da proposta é praça de verdade: cabe um círculo de 10 m e não vem picada", async () => {
+  const { verdeValida } = await import("../src/lib/loteamento/auto.ts");
+  const verdes = r0.areas.filter((a) => a.tipo === "verde");
+  assert.ok(verdes.length >= 1);
+  // poucas áreas verdes (num perímetro só, ou quase), nenhuma nesga
+  assert.ok(verdes.length <= 3, `${verdes.length} áreas verdes separadas`);
+  for (const a of verdes) assert.ok(verdeValida(a.pols), `${a.nome} (${a.area.toFixed(0)} m²) é nesga`);
+});
+
+test("retalhos vizinhos saem como um só e encostado em área pública entra nela", () => {
+  for (let i = 0; i < r0.sobras.length; i++) {
+    for (let j = i + 1; j < r0.sobras.length; j++) {
+      const u = uniao([r0.sobras[i]], [r0.sobras[j]]);
+      assert.equal(u.length, 2, "dois retalhos encostados não foram unidos");
+    }
+  }
+});
+
+test("quadrinha da ponta vira um lote de ponta, sem triângulos soltos", () => {
+  for (const q of r0.quadras.filter((x) => x.lotes.length > 0 && x.lotes.length <= 3)) {
+    const tri = q.lotes.filter((l) => l.pol.ext.length === 3);
+    assert.ok(tri.length <= 1, `quadra ${q.nome} com ${tri.length} triângulos`);
+  }
+});
