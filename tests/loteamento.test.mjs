@@ -78,12 +78,14 @@ test("travar a frente de um lote: a fileira se reorganiza e o comprimento se con
 });
 
 test("arrastar a divisa trava a frente do lote de trás dela", () => {
-  const q = r0.quadras.find((x) => x.cortes.some((c) => c.arrastavel && c.fileira === 0));
-  const c = q.cortes.find((x) => x.arrastavel && x.fileira === 0 && x.indice === 3);
+  // uma divisa arrastável entre dois lotes que existem (a reserva pode ter feito área verde)
+  const existe = (q, fil, i) => q.lotes.some((l) => l.fileira === fil && l.indice === i);
+  const q = r0.quadras.find((x) => x.cortes.some((c) => c.arrastavel && c.fileira === 0 && existe(x, 0, c.indice) && c.indice >= 2));
+  const c = q.cortes.find((x) => x.arrastavel && x.fileira === 0 && existe(q, 0, x.indice) && x.indice >= 2);
   const p = [c.a[0] + c.dir[0] * 2, c.a[1] + c.dir[1] * 2]; // 2 m adiante
   const pr = moverCorte(pr0, r0, c, p);
   const r = calcular(pr, perimetro);
-  const l = r.quadras.find((x) => x.nome === q.nome).lotes.find((x) => x.fileira === 0 && x.indice === 3);
+  const l = r.quadras.find((x) => x.nome === q.nome).lotes.find((x) => x.fileira === 0 && x.indice === c.indice);
   assert.ok(Math.abs(l.travaFrente - (c.s - c.s0 + 2)) < 0.02);
 });
 
@@ -243,7 +245,23 @@ test("quadra de duas fileiras: lotes fundo com fundo alinhados", () => {
   let conferidas = 0;
   // (quadra com parte virada área pública fica de fora: ali a fileira foi cortada de propósito)
   const inteira = (q) => Math.abs(q.area - q.lotes.reduce((s, l) => s + l.area, 0)) < 1;
-  for (const q of r0.quadras.filter((x) => x.fileiras === 2 && x.fundo && inteira(x))) {
+  // só quadra entre ruas paralelas: na quadra triangular o fundo é a bissetriz e
+  // as divisas de cada fileira seguem a SUA rua
+  const dirFileira = (q, fil) => {
+    const ls = q.lotes.filter((l) => l.fileira === fil).flatMap((l) => l.lados.filter((x) => x.tipo === "rua"));
+    if (!ls.length) return null;
+    const m = ls.reduce((a, b) => (b.comp > a.comp ? b : a), ls[0]);
+    const d = [m.b[0] - m.a[0], m.b[1] - m.a[1]], n = Math.hypot(d[0], d[1]);
+    return [d[0] / n, d[1] / n];
+  };
+  const paralelas = (q) => {
+    const a = dirFileira(q, 0), b = dirFileira(q, 1);
+    // fundo pela bissetriz (ruas que se abrem) não corre paralelo à rua principal
+    const f = [q.fundo.b[0] - q.fundo.a[0], q.fundo.b[1] - q.fundo.a[1]], nf = Math.hypot(f[0], f[1]);
+    const fundoParalelo = Math.abs((f[0] * q.u[0] + f[1] * q.u[1]) / nf) > 0.985;
+    return fundoParalelo && a && b && Math.abs(a[0] * b[0] + a[1] * b[1]) > 0.985;
+  };
+  for (const q of r0.quadras.filter((x) => x.fileiras === 2 && x.fundo && inteira(x) && paralelas(x))) {
     const L = Math.hypot(q.fundo.b[0] - q.fundo.a[0], q.fundo.b[1] - q.fundo.a[1]);
     const s = (p) => ((p[0] - q.fundo.a[0]) * (q.fundo.b[0] - q.fundo.a[0]) + (p[1] - q.fundo.a[1]) * (q.fundo.b[1] - q.fundo.a[1])) / L;
     const miolo = (p) => s(p) > 3.5 * pr0.params.frente && s(p) < L - 3.5 * pr0.params.frente;
@@ -268,7 +286,7 @@ test("fileira com divisa torta: pontas proporcionais, sem lote nanico nem gigant
       const med = areas[Math.floor(areas.length / 2)];
       // lote de ponta anexa a sobra da gleba (até 2× a área máxima, como os de borda da equipe)
       for (const l of ls) {
-        if (l.ponta) assert.ok(l.area <= 2 * pr0.params.areaMax + 0.5, `${l.id} de ponta com ${l.area.toFixed(0)} m²`);
+        if (l.ponta) assert.ok(l.area <= pr0.params.areaMax * 1.03 + 0.5, `${l.id} de ponta com ${l.area.toFixed(0)} m²`);
         else assert.ok(l.area < 2.6 * med, `${l.id} com ${l.area.toFixed(0)} m² numa fileira de ${med.toFixed(0)}`);
       }
     }
@@ -341,7 +359,7 @@ test("medidas do lote: a proposta automática não deixa lote fora das faixas", 
   const { foraDasFaixas, esquinaDe } = await import("../src/lib/loteamento/calculo.ts");
   const p = pr0.params;
   for (const l of r0.lotes) {
-    const f = l.ponta ? 2 : 1; // lote de ponta: até 2× a área e o fundo máximos
+    const f = 1; // lote de ponta também respeita área e fundo máximos
     assert.ok(l.area <= f * p.areaMax * 1.03 + 0.5, `${l.id} com ${l.area.toFixed(0)} m² (máx. ${p.areaMax})`);
     assert.ok(l.profundidade <= f * p.profundidadeMax + 0.5, `${l.id} com ${l.profundidade.toFixed(1)} m de fundo`);
     // lote de ponta (quadrinha da ponta da gleba virou um lote só) não tem frente máxima
@@ -403,11 +421,12 @@ test("área verde 0%: nenhum retalho vira área verde nem institucional", () => 
 
 test("área verde da proposta é praça de verdade: cabe um círculo de 10 m e não vem picada", async () => {
   const { verdeValida } = await import("../src/lib/loteamento/auto.ts");
-  const verdes = r0.areas.filter((a) => a.tipo === "verde");
+  // como sai na planta: as peças encostadas formam uma área só
+  const verdes = r0.publicas.filter((a) => a.tipo === "verde");
   assert.ok(verdes.length >= 1);
   // poucas áreas verdes (num perímetro só, ou quase), nenhuma nesga
   assert.ok(verdes.length <= 3, `${verdes.length} áreas verdes separadas`);
-  for (const a of verdes) assert.ok(verdeValida(a.pols), `${a.nome} (${a.area.toFixed(0)} m²) é nesga`);
+  for (const a of verdes) assert.ok(verdeValida([a.pol]), `${a.nome} (${a.area.toFixed(0)} m²) é nesga`);
 });
 
 test("retalhos vizinhos saem como um só e encostado em área pública entra nela", () => {

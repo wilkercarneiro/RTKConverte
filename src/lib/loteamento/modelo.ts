@@ -267,6 +267,8 @@ export function conferirConfiguracao(p: Parametros, areaGleba?: number): { bloqu
   if (razao > 5) bloqueios.push(`Lote padrão de ${fmtN(p.frente)} × ${fmtN(p.profundidade)} m: o fundo tem ${fmtN(razao, 1)} vezes a frente — não é lote de loteamento (o usual é até 3 vezes). Aumente a frente ou diminua a profundidade.`);
   else if (razao > 3.5) avisos.push(`Lote padrão comprido: o fundo (${fmtN(p.profundidade)} m) tem ${fmtN(razao, 1)} vezes a frente. O usual é até 3 vezes (códigos de parcelamento: 2,5 a 3).`);
   if (razao < 1) avisos.push(`Lote padrão mais largo que fundo (${fmtN(p.frente)} × ${fmtN(p.profundidade)} m): quadra rasa e muita rua por lote.`);
+  if (p.pctPublicasMin > 0 && p.pctVerdeMin + p.pctInstitucionalMin <= 0)
+    avisos.push(`Sem área verde nem institucional, as áreas públicas ficam só no viário (uns 15 a 25% da gleba) — abaixo da meta municipal de ${fmtN(p.pctPublicasMin, 0)}% informada. Confirme com a prefeitura.`);
   // faixa sem folga não absorve a gleba irregular
   if (p.areaMax < 1.4 * p.areaPadrao || p.frenteMax < 1.3 * p.frente || p.profundidadeMax < 1.2 * p.profundidade)
     avisos.push("Faixas máximas apertadas: nas pontas e na divisa torta não há folga para um lote maior absorver a irregularidade — sobram retalhos e lotes fora das medidas. Recomendado: frente máxima de pelo menos 1,3×, profundidade máxima de 1,2× e área máxima de 1,5× o padrão.");

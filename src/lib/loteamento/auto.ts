@@ -402,10 +402,12 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
     const padrao = p.areaPadrao;
     let n = 0, a = 0;
     for (const l of r.lotes) if (l.area >= p.areaMin - 0.01) { n += l.area > p.areaMax + 0.5 ? 0.5 : 1; a += l.area; }
-    n -= r.quadro.sobras / padrao;
+    // terra sem destino pesa mais que o lote que renderia: a malha que deixa
+    // área rosa perde para a que aproveita a gleba
+    n -= 2.5 * r.quadro.sobras / padrao;
     // lote fora das faixas (fundo demais, largo demais) ou torto: a malha que
     // o produz perde para a que dá lotes harmônicos, mesmo com um lote a menos
-    n -= r.desarmonicos;
+    n -= 3 * r.desarmonicos;
     // quadra longa: tolera um pouco (a planta aprovada tem 250 m), cobra caro
     // quanto mais passa — quadra de 600 m não é quadra. Faixa da beirada
     // (lindeira à divisa) não conta: ali a rua não pode cortar até a divisa.
@@ -413,9 +415,9 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
     for (const q of r.quadras) {
       const us = q.pol.ext.map((x) => dot(sub(x, q.origem), q.u));
       const comp = Math.max(...us) - Math.min(...us);
-      if (comp <= p.quadraCompMax * 1.15) continue;
+      if (comp <= p.quadraCompMax + 1) continue;
       const beirada = q.fileiras <= 1 && q.lotes.length > 0 && q.lotes.every((l) => l.fileira === 0);
-      if (!beirada) longas += 1 + 3 * (comp / p.quadraCompMax - 1.15);
+      if (!beirada) longas += 2 + 6 * (comp / p.quadraCompMax - 1);
     }
     // quadra longa desconta, mas pouco: a planta aprovada da equipe tem quadra
     // de 250 m; o que não pode é perder lote para cumprir isso à força
@@ -497,6 +499,8 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
   const props: Proposta[] = [];
   for (const c of porAngulo.slice(0, quantas)) {
     let projeto = montar(c.eixos);
+    projeto = abrirTransversais(projeto, perimetro, w);
+    projeto = abrirRuasDeMiolo(projeto, perimetro, w);
     projeto = nomearRuas(projeto, plano, c.ang);
     if (op.reservarAreas !== false) projeto = reservarAreas(projeto, perimetro);
     const resultado = calcular(projeto, perimetro);
@@ -516,6 +520,96 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
   props.sort((a, b) => b.lotes - a.lotes);
   props.forEach((pr, i) => { pr.titulo = `Proposta ${String.fromCharCode(65 + i)}`; });
   return props;
+}
+
+/**
+ * Comprimento máximo de quadra é lei municipal (Campinas 180 m, Joinville
+ * 200 m): a quadra interna que passa dele ganha uma rua transversal no meio
+ * — de rua a rua, atravessando as duas fileiras —, como o projetista faria na
+ * malha já escolhida. A faixa de uma fileira na divisa fica de fora (a rua iria
+ * para a terra do vizinho).
+ */
+function abrirTransversais(projeto: Projeto, perimetro: Perimetro, w: number, volta = 0): Projeto {
+  const p = projeto.params;
+  const res = calcular(projeto, perimetro, { rapido: true });
+  const novas: Rua[] = [];
+  for (const q of res.quadras) {
+    if (q.fileiras < 2 || !q.lotes.length) continue;
+    const us = q.pol.ext.map((x) => dot(sub(x, q.origem), q.u));
+    const vs = q.pol.ext.map((x) => dot(sub(x, q.origem), q.v));
+    const u0 = Math.min(...us), u1 = Math.max(...us);
+    const comp = u1 - u0;
+    if (comp <= p.quadraCompMax + 1) continue;
+    const k = Math.ceil(comp / p.quadraCompMax);
+    for (let j = 1; j < k; j++) {
+      const s = u0 + (comp * j) / k;
+      // do eixo de uma rua ao eixo da outra (meia largura além da quadra)
+      const a = soma(q.origem, soma(mult(q.u, s), mult(q.v, Math.min(...vs) - w / 2 - 0.5)));
+      const b = soma(q.origem, soma(mult(q.u, s), mult(q.v, Math.max(...vs) + w / 2 + 0.5)));
+      // só se as duas pontas caem no eixo de outra rua (de rua a rua, nunca na divisa)
+      const noEixo = (pt: Pt) => res.ruas.some((r) => r.eixo.some((e0, i) => i + 1 < r.eixo.length && distSegmentoAuto(pt, e0, r.eixo[i + 1]) < w / 2 + 1.5));
+      if (!noEixo(a) || !noEixo(b)) continue;
+      novas.push({ id: novoId("a"), nome: "", largura: w, eixo: [paraUtm(res.plano, a), paraUtm(res.plano, b)] });
+    }
+  }
+  if (!novas.length) return projeto;
+  const pr2 = { ...projeto, ruas: [...projeto.ruas, ...novas] };
+  // quadra torta pode sair ainda comprida de um lado: confere de novo
+  return volta < 2 ? abrirTransversais(pr2, perimetro, w, volta + 1) : pr2;
+}
+
+/**
+ * Miolo sem acesso (retalho com área de 4 lotes ou mais, sem frente para rua):
+ * o projetista abre uma rua sem saída com balão de retorno até ele (cul-de-sac
+ * de até 300 m — minuta do código de parcelamento de Goiânia, art. 13) e
+ * loteia em volta. A rua sai do ponto mais próximo de uma rua existente e
+ * entra no miolo pelo eixo dele; só fica se aproveitar mais a gleba.
+ */
+function abrirRuasDeMiolo(projeto: Projeto, perimetro: Perimetro, w: number): Projeto {
+  const p = projeto.params;
+  let atual = projeto;
+  let res = calcular(atual, perimetro, { rapido: true });
+  const nota = (r: Resultado) => r.quadro.lotes.area - 2 * r.quadro.sobras;
+  for (let volta = 0; volta < 3; volta++) {
+    // com meta de verde, o miolo que é praça de verdade fica para a praça
+    const miolos = res.sobras.filter((s) => areaPol(s) >= 4 * p.areaPadrao && !(p.pctVerdeMin > 0 && verdeValida([s])))
+      .sort((x, y) => areaPol(y) - areaPol(x));
+    if (!miolos.length) break;
+    let melhorou = false;
+    for (const sb of miolos) {
+      const c = pontoInterno(sb);
+      // ponto mais próximo num eixo de rua
+      let q: Pt | null = null, dq = Infinity;
+      for (const r of res.ruas) for (let i = 0; i + 1 < r.eixo.length; i++) {
+        const a = r.eixo[i], b = r.eixo[i + 1];
+        const ab = sub(b, a), L2 = dot(ab, ab) || 1;
+        const t = Math.max(0, Math.min(1, dot(sub(c, a), ab) / L2));
+        const pt: Pt = soma(a, mult(ab, t));
+        const d = dist(pt, c);
+        if (d < dq) { dq = d; q = pt; }
+      }
+      if (!q || dq > 300) continue;
+      // entra pelo miolo até deixar uma profundidade de lote depois do balão
+      const dir = unit(sub(c, q));
+      const us = sb.ext.map((x) => dot(sub(x, q!), dir));
+      const fim = Math.max(...us) - p.profundidade - w / 2;
+      if (fim < dq * 0.5) continue;
+      // o balão precisa de uma profundidade de lote em volta até a divisa:
+      // recua a ponta até ter essa folga
+      const g = res.gleba.ext;
+      const folga = (t: number) => { const pt = soma(q!, mult(dir, t)); return Math.min(...g.map((a0, i) => distSegmentoAuto(pt, a0, g[(i + 1) % g.length]))); };
+      let t = fim;
+      while (t > dq + w && folga(t) < p.profundidade + w / 2) t -= 2;
+      if (t <= dq + w) continue;
+      const eixo = [q, soma(q, mult(dir, t))];
+      const rua: Rua = { id: novoId("a"), nome: "", largura: w, eixo: eixo.map((x) => paraUtm(res.plano, x)), balao: Math.max(w * 0.75, 9) };
+      const tentativa = { ...atual, ruas: [...atual.ruas, rua] };
+      const r2 = calcular(tentativa, perimetro, { rapido: true });
+      if (nota(r2) > nota(res) + p.areaPadrao) { atual = tentativa; res = r2; melhorou = true; break; }
+    }
+    if (!melhorou) break;
+  }
+  return atual;
 }
 
 /** Ruas longitudinais primeiro (de cima para baixo), depois as transversais. */
@@ -602,7 +696,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
 
   // 3. institucional: lotes de uma ponta da quadra mais central
   //    (se a quadra central não basta, continua na vizinha mais próxima)
-  res = calcular(pr, perimetro, { rapido: true });
+  res = calcular(pr, perimetro); // lotes e metas do cálculo completo (o da planta)
   let faltaInst = (p.pctInstitucionalMin / 100) * G - res.quadro.institucional;
   let referencia = centroide(res.gleba.ext);
   const usadas = new Set<string>();
@@ -637,7 +731,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
     }
     quadrasCfg = cfgs;
     pr = { ...pr, quadras: quadrasCfg.slice() };
-    res = calcular(pr, perimetro, { rapido: true });
+    res = calcular(pr, perimetro);
     faltaInst = (p.pctInstitucionalMin / 100) * G - res.quadro.institucional;
   }
 
@@ -687,6 +781,13 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
       } else if (!semVerde && encostaEmVerde(res, l.pol)) c.ajustes.push({ fileira: l.fileira, indice, destino: "verde" });
     }
     pr = { ...pr, quadras: cfgs };
+  }
+  // 6. fechamento: o retalho que ainda ficou e é praça de verdade vira área verde
+  //    (a planta não sai com área rosa que podia ser praça)
+  if (!semVerde) {
+    res = calcular(pr, perimetro);
+    const novas = res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
+    if (novas.length) pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...novas] };
   }
   return pr;
 }
