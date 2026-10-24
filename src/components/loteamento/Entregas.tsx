@@ -163,7 +163,7 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou }: Props
       {
         titulo: "3. CONDIÇÕES URBANÍSTICAS E RESTRIÇÕES",
         paragrafos: [
-          `Lote mínimo de ${fmt(p.areaMin)} m² e frente mínima de ${fmt(p.frenteMin)} m (Lei Federal 6.766/79, art. 4º, II, observada a legislação municipal).`,
+          `Lotes entre ${fmt(p.areaMin)} e ${fmt(p.areaMax)} m², com frente de ${fmt(p.frenteMin)} a ${fmt(p.frenteMax)} m e profundidade de ${fmt(p.profundidadeMin)} a ${fmt(p.profundidadeMax)} m (mínimos conforme a Lei Federal 6.766/79, art. 4º, II, observada a legislação municipal).`,
           `Vias com largura total de ${fmt(p.ruaLargura)} m, sendo ${fmt(p.ruaPista)} m de pista de rolamento e ${fmt(Math.max(0, (p.ruaLargura - p.ruaPista) / 2))} m de passeio de cada lado. ${p.esquina === "raio" ? `Esquinas concordadas em curva de raio ${fmt(p.esquinaValor)} m no alinhamento predial.` : p.esquina === "chanfro" ? `Esquinas chanfradas em ${fmt(p.esquinaValor)} m em cada alinhamento.` : ""}`,
           `Quadras com comprimento máximo de ${fmt(p.quadraCompMax, 0)} m.`,
           ...(q.app > 0 ? ["As faixas de preservação permanente e non aedificandi indicadas na planta não integram os lotes."] : []),

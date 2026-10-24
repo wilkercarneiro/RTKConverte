@@ -8,8 +8,8 @@ import { ancoraDaQuadra } from "./auto.ts";
 import { fmt } from "./calculo.ts";
 import type { Corte, Lote, Quadra, Resultado } from "./calculo.ts";
 import { paraUtm } from "./plano.ts";
-import { ROTULO_AREA, novoId } from "./modelo.ts";
-import type { AjusteLote, AreaDesenhada, Esquina, Projeto, QuadraCfg, Rua, Sobra, TipoArea } from "./modelo.ts";
+import { ROTULO_AREA, mudarLote, novoId } from "./modelo.ts";
+import type { AjusteLote, AreaDesenhada, Esquina, Parametros, Projeto, QuadraCfg, Rua, Sobra, TipoArea } from "./modelo.ts";
 
 /** Lote identificado pela posição (sobrevive à renumeração). */
 export interface ChaveLote { quadra: string; fileira: number; indice: number }
@@ -81,10 +81,48 @@ export function restaurarQuadra(pr: Projeto, q: Quadra): Projeto {
   return { ...pr, quadras: pr.quadras.filter((_, i) => i !== q.cfg) };
 }
 
-/** Arrastar a divisa entre dois lotes = travar a frente do lote de trás dela. */
+// ---------------------------------------------------------------------------
+// Regras na edição: as medidas do lote do projeto (mín./máx. de frente e área)
+// valem para o que o operador digita, une ou divide. A conferência geral (lote
+// nenhum sai das regras) fica no editor, que recalcula antes de aceitar.
+// ---------------------------------------------------------------------------
+
+const FORA = "Mude as medidas do lote nas perguntas (item 2) se precisar.";
+
+/** Frente ou área digitada fora das faixas do projeto → mensagem; dentro → null. */
+export function conferirMedida(p: Parametros, campo: "frente" | "area", v: number): string | null {
+  const [min, max, un, nome] = campo === "frente" ? [p.frenteMin, p.frenteMax, "m", "Frente"] : [p.areaMin, p.areaMax, "m²", "Área"];
+  if (v >= min - 1e-6 && v <= max + 1e-6) return null;
+  return `${nome} de ${fmt(v)} ${un} fora das medidas do projeto (${fmt(min)} a ${fmt(max)} ${un}). ${FORA}`;
+}
+
+/** Lote seguinte na fileira (o que "unir" junta). */
+function seguinte(res: Resultado, l: Lote): Lote | undefined {
+  return res.lotes
+    .filter((x) => x.quadra === l.quadra && x.fileira === l.fileira && x.indice > l.indice + 1e-9)
+    .sort((a, b) => a.indice - b.indice)[0];
+}
+
+/** Unir passaria da área máxima? */
+export function conferirUnir(p: Parametros, res: Resultado, lotes: Lote[]): string | null {
+  const grupo = lotes.length === 1 ? [lotes[0], seguinte(res, lotes[0])].filter((x): x is Lote => !!x) : lotes;
+  if (grupo.length < 2) return "Não há lote seguinte na fileira para unir.";
+  const area = grupo.reduce((s, l) => s + l.area, 0);
+  if (area <= p.areaMax + 0.5) return null;
+  return `Unidos, os lotes teriam ${fmt(area)} m² — passa da área máxima de ${fmt(p.areaMax)} m². ${FORA}`;
+}
+
+/** Dividir em n deixaria parte abaixo do mínimo? */
+export function conferirDividir(p: Parametros, l: Lote, n: number): string | null {
+  if (l.area / n < p.areaMin - 0.01) return `Em ${n} partes, cada uma teria ${fmt(l.area / n)} m² — abaixo da área mínima de ${fmt(p.areaMin)} m².`;
+  if (l.frente / n < p.frenteMin - 0.005) return `Em ${n} partes, cada uma teria ${fmt(l.frente / n)} m de frente — abaixo da frente mínima de ${fmt(p.frenteMin)} m.`;
+  return null;
+}
+
+/** Arrastar a divisa entre dois lotes = travar a frente do lote de trás dela (dentro das faixas do projeto). */
 export function moverCorte(pr: Projeto, res: Resultado, c: Corte, ponto: Pt): Projeto {
   const s = dot(sub(ponto, c.o), c.dir);
-  const frente = Math.max(pr.params.frenteMin * 0.5, s - c.s0);
+  const frente = Math.min(pr.params.frenteMax, Math.max(pr.params.frenteMin, s - c.s0));
   const l = res.lotes.find((x) => x.quadra === quadraDoCorte(res, c)?.nome && x.fileira === c.fileira && Math.abs(x.indice - c.indice) < 1e-9);
   if (!l) return pr;
   return ajustarLote(pr, res, l, { frente: Math.round(frente * 100) / 100 });
@@ -256,16 +294,18 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
 
     case "frente": case "f": case "testada": {
       if (!Number.isFinite(n1) || n1 <= 0) return numErr("frente 12");
+      if (lotes.length || quadra) { const e = conferirMedida(p, "frente", n1); if (e) return { msg: e, erro: true }; }
       if (lotes.length) {
         let novo = pr;
         for (const l of lotes) novo = ajustarLote(novo, res, l, { frente: n1 });
         return { pr: novo, msg: `${lotes.length === 1 ? `Lote ${lotes[0].id}` : `${lotes.length} lotes`} com frente travada em ${fmt(n1)} m — os demais da fileira se ajustaram.` };
       }
       if (quadra) return { pr: ajustarQuadra(pr, res, quadra, { modo: "frente", valor: n1 }), msg: `Quadra ${quadra.nome}: frente padrão ${fmt(n1)} m.` };
-      return { pr: { ...pr, params: { ...p, frente: n1 } }, msg: `Frente padrão do projeto: ${fmt(n1)} m (todas as quadras sem ajuste próprio).` };
+      return { pr: { ...pr, params: mudarLote(p, { frente: n1 }) }, msg: `Frente padrão do projeto: ${fmt(n1)} m (todas as quadras sem ajuste próprio; as faixas automáticas acompanham).` };
     }
     case "area": case "a": {
       if (!Number.isFinite(n1) || n1 <= 0) return numErr("area 300");
+      if (lotes.length || quadra) { const e = conferirMedida(p, "area", n1); if (e) return { msg: e, erro: true }; }
       if (lotes.length) {
         let novo = pr;
         for (const l of lotes) novo = ajustarLote(novo, res, l, { area: n1 });
@@ -276,6 +316,8 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
     }
     case "unir": case "juntar": {
       if (!lotes.length) return precisa("o lote");
+      const eU = conferirUnir(p, res, lotes);
+      if (eU) return { msg: eU, erro: true };
       const ord = [...lotes].sort((x, y) => x.fileira - y.fileira || x.indice - y.indice);
       let novo = pr;
       const alvo = ord.length === 1 ? ord : ord.slice(0, -1);
@@ -286,6 +328,8 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       if (lotes.length !== 1) return precisa("um lote");
       const n = Number.isFinite(n1) ? Math.round(n1) : 2;
       if (n < 2 || n > 20) return { msg: "Divida em 2 a 20 partes.", erro: true };
+      const eD = conferirDividir(p, lotes[0], n);
+      if (eD) return { msg: eD, erro: true };
       return { pr: ajustarLote(pr, res, lotes[0], { dividir: n }), msg: `Lote ${lotes[0].id} dividido em ${n}.` };
     }
     case "verde": case "institucional": case "lazer": case "app": {
@@ -319,7 +363,7 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
     }
     case "iguais": {
       if (!quadra) return precisa("a quadra");
-      return { pr: ajustarQuadra(pr, res, quadra, { modo: "area", valor: Number.isFinite(n1) ? n1 : p.frente * p.profundidade }), msg: `Quadra ${quadra.nome} em áreas iguais.` };
+      return { pr: ajustarQuadra(pr, res, quadra, { modo: "area", valor: Number.isFinite(n1) ? n1 : p.areaPadrao }), msg: `Quadra ${quadra.nome} em áreas iguais.` };
     }
     case "padronizar": case "padronizada": {
       if (!quadra) return precisa("a quadra");
@@ -344,7 +388,7 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
     }
     case "prof": case "profundidade": {
       if (!Number.isFinite(n1) || n1 <= 0) return numErr("prof 30");
-      return { pr: { ...pr, params: { ...p, profundidade: n1 } }, msg: `Profundidade padrão: ${fmt(n1)} m.` };
+      return { pr: { ...pr, params: mudarLote(p, { profundidade: n1 }) }, msg: `Profundidade padrão: ${fmt(n1)} m (as faixas automáticas acompanham).` };
     }
     case "largura": {
       if (!Number.isFinite(n1) || n1 <= 0) return numErr("largura 14");

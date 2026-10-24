@@ -29,6 +29,16 @@ type Etapa = "perguntas" | "projeto" | "entregas";
 interface Historico { passado: Projeto[]; atual: Projeto; futuro: Projeto[]; base: Projeto | null }
 
 /** Desfazer/refazer. Mudança transiente (arraste) não empilha: só o resultado final, ao soltar. */
+/** O que a edição pioraria nas regras do lote: o 1º lote que sai delas (ou null). */
+function violacaoNova(antes: Resultado, depois: Resultado | null): string | null {
+  if (!depois) return "o cálculo falhou com essa mudança";
+  const conta = (r: Resultado) => r.lotes.reduce((s, l) => s + l.problemas.length, 0);
+  if (conta(depois) <= conta(antes)) return null;
+  const ja = new Set(antes.lotes.flatMap((l) => l.problemas.map((t) => `${l.id}|${t}`)));
+  const l = depois.lotes.find((x) => x.problemas.some((t) => !ja.has(`${x.id}|${t}`))) ?? depois.lotes.find((x) => x.problemas.length);
+  return l ? `o lote ${l.id} ficaria com ${l.problemas.find((t) => !ja.has(`${l.id}|${t}`)) ?? l.problemas[0]}` : "um lote sairia das regras";
+}
+
 function useHistorico(inicial: Projeto | null) {
   const [h, setH] = useState<Historico | null>(inicial ? { passado: [], atual: inicial, futuro: [], base: null } : null);
   const iniciar = useCallback((p: Projeto) => setH({ passado: [], atual: p, futuro: [], base: null }), []);
@@ -95,13 +105,38 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
 
   const auto = useAutosave(projeto, async (p) => { if (p) await armazenamento.salvar(servico.id, p); }, { ativo: !!projeto, atraso: 1500 });
 
-  const res: Resultado | null = useMemo(() => {
-    if (!projeto || perimetro.pts.length < 3) return null;
-    try { return calcular(projeto, perimetro); } catch (e) { console.error(e); return null; }
-  }, [projeto, perimetro]);
+  // um cálculo por versão do projeto: a conferência das regras na edição e o
+  // desenho usam o mesmo resultado
+  const cache = useRef(new WeakMap<Projeto, Resultado | null>());
+  const calc = useCallback((p: Projeto): Resultado | null => {
+    if (perimetro.pts.length < 3) return null;
+    if (cache.current.has(p)) return cache.current.get(p)!;
+    let r: Resultado | null = null;
+    try { r = calcular(p, perimetro); } catch (e) { console.error(e); }
+    cache.current.set(p, r);
+    return r;
+  }, [perimetro]);
+  const res: Resultado | null = useMemo(() => (projeto ? calc(projeto) : null), [projeto, calc]);
 
   const mostrar = useCallback((t: string, erro = false) => setMsg({ t, erro }), []);
-  const mudar = useCallback((p: Projeto, transiente = false) => hist.mudar(p, transiente), [hist]);
+  // A edição respeita as regras do lote (mínimas e máximas de frente,
+  // profundidade e área): ajuste de lote/quadra que deixaria lote fora delas
+  // não entra. Mudar rua, área ou as próprias regras passa (é decisão de projeto).
+  const mudar = useCallback((p: Projeto, transiente = false): boolean => {
+    const atual = projeto;
+    const r0 = res;
+    const soAjuste = !!atual && !!r0 && p.ruas === atual.ruas && p.areas === atual.areas && p.bordas === atual.bordas && p.params === atual.params && p.quadras !== atual.quadras;
+    if (soAjuste) {
+      const r1 = calc(p);
+      const viola = violacaoNova(r0!, r1);
+      if (viola) {
+        if (!transiente) mostrar(`Não aplicado: ${viola}. As medidas do lote definidas no projeto valem também na edição (mude-as nas perguntas, item 2, se precisar).`, true);
+        return false;
+      }
+    }
+    hist.mudar(p, transiente);
+    return true;
+  }, [hist, projeto, res, calc, mostrar]);
 
   // atalhos globais: desfazer/refazer e "/" para a linha de comando
   useEffect(() => {
@@ -132,11 +167,11 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     if (s.desfazer) hist.desfazer();
     if (s.refazer) hist.refazer();
     if (s.ajuda) setAjuda(true);
-    if (s.pr) mudar(s.pr);
-    if (s.sel !== undefined) setSel(s.sel);
+    const aceito = s.pr ? mudar(s.pr) : true;
+    if (aceito && s.sel !== undefined) setSel(s.sel);
     if (s.ferramenta) setFerramenta(s.ferramenta);
     if (s.focar) setFocar({ pt: s.focar, n: Date.now() });
-    if (s.msg) mostrar(s.msg, s.erro);
+    if (aceito && s.msg) mostrar(s.msg, s.erro);
     if (texto.trim()) setHistoricoCmd((h) => [texto, ...h.filter((x) => x !== texto)].slice(0, 30));
   }
 
@@ -235,7 +270,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
           </div>
 
           <Painel projeto={projeto} res={res} sel={sel} onSel={setSel} onMudar={(p) => mudar(p)}
-            onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onMsg={(m) => mostrar(m)} />
+            onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onMsg={mostrar} />
 
           <div className="lot-rodape-etapa">
             <button onClick={() => setEtapa("perguntas")}>← Rever as perguntas</button>

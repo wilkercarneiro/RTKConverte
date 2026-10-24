@@ -7,7 +7,7 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
 1. **Início → Loteamento → Enviar TXT.** O TXT é o mesmo do levantamento do perímetro. O `parse-txt` cria o serviço com fuso, UF e vértices, e a confrontação de cada lado vem dos vértices M.
 2. **Perguntas.** Cada resposta vira parâmetro do projeto e pode ser mudada depois.
    - **Lados do terreno.** Para cada lado, diga se é divisa, estrada existente, rio (com faixa de APP) ou rodovia/ferrovia (com faixa non aedificandi). Trechos marcados como estrada no levantamento já chegam marcados.
-   - **Lotes.** Escolha um perfil (Lei 6.766, popular, padrão, médio, chácaras) e ajuste frente, profundidade e área/frente mínimas. Diga também para onde vai a sobra da fileira e como ficam os lotes da divisa (padronizados ou em áreas iguais).
+   - **Lotes.** Escolha um perfil (Lei 6.766, popular, padrão, médio, chácaras) e ajuste as medidas em três colunas — **mínima, padrão e máxima** — para frente, profundidade e área. As faixas que o operador não digitou acompanham o padrão (frente até 2×, fundo de 60% a 160%, área até 2× o lote padrão). Diga também para onde vai a sobra da fileira e como ficam os lotes da divisa (padronizados ou em áreas iguais).
    - **Ruas.** Informe a largura e a pista, as esquinas (raio ou chanfro) e o comprimento máximo da quadra. Escolha quem traça: o sistema, ruas paralelas a um lado escolhido, ou desenho à mão.
    - **Áreas públicas.** Metas de % verde, institucional e total.
    - **Numeração e medidas.** Quadras por letra ou número, sentido dos lotes e "medidas de terreno".
@@ -56,6 +56,15 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - Lote de frente para a estrada **nunca** vira área pública. Retalho nessa posição é somado ao lote vizinho ou vira passeio.
   - A escolha é sempre um trecho contínuo de lotes em volta da quadra.
 - **Institucional.** Fica na quadra mais central e, se ela não bastar, continua na vizinha.
+- **Medidas do lote (harmonia).** Nenhum lote sai fora das faixas mínima–máxima:
+  - lote fundo demais (ponta aguda da gleba, quadra triangular) é aparado na profundidade máxima, medida como a maior distância até a frente — o fundo cortado vira retalho;
+  - lote acima da área ou da frente máxima é dividido em partes iguais, perpendiculares à frente, cada uma com as mínimas;
+  - quadra entre ruas que se abrem em ângulo tem o fundo na bissetriz, e as duas fileiras ficam com a mesma profundidade;
+  - na ponta da fileira, cunha (menos de 30°), lote raso ou triângulo largo junta-se ao vizinho se couber nas máximas; se não couber, vira retalho — menos na beira da estrada de acesso, onde fica lote com aviso;
+  - há folga de 3% sobre as máximas para absorver a nesga da ponta sem criar lote nanico;
+  - quadra difícil é refeita testando outras frentes e uma ou duas fileiras, e a malha de ruas que deixa menos lote fora das faixas ou torto ganha a nota.
+- **Área verde 0%.** Com a meta de verde em zero, nenhum retalho vira área pública: fica como **área remanescente** (do proprietário), desenhada e cotada na planta. O mesmo vale para institucional 0%.
+- **Edição dentro das regras.** Frente e área digitadas fora das faixas, unir acima da área máxima, dividir abaixo da mínima e arrastar a divisa além da frente máxima são recusados com o motivo. Toda edição de lote ou quadra é recalculada antes de entrar: se deixar lote fora das regras, não é aplicada.
 
 ## Como funciona por dentro
 

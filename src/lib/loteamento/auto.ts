@@ -396,13 +396,16 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
   }).filter((x) => !x.acesso);
   const compDivisas = dirDivisas.reduce((s2, x) => s2 + x.comp, 0);
   const nota = (r: Resultado, tr = true, ang = 0) => {
-    // lote válido conta 1; lote desproporcional (mais que 2,2× o padrão) conta
-    // meio — é a faixa comprida da beirada, que ninguém quer comprar; terra
-    // sem frente (sobra) desconta o que renderia em lotes
-    const padrao = p.frente * p.profundidade;
+    // lote válido conta 1; lote acima da área máxima (a faixa comprida da
+    // beirada, que ninguém quer comprar) conta meio; terra sem frente (sobra)
+    // desconta o que renderia em lotes
+    const padrao = p.areaPadrao;
     let n = 0, a = 0;
-    for (const l of r.lotes) if (l.area >= p.areaMin - 0.01) { n += l.area > 2.2 * padrao ? 0.5 : 1; a += l.area; }
+    for (const l of r.lotes) if (l.area >= p.areaMin - 0.01) { n += l.area > p.areaMax + 0.5 ? 0.5 : 1; a += l.area; }
     n -= r.quadro.sobras / padrao;
+    // lote fora das faixas (fundo demais, largo demais) ou torto: a malha que
+    // o produz perde para a que dá lotes harmônicos, mesmo com um lote a menos
+    n -= r.desarmonicos;
     // quadra longa: tolera um pouco (a planta aprovada tem 250 m), cobra caro
     // quanto mais passa — quadra de 600 m não é quadra. Faixa da beirada
     // (lindeira à divisa) não conta: ali a rua não pode cortar até a divisa.
@@ -536,7 +539,10 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
   // 1. retalhos sem frente viram área verde. Repete até parar: tirar um
   //    retalho muda a quadra vizinha e pode soltar outro. Tem de acontecer
   //    ANTES das reservas por lote, que são presas à posição do lote na fileira.
-  for (let rodada = 0; rodada < 5; rodada++) {
+  // Área verde 0% é escolha do projeto (loteamento sem área pública verde):
+  // o retalho fica como área remanescente do proprietário, nunca vira verde.
+  const semVerde = p.pctVerdeMin <= 0;
+  for (let rodada = 0; rodada < 5 && !semVerde; rodada++) {
     const novas: AreaDesenhada[] = [];
     for (const s of uniao(res.sobras.map((x) => ({ ext: x.ext, furos: [] })))) {
       if (Math.abs(areaAssinada(s.ext)) < 50) continue;
@@ -615,7 +621,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
   //    — marcados por um ponto, sem redesenhar: assim nenhuma quadra muda de
   //    forma e as reservas já feitas (presas à posição do lote) continuam certas
   res = calcular(pr, perimetro, { rapido: true });
-  const marcas = res.sobras.filter((s) => Math.abs(areaAssinada(s.ext)) >= 50).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
+  const marcas = semVerde ? [] : res.sobras.filter((s) => Math.abs(areaAssinada(s.ext)) >= 50).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
   if (marcas.length) pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...marcas] };
 
   // 5. o que ainda ficou abaixo do mínimo (retalho com frente) vira área verde —
@@ -623,7 +629,15 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
   // (repete: unir dois lotes muda a fileira e pode sobrar outro pequeno)
   for (let rodada = 0; rodada < 3; rodada++) {
     res = calcular(pr, perimetro);
-    const ruins = res.lotes.filter((l) => l.problemas.length);
+    // o cálculo completo testa outras frentes nas quadras difíceis e pode
+    // soltar retalho que o rápido não via: ele também vira área verde
+    if (!semVerde) {
+      const novas = res.sobras.filter((s) => Math.abs(areaAssinada(s.ext)) >= 50).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
+      if (novas.length) { pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...novas] }; res = calcular(pr, perimetro); }
+    }
+    // só o que está ABAIXO das regras (área, frente, sem frente); o que passa do
+    // máximo o motor já divide — unir aqui criaria lote ainda maior
+    const ruins = res.lotes.filter((l) => l.area < p.areaMin - 0.01 || l.frente < p.frenteMin - 0.005);
     if (!ruins.length) break;
     const cfgs = pr.quadras.map((c) => ({ ...c, ajustes: [...c.ajustes] }));
     for (const l of ruins) {
@@ -638,12 +652,15 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
       if (temVizinho || l.lados.some((x) => x.tipo === "via")) {
         // "unir" junta um lote com o SEGUINTE da fileira: vale o vizinho imediato
         // (índice − 1 unido a este, ou este unido ao índice + 1)
-        const vizinhos = new Set(q.lotes.filter((x) => x.fileira === l.fileira).map((x) => Math.floor(x.indice + 1e-9)));
-        if (vizinhos.has(indice - 1)) c.ajustes.push({ fileira: l.fileira, indice: indice - 1, unir: true });
-        else if (vizinhos.has(indice + 1)) c.ajustes.push({ fileira: l.fileira, indice, unir: true });
+        // (só se os dois juntos couberem na área máxima — senão o motor dividiria de novo)
+        const areaDe = new Map<number, number>();
+        for (const x of q.lotes) if (x.fileira === l.fileira) { const k = Math.floor(x.indice + 1e-9); areaDe.set(k, (areaDe.get(k) ?? 0) + x.area); }
+        const cabe = (k: number) => areaDe.has(k) && (areaDe.get(k) ?? 0) + l.area <= p.areaMax + 0.5;
+        if (cabe(indice - 1)) c.ajustes.push({ fileira: l.fileira, indice: indice - 1, unir: true });
+        else if (cabe(indice + 1)) c.ajustes.push({ fileira: l.fileira, indice, unir: true });
         else if (q.lotes.length <= 3) { c.modo = "quantidade"; c.valor = Math.max(1, q.lotes.length - 1); } // quadrinha: um lote a menos
-        else if (!l.lados.some((x) => x.tipo === "via")) c.ajustes.push({ fileira: l.fileira, indice, destino: "verde" });
-      } else c.ajustes.push({ fileira: l.fileira, indice, destino: "verde" });
+        else if (!semVerde && !l.lados.some((x) => x.tipo === "via")) c.ajustes.push({ fileira: l.fileira, indice, destino: "verde" });
+      } else if (!semVerde) c.ajustes.push({ fileira: l.fileira, indice, destino: "verde" });
     }
     pr = { ...pr, quadras: cfgs };
   }
@@ -683,7 +700,10 @@ export function valorDosLotes(res: Resultado, pr: Projeto, perimetro: Perimetro)
     const v = relevo
       ? 0.4 * z + 0.25 * (1 - s) + 0.15 * (1 - b) + 0.2 * (1 - longe)
       : 1 - longe;
-    out.set(x.l.id, Math.max(0, Math.min(1, v)));
+    // lote fora das faixas (cunha rasa na ponta da quadra, tira funda) vale
+    // pouco no mercado: é ele que deve virar área verde antes do lote bom
+    const desarmonico = x.l.problemas.length > 0 ? 0.35 : 1;
+    out.set(x.l.id, Math.max(0, Math.min(1, v)) * desarmonico);
   }
   return out;
 }

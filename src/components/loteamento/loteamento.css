@@ -32,6 +32,13 @@
 .lot-grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 20px; margin-top: 6px; }
 .lot-grade > label { display: grid; gap: 6px; align-content: start; font-size: 13px; font-weight: 600; color: var(--texto-2); }
 .lot-grade > label select { width: 100%; }
+/* medidas do lote: mínima · padrão · máxima */
+.lot-faixas { display: grid; grid-template-columns: minmax(96px, auto) repeat(3, minmax(0, 1fr)); gap: 8px 14px; align-items: center; max-width: 640px; }
+.lot-faixas > span[role="columnheader"] { font-size: 12px; font-weight: 600; color: var(--texto-3); text-transform: uppercase; letter-spacing: .04em; }
+.lot-faixas-linha { display: contents; }
+.lot-faixas-linha > b { font-size: 13px; color: var(--texto-2); }
+.lot-faixas .lot-num-campo input { width: 100%; min-width: 0; }
+@media (max-width: 560px) { .lot-faixas { grid-template-columns: 1fr repeat(3, minmax(0, 1fr)); gap: 6px 8px; } }
 .lot-grade > label.lot-check { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; grid-column: 1 / -1; }
 .lot-check input { margin-top: 3px; width: auto; height: auto; flex: none; }
 .lot-opcoes-ruas { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }

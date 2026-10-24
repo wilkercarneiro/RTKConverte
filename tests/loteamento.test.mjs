@@ -88,7 +88,11 @@ test("arrastar a divisa trava a frente do lote de trás dela", () => {
 });
 
 test("comandos: unir, dividir e virar área verde", () => {
-  const l = r0.lotes.find((x) => !x.esquina && x.quadra === r0.quadras[1].nome);
+  // lote cujo vizinho da fileira cabe junto com ele na área máxima
+  const prox = (x) => r0.lotes.filter((y) => y.quadra === x.quadra && y.fileira === x.fileira && y.indice > x.indice).sort((a, b) => a.indice - b.indice)[0];
+  const l = r0.lotes.find((x) => !x.esquina && !x.ajustado && Number.isInteger(x.indice) && prox(x) && Number.isInteger(prox(x).indice)
+    && x.area + prox(x).area <= pr0.params.areaMax && x.area / 2 >= pr0.params.areaMin && x.frente / 2 >= pr0.params.frenteMin);
+  assert.ok(l, "nenhum par de lotes que caiba junto na área máxima");
   const sel = { tipo: "lotes", chaves: [{ quadra: l.quadra, fileira: l.fileira, indice: l.indice }] };
   const unir = executar("unir", pr0, r0, sel);
   const ru = calcular(unir.pr, perimetro);
@@ -303,3 +307,85 @@ test("área verde: nunca na frente da estrada, e vai para a baixada", async () =
   assert.ok(cota(centroide(verdes[0].pol.ext)) < mediaLotes, "a maior área verde não está na parte baixa");
   assert.ok((100 * (r.quadro.verde + r.quadro.lazer)) / r.quadro.gleba >= 10 - 0.01);
 });
+
+// ---------------------------------------------------------------------------
+// Medidas do lote: mínima · padrão · máxima (frente, profundidade, área)
+// ---------------------------------------------------------------------------
+
+test("medidas do lote: projeto antigo ganha faixas derivadas e elas acompanham o padrão", async () => {
+  const { normalizarProjeto, mudarLote, faixasDerivadas } = await import("../src/lib/loteamento/modelo.ts");
+  // projeto salvo antes das faixas (só frente, profundidade e mínimas)
+  const velho = { versao: 1, params: { frente: 12, profundidade: 30, areaMin: 300, frenteMin: 12 } };
+  const p = normalizarProjeto(velho, "X", 4).params;
+  assert.deepEqual(
+    { fmax: p.frenteMax, pmin: p.profundidadeMin, pmax: p.profundidadeMax, a: p.areaPadrao, amax: p.areaMax },
+    { fmax: 24, pmin: 18, pmax: 48, a: 360, amax: 720 },
+  );
+  // faixa automática acompanha o padrão; a digitada fica
+  const q = mudarLote({ ...p, areaMax: 900 }, { frente: 15 });
+  assert.equal(q.frenteMax, 30);
+  assert.equal(q.areaPadrao, 450);
+  assert.equal(q.areaMax, 900);
+  // o campo digitado manda: mínima acima do padrão leva o padrão junto
+  const r = mudarLote(p, { frenteMin: 14 });
+  assert.equal(r.frente, 14);
+  assert.ok(r.frenteMin <= r.frente && r.frente <= r.frenteMax);
+  assert.deepEqual(faixasDerivadas({ frente: 10, profundidade: 25, areaMin: 125, frenteMin: 5 }).areaMax, 500);
+});
+
+test("medidas do lote: a proposta automática não deixa lote fora das faixas", async () => {
+  const { foraDasFaixas, esquinaDe } = await import("../src/lib/loteamento/calculo.ts");
+  const p = pr0.params;
+  for (const l of r0.lotes) {
+    assert.ok(l.area <= p.areaMax * 1.03 + 0.5, `${l.id} com ${l.area.toFixed(0)} m² (máx. ${p.areaMax})`);
+    assert.ok(l.profundidade <= p.profundidadeMax + 0.5, `${l.id} com ${l.profundidade.toFixed(1)} m de fundo`);
+    assert.deepEqual(foraDasFaixas(l, p, false, l.esquina || esquinaDe(l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via").map((x) => [x.a, x.b]))), [], l.id);
+  }
+});
+
+test("medidas do lote: área máxima menor divide o lote grande em vez de deixá-lo inteiro", () => {
+  const pr = { ...pr0, params: { ...pr0.params, areaMax: 300, frenteMax: 12 } };
+  const r = calcular(pr, perimetro);
+  const grandes = r.lotes.filter((l) => l.area > 300 * 1.03 + 0.5 && !l.esquina);
+  // os de esquina podem passar (frente nas duas ruas); o resto cabe na faixa
+  assert.ok(grandes.length <= Math.ceil(0.02 * r.lotes.length), `${grandes.length} lotes acima de 300 m²: ${grandes.slice(0, 5).map((l) => l.id).join(", ")}`);
+  assert.ok(r.lotes.length > r0.lotes.length, "dividir os grandes tinha de dar mais lotes");
+});
+
+test("medidas do lote: a edição não aceita frente, área, unir ou dividir fora das faixas", () => {
+  const p = pr0.params;
+  const l = r0.lotes.find((x) => !x.esquina && x.quadra === r0.quadras[1].nome);
+  const sel = { tipo: "lotes", chaves: [{ quadra: l.quadra, fileira: l.fileira, indice: l.indice }] };
+  const f = executar(`frente ${p.frenteMax + 5}`, pr0, r0, sel);
+  assert.ok(f.erro && !f.pr, f.msg);
+  assert.match(f.msg, /fora das medidas do projeto/);
+  const a = executar(`area ${p.areaMin - 10}`, pr0, r0, sel);
+  assert.ok(a.erro && !a.pr, a.msg);
+  // unir dois lotes que passam da máxima
+  const apertado = { ...pr0, params: { ...p, areaMax: l.area + 1 } };
+  const u = executar("unir", apertado, r0, sel);
+  assert.ok(u.erro && !u.pr, u.msg);
+  assert.match(u.msg, /área máxima/);
+  // dividir abaixo da mínima
+  const d = executar("dividir 5", pr0, r0, sel);
+  assert.ok(d.erro && !d.pr, d.msg);
+  // arrastar a divisa para longe não passa da frente máxima
+  const c = r0.quadras.flatMap((q) => q.cortes).find((x) => x.arrastavel);
+  const longe = [c.a[0] + c.dir[0] * 500, c.a[1] + c.dir[1] * 500];
+  const m = moverCorte(pr0, r0, c, longe);
+  const trava = m.quadras.flatMap((q) => q.ajustes).find((x) => x.frente !== undefined);
+  assert.ok(trava && trava.frente <= p.frenteMax + 1e-9, `frente travada em ${trava?.frente}`);
+});
+
+test("área verde 0%: nenhum retalho vira área verde nem institucional", () => {
+  const b = base();
+  b.params = { ...b.params, pctVerdeMin: 0, pctInstitucionalMin: 0 };
+  const r = gerarPropostas(b, perimetro, { quantas: 1 })[0].resultado;
+  assert.equal(r.quadro.verde, 0, `verde ${r.quadro.verde}`);
+  assert.equal(r.quadro.institucional, 0);
+  assert.equal(r.areas.filter((x) => x.tipo === "verde" || x.tipo === "institucional").length, 0);
+  // o que não vira lote fica como área remanescente (do proprietário)
+  const soma = r.quadro.lotes.area + r.quadro.viario + r.quadro.app + r.quadro.sobras;
+  assert.ok(Math.abs(soma - r.quadro.gleba) < 0.5);
+});
+

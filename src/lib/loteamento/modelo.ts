@@ -57,6 +57,17 @@ export interface Parametros {
   /** Lei 6.766 art. 4º II: 125 m² e 5 m, salvo lei municipal mais exigente */
   areaMin: number;
   frenteMin: number;
+  /**
+   * Faixas de harmonia: lote fora delas é refeito pelo gerador (dividido,
+   * aparado no fundo) e a edição não deixa passar. Projeto antigo sem elas
+   * ganha valores derivados do padrão (`completarFaixas`).
+   */
+  frenteMax: number;
+  profundidadeMin: number;
+  profundidadeMax: number;
+  /** área alvo do lote; nasce frente × profundidade */
+  areaPadrao: number;
+  areaMax: number;
   /** largura total da rua (pista + calçadas) */
   ruaLargura: number;
   /** pista de rolamento (só para o desenho e o memorial); calçadas = (largura − pista)/2 */
@@ -88,6 +99,11 @@ export const PARAMETROS_PADRAO: Parametros = {
   profundidade: 25,
   areaMin: 125,
   frenteMin: 5,
+  frenteMax: 20,
+  profundidadeMin: 15,
+  profundidadeMax: 40,
+  areaPadrao: 250,
+  areaMax: 500,
   ruaLargura: 12,
   ruaPista: 8,
   esquina: "raio",
@@ -104,6 +120,78 @@ export const PARAMETROS_PADRAO: Parametros = {
   precoM2: 0,
   acrescimoEsquina: 10,
 };
+
+type Faixas = Pick<Parametros, "frenteMax" | "profundidadeMin" | "profundidadeMax" | "areaPadrao" | "areaMax">;
+const r1 = (x: number) => Math.round(x * 10) / 10;
+
+/** Faixas derivadas do lote padrão: frente até 2×, fundo de 60% a 160%, área até 2×. */
+export function faixasDerivadas(p: Pick<Parametros, "frente" | "profundidade" | "areaMin" | "frenteMin">): Faixas {
+  const areaPadrao = Math.max(p.areaMin, Math.round(p.frente * p.profundidade));
+  return {
+    frenteMax: Math.max(p.frenteMin, r1(2 * p.frente)),
+    profundidadeMin: r1(0.6 * p.profundidade),
+    profundidadeMax: r1(1.6 * p.profundidade),
+    areaPadrao,
+    areaMax: Math.round(2 * areaPadrao),
+  };
+}
+
+/**
+ * Coloca as faixas em ordem (mínimo ≤ padrão ≤ máximo) e preenche as que
+ * faltam. Quem chama decide o padrão; aqui só se garante a coerência.
+ */
+export function completarFaixas(p: Parametros, salvo?: Partial<Parametros>): Parametros {
+  const d = faixasDerivadas(p);
+  const tem = (k: keyof Faixas) => salvo === undefined || (typeof salvo[k] === "number" && Number.isFinite(salvo[k]));
+  const q: Parametros = { ...p };
+  for (const k of Object.keys(d) as (keyof Faixas)[]) if (!tem(k)) q[k] = d[k];
+  q.frenteMin = Math.min(q.frenteMin, q.frente);
+  q.frenteMax = Math.max(q.frenteMax, q.frente);
+  q.profundidadeMin = Math.min(q.profundidadeMin, q.profundidade);
+  q.profundidadeMax = Math.max(q.profundidadeMax, q.profundidade);
+  q.areaPadrao = Math.max(q.areaPadrao, q.areaMin);
+  q.areaMax = Math.max(q.areaMax, q.areaPadrao);
+  return q;
+}
+
+/**
+ * Muda o lote do projeto. Faixa que ainda estava no valor derivado do padrão
+ * antigo acompanha o padrão novo (frente 10 → 12 leva a máxima de 20 a 24);
+ * faixa que o usuário digitou fica. Depois tudo volta à ordem mín ≤ padrão ≤ máx.
+ */
+export function mudarLote(p: Parametros, patch: Partial<Parametros>): Parametros {
+  const antes = faixasDerivadas(p);
+  const novo: Parametros = { ...p, ...patch };
+  // área padrão digitada não é "derivada" — só acompanha quando ninguém mexeu nela
+  const depois = faixasDerivadas(novo);
+  for (const k of Object.keys(antes) as (keyof Faixas)[]) {
+    if (k in patch) continue;
+    if (Math.abs(p[k] - antes[k]) < 1e-6) novo[k] = depois[k];
+  }
+  if ("areaPadrao" in patch && !("areaMax" in patch) && Math.abs(p.areaMax - 2 * p.areaPadrao) < 1e-6) novo.areaMax = Math.round(2 * novo.areaPadrao);
+  // o campo digitado manda: mínima acima do padrão leva o padrão junto (e não o contrário)
+  const ordenar = (min: keyof Parametros, pad: keyof Parametros, max: keyof Parametros) => {
+    const q = novo as unknown as Record<string, number>;
+    if (min in patch) { q[pad] = Math.max(q[pad], q[min]); q[max] = Math.max(q[max], q[pad]); }
+    else if (max in patch) { q[pad] = Math.min(q[pad], q[max]); q[min] = Math.min(q[min], q[pad]); }
+    else { q[min] = Math.min(q[min], q[pad]); q[max] = Math.max(q[max], q[pad]); }
+  };
+  ordenar("frenteMin", "frente", "frenteMax");
+  ordenar("profundidadeMin", "profundidade", "profundidadeMax");
+  ordenar("areaMin", "areaPadrao", "areaMax");
+  return novo;
+}
+
+/** O que está incoerente nas faixas do lote (para avisar no assistente). */
+export function conferirFaixas(p: Parametros): string[] {
+  const out: string[] = [];
+  if (p.frenteMin < 5 || p.areaMin < 125) out.push("abaixo do mínimo federal (125 m² e 5 m de frente — Lei 6.766, art. 4º, II)");
+  if (p.frenteMax * p.profundidadeMax < p.areaMin) out.push("frente máxima × profundidade máxima não chega à área mínima: nenhum lote cabe");
+  if (p.frenteMin * p.profundidadeMin > p.areaMax) out.push("frente mínima × profundidade mínima já passa da área máxima");
+  if (p.frente * p.profundidade < p.areaMin - 0.5) out.push(`o lote padrão (${Math.round(p.frente * p.profundidade)} m²) é menor que a área mínima`);
+  if (p.frente * p.profundidade > p.areaMax + 0.5) out.push(`o lote padrão (${Math.round(p.frente * p.profundidade)} m²) passa da área máxima`);
+  return out;
+}
 
 /** Configuração de cada lado do perímetro (lado i vai do ponto i ao i+1). */
 export interface Borda {
@@ -213,7 +301,7 @@ export function normalizarProjeto(p: Partial<Projeto> | null | undefined, nome: 
   return {
     ...base,
     ...p,
-    params: { ...PARAMETROS_PADRAO, ...(p.params ?? {}) },
+    params: completarFaixas({ ...PARAMETROS_PADRAO, ...(p.params ?? {}) }, p.params ?? {}),
     bordas,
     ruas: p.ruas ?? [],
     areas: p.areas ?? [],

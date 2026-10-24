@@ -19,7 +19,8 @@
 import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 import type { PDFFont, PDFImage, PDFPage, RGB } from "pdf-lib";
 import { textoWinAnsi } from "../../../supabase/functions/_shared/texto.ts";
-import { caixa, centroide, dist, esquerda, sub, unit } from "./geom.ts";
+import { areaPol, caixa, centroide, dist, esquerda, sub, unit } from "./geom.ts";
+import { pontoInterno } from "./auto.ts";
 import type { Anel, Poligono, Pt } from "./geom.ts";
 import { fmt, viarioDe } from "./calculo.ts";
 import type { Perimetro, Resultado } from "./calculo.ts";
@@ -123,6 +124,8 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   // ruas projetadas (cinza) com o alinhamento predial em vermelho
   for (const v of viarioDe(res)) pol(v, { cor: CINZA(0.86), borda: VERMELHO, esp: 0.7 });
   for (const a of res.publicas) pol(a.pol, { cor: COR_AREA[a.tipo], borda: CINZA(0.3), esp: 0.5 });
+  // terra que não virou lote nem área pública (projeto sem área verde): fica do proprietário
+  for (const sb of res.sobras) pol(sb, { cor: CINZA(0.95), borda: CINZA(0.35), esp: 0.5 });
   for (const l of res.lotes) pol(l.pol, { borda: VERDE_LOTE, esp: 0.6 });
   // eixo das ruas (traço-ponto)
   for (const r of res.ruas) {
@@ -242,6 +245,13 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
     const c2 = P(centroide(a.pol.ext));
     textoCentrado(page, negrito, T(a.nome), c2[0], c2[1] + 3, 7 * k, CINZA(0.1));
     textoCentrado(page, fonte, `${fmt(a.area)} m²`, c2[0], c2[1] - 6, 6 * k, CINZA(0.2));
+  }
+  for (const sb of res.sobras) {
+    const area = areaPol(sb);
+    if (area < 100) continue;
+    const c2 = P(pontoInterno(sb));
+    textoCentrado(page, negrito, "ÁREA REMANESCENTE", c2[0], c2[1] + 3, 6.5 * k, CINZA(0.15));
+    textoCentrado(page, fonte, `${fmt(area)} m²`, c2[0], c2[1] - 6, 6 * k, CINZA(0.25));
   }
 
   // rosa dos ventos (alto, à esquerda, como na planta da equipe)

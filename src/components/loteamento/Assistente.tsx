@@ -9,7 +9,7 @@ import type { Proposta } from "../../lib/loteamento/auto.ts";
 import { fmt } from "../../lib/loteamento/calculo.ts";
 import type { Perimetro, Resultado } from "../../lib/loteamento/calculo.ts";
 import { criarPlano, paraPlano } from "../../lib/loteamento/plano.ts";
-import { FAIXA_SUGERIDA, ROTULO_BORDA } from "../../lib/loteamento/modelo.ts";
+import { FAIXA_SUGERIDA, ROTULO_BORDA, conferirFaixas, faixasDerivadas, mudarLote } from "../../lib/loteamento/modelo.ts";
 import type { Borda, Parametros, Projeto, TipoBorda } from "../../lib/loteamento/modelo.ts";
 import { caixa, dist } from "../../lib/loteamento/geom.ts";
 import type { Poligono, Pt } from "../../lib/loteamento/geom.ts";
@@ -58,6 +58,12 @@ export function Miniatura({ res, largura = 300, altura = 210 }: { res: Resultado
 export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Props) {
   const p = projeto.params;
   const setP = (patch: Partial<Parametros>) => onMudar({ ...projeto, params: { ...p, ...patch } });
+  // lote: as faixas mín/padrão/máx andam juntas (ver mudarLote)
+  const setLote = (patch: Partial<Parametros>) => onMudar({ ...projeto, params: mudarLote(p, patch) });
+  const usarPerfil = (pp: Partial<Parametros>) => {
+    const base = { ...p, ...pp };
+    onMudar({ ...projeto, params: { ...base, ...faixasDerivadas(base) } });
+  };
   const [ladoAtivo, setLadoAtivo] = useState<number | null>(null);
   const [modoRuas, setModoRuas] = useState<"auto" | "lado" | "mao">("auto");
   const [ladoRef, setLadoRef] = useState(0);
@@ -175,18 +181,35 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
         <header><h3>2. Os lotes</h3><span className="desc">Comece por um perfil e ajuste. Lote mínimo federal: 125 m² e 5 m de frente (Lei 6.766, art. 4º, II) — o município pode exigir mais.</span></header>
         <div className="lot-perfis">
           {PERFIS.map((pf) => (
-            <button key={pf.nome} className={pf.p.frente === p.frente && pf.p.profundidade === p.profundidade ? "ativo" : ""} onClick={() => setP(pf.p)}>
+            <button key={pf.nome} className={pf.p.frente === p.frente && pf.p.profundidade === p.profundidade ? "ativo" : ""} onClick={() => usarPerfil(pf.p)}>
               <b>{pf.nome}</b><span>{pf.desc}</span>
             </button>
           ))}
         </div>
-        <div className="lot-grade">
-          <label>Frente padrão<CampoNum valor={p.frente} sufixo="m" onAplicar={(v) => v && setP({ frente: v })} /></label>
-          <label>Profundidade<CampoNum valor={p.profundidade} sufixo="m" onAplicar={(v) => v && setP({ profundidade: v })} /></label>
-          <label>Área mínima<CampoNum valor={p.areaMin} sufixo="m²" onAplicar={(v) => v && setP({ areaMin: v })} /></label>
-          <label>Frente mínima<CampoNum valor={p.frenteMin} sufixo="m" onAplicar={(v) => v && setP({ frenteMin: v })} /></label>
+        <div className="lot-faixas" role="table" aria-label="Medidas do lote">
+          <span role="columnheader" />
+          <span role="columnheader">Mínima</span>
+          <span role="columnheader">Padrão</span>
+          <span role="columnheader">Máxima</span>
+          {([
+            ["Frente", "m", "frenteMin", "frente", "frenteMax"],
+            ["Profundidade", "m", "profundidadeMin", "profundidade", "profundidadeMax"],
+            ["Área", "m²", "areaMin", "areaPadrao", "areaMax"],
+          ] as const).map(([rot, suf, ...ks]) => (
+            <div key={rot} role="row" className="lot-faixas-linha">
+              <b role="rowheader">{rot}</b>
+              {ks.map((k) => (
+                <CampoNum key={k} valor={p[k]} sufixo={suf} casas={suf === "m²" ? 0 : 2} onAplicar={(v) => v && setLote({ [k]: v })} />
+              ))}
+            </div>
+          ))}
         </div>
-        <p className="lot-dica">Lote padrão: <b>{fmt(lotePadrao)} m²</b>. Quadra de duas fileiras: {fmt(2 * p.profundidade)} m de fundo a fundo.</p>
+        <p className="lot-dica">
+          O gerador busca o <b>padrão</b> ({fmt(p.frente)} × {fmt(p.profundidade)} m = {fmt(lotePadrao)} m²) e não deixa lote fora das faixas:
+          o que passa da máxima é dividido ou aparado no fundo, o que fica abaixo da mínima se junta ao vizinho. Na prancheta,
+          a edição também respeita as faixas. Quadra de duas fileiras: {fmt(2 * p.profundidade)} m de fundo a fundo.
+        </p>
+        {conferirFaixas(p).map((t) => <p key={t} className="lot-aviso">Atenção: {t}.</p>)}
         <div className="lot-grade">
           <label>Quando a fileira não fecha em lotes inteiros, a sobra vai para
             <select value={p.sobra} onChange={(e) => setP({ sobra: e.target.value as Parametros["sobra"] })}>
