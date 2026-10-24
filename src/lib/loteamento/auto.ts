@@ -134,6 +134,9 @@ function malha(
       const a = anel[i], b = anel[(i + 1) % anel.length];
       const m: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
       if (vias.some(([p1, p2]) => distSegmentoAuto(m, p1, p2) < 0.5)) continue;
+      // trecho sobre a própria divisa (lado paralelo à família): ali não corre rua
+      const g = glebaPl.ext;
+      if (g.some((g0, k) => distSegmentoAuto(m, g0, g[(k + 1) % g.length]) < 0.5)) continue;
       segs.push({ a, b, viaA: tocaVia(a, vias), viaB: tocaVia(b, vias), balao: false, anel: true, ordem: i });
     }
     for (const l of linhas) {
@@ -187,10 +190,58 @@ function malha(
   if (anel && cadeias.length > 1 && cadeias[0][0].ordem === 0 && cadeias[cadeias.length - 1].slice(-1)[0].ordem === anel.length - 1) {
     cadeias[0] = [...cadeias.pop()!, ...cadeias[0]];
   }
+  // Rabo do contorno: o trecho que passa da última rua que chega nele e morre
+  // na divisa, sem saída, só tira terreno — como na planta aprovada da equipe,
+  // o contorno começa na rua que chega nele e essa rua segue até a divisa (os
+  // lotes da ponta ficam de frente para ela).
+  const internas = ligados.filter((s) => !s.anel);
+  const aparar = (pts: Pt[], noInicio: boolean): Pt[] => {
+    const lin = noInicio ? [...pts].reverse() : pts;
+    const acum = [0];
+    for (let i = 1; i < lin.length; i++) acum.push(acum[i - 1] + dist(lin[i - 1], lin[i]));
+    const total = acum[acum.length - 1];
+    let jun: { pos: number; s: Seg; ponta: "a" | "b"; q: Pt } | null = null;
+    for (const sg of internas) for (const ponta of ["a", "b"] as const) {
+      const q = sg[ponta];
+      for (let i = 0; i + 1 < lin.length; i++) {
+        if (distSegmentoAuto(q, lin[i], lin[i + 1]) > 1) continue;
+        const l = dist(lin[i], lin[i + 1]);
+        const pos = acum[i] + (l > 0 ? Math.max(0, Math.min(l, dot(sub(q, lin[i]), unit(sub(lin[i + 1], lin[i]))))) : 0);
+        if (!jun || pos > jun.pos) jun = { pos, s: sg, ponta, q };
+      }
+    }
+    const rabo = jun ? total - jun.pos : 0;
+    if (!jun || rabo < 1 || rabo > 1.5 * (2 * p.profundidade + w)) return pts;
+    // a rua que chega no contorno atravessa e vai até a divisa (uma profundidade de lote)
+    const outra = jun.ponta === "a" ? jun.s.b : jun.s.a;
+    const d = unit(sub(jun.q, outra));
+    let tMin = Infinity;
+    const g = glebaPl.ext;
+    for (let k = 0; k < g.length; k++) {
+      const a = g[k], b = g[(k + 1) % g.length], sv = sub(b, a);
+      const den = d[0] * sv[1] - d[1] * sv[0];
+      if (Math.abs(den) < 1e-9) continue;
+      const w0 = sub(a, jun.q);
+      const t = (w0[0] * sv[1] - w0[1] * sv[0]) / den, uu = (w0[0] * d[1] - w0[1] * d[0]) / den;
+      if (t > 0.5 && uu >= 0 && uu <= 1 && t < tMin) tMin = t;
+    }
+    if (!(tMin <= 1.5 * p.profundidade + w)) return pts;
+    // corta a polilinha na junção (se sobrar menos que um trecho, fica como está)
+    const out: Pt[] = [];
+    for (let i = 0; i < lin.length; i++) {
+      if (acum[i] < jun.pos - 1e-6) out.push(lin[i]);
+      else { out.push(jun.q); break; }
+    }
+    if (out.length < 2 || dist(out[0], out[out.length - 1]) < 1) return pts;
+    jun.s[jun.ponta] = soma(jun.q, mult(d, tMin + w));
+    return noInicio ? out.reverse() : out;
+  };
   for (const c of cadeias) {
-    const pts: Pt[] = [c[0].a, ...c.map((x) => x.b)];
+    let pts: Pt[] = [c[0].a, ...c.map((x) => x.b)];
     const fechado = anel !== null && c.length === anel.length;
     if (!fechado) {
+      if (!c[0].viaA) pts = aparar(pts, true);
+      if (!c[c.length - 1].viaB) pts = aparar(pts, false);
       // ponta que sai na estrada atravessa a divisa (corte limpo)
       if (c[0].viaA) pts.unshift(soma(pts[0], mult(unit(sub(pts[0], pts[1])), w)));
       if (c[c.length - 1].viaB) { const k = pts.length; pts.push(soma(pts[k - 1], mult(unit(sub(pts[k - 1], pts[k - 2])), w))); }
@@ -447,20 +498,20 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
   // aprovadas da equipe (LOTEAMENTO NOVO, out/2026).
   const distDivisa = (b: (typeof base.bordas)[number]) => p.profundidade + w / 2 + (b.tipo === "rio" ? b.faixa : 0);
   const anelEstrada = anelInterno(ptsPl, base.bordas.map((b) => (ehAcesso(b.tipo) ? 0 : distDivisa(b))), glebaPl, 2 * p.profundidade);
-  // com contorno sempre que ele existir (a malha solta, aparada nos
-  // cruzamentos, deixa faixa funda demais junto à divisa e miolo sem acesso)
-  // Contorno completo: na estrada também corre uma rua paralela, a duas
-  // profundidades de lote — a faixa da estrada vira quadra de duas fileiras
-  // (uma de frente para a estrada, outra de costas para ela, de frente para a
-  // rua paralela). É a "via paralela" das leis de parcelamento junto a rodovia,
-  // e evita o triângulo picado quando a estrada corre torta em relação às ruas.
-  const anelCompleto = vias.length
-    ? anelInterno(ptsPl, base.bordas.map((b) => (ehAcesso(b.tipo) ? 2 * p.profundidade + w / 2 : distDivisa(b))), glebaPl, 2 * p.profundidade)
-    : null;
-  const variantes: (Pt[] | null)[] = [anelEstrada, anelCompleto].filter((x): x is Pt[] => !!x);
-  if (!variantes.length) variantes.push(null);
+  // Contorno seletivo — a lógica da planta aprovada da equipe (IRAN, LOTEAMENTO
+  // NOVO-A1): as ruas são UMA família paralela à divisa mais longa; nas divisas
+  // paralelas a ela não corre rua (a faixa da borda fica com a profundidade que
+  // sobrar, lotes maiores); só na divisa que a família CRUZA corre a rua de
+  // contorno, a uma profundidade de lote, e dela nascem as ruas da família, que
+  // terminam na estrada. Na estrada não há rua paralela.
+  const anelDaFamilia = (ang: number) => anelInterno(ptsPl, base.bordas.map((b, i) => {
+    if (ehAcesso(b.tipo)) return 0;
+    const a0 = ptsPl[i], b0 = ptsPl[(i + 1) % ptsPl.length];
+    const paralela = Math.abs(Math.sin(Math.atan2(b0[1] - a0[1], b0[0] - a0[0]) - ang)) < 0.34; // até 20°
+    return paralela ? 0 : distDivisa(b);
+  }), glebaPl, 2 * p.profundidade);
 
-  const porAngulo: { ang: number; eixos: EixoAuto[]; nota: number; res: Resultado }[] = [];
+  const porAngulo: { ang: number; eixos: EixoAuto[]; nota: number; res: Resultado; tr: boolean }[] = [];
   for (const ang of angs) {
     const v = esquerda([Math.cos(ang), Math.sin(ang)]);
     const vMin = Math.min(...ptsPl.map((q) => dot(q, v)));
@@ -472,11 +523,27 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
       const vv = (dot(a, v) + dot(b, v)) / 2;
       for (const s of [1, -1]) fys.add((((vv + s * (2 * p.profundidade + w / 2) - vMin) % passoV) + passoV) % passoV);
     }
+    // divisa paralela à família (onde não corre rua): a 1ª rua a uma
+    // profundidade de lote dela — a padrão ou quase a máxima, como a equipe fez
+    // no IRAN (faixa da borda com lotes fundos até a divisa)
+    base.bordas.forEach((bd, i) => {
+      if (ehAcesso(bd.tipo)) return;
+      const a = ptsPl[i], b = ptsPl[(i + 1) % ptsPl.length];
+      if (dist(a, b) < 2 * p.frente || Math.abs(Math.sin(Math.atan2(b[1] - a[1], b[0] - a[0]) - ang)) > 0.1) return;
+      const vv = (dot(a, v) + dot(b, v)) / 2;
+      for (const prof of [p.profundidade, Math.max(p.profundidade, p.profundidadeMax - 4), Math.max(p.profundidade, p.profundidadeMax - 8)]) {
+        for (const s of [1, -1]) fys.add(Math.round((((vv + s * (prof + w / 2) - vMin) % passoV) + passoV) % passoV));
+      }
+    });
+    // defasagens a menos de 2 m uma da outra dão a mesma malha: fica uma
+    const fysUnicas: number[] = [];
+    for (const f of [...fys].sort((x, y) => x - y)) if (!fysUnicas.some((g) => Math.min(Math.abs(g - f), passoV - Math.abs(g - f)) < 2)) fysUnicas.push(f);
     let melhor: { eixos: EixoAuto[]; nota: number; res: Resultado; fy: number; anel: Pt[] | null; tr: boolean } | null = null;
+    const variantes: (Pt[] | null)[] = [anelEstrada, anelDaFamilia(ang)].filter((x): x is Pt[] => !!x);
+    if (!variantes.length) variantes.push(null);
     // com e sem a segunda família de ruas (a equipe costuma usar uma só: as
     // ruas saem do contorno e vão até a estrada, sem cruzamento no meio)
-    for (const va of variantes) for (const tr of [true, false]) for (const fy of fys) {
-      if (va === anelCompleto && tr) continue; // com via paralela à estrada, uma família de ruas basta
+    for (const va of variantes) for (const tr of [true, false]) for (const fy of fysUnicas) {
       const eixos = malha(glebaPl, ang, fy, passoU / 2, base, viasPl, va, tr);
       const res = calcular(montar(eixos), perimetro, { busca: true });
       const n = nota(res, tr, ang);
@@ -497,10 +564,9 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
 
   const quantas = op.quantas ?? 3;
   const props: Proposta[] = [];
+  const notaFinal = new Map<Proposta, number>();
   for (const c of porAngulo.slice(0, quantas)) {
     let projeto = montar(c.eixos);
-    projeto = abrirTransversais(projeto, perimetro, w);
-    projeto = abrirRuasDeMiolo(projeto, perimetro, w);
     projeto = nomearRuas(projeto, plano, c.ang);
     if (op.reservarAreas !== false) projeto = reservarAreas(projeto, perimetro);
     const resultado = calcular(projeto, perimetro);
@@ -516,100 +582,14 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
       projeto: { ...projeto, gerado: true },
       resultado,
     });
+    notaFinal.set(props[props.length - 1], nota(resultado, c.tr, c.ang));
   }
-  props.sort((a, b) => b.lotes - a.lotes);
+  // a ordem é a da nota no cálculo completo (lotes, terra sem uso, harmonia,
+  // quadra longa) — não só a contagem: a planta com mais lotes e retalho
+  // grande não vem antes da que aproveita a gleba como a equipe faria
+  props.sort((a, b) => notaFinal.get(b)! - notaFinal.get(a)! || b.lotes - a.lotes);
   props.forEach((pr, i) => { pr.titulo = `Proposta ${String.fromCharCode(65 + i)}`; });
   return props;
-}
-
-/**
- * Comprimento máximo de quadra é lei municipal (Campinas 180 m, Joinville
- * 200 m): a quadra interna que passa dele ganha uma rua transversal no meio
- * — de rua a rua, atravessando as duas fileiras —, como o projetista faria na
- * malha já escolhida. A faixa de uma fileira na divisa fica de fora (a rua iria
- * para a terra do vizinho).
- */
-function abrirTransversais(projeto: Projeto, perimetro: Perimetro, w: number, volta = 0): Projeto {
-  const p = projeto.params;
-  const res = calcular(projeto, perimetro, { rapido: true });
-  const novas: Rua[] = [];
-  for (const q of res.quadras) {
-    if (q.fileiras < 2 || !q.lotes.length) continue;
-    const us = q.pol.ext.map((x) => dot(sub(x, q.origem), q.u));
-    const vs = q.pol.ext.map((x) => dot(sub(x, q.origem), q.v));
-    const u0 = Math.min(...us), u1 = Math.max(...us);
-    const comp = u1 - u0;
-    if (comp <= p.quadraCompMax + 1) continue;
-    const k = Math.ceil(comp / p.quadraCompMax);
-    for (let j = 1; j < k; j++) {
-      const s = u0 + (comp * j) / k;
-      // do eixo de uma rua ao eixo da outra (meia largura além da quadra)
-      const a = soma(q.origem, soma(mult(q.u, s), mult(q.v, Math.min(...vs) - w / 2 - 0.5)));
-      const b = soma(q.origem, soma(mult(q.u, s), mult(q.v, Math.max(...vs) + w / 2 + 0.5)));
-      // só se as duas pontas caem no eixo de outra rua (de rua a rua, nunca na divisa)
-      const noEixo = (pt: Pt) => res.ruas.some((r) => r.eixo.some((e0, i) => i + 1 < r.eixo.length && distSegmentoAuto(pt, e0, r.eixo[i + 1]) < w / 2 + 1.5));
-      if (!noEixo(a) || !noEixo(b)) continue;
-      novas.push({ id: novoId("a"), nome: "", largura: w, eixo: [paraUtm(res.plano, a), paraUtm(res.plano, b)] });
-    }
-  }
-  if (!novas.length) return projeto;
-  const pr2 = { ...projeto, ruas: [...projeto.ruas, ...novas] };
-  // quadra torta pode sair ainda comprida de um lado: confere de novo
-  return volta < 2 ? abrirTransversais(pr2, perimetro, w, volta + 1) : pr2;
-}
-
-/**
- * Miolo sem acesso (retalho com área de 4 lotes ou mais, sem frente para rua):
- * o projetista abre uma rua sem saída com balão de retorno até ele (cul-de-sac
- * de até 300 m — minuta do código de parcelamento de Goiânia, art. 13) e
- * loteia em volta. A rua sai do ponto mais próximo de uma rua existente e
- * entra no miolo pelo eixo dele; só fica se aproveitar mais a gleba.
- */
-function abrirRuasDeMiolo(projeto: Projeto, perimetro: Perimetro, w: number): Projeto {
-  const p = projeto.params;
-  let atual = projeto;
-  let res = calcular(atual, perimetro, { rapido: true });
-  const nota = (r: Resultado) => r.quadro.lotes.area - 2 * r.quadro.sobras;
-  for (let volta = 0; volta < 3; volta++) {
-    // com meta de verde, o miolo que é praça de verdade fica para a praça
-    const miolos = res.sobras.filter((s) => areaPol(s) >= 4 * p.areaPadrao && !(p.pctVerdeMin > 0 && verdeValida([s])))
-      .sort((x, y) => areaPol(y) - areaPol(x));
-    if (!miolos.length) break;
-    let melhorou = false;
-    for (const sb of miolos) {
-      const c = pontoInterno(sb);
-      // ponto mais próximo num eixo de rua
-      let q: Pt | null = null, dq = Infinity;
-      for (const r of res.ruas) for (let i = 0; i + 1 < r.eixo.length; i++) {
-        const a = r.eixo[i], b = r.eixo[i + 1];
-        const ab = sub(b, a), L2 = dot(ab, ab) || 1;
-        const t = Math.max(0, Math.min(1, dot(sub(c, a), ab) / L2));
-        const pt: Pt = soma(a, mult(ab, t));
-        const d = dist(pt, c);
-        if (d < dq) { dq = d; q = pt; }
-      }
-      if (!q || dq > 300) continue;
-      // entra pelo miolo até deixar uma profundidade de lote depois do balão
-      const dir = unit(sub(c, q));
-      const us = sb.ext.map((x) => dot(sub(x, q!), dir));
-      const fim = Math.max(...us) - p.profundidade - w / 2;
-      if (fim < dq * 0.5) continue;
-      // o balão precisa de uma profundidade de lote em volta até a divisa:
-      // recua a ponta até ter essa folga
-      const g = res.gleba.ext;
-      const folga = (t: number) => { const pt = soma(q!, mult(dir, t)); return Math.min(...g.map((a0, i) => distSegmentoAuto(pt, a0, g[(i + 1) % g.length]))); };
-      let t = fim;
-      while (t > dq + w && folga(t) < p.profundidade + w / 2) t -= 2;
-      if (t <= dq + w) continue;
-      const eixo = [q, soma(q, mult(dir, t))];
-      const rua: Rua = { id: novoId("a"), nome: "", largura: w, eixo: eixo.map((x) => paraUtm(res.plano, x)), balao: Math.max(w * 0.75, 9) };
-      const tentativa = { ...atual, ruas: [...atual.ruas, rua] };
-      const r2 = calcular(tentativa, perimetro, { rapido: true });
-      if (nota(r2) > nota(res) + p.areaPadrao) { atual = tentativa; res = r2; melhorou = true; break; }
-    }
-    if (!melhorou) break;
-  }
-  return atual;
 }
 
 /** Ruas longitudinais primeiro (de cima para baixo), depois as transversais. */

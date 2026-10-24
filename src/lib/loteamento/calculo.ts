@@ -58,6 +58,11 @@ export interface Lote {
   profundidade: number;
   /** lote de ponta que absorve a irregularidade da gleba (frente máxima não se aplica) */
   ponta?: boolean;
+  /** ângulo de projeto entre a frente e as divisas (graus), quando a fileira
+   *  corta na direção da malha — lote em paralelogramo de propósito, não torto */
+  angCorte?: number;
+  /** direção das divisas laterais (a do leque), para redividir o lote sem perder o alinhamento */
+  dirCorte?: Pt;
   lados: Lado[];
   esquina: boolean;
   /** posição na quadra — é a chave dos ajustes */
@@ -185,6 +190,8 @@ export interface Resultado {
   /** áreas públicas numeradas para a planta e o quadro (ÁREA VERDE 01, 02…) */
   publicas: AreaConsolidada[];
   sobras: Poligono[];
+  /** pedaços de quadra que viraram viário (canteiro de cruzamento, calçada, bico na estrada) */
+  canteiros: Poligono[];
   quadro: QuadroAreas;
   problemas: Problema[];
   /** lotes fora das faixas ou tortos (conta também no cálculo rápido — é a nota do gerador) */
@@ -407,6 +414,10 @@ function partirEmL(ctx: Contexto, pol: Poligono): Poligono[] {
     const a = unit(sub(A, V)), b = unit(sub(B, V));
     const ang = Math.acos(Math.max(-1, Math.min(1, dot(a, b))));
     if (ang > (160 * Math.PI) / 180) continue; // dobra suave de rua, não é canto
+    // canto aberto em que um dos braços é curto (a rua que passa pela ponta da
+    // fileira): a fileira dobra nele com lote de esquina, como na planta da
+    // equipe — partir aqui deixaria um triângulo e uma bissetriz torta
+    if (ang > (120 * Math.PI) / 180 && Math.min(dist(A, V), dist(B, V)) < 2 * ctx.prof) continue;
     // canto interno: bissetriz para dentro é −(a+b); canto externo (a rua dobra
     // em volta da quadra): +(a+b) — este só parte faixa de uma fileira, cuja
     // bissetriz bate na divisa logo ali (numa quadra comum ela bate em outra rua)
@@ -441,15 +452,16 @@ function partirEmL(ctx: Contexto, pol: Poligono): Poligono[] {
     if (partes) pecas.splice(i, 1, ...partes);
   }
   let out: Poligono[] = pecas.filter((pc) => pc.length >= 3).map((ext) => ({ ext: antiHorario(limparAnel(ext, 0.005)), furos: [] }));
-  // lasca pequena demais para lote (canto entre dois cortes) volta para a
-  // peça vizinha: vira o lote de ponta um pouco maior em vez de um lote nanico
+  // lasca pequena demais para dois lotes (canto entre dois cortes, bico da
+  // gleba) volta para a peça vizinha: vira o lote de ponta dela (de esquina)
+  // em vez de uma quadra de um lote só ao lado de um trapézio largo
   for (let guarda = 0; guarda < 6; guarda++) {
-    const i = out.findIndex((pc) => areaPol(pc) < 1.5 * ctx.areaMin);
+    const i = out.findIndex((pc) => areaPol(pc) < 2 * ctx.areaMin);
     if (i < 0 || out.length < 2) break;
     let feito = false;
     for (let j = 0; j < out.length && !feito; j++) {
       if (j === i) continue;
-      const u2 = uniao([out[i]], [out[j]]);
+      const u2 = uniaoFechada([out[i], out[j]]);
       if (u2.length === 1 && !u2[0].furos.length) {
         const novo = { ext: limparAnel(u2[0].ext, 0.005), furos: [] };
         out = out.filter((_, k) => k !== i && k !== j);
@@ -735,6 +747,8 @@ interface ResultadoQuadra {
   cortes: Corte[];
   fundo: Quadra["fundo"];
   sobras: Poligono[];
+  /** bico da esquina na estrada que virou parte do cruzamento */
+  canteiros?: Poligono[];
   origem: Pt; u: Pt; v: Pt;
   fileiras: number;
   problemas: string[];
@@ -766,7 +780,7 @@ export const acimaDaArea = (a: number, p: Parametros) => a > p.areaMax * FOLGA_M
 export const acimaDaFrente = (f: number, p: Parametros) => f > p.frenteMax * FOLGA_MAX + 0.05;
 
 export function foraDasFaixas(
-  l: Pick<Lote, "area" | "frente" | "profundidade">, p: Parametros, semFrente = false, esquina = false,
+  l: Pick<Lote, "area" | "frente" | "profundidade"> & { rasa?: number }, p: Parametros, semFrente = false, esquina = false,
   /** frente para a rua principal (o lote de rua a rua não soma as duas) — vale para a máxima */
   testada = l.frente,
   /** lote de ponta: mantido por compatibilidade (as máximas de área e fundo valem para ele também) */
@@ -778,10 +792,12 @@ export function foraDasFaixas(
   if (l.area < p.areaMin - 0.01) out.push(`área ${fmt(l.area)} m² abaixo do mínimo de ${fmt(p.areaMin)} m²`);
   else if (acimaDaArea(l.area, p)) out.push(`área ${fmt(l.area)} m² acima do máximo de ${fmt(fator * p.areaMax)} m²`);
   if (semFrente) out.push("lote sem frente para rua");
-  else if (l.frente < p.frenteMin - 0.005) out.push(`frente ${fmt(l.frente)} m abaixo do mínimo de ${fmt(p.frenteMin)} m`);
+  // a mínima também vale para a frente principal: o lote de rua a rua com
+  // 10 m em cada uma não tem 20 m de frente
+  else if (Math.min(l.frente, testada > 0 ? testada : l.frente) < p.frenteMin - 0.005) out.push(`frente ${fmt(Math.min(l.frente, testada > 0 ? testada : l.frente))} m abaixo do mínimo de ${fmt(p.frenteMin)} m`);
   else if (!esquina && acimaDaFrente(testada, p)) out.push(`frente ${fmt(testada)} m acima do máximo de ${fmt(p.frenteMax)} m`);
   if (!semFrente && l.profundidade > fator * p.profundidadeMax + 0.5) out.push(`profundidade ${fmt(l.profundidade)} m acima do máximo de ${fmt(fator * p.profundidadeMax)} m`);
-  else if (!semFrente && !esquina && l.profundidade > 0 && l.profundidade < p.profundidadeMin - 0.5) out.push(`profundidade ${fmt(l.profundidade)} m abaixo do mínimo de ${fmt(p.profundidadeMin)} m`);
+  else if (!semFrente && !esquina && (l.rasa ?? l.profundidade) > 0 && (l.rasa ?? l.profundidade) < p.profundidadeMin - 0.5) out.push(`profundidade ${fmt(l.rasa ?? l.profundidade)} m abaixo do mínimo de ${fmt(p.profundidadeMin)} m`);
   return out;
 }
 
@@ -820,15 +836,25 @@ export function verticesReais(pol: Poligono): number {
 }
 
 /** Menor ângulo interno do lote, em graus (vértices quase retos/rasos não contam). */
-export function anguloMinimo(pol: Poligono): number {
+export function anguloMinimo(pol: Poligono, quadra?: Poligono): number {
   const e = pol.ext;
+  // canto feito só pelo contorno da quadra (rua com rua, rua com divisa) é o
+  // que o terreno dá — o lote de esquina da planta da equipe também o tem; o
+  // que se mede é o canto que a divisão criou (onde há linha de corte)
+  const noContorno = (a: Pt, b: Pt) => {
+    if (!quadra) return false;
+    const m = lerp(a, b, 0.5);
+    return quadra.ext.some((x, k) => distSegmento(m, x, quadra.ext[(k + 1) % quadra.ext.length]).d < 0.05);
+  };
   let m = 180;
   for (let i = 0; i < e.length; i++) {
     const a = e[(i + e.length - 1) % e.length], q = e[i], c = e[(i + 1) % e.length];
     if (dist(a, q) < 1 || dist(q, c) < 1) continue; // arco de esquina: muitos vértices curtos
     const u = unit(sub(a, q)), v = unit(sub(c, q));
     const ang = (Math.acos(Math.max(-1, Math.min(1, dot(u, v)))) * 180) / Math.PI;
-    if (ang < 175) m = Math.min(m, ang);
+    if (ang >= 175 || ang >= m) continue;
+    if (quadra && ang < 70 && noContorno(a, q) && noContorno(q, c)) continue;
+    m = ang;
   }
   return m;
 }
@@ -867,11 +893,19 @@ function fundoDe(pol: Poligono, segs: Seg[]): number {
   return f;
 }
 
+const cacheFundoMax = new WeakMap<Poligono, number>();
+/** Profundidade para a máxima (medida oblíqua), guardada por polígono. */
+function fundoMaxDe(pol: Poligono, segs: Seg[]): number {
+  let f = cacheFundoMax.get(pol);
+  if (f === undefined) { f = profundidadeDe(pol, segs, true); cacheFundoMax.set(pol, f); }
+  return f;
+}
+
 /** Passa da profundidade máxima? Lote cuja diagonal nem chega lá não precisa ser medido. */
 function passaDoFundo(pol: Poligono, segs: Seg[], p: Parametros): boolean {
   const b = caixa(pol.ext);
   if (Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1]) <= p.profundidadeMax + 0.5) return false;
-  return fundoDe(pol, segs) > p.profundidadeMax + 0.5;
+  return fundoMaxDe(pol, segs) > p.profundidadeMax + 0.5;
 }
 
 function frentesBrutas(pol: Poligono, naFrente: (a: Pt, b: Pt) => boolean): Seg[] {
@@ -901,12 +935,25 @@ export function esquinaDe(segs: Seg[]): boolean {
  * Pega também o lote que avança de lado, atrás do fim da rua (a ponta da
  * gleba), que a medida perpendicular à frente não enxerga.
  */
-export function profundidadeDe(pol: Poligono, segs: Seg[]): number {
+export function profundidadeDe(pol: Poligono, segs: Seg[], obliqua = false): number {
   if (!segs.length) return 0;
   const pts: Pt[] = [];
   pol.ext.forEach((q, i) => { pts.push(q, lerp(q, pol.ext[(i + 1) % pol.ext.length], 0.5)); });
+  // `obliqua` (para a MÁXIMA): no lote de divisa oblíqua (leque, até 35° com a
+  // frente) o canto do fundo cai de lado, além da ponta da frente — ali conta a
+  // distância à reta da frente, não ao segmento (senão um lote de 35 m mediria
+  // 45). Só o ponto que passa dessa inclinação (lote que contorna o fim da rua)
+  // usa o segmento. A MÍNIMA segue medida no segmento: a cunha rasa não passa.
+  const cot35 = 1 / Math.tan((35 * Math.PI) / 180);
+  const ate = (q: Pt, a: Pt, b: Pt) => {
+    const L = dist(a, b);
+    if (L < 1e-9) return dist(q, a);
+    const d = unit(sub(b, a)), w = sub(q, a);
+    const t = dot(w, d), h = Math.abs(cross(d, w));
+    return obliqua && t >= -cot35 * h && t <= L + cot35 * h ? h : distSegmento(q, a, b).d;
+  };
   let m = 0;
-  for (const q of pts) m = Math.max(m, Math.min(...segs.map(([a, b]) => distSegmento(q, a, b).d)));
+  for (const q of pts) m = Math.max(m, Math.min(...segs.map(([a, b]) => ate(q, a, b))));
   return m;
 }
 
@@ -918,9 +965,95 @@ function corredorDaFrente(pol: Poligono | Poligono[], segs: Seg[], prof: number,
     let n = esquerda(d);
     const teste = soma(lerp(a, b, 0.5), mult(n, 0.05));
     if (!pols.some((pg) => dentroPol(teste, pg))) n = mult(n, -1);
-    return faixaReferencial(a, d, n, -ext, dist(a, b) + ext, -1, prof);
+    // abre até 35° nas pontas, como a medida da profundidade (profundidadeDe):
+    // o lote de divisa oblíqua tem o canto do fundo de lado, além da frente —
+    // a faixa reta o cortaria em cunha
+    const abre = prof / Math.tan((35 * Math.PI) / 180);
+    const P = (s2: number, t: number) => soma(a, soma(mult(d, s2), mult(n, t)));
+    const L = dist(a, b);
+    return { ext: antiHorario([P(-ext, -1), P(L + ext, -1), P(L + ext + abre, prof), P(-ext - abre, prof)]), furos: [] };
   });
   return uniao(faixas);
+}
+
+/**
+ * Direção das divisas laterais de uma fileira, como na planta aprovada da
+ * equipe: paralelas às ruas que encontram a rua da fileira (a fileira das
+ * ruas da família corta paralela à rua de contorno, e a fileira do contorno
+ * corta paralela às ruas da família). Assim a quadra de pontas oblíquas sai
+ * toda em lotes iguais, sem cunha. Volta null (perpendicular) quando não há
+ * rua cruzando ou quando o corte ficaria a menos de 35° da frente.
+ */
+function direcaoDeCorte(ctx: Contexto, pol: Poligono, naFrente: (a: Pt, b: Pt) => boolean, uf: Pt): Pt | null {
+  // ponto da frente: meio do lado de frente mais longo
+  let m: Pt | null = null, lm = 0;
+  for (let i = 0; i < pol.ext.length; i++) {
+    const a = pol.ext[i], b = pol.ext[(i + 1) % pol.ext.length];
+    if (naFrente(a, b) && dist(a, b) > lm && Math.abs(dot(unit(sub(b, a)), uf)) > 0.9) { lm = dist(a, b); m = lerp(a, b, 0.5); }
+  }
+  if (!m) return null;
+  // a rua da frente: eixo paralelo à fileira mais perto desse ponto
+  let rua: RuaCalc | null = null, dm = Infinity;
+  for (const r of ctx.ruas) for (let i = 0; i + 1 < r.eixo.length; i++) {
+    const a = r.eixo[i], b = r.eixo[i + 1];
+    if (Math.abs(dot(unit(sub(b, a)), uf)) < 0.95) continue;
+    const d = distSegmento(m, a, b).d;
+    if (d < dm) { dm = d; rua = r; }
+  }
+  if (!rua || dm > rua.largura) return null;
+  const naRua = (q: Pt, folga: number) => rua!.eixo.some((a, i) => i + 1 < rua!.eixo.length && distSegmento(q, a, rua!.eixo[i + 1]).d < folga);
+  // ruas que encontram a da frente (a ponta delas cai no eixo dela); fica a do encontro mais perto
+  let melhor: { d: number; dir: Pt } | null = null;
+  for (const r of ctx.ruas) {
+    if (r === rua || r.eixo.length < 2) continue;
+    const pontas: [Pt, Pt][] = [[r.eixo[0], r.eixo[1]], [r.eixo[r.eixo.length - 1], r.eixo[r.eixo.length - 2]]];
+    for (const [pt, viz] of pontas) {
+      if (!naRua(pt, r.largura + rua.largura)) continue;
+      const dir = unit(sub(viz, pt));
+      const d = dist(pt, m);
+      if (!melhor || d < melhor.d) melhor = { d, dir };
+    }
+  }
+  if (!melhor) return null;
+  // ângulo com a frente: abaixo de 35° o lote fica torto demais
+  const seno = Math.abs(cross(melhor.dir, uf));
+  if (seno < Math.sin((35 * Math.PI) / 180) || seno > 0.995) return null;
+  // aponta para dentro da fileira (o mesmo lado da normal)
+  return dot(melhor.dir, esquerda(uf)) >= 0 ? melhor.dir : mult(melhor.dir, -1);
+}
+
+/**
+ * Direção das pontas de uma fileira: o lado mais longo em cada extremidade,
+ * orientado para dentro da fileira. Só vale se fizer pelo menos 35° com a
+ * frente — ponta em bico não serve de guia. Ponta que é rua ou rodovia manda
+ * sobre ponta que é divisa, e esta sobre a linha interna que separa as
+ * fileiras: se uma ponta vale mais que a outra, a fileira toda segue a dela
+ * (na planta da equipe só a fileira entre duas ruas abre em leque).
+ */
+function direcoesDasPontas(
+  pol: Poligono, quadra: Poligono, naFrente: (a: Pt, b: Pt) => boolean, uf: Pt, o: Pt, ini: number, fim: number,
+): { ini: Pt | null; fim: Pt | null } {
+  const noContorno = (q: Pt) => quadra.ext.some((a, i) => distSegmento(q, a, quadra.ext[(i + 1) % quadra.ext.length]).d < 0.3);
+  const vv = esquerda(uf);
+  const L = fim - ini;
+  if (!(L > 0)) return { ini: null, fim: null };
+  type Cand = { d: Pt; c: number; peso: number };
+  const melhor = (m: Cand | null, x: Cand) => !m || x.peso > m.peso || (x.peso === m.peso && x.c > m.c);
+  let mi: Cand | null = null, mf: Cand | null = null;
+  for (let i = 0; i < pol.ext.length; i++) {
+    const a = pol.ext[i], b = pol.ext[(i + 1) % pol.ext.length];
+    const c = dist(a, b);
+    if (c < 4) continue; // a ponta pode ser rua ou rodovia: o lado de frente sai pelo ângulo
+    let d = unit(sub(b, a));
+    if (Math.abs(cross(d, uf)) < Math.sin((35 * Math.PI) / 180)) continue;
+    if (dot(d, vv) < 0) d = mult(d, -1);
+    const sm = dot(sub(lerp(a, b, 0.5), o), uf);
+    const x: Cand = { d, c, peso: naFrente(a, b) ? 2 : noContorno(lerp(a, b, 0.5)) ? 1 : 0 };
+    if (sm <= ini + 0.2 * L && melhor(mi, x)) mi = x;
+    if (sm >= fim - 0.2 * L && melhor(mf, x)) mf = x;
+  }
+  if (mi && mf && mi.peso !== mf.peso) return mi.peso > mf.peso ? { ini: mi.d, fim: null } : { ini: null, fim: mf.d };
+  return { ini: mi?.d ?? null, fim: mf?.d ?? null };
 }
 
 /** Direção da frente principal (a mais longa) e uma origem nela. */
@@ -931,36 +1064,53 @@ function frenteMaiorDe(segs: Seg[]): { a: Pt; d: Pt } | null {
 }
 
 /** `m` partes de frente igual (cortes equidistantes ao longo da frente, perpendiculares a `d`). */
-function partirFrenteIgual(pol: Poligono, segs: Seg[], o: Pt, d: Pt, m: number, GR: number): Poligono[] | null {
-  const us = segs.flatMap(([a, b]) => [dot(sub(a, o), d), dot(sub(b, o), d)]);
+/** Posição ao longo de `d` medida por retas na direção `c` (perpendicular se não houver `c`). */
+const posCorte = (q: Pt, o: Pt, d: Pt, c?: Pt) => (c ? cross(sub(q, o), c) / cross(d, c) : dot(sub(q, o), d));
+
+function partirFrenteIgual(pol: Poligono, segs: Seg[], o: Pt, d: Pt, m: number, GR: number, c?: Pt): Poligono[] | null {
+  if (c && Math.abs(cross(d, c)) < 0.5) c = undefined;
+  const us = segs.flatMap(([a, b]) => [posCorte(a, o, d, c), posCorte(b, o, d, c)]);
   if (!us.length) return null;
   const f0 = Math.min(...us), f1 = Math.max(...us);
-  const todos = pol.ext.map((q) => dot(sub(q, o), d));
+  const todos = pol.ext.map((q) => posCorte(q, o, d, c));
   const cortes = [Math.min(...todos) - 1, ...Array.from({ length: m - 1 }, (_, j) => f0 + ((f1 - f0) * (j + 1)) / m), Math.max(...todos) + 1];
   const out: Poligono[] = [];
   for (let j = 0; j < m; j++) {
-    const ps = intersecao([pol], [faixaReferencial(o, d, esquerda(d), cortes[j], cortes[j + 1], -GR, GR)]).filter((x) => areaPol(x) > 0.05);
+    const ps = intersecao([pol], [faixaReferencial(o, d, c ?? esquerda(d), cortes[j], cortes[j + 1], -GR, GR)]).filter((x) => areaPol(x) > 0.05);
     if (ps.length !== 1) return null;
     out.push({ ext: limparAnel(ps[0].ext, 0.005), furos: ps[0].furos });
   }
   return out;
 }
 
-/** `m` partes de área igual, cortadas perpendiculares à direção `d`; null se alguma sair em pedaços. */
-function partirIgual(pol: Poligono, o: Pt, d: Pt, m: number, GR: number): Poligono[] | null {
+/**
+ * `m` partes de área igual, cortadas perpendiculares à direção `d` — ou na
+ * direção `c` (a divisa do leque); null se alguma sair em pedaços.
+ */
+function partirIgual(pol: Poligono, o: Pt, d: Pt, m: number, GR: number, c?: Pt): Poligono[] | null {
+  if (c && Math.abs(cross(d, c)) < 0.5) c = undefined;
   const area = areaPol(pol);
-  const us = pol.ext.map((q) => dot(sub(q, o), d));
+  const us = pol.ext.map((q) => posCorte(q, o, d, c));
   const lo0 = Math.min(...us), hi0 = Math.max(...us);
+  // corte oblíquo: o cisalhamento (s, t) → (s − t·c_d/c_n, t) preserva área e
+  // deixa as linhas na direção `c` perpendiculares — vale a conta rápida
+  let ateCorte = (x: number) => areaPolAteCorte(pol, o, d, x);
+  if (c) {
+    const n = esquerda(d), k = dot(c, d) / dot(c, n);
+    const cis = (q: Pt): Pt => { const sv = dot(sub(q, o), d), tv = dot(sub(q, o), n); return [sv - tv * k, tv]; };
+    const polC: Poligono = { ext: pol.ext.map(cis), furos: pol.furos.map((f) => f.map(cis)) };
+    ateCorte = (x: number) => areaPolAteCorte(polC, [0, 0], [1, 0], x);
+  }
   const cortes: number[] = [lo0 - 1];
   for (let j = 1; j < m; j++) {
     let lo = lo0, hi = hi0;
-    for (let it = 0; it < 32; it++) { const mid = (lo + hi) / 2; if (areaPolAteCorte(pol, o, d, mid) < (area * j) / m) lo = mid; else hi = mid; }
+    for (let it = 0; it < 32; it++) { const mid = (lo + hi) / 2; if (ateCorte(mid) < (area * j) / m) lo = mid; else hi = mid; }
     cortes.push((lo + hi) / 2);
   }
   cortes.push(hi0 + 1);
   const out: Poligono[] = [];
   for (let j = 0; j < m; j++) {
-    const ps = intersecao([pol], [faixaReferencial(o, d, esquerda(d), cortes[j], cortes[j + 1], -GR, GR)]).filter((x) => areaPol(x) > 0.05);
+    const ps = intersecao([pol], [faixaReferencial(o, d, c ?? esquerda(d), cortes[j], cortes[j + 1], -GR, GR)]).filter((x) => areaPol(x) > 0.05);
     if (ps.length !== 1) return null;
     out.push({ ext: limparAnel(ps[0].ext, 0.005), furos: ps[0].furos });
   }
@@ -980,9 +1130,10 @@ function partirIgual(pol: Poligono, o: Pt, d: Pt, m: number, GR: number): Poligo
 function harmonizar(
   lotes: ResultadoQuadra["lotes"], destinos: Map<string, TipoArea>, naFrente: (a: Pt, b: Pt) => boolean,
   ladosQuadra: Lado[], p: Parametros, GR: number, busca = false,
-): { lotes: ResultadoQuadra["lotes"]; sobras: Poligono[] } {
+): { lotes: ResultadoQuadra["lotes"]; sobras: Poligono[]; viario: Poligono[] } {
   const out: ResultadoQuadra["lotes"] = [];
   const sobras: Poligono[] = [];
+  const viario: Poligono[] = [];
   const frenteDe = (pol: Poligono) => {
     let s = 0;
     for (let i = 0; i < pol.ext.length; i++) { const a = pol.ext[i], b = pol.ext[(i + 1) % pol.ext.length]; if (naFrente(a, b)) s += dist(a, b); }
@@ -1043,7 +1194,7 @@ function harmonizar(
       const mMax = Math.min(Math.floor(f / p.frenteMin + 1e-6), Math.floor(area / p.areaMin + 1e-6));
       const m0 = Math.min(mMax, Math.max(Math.ceil(area / p.areaMax - 1e-6), esquina ? 1 : Math.ceil(f / p.frenteMax - 1e-6), Math.round(area / p.areaPadrao)));
       for (let m = m0; m >= 2; m--) {
-        const ps = partirIgual(pol, fr.a, fr.d, m, GR);
+        const ps = partirIgual(pol, fr.a, fr.d, m, GR, l.dirCorte);
         if (ps && ps.every((x) => areaPol(x) >= p.areaMin - 0.01 && frenteDe(x) >= p.frenteMin - 0.005)) { partes = ps; break; }
       }
     }
@@ -1122,8 +1273,9 @@ function harmonizar(
           if (area / m < p.areaMin - 0.01) continue;
           // áreas iguais; se a ponta rasa sai larga demais, frentes iguais (como
           // se loteia de frente para a estrada: a ponta fica com menos área)
-          let partes = m === 1 ? [pol] : partirIgual(pol, fr.a, fr.d, m, GR);
-          if (m > 1 && (!partes || !partes.every(bomLote))) partes = partirFrenteIgual(pol, frentesDe(pol, naFrente), fr.a, fr.d, m, GR);
+          const dc = grupo[k - 1].dirCorte;
+          let partes = m === 1 ? [pol] : partirIgual(pol, fr.a, fr.d, m, GR, dc);
+          if (m > 1 && (!partes || !partes.every(bomLote))) partes = partirFrenteIgual(pol, frentesDe(pol, naFrente), fr.a, fr.d, m, GR, dc);
           if (!partes || !partes.every(bomLote)) continue;
           // as partes, da ponta para dentro; ficam os índices de dentro (a
           // fileira continua numerada sem buraco junto ao resto)
@@ -1180,7 +1332,7 @@ function harmonizar(
         const segs = frentesDe(x.pol, naFrente);
         const temRua = segs.some(([a2, b2]) => { const m = lerp(a2, b2, 0.5); return !vias.some((l) => distSegmento(m, l.a, l.b).d < 0.05); });
         const rasa = fundoDe(x.pol, segs) < p.profundidadeMin - 0.5;
-        if (volta === 0 && (temRua || rasa) && ehPonta(x) && x.area < p.areaPadrao && out.filter((y) => y.fileira === x.fileira).length >= 3) { out.splice(i, 1); mudou = true; }
+        if (volta === 0 && (temRua || rasa) && ehPonta(x) && x.area < p.areaPadrao && out.filter((y) => y.fileira === x.fileira).length >= 3) { viario.push(x.pol); out.splice(i, 1); mudou = true; }
         continue;
       }
       if (out.filter((y) => y.fileira === x.fileira).length < 3) continue; // quadrinha: fica (com aviso)
@@ -1190,7 +1342,7 @@ function harmonizar(
       mudou = true;
     }
   }
-  return { lotes: out, sobras };
+  return { lotes: out, sobras, viario };
 }
 
 /**
@@ -1215,7 +1367,7 @@ function anexarSobras(
     const a = areaPol(pol);
     if (acimaDaArea(a, p) || !formaDeLote(pol)) return false;
     const segs = frentesDe(pol, naFrente);
-    return segs.length > 0 && profundidadeDe(pol, segs) <= p.profundidadeMax + 0.5;
+    return segs.length > 0 && profundidadeDe(pol, segs, true) <= p.profundidadeMax + 0.5;
   };
   const encosta = (a: Poligono, b: Poligono) => {
     const ca = caixa(a.ext), cb = caixa(b.ext);
@@ -1274,6 +1426,16 @@ function anexarSobras(
   return { lotes: out, sobras: restam };
 }
 
+/** O lote passa no aviso da planta? (lados classificados, esquina por ruas distintas) */
+function dentroDasFaixas(ctx: Contexto, pol: Poligono, p: Parametros, ponta = false): boolean {
+  const fr = ladosDe(ctx, pol, null).filter((x) => ehFrente(x.tipo));
+  if (!fr.length) return false;
+  const segs: Seg[] = fr.map((x) => [x.a, x.b]);
+  const esq = new Set(fr.map((x) => x.ref)).size >= 2 || esquinaDe(segs);
+  const frente = fr.reduce((s2, x) => s2 + x.comp, 0);
+  return foraDasFaixas({ area: areaPol(pol), frente, profundidade: profundidadeDe(pol, segs, true), rasa: profundidadeDe(pol, segs) }, p, false, esq, ponta ? 0 : frentePrincipal(segs)).length === 0;
+}
+
 /**
  * Conformidade final — a garantia: nenhum lote fora das medidas do projeto
  * chega à planta. Cada lote ainda fora delas é consertado como o projetista
@@ -1291,14 +1453,7 @@ function conformar(
   const livre = (x: ResultadoQuadra["lotes"][number]) => !destinos.has(`${x.fileira}:${x.indice}`);
   // as MESMAS medidas e regras do aviso da planta (lados classificados, esquina
   // por ruas distintas) — conferir diferente daria lote bom descartado
-  const valido = (pol: Poligono, ponta = false) => {
-    const fr = ladosDe(ctx, pol, null).filter((x) => ehFrente(x.tipo));
-    if (!fr.length) return false;
-    const segs: Seg[] = fr.map((x) => [x.a, x.b]);
-    const esq = new Set(fr.map((x) => x.ref)).size >= 2 || esquinaDe(segs);
-    const frente = fr.reduce((s2, x) => s2 + x.comp, 0);
-    return foraDasFaixas({ area: areaPol(pol), frente, profundidade: profundidadeDe(pol, segs) }, p, false, esq, ponta ? 0 : frentePrincipal(segs)).length === 0;
-  };
+  const valido = (pol: Poligono, ponta = false) => dentroDasFaixas(ctx, pol, p, ponta);
   const invalidos: { l: ResultadoQuadra["lotes"][number]; pol: Poligono }[] = [];
   for (const l of lotes) {
     if (!livre(l) || valido(l.pol, l.ponta)) { out.push(l); continue; }
@@ -1306,7 +1461,7 @@ function conformar(
     let segs = frentesDe(pol, naFrente);
     if (!segs.length) { sobras.push(pol); continue; }
     // 1. fundo além da máxima: apara pela própria frente
-    if (fundoDe(pol, segs) > p.profundidadeMax + 0.5) {
+    if (fundoMaxDe(pol, segs) > p.profundidadeMax + 0.5) {
       const corredor = corredorDaFrente(pol, segs, p.profundidadeMax - 0.5, 0);
       const dentro = intersecao([pol], corredor).filter((x) => areaPol(x) > 0.5).sort((x, y) => areaPol(y) - areaPol(x));
       if (dentro.length && frentesDe(dentro[0], naFrente).length) {
@@ -1323,7 +1478,7 @@ function conformar(
       const area = areaPol(pol);
       const m0 = Math.max(2, Math.ceil(area / p.areaMax - 1e-6), Math.ceil(frentePrincipal(segs) / p.frenteMax - 1e-6));
       for (let m = m0; m <= m0 + 1 && !feito; m++) {
-        for (const partes of [partirIgual(pol, fr.a, fr.d, m, GR), partirFrenteIgual(pol, segs, fr.a, fr.d, m, GR)]) {
+        for (const partes of [partirIgual(pol, fr.a, fr.d, m, GR, l.dirCorte), partirFrenteIgual(pol, segs, fr.a, fr.d, m, GR, l.dirCorte)]) {
           if (!partes || !partes.every((x) => valido(x))) continue;
           partes.forEach((x, k) => out.push({ ...l, pol: x, area: areaPol(x), indice: l.indice + k / 1000, ponta: false }));
           feito = true;
@@ -1437,7 +1592,26 @@ function dividirQuadra(
     // fileira única: além da profundidade máxima o fundo não é lote
     const limite = Math.max(p.profundidadeMax, 1.2 * p.profundidade);
     if (!oposta && vMax > limite) {
-      const f = cfg?.fundo ?? Math.min(1.2 * p.profundidade, p.profundidadeMax);
+      // profundidade típica da fileira (mediana ao longo da frente): se ela cabe
+      // na máxima, quem passa é só o bico da ponta — corta-se ali, na máxima, e
+      // o lote vai até a divisa como na planta da equipe; aparar a fileira toda
+      // na padrão deixaria uma faixa de fundo inteira sem uso
+      const us0 = pol.ext.map((q) => proj(q)[0]);
+      const uMin = Math.min(...us0), uMax = Math.max(...us0);
+      const fundos: number[] = [];
+      for (let k = 1; k < 20; k++) {
+        const x = uMin + ((uMax - uMin) * k) / 20;
+        let vm = -Infinity;
+        for (let i = 0; i < pol.ext.length; i++) {
+          const [ua, va] = proj(pol.ext[i]), [ub, vb] = proj(pol.ext[(i + 1) % pol.ext.length]);
+          if ((ua - x) * (ub - x) > 0 || ua === ub) continue;
+          vm = Math.max(vm, va + ((vb - va) * (x - ua)) / (ub - ua));
+        }
+        if (Number.isFinite(vm)) fundos.push(vm);
+      }
+      fundos.sort((a, b) => a - b);
+      const tipica = fundos.length ? fundos[Math.floor(fundos.length / 2)] : vMax;
+      const f = cfg?.fundo ?? (tipica <= p.profundidadeMax ? p.profundidadeMax : Math.min(1.2 * p.profundidade, p.profundidadeMax));
       for (const pp of intersecao([pol], [faixaReferencial(o, u, v, -GR, GR, -GR, f)])) fileirasPol.push({ pol: pp, sentido: 1 });
       for (const pp of diferenca([pol], [faixaReferencial(o, u, v, -GR, GR, -GR, f)])) sobras.push(pp);
       const us = pol.ext.map((q) => proj(q)[0]);
@@ -1465,7 +1639,7 @@ function dividirQuadra(
   for (let i = 0; i < fileirasPol.length; i++) {
     const fp = fileirasPol[i];
     const segs = frentesBrutas(fp.pol, naFrente);
-    if (!segs.length || profundidadeDe(fp.pol, segs) <= p.profundidadeMax + 0.5) continue;
+    if (!segs.length || profundidadeDe(fp.pol, segs, true) <= p.profundidadeMax + 0.5) continue;
     const corredor = corredorDaFrente(fp.pol, segs, p.profundidadeMax, 0);
     // o que encosta na estrada fica na fileira (é lote); o resto do fundo sai
     const fora = diferenca([fp.pol], corredor).filter((x) => areaPol(x) > 1 && !tocaEstrada(x));
@@ -1534,6 +1708,69 @@ function dividirQuadra(
 
     interface Pedaco { pol: Poligono; area: number; a: number; b: number; indice: number; frente: number; aj?: AjusteLote; sub: boolean }
     const vv = esquerda(uf);
+    // direção das divisas laterais: a das ruas que encontram a rua desta
+    // fileira (a malha da planta aprovada — lote alinhado à propriedade, sem
+    // cunha na ponta oblíqua da quadra); perpendicular se não houver
+    const sdir = direcaoDeCorte(ctx, fp.pol, naFrente, uf) ?? vv;
+    // Divisas em leque, como na planta da equipe: a direção das divisas acompanha
+    // as PONTAS da fileira (a da ponta inicial vai girando até a da ponta final),
+    // e todo lote encaixa na quadra de pontas oblíquas sem virar cunha. Ponta que
+    // não serve (menos de 35° com a frente) dá lugar à outra; sem nenhuma, vale a
+    // rua que cruza (sdir) ou a perpendicular.
+    const pontas = direcoesDasPontas(fp.pol, pol, naFrente, uf, o, ini, fim);
+    // uma ponta só: a fileira inteira sai paralela a ela, mas sem passar de 60°
+    // de inclinação com a frente (fileira longa de paralelogramos finos não é
+    // lote) — o lote da ponta vira trapézio, como na planta da equipe
+    const umaSo = (d: Pt): Pt => {
+      const minimo = Math.sin((60 * Math.PI) / 180);
+      if (Math.abs(cross(d, uf)) >= minimo) return d;
+      const cos = Math.cos((60 * Math.PI) / 180);
+      return soma(mult(uf, dot(d, uf) >= 0 ? cos : -cos), mult(vv, minimo));
+    };
+    // fileira única (fundo na divisa): lotes paralelos entre si, na média das
+    // duas pontas — o leque fica para a quadra de duas fileiras entre ruas,
+    // onde os fundos se encontram (é assim nas duas na planta da equipe)
+    const media = pontas.ini && pontas.fim && fileirasPol.length === 1 ? umaSo(unit(soma(pontas.ini, pontas.fim))) : null;
+    let dIni = media ?? (pontas.ini ? (pontas.fim ? pontas.ini : umaSo(pontas.ini)) : pontas.fim ? umaSo(pontas.fim) : sdir);
+    let dFim = media ?? (pontas.fim ? (pontas.ini ? pontas.fim : umaSo(pontas.fim)) : pontas.ini ? umaSo(pontas.ini) : sdir);
+    // pontas quase em esquadro (até 12°): lote retangular, divisas
+    // perpendiculares — o leque só entra quando a quadra é de fato oblíqua
+    const quaseReto = (d: Pt) => Math.abs(dot(d, uf)) < Math.sin((12 * Math.PI) / 180);
+    if (quaseReto(dIni) && quaseReto(dFim)) { dIni = vv; dFim = vv; }
+    // fileira curta com pontas que convergem: as divisas do leque se cruzariam
+    // antes do fundo (lote em gravata) — aí a fileira vai paralela, na média
+    if (dIni !== dFim && fim > ini) {
+      const inc = (d: Pt) => dot(d, uf) / Math.max(1e-9, dot(d, vv));
+      const den = inc(dIni) - inc(dFim);
+      const vs = fp.pol.ext.map((q) => dot(sub(q, o), vv));
+      if (den > 1e-9 && (fim - ini) / den < Math.max(...vs) - Math.min(...vs)) { dIni = dFim = umaSo(unit(soma(dIni, dFim))); }
+    }
+    const angDe = (d: Pt) => Math.atan2(d[1], d[0]);
+    const aIni = angDe(dIni);
+    let delta = angDe(dFim) - aIni;
+    while (delta > Math.PI) delta -= 2 * Math.PI;
+    while (delta < -Math.PI) delta += 2 * Math.PI;
+    const dirEm = (sv: number): Pt => {
+      const t = fim > ini ? Math.max(0, Math.min(1, (sv - ini) / (fim - ini))) : 0;
+      const a = aIni + delta * t;
+      return [Math.cos(a), Math.sin(a)];
+    };
+    const acudo = (d: Pt) => (Math.asin(Math.min(1, Math.abs(cross(d, uf)))) * 180) / Math.PI;
+    const emLeque = dIni !== vv || dFim !== vv;
+    // reta de frente da fileira e alcance das linhas de corte
+    let vFrente = 0, lMax = 0;
+    for (let i = 0; i < fp.pol.ext.length; i++) {
+      const a = fp.pol.ext[i], b = fp.pol.ext[(i + 1) % fp.pol.ext.length];
+      if (naFrente(a, b) && dist(a, b) > lMax && Math.abs(dot(unit(sub(b, a)), uf)) > 0.9) { lMax = dist(a, b); vFrente = dot(sub(lerp(a, b, 0.5), o), vv); }
+    }
+    const fundoMax = Math.max(...fp.pol.ext.map((q) => Math.abs(dot(sub(q, o), vv) - vFrente)));
+    const T = 3 * (fundoMax + 20);
+    const F = (sv: number): Pt => soma(o, soma(mult(uf, sv), mult(vv, vFrente)));
+    const faixaCorte = (sa: number, sb: number): Poligono => {
+      if (!emLeque) return faixaReferencial(o, uf, vv, sa, sb, -GR, GR);
+      const da = dirEm(sa), db = dirEm(sb), A = F(sa), B = F(sb);
+      return { ext: antiHorario([soma(A, mult(da, -T)), soma(B, mult(db, -T)), soma(B, mult(db, T)), soma(A, mult(da, T))]), furos: [] };
+    };
     const frenteDe = (pol: Poligono) => {
       let s = 0;
       for (let i = 0; i < pol.ext.length; i++) {
@@ -1551,7 +1788,7 @@ function dividirQuadra(
       for (let k = 0; k < partes; k++) {
         const sa = partes === 1 || k === 0 ? it.a : ea + ((eb - ea) * k) / partes;
         const sb = partes === 1 || k === partes - 1 ? it.b : ea + ((eb - ea) * (k + 1)) / partes;
-        const corte = faixaReferencial(o, uf, vv, sa, sb, -GR, GR);
+        const corte = faixaCorte(sa, sb);
         const partesPol = intersecao([fp.pol], [corte]).sort((x, y) => areaPol(y) - areaPol(x));
         if (!partesPol.length) continue;
         for (const resto of partesPol.slice(1)) sobras.push(resto);
@@ -1582,21 +1819,24 @@ function dividirQuadra(
     }
 
     pedacos.forEach((x, i) => {
-      if (x.area < p.areaMin - 0.01 || x.frente < p.frenteMin - 0.005) ruins++;
       const a = x.aj;
       lotes.push({
         pol: x.pol, area: x.area, fileira: fi, indice: x.indice,
+        angCorte: emLeque ? Math.min(acudo(dirEm(x.a)), acudo(dirEm(x.b))) : undefined,
+        dirCorte: emLeque ? dirEm((x.a + x.b) / 2) : undefined,
         ajustado: !!a && !!(a.frente || a.area || a.unir || (a.dividir && a.dividir > 1)),
         travaFrente: a?.frente, travaArea: a?.area,
       });
       if (a?.destino) destinos.set(`${fi}:${x.indice}`, a.destino);
       const prox = pedacos[i + 1];
       if (prox && Math.abs(prox.a - x.b) < 1e-6) {
-        const ps = fp.pol.ext.map((q) => dot(sub(q, o), vv));
+        // posição ao longo da divisa (oblíqua): t = cruz(uf, q − o) / cruz(uf, sdir)
+        const dc = emLeque ? dirEm(x.b) : vv;
+        const ps = fp.pol.ext.map((q) => cross(uf, sub(q, F(x.b))) / cross(uf, dc));
         cortes.push({
           fileira: fi, indice: x.indice, arrastavel: !x.sub && !prox.sub,
-          a: soma(o, soma(mult(uf, x.b), mult(vv, Math.min(...ps)))),
-          b: soma(o, soma(mult(uf, x.b), mult(vv, Math.max(...ps)))),
+          a: soma(F(x.b), mult(dc, Math.min(...ps))),
+          b: soma(F(x.b), mult(dc, Math.max(...ps))),
           o, dir: uf, s0: i === 0 ? ini : x.a, s: x.b,
         });
       }
@@ -1669,7 +1909,7 @@ function dividirQuadra(
       const area = areaPol(u2[0]);
       // o retalho do fundo aparado não volta para o lote (ficaria fundo de novo)
       const novo: Poligono = { ext: limparAnel(u2[0].ext, 0.005), furos: [] };
-      if (profundidadeDe(novo, frentesBrutas(novo, naFrente)) > p.profundidadeMax + 0.5) continue;
+      if (profundidadeDe(novo, frentesBrutas(novo, naFrente), true) > p.profundidadeMax + 0.5) continue;
       if (!melhor || l.area < lotes[melhor.i].area) melhor = { i, pol: novo, area };
     }
     if (melhor) { lotes[melhor.i] = { ...lotes[melhor.i], pol: melhor.pol, area: melhor.area }; continue; }
@@ -1692,16 +1932,21 @@ function dividirQuadra(
   for (const l of h.lotes) {
     if (destinos.has(`${l.fileira}:${l.indice}`) || l.ponta) continue;
     const segs = frentesDe(l.pol, naFrente);
-    const ang = anguloMinimo(l.pol);
-    if (ang < 70) tortos++;
+    const ang = anguloMinimo(l.pol, pol);
+    // lote de divisa oblíqua de projeto: o canto do fundo pode fugir um pouco do
+    // ângulo da frente (o fundo da quadra de duas fileiras segue a bissetriz
+    // entre ruas que não são paralelas); torto é passar disso ou ficar agudo
+    const deProjeto = l.angCorte !== undefined && ang >= Math.max(40, l.angCorte - 15);
+    if (ang < 70 && !deProjeto) tortos++;
     const esq = esquinaDe(segs);
     const fr = segs.reduce((s2, [a, b]) => s2 + dist(a, b), 0);
     if (!esq && fr > 0 && l.area / fr < 1.5 * p.profundidadeMin && fundoDe(l.pol, segs) < p.profundidadeMin - 0.5) rasos++;
-    if (acimaDaArea(l.area, p) || passaDoFundo(l.pol, segs, p)) ruins++;
+    // medido no lote final (o pedaço provisório abaixo da mínima a harmonia já consertou)
+    if (acimaDaArea(l.area, p) || passaDoFundo(l.pol, segs, p) || l.area < p.areaMin - 0.01 || frentePrincipal(segs) < p.frenteMin - 0.005) ruins++;
     else if (!esq && acimaDaFrente(segs.reduce((s2, [a, b]) => s2 + dist(a, b), 0), p)) ruins++;
-    else if (ang < 50) ruins++; // cunha
+    else if (ang < 50 && !deProjeto) ruins++; // cunha
   }
-  return { lotes: h.lotes, destinos, cortes, fundo, sobras: finais, origem: o, u, v, fileiras: fileirasPol.length, problemas, ruins, nFaces: candidatas.length, tortos, largura: D, rasos };
+  return { lotes: h.lotes, destinos, cortes, fundo, sobras: finais, canteiros: h0.viario, origem: o, u, v, fileiras: fileirasPol.length, problemas, ruins, nFaces: candidatas.length, tortos, largura: D, rasos };
 }
 
 // ---------------------------------------------------------------------------
@@ -1814,6 +2059,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
   const bloqueios = [...viarioBruto, ...areas.flatMap((a) => a.pols)];
   const pedacos = diferenca([gleba], bloqueios);
   const sobras: Poligono[] = [];
+  const canteiros: Poligono[] = [];
 
   const fixos = new Indice();
   for (const a of areas) for (const pol of a.pols) fixos.add(item(pol, a.tipo === "app" ? "faixa" : "area", a.id, a.nome));
@@ -1917,6 +2163,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       }
     }
     for (const s of res.sobras) sobras.push(s);
+    canteiros.push(...(res.canteiros ?? []));
     desarmonicos += res.ruins + 0.5 * res.tortos;
 
     // numeração: fileira 0 no sentido dela, fileira 1 voltando — dá a volta na quadra
@@ -1979,7 +2226,32 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
   // --- retalhos encostados viram um só (o fundo aparado de vários lotes é UM retalho)
   if (sobras.length > 1) { const u = uniaoFechada(sobras); sobras.length = 0; sobras.push(...u); }
   // --- retalho minúsculo (canto de esquina, ponta de rua) é calçada: some no viário
-  for (let i = sobras.length - 1; i >= 0; i--) if (areaPol(sobras[i]) < 30) sobras.splice(i, 1);
+  //     — só na beira da rua; a lasca do miolo (dente no fundo entre as
+  //     fileiras) entra no lote vizinho, senão ficaria um furo de "viário"
+  //     no meio da quadra
+  for (let i = sobras.length - 1; i >= 0; i--) {
+    const sb = sobras[i];
+    if (areaPol(sb) >= 30) continue;
+    const naRua = ladosDe(ctx, sb, null).some((l) => ehFrente(l.tipo));
+    if (!naRua) {
+      const cb = caixa(sb.ext);
+      const perto = (l: Lote) => { const c2 = caixa(l.pol.ext); return c2.min[0] <= cb.max[0] + 0.1 && c2.max[0] >= cb.min[0] - 0.1 && c2.min[1] <= cb.max[1] + 0.1 && c2.max[1] >= cb.min[1] - 0.1; };
+      const viz = lotes.filter(perto)
+        .map((l) => ({ l, u: uniaoFechada([l.pol, sb]) }))
+        .filter((x) => x.u.length === 1 && !x.u[0].furos.length && dentroDasFaixas(ctx, x.u[0], p, !!x.l.ponta))
+        .sort((a, b) => a.l.area - b.l.area)[0];
+      if (viz) {
+        viz.l.pol = { ext: limparAnel(viz.u[0].ext, 0.005), furos: [] };
+        viz.l.area = areaPol(viz.l.pol);
+        // o índice guarda o polígono: o lote crescido entra de novo (mesmo id),
+        // senão o vizinho que encosta na lasca a leria como "lote vizinho"
+        lotesIdx.add(item(viz.l.pol, "lote", viz.l.id, `Lote ${String(viz.l.numero).padStart(2, "0")} da Quadra ${viz.l.quadra}`));
+        sobras.splice(i, 1);
+        continue;
+      }
+    }
+    canteiros.push(...sobras.splice(i, 1));
+  }
   // --- bico de quadra entre ruas (cruzamento em ângulo fechado) que não é
   //     praça (não cabe o círculo de 10 m) nem cabe num lote: é canteiro do
   //     cruzamento — entra no viário, em vez de ficar retalho sem destino
@@ -1988,7 +2260,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     const a = areaPol(sb);
     if (a >= 2 * p.areaPadrao || verdeValida([sb])) continue;
     const frenteRua = ladosDe(ctx, sb, null).filter((l) => ehFrente(l.tipo)).reduce((s2, l) => s2 + l.comp, 0);
-    if (frenteRua >= 5) sobras.splice(i, 1);
+    if (frenteRua >= 5) canteiros.push(...sobras.splice(i, 1));
   }
   // --- retalho colado numa área verde entra nela: a praça cresce num perímetro só
   for (let i = sobras.length - 1; i >= 0; i--) {
@@ -2028,9 +2300,9 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     l.rua = maior?.nome ?? "";
     l.naDivisa = l.lados.some((x) => x.tipo === "divisa");
     const segs: Seg[] = fr.map((x) => [x.a, x.b]);
-    l.profundidade = profundidadeDe(l.pol, segs);
+    l.profundidade = profundidadeDe(l.pol, segs, true);
     // lote de rua a rua (frente e fundo para rua): a regra vale para a frente principal
-    l.problemas.push(...foraDasFaixas(l, p, !fr.length, l.esquina || esquinaDe(segs), l.ponta ? 0 : frentePrincipal(segs), !!l.ponta));
+    l.problemas.push(...foraDasFaixas({ ...l, rasa: profundidadeDe(l.pol, segs) }, p, !fr.length, l.esquina || esquinaDe(segs), l.ponta ? 0 : frentePrincipal(segs), !!l.ponta));
     for (const pr of l.problemas) problemas.push({ nivel: "erro", texto: `Lote ${l.id}: ${pr}`, alvo: { lote: l.id } });
   }
   for (const q of quadras) for (const pr of q.problemas) problemas.push({ nivel: "aviso", texto: `Quadra ${q.nome}: ${pr}`, alvo: { quadra: q.nome } });
@@ -2078,7 +2350,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
 
   const ms = quadras.length ? Math.atan2(quadras[0].u[1], quadras[0].u[0]) : 0;
   const publicas = op.rapido ? [] : consolidar(areas);
-  return { plano, gleba, ladosGleba, ruas, quadras, lotes, areas, faixasRestricao, publicas, sobras, quadro, problemas, ms, desarmonicos };
+  return { plano, gleba, ladosGleba, ruas, quadras, lotes, areas, faixasRestricao, publicas, sobras, canteiros, quadro, problemas, ms, desarmonicos };
 }
 
 const cacheViario = new WeakMap<Resultado, Poligono[]>();
@@ -2091,6 +2363,8 @@ export function viarioDe(res: Resultado): Poligono[] {
   let v = cacheViario.get(res);
   if (!v) {
     v = diferenca([res.gleba], [...res.quadras.map((q) => q.pol), ...res.areas.flatMap((a) => a.pols), ...res.sobras]);
+    // o pedaço de quadra que virou canteiro/calçada é viário
+    if (res.canteiros?.length) v = uniaoFechada([...v, ...res.canteiros]);
     cacheViario.set(res, v);
   }
   return v;

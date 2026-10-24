@@ -74,7 +74,10 @@ test("travar a frente de um lote: a fileira se reorganiza e o comprimento se con
   assert.ok(travado.ajustado);
   const soma = (ls) => ls.reduce((s, l) => s + l.area, 0);
   assert.ok(Math.abs(soma(antes) - soma(depois)) < 0.5, "a fileira perdeu área");
-  assert.equal(depois.length, antes.length - 1, "um lote de 10 m a menos (sobra foi para as esquinas)");
+  // os 5 m a mais saem das esquinas: some um lote, ou a ponta é redividida em
+  // lotes iguais — em qualquer caso nenhum lote da fileira fica fora das faixas
+  assert.ok(depois.length === antes.length - 1 || depois.length === antes.length, `${antes.length} → ${depois.length} lotes`);
+  for (const l of depois) assert.deepEqual(l.problemas, [], `${l.id}: ${l.problemas.join("; ")}`);
 });
 
 test("arrastar a divisa trava a frente do lote de trás dela", () => {
