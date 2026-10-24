@@ -266,7 +266,11 @@ test("fileira com divisa torta: pontas proporcionais, sem lote nanico nem gigant
       if (ls.length < 4) continue;
       const areas = ls.map((l) => l.area).sort((a, b) => a - b);
       const med = areas[Math.floor(areas.length / 2)];
-      for (const l of ls) assert.ok(l.area < 2.6 * med, `${l.id} com ${l.area.toFixed(0)} m² numa fileira de ${med.toFixed(0)}`);
+      // lote de ponta anexa a sobra da gleba (até 2× a área máxima, como os de borda da equipe)
+      for (const l of ls) {
+        if (l.ponta) assert.ok(l.area <= 2 * pr0.params.areaMax + 0.5, `${l.id} de ponta com ${l.area.toFixed(0)} m²`);
+        else assert.ok(l.area < 2.6 * med, `${l.id} com ${l.area.toFixed(0)} m² numa fileira de ${med.toFixed(0)}`);
+      }
     }
   }
 });
@@ -337,18 +341,19 @@ test("medidas do lote: a proposta automática não deixa lote fora das faixas", 
   const { foraDasFaixas, esquinaDe } = await import("../src/lib/loteamento/calculo.ts");
   const p = pr0.params;
   for (const l of r0.lotes) {
-    assert.ok(l.area <= p.areaMax * 1.03 + 0.5, `${l.id} com ${l.area.toFixed(0)} m² (máx. ${p.areaMax})`);
-    assert.ok(l.profundidade <= p.profundidadeMax + 0.5, `${l.id} com ${l.profundidade.toFixed(1)} m de fundo`);
+    const f = l.ponta ? 2 : 1; // lote de ponta: até 2× a área e o fundo máximos
+    assert.ok(l.area <= f * p.areaMax * 1.03 + 0.5, `${l.id} com ${l.area.toFixed(0)} m² (máx. ${p.areaMax})`);
+    assert.ok(l.profundidade <= f * p.profundidadeMax + 0.5, `${l.id} com ${l.profundidade.toFixed(1)} m de fundo`);
     // lote de ponta (quadrinha da ponta da gleba virou um lote só) não tem frente máxima
     const esq = l.esquina || esquinaDe(l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via").map((x) => [x.a, x.b]));
-    assert.deepEqual(foraDasFaixas(l, p, false, esq, l.ponta ? 0 : l.frente), [], l.id);
+    assert.deepEqual(foraDasFaixas(l, p, false, esq, l.ponta ? 0 : l.frente, !!l.ponta), [], l.id);
   }
 });
 
 test("medidas do lote: área máxima menor divide o lote grande em vez de deixá-lo inteiro", () => {
   const pr = { ...pr0, params: { ...pr0.params, areaMax: 300, frenteMax: 12 } };
   const r = calcular(pr, perimetro);
-  const grandes = r.lotes.filter((l) => l.area > 300 * 1.03 + 0.5 && !l.esquina);
+  const grandes = r.lotes.filter((l) => l.area > 300 * 1.03 + 0.5 && !l.esquina && !l.ponta);
   // os de esquina podem passar (frente nas duas ruas); o resto cabe na faixa
   assert.ok(grandes.length <= Math.ceil(0.02 * r.lotes.length), `${grandes.length} lotes acima de 300 m²: ${grandes.slice(0, 5).map((l) => l.id).join(", ")}`);
   assert.ok(r.lotes.length > r0.lotes.length, "dividir os grandes tinha de dar mais lotes");
@@ -420,3 +425,27 @@ test("quadrinha da ponta vira um lote de ponta, sem triângulos soltos", () => {
     assert.ok(tri.length <= 1, `quadra ${q.nome} com ${tri.length} triângulos`);
   }
 });
+
+test("configuração ilógica é acertada na hora e o que sobra bloqueia a geração", async () => {
+  const { editarMedidas, conferirConfiguracao, normalizarProjeto } = await import("../src/lib/loteamento/modelo.ts");
+  const base = normalizarProjeto(null, "X", 4).params;
+  // máximo 10 × 20 e área máxima de 1.000 m²: não existe lote assim
+  let r = editarMedidas(base, { frenteMax: 10 });
+  r = editarMedidas(r.params, { profundidadeMax: 20 });
+  assert.ok(r.params.areaMax <= 10 * 20, `área máxima ${r.params.areaMax}`);
+  r = editarMedidas(r.params, { areaMax: 1000 });
+  assert.ok(r.params.frenteMax * r.params.profundidadeMax >= 1000 - 0.5, "a área máxima digitada tem de ser alcançável");
+  assert.ok(r.ajustes.some((x) => /Profundidade máxima ajustada/.test(x)), r.ajustes.join(" | "));
+  // área padrão sempre igual a frente × profundidade
+  const a = editarMedidas(base, { areaPadrao: 1000 }).params;
+  assert.ok(Math.abs(a.frente * a.profundidade - a.areaPadrao) < 0.05 * a.areaPadrao);
+  // mínimo federal
+  assert.equal(editarMedidas(base, { areaMin: 90 }).params.areaMin, 125);
+  // nenhum resultado de edição bloqueia; incoerência injetada bloqueia
+  assert.deepEqual(conferirConfiguracao(r.params, 50000).bloqueios, []);
+  const ruim = { ...base, areaPadrao: 1000 };
+  assert.ok(conferirConfiguracao(ruim, 50000).bloqueios.length > 0);
+  // gleba pequena para o lote pedido
+  assert.ok(conferirConfiguracao(base, 800).bloqueios.some((x) => /não cabem/.test(x)));
+});
+

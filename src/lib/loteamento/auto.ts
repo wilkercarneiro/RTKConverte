@@ -6,7 +6,7 @@
 // própria do que é um lote bom.
 import {
   antiHorario, areaAssinada, areaPol, caixa, centroide, dentroPol, dist, dot, esquerda, intersecao as intersecaoPols, limparAnel, mult,
-  offsetPols, recortarLinha, soma, sub, uniao, uniaoFechada, unit,
+  offsetPols, recortarLinha, soma, sub, uniao, uniaoFechada, unit, verdeValida,
 } from "./geom.ts";
 import type { Poligono, Pt } from "./geom.ts";
 import { calcular } from "./calculo.ts";
@@ -534,18 +534,7 @@ function nomearRuas(projeto: Projeto, plano: ReturnType<typeof criarPlano>, ang:
   return { ...projeto, ruas: [...projeto.ruas.filter((r) => !r.id.startsWith("a")), ...nomeadas] };
 }
 
-/**
- * Área verde de verdade: cabe um círculo de 10 m de raio em qualquer ponto
- * dela (Lei 9.413/81 de SP, art. 2º, IV, b — o critério que exclui nesga e
- * faixa estreita). Medido pela abertura: encolhe 10 m e expande de volta; o
- * que volta tem de cobrir quase toda a área.
- */
-export function verdeValida(pols: Poligono[], raio = 10): boolean {
-  const a = pols.reduce((s2, x) => s2 + areaPol(x), 0);
-  if (a < Math.PI * raio * raio) return false;
-  const ab = offsetPols(offsetPols(pols, -raio), raio, "redonda");
-  return ab.reduce((s2, x) => s2 + areaPol(x), 0) >= 0.7 * a;
-}
+export { verdeValida };
 
 /** Já há área pública cobrindo este retalho? (evita desenhar o mesmo verde de novo) */
 const coberto = (res: Resultado, s: Poligono) => {
@@ -607,7 +596,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
     else for (const l of melhor.lotes) c.ajustes.push({ fileira: l.fileira, indice: Math.floor(l.indice + 1e-9), destino: "verde" });
     quadrasCfg = cfgs;
     pr = { ...pr, quadras: quadrasCfg.slice() };
-    res = calcular(pr, perimetro, { rapido: true });
+    res = calcular(pr, perimetro); // a meta confere no cálculo completo (o da planta)
     falta = (p.pctVerdeMin / 100) * G - verdeAtual();
   }
 

@@ -9,7 +9,7 @@ import type { Proposta } from "../../lib/loteamento/auto.ts";
 import { fmt } from "../../lib/loteamento/calculo.ts";
 import type { Perimetro, Resultado } from "../../lib/loteamento/calculo.ts";
 import { criarPlano, paraPlano } from "../../lib/loteamento/plano.ts";
-import { FAIXA_SUGERIDA, ROTULO_BORDA, conferirFaixas, faixasDerivadas, mudarLote } from "../../lib/loteamento/modelo.ts";
+import { FAIXA_SUGERIDA, ROTULO_BORDA, conferirConfiguracao, editarMedidas, faixasDerivadas, folgaRecomendada } from "../../lib/loteamento/modelo.ts";
 import type { Borda, Parametros, Projeto, TipoBorda } from "../../lib/loteamento/modelo.ts";
 import { caixa, dist } from "../../lib/loteamento/geom.ts";
 import type { Poligono, Pt } from "../../lib/loteamento/geom.ts";
@@ -26,11 +26,11 @@ interface Props {
 
 /** Perfis prontos: o ponto de partida mais comum de cada tipo de loteamento. */
 const PERFIS: { nome: string; desc: string; p: Partial<Parametros> }[] = [
-  { nome: "Mínimo da Lei 6.766", desc: "125 m² · frente 5 m", p: { frente: 5, profundidade: 25, areaMin: 125, frenteMin: 5, ruaLargura: 12, ruaPista: 7 } },
-  { nome: "Popular", desc: "8 × 25 m = 200 m²", p: { frente: 8, profundidade: 25, areaMin: 160, frenteMin: 8, ruaLargura: 12, ruaPista: 8 } },
-  { nome: "Padrão", desc: "10 × 25 m = 250 m²", p: { frente: 10, profundidade: 25, areaMin: 200, frenteMin: 10, ruaLargura: 12, ruaPista: 8 } },
-  { nome: "Médio", desc: "12 × 30 m = 360 m²", p: { frente: 12, profundidade: 30, areaMin: 300, frenteMin: 12, ruaLargura: 14, ruaPista: 9 } },
-  { nome: "Chácaras", desc: "20 × 50 m = 1.000 m²", p: { frente: 20, profundidade: 50, areaMin: 1000, frenteMin: 20, ruaLargura: 14, ruaPista: 8, quadraCompMax: 300 } },
+  { nome: "Mínimo da Lei 6.766", desc: "6 × 25 m = 150 m² (mín. 125 m²)", p: { frente: 6, profundidade: 25, areaMin: 125, frenteMin: 5, ruaLargura: 12, ruaPista: 7 } },
+  { nome: "Popular", desc: "8 × 25 m = 200 m²", p: { frente: 8, profundidade: 25, areaMin: 160, frenteMin: 6.4, ruaLargura: 12, ruaPista: 8 } },
+  { nome: "Padrão", desc: "10 × 25 m = 250 m²", p: { frente: 10, profundidade: 25, areaMin: 200, frenteMin: 8, ruaLargura: 12, ruaPista: 8 } },
+  { nome: "Médio", desc: "12 × 30 m = 360 m²", p: { frente: 12, profundidade: 30, areaMin: 288, frenteMin: 9.6, ruaLargura: 14, ruaPista: 9 } },
+  { nome: "Chácaras", desc: "20 × 50 m = 1.000 m²", p: { frente: 20, profundidade: 50, areaMin: 800, frenteMin: 16, ruaLargura: 14, ruaPista: 8, quadraCompMax: 300 } },
 ];
 
 function pathPol(p: Poligono, T: (q: Pt) => Pt): string {
@@ -59,9 +59,16 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
   const p = projeto.params;
   const setP = (patch: Partial<Parametros>) => onMudar({ ...projeto, params: { ...p, ...patch } });
   // lote: as faixas mín/padrão/máx andam juntas (ver mudarLote)
-  const setLote = (patch: Partial<Parametros>) => onMudar({ ...projeto, params: mudarLote(p, patch) });
+  // o que o sistema acomodou na última edição das medidas (aparece embaixo da grade)
+  const [ajustes, setAjustes] = useState<string[]>([]);
+  const setLote = (patch: Partial<Parametros>) => {
+    const r = editarMedidas(p, patch);
+    setAjustes(r.ajustes);
+    onMudar({ ...projeto, params: r.params });
+  };
   const usarPerfil = (pp: Partial<Parametros>) => {
     const base = { ...p, ...pp };
+    setAjustes([]);
     onMudar({ ...projeto, params: { ...base, ...faixasDerivadas(base) } });
   };
   const [ladoAtivo, setLadoAtivo] = useState<number | null>(null);
@@ -121,6 +128,8 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
   }
 
   const lotePadrao = p.frente * p.profundidade;
+  // o que impede gerar: só passa configuração coerente
+  const conf = conferirConfiguracao(p, areaHa * 1e4);
   return (
     <div className="lot-assistente">
       <section className="bloco">
@@ -209,7 +218,17 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
           o que passa da máxima é dividido ou aparado no fundo, o que fica abaixo da mínima se junta ao vizinho. Na prancheta,
           a edição também respeita as faixas. Quadra de duas fileiras: {fmt(2 * p.profundidade)} m de fundo a fundo.
         </p>
-        {conferirFaixas(p).map((t) => <p key={t} className="lot-aviso">Atenção: {t}.</p>)}
+        {ajustes.length > 0 && (
+          <div className="lot-ajustes" role="status">
+            <b>Ajustado automaticamente para manter as medidas coerentes:</b>
+            <ul>{ajustes.map((t) => <li key={t}>{t}</li>)}</ul>
+          </div>
+        )}
+        {conf.avisos.map((t) => (
+          <p key={t} className="lot-aviso">
+            {t} {t.startsWith("Faixas") && <button type="button" className="lot-link" onClick={() => { setAjustes(["Folga recomendada aplicada às mínimas e máximas."]); onMudar({ ...projeto, params: folgaRecomendada(p) }); }}>Usar folga recomendada</button>}
+          </p>
+        ))}
         <div className="lot-grade">
           <label>Quando a fileira não fecha em lotes inteiros, a sobra vai para
             <select value={p.sobra} onChange={(e) => setP({ sobra: e.target.value as Parametros["sobra"] })}>
@@ -306,7 +325,13 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
       </section>
 
       <div className="lot-gerar">
-        <button className="principal grande" disabled={gerando} onClick={gerar}>
+        {conf.bloqueios.length > 0 && (
+          <div className="lot-bloqueio" role="alert">
+            <b>Corrija antes de gerar:</b>
+            <ul>{conf.bloqueios.map((t) => <li key={t}>{t}</li>)}</ul>
+          </div>
+        )}
+        <button className="principal grande" disabled={gerando || conf.bloqueios.length > 0} onClick={gerar}>
           {gerando ? <><span className="spinner" /> {etapaGerar === "relevo" ? "Lendo o relevo do terreno…" : "Testando direções, contorno e defasagens…"}</> : modoRuas === "mao" ? "Ir para o desenho →" : propostas ? "Gerar de novo" : "Gerar o loteamento"}
         </button>
         {erro && <p className="lot-erro">{erro}</p>}

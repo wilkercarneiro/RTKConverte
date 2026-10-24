@@ -309,3 +309,17 @@ export function recortarLinha(linha: Pt[], pol: Poligono): Pt[][] {
   const abertos = ClipperLib.Clipper.OpenPathsFromPolyTree(tree) as Path[];
   return abertos.map(doPath).filter((l) => l.length >= 2);
 }
+
+/**
+ * Área verde de verdade: cabe um círculo de 10 m de raio em qualquer ponto
+ * dela (Lei 9.413/81 de SP, art. 2º, IV, b — o critério que exclui nesga e
+ * faixa estreita). Medido pela abertura: encolhe 10 m e expande de volta; o
+ * que volta tem de cobrir quase toda a área.
+ */
+export function verdeValida(pols: Poligono[], raio = 10): boolean {
+  const a = pols.reduce((s2, x) => s2 + areaPol(x), 0);
+  if (a < Math.PI * raio * raio) return false;
+  const ab = offsetPols(offsetPols(pols, -raio), raio, "redonda");
+  return ab.reduce((s2, x) => s2 + areaPol(x), 0) >= 0.7 * a;
+}
+
