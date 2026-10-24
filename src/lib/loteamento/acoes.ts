@@ -87,9 +87,9 @@ export function restaurarQuadra(pr: Projeto, q: Quadra): Projeto {
 // nenhum sai das regras) fica no editor, que recalcula antes de aceitar.
 // ---------------------------------------------------------------------------
 
-const FORA = "Mude as medidas do lote nas perguntas (item 2) se precisar.";
+const FORA = "Aplicado mesmo assim: o lote fica com aviso na planta até ser acertado.";
 
-/** Frente ou área digitada fora das faixas do projeto → mensagem; dentro → null. */
+/** Frente ou área digitada fora das faixas do projeto → aviso (a edição é livre); dentro → null. */
 export function conferirMedida(p: Parametros, campo: "frente" | "area", v: number): string | null {
   const [min, max, un, nome] = campo === "frente" ? [p.frenteMin, p.frenteMax, "m", "Frente"] : [p.areaMin, p.areaMax, "m²", "Área"];
   if (v >= min - 1e-6 && v <= max + 1e-6) return null;
@@ -103,7 +103,7 @@ function seguinte(res: Resultado, l: Lote): Lote | undefined {
     .sort((a, b) => a.indice - b.indice)[0];
 }
 
-/** Unir passaria da área máxima? */
+/** Unir passaria da área máxima? (aviso; só "não há lote seguinte" impede) */
 export function conferirUnir(p: Parametros, res: Resultado, lotes: Lote[]): string | null {
   const grupo = lotes.length === 1 ? [lotes[0], seguinte(res, lotes[0])].filter((x): x is Lote => !!x) : lotes;
   if (grupo.length < 2) return "Não há lote seguinte na fileira para unir.";
@@ -112,19 +112,29 @@ export function conferirUnir(p: Parametros, res: Resultado, lotes: Lote[]): stri
   return `Unidos, os lotes teriam ${fmt(area)} m² — passa da área máxima de ${fmt(p.areaMax)} m². ${FORA}`;
 }
 
-/** Dividir em n deixaria parte abaixo do mínimo? */
+/** Dividir em n deixaria parte abaixo do mínimo? (aviso) */
 export function conferirDividir(p: Parametros, l: Lote, n: number): string | null {
   if (l.area / n < p.areaMin - 0.01) return `Em ${n} partes, cada uma teria ${fmt(l.area / n)} m² — abaixo da área mínima de ${fmt(p.areaMin)} m².`;
   if (l.frente / n < p.frenteMin - 0.005) return `Em ${n} partes, cada uma teria ${fmt(l.frente / n)} m de frente — abaixo da frente mínima de ${fmt(p.frenteMin)} m.`;
   return null;
 }
 
-/** Arrastar a divisa entre dois lotes = travar a frente do lote de trás dela (dentro das faixas do projeto). */
+/**
+ * Arrastar a divisa entre dois lotes = travar a frente do lote de trás dela.
+ * Edição livre: a divisa vai aonde o operador soltar (fora das faixas o lote
+ * fica com aviso); só não passa de 0,5 m, para o lote não sumir.
+ */
 export function moverCorte(pr: Projeto, res: Resultado, c: Corte, ponto: Pt): Projeto {
   const s = dot(sub(ponto, c.o), c.dir);
-  const frente = Math.min(pr.params.frenteMax, Math.max(pr.params.frenteMin, s - c.s0));
-  const l = res.lotes.find((x) => x.quadra === quadraDoCorte(res, c)?.nome && x.fileira === c.fileira && Math.abs(x.indice - c.indice) < 1e-9);
-  if (!l) return pr;
+  // só o limite geométrico: a divisa não passa do fim da fileira
+  const frente = Math.max(0.5, Math.min(s - c.s0, (c.sFim ?? Infinity) - c.s0 - 0.5));
+  const q = quadraDoCorte(res, c);
+  if (!q) return pr;
+  // o lote daquela posição pode ter sido redistribuído no acabamento (ponta da
+  // fileira): a trava vai para a posição mesmo assim — e lote travado o
+  // acabamento não refaz, então a divisa fica onde o operador soltou
+  const l = res.lotes.find((x) => x.quadra === q.nome && x.fileira === c.fileira && Math.abs(x.indice - c.indice) < 1e-9)
+    ?? ({ quadra: q.nome, fileira: c.fileira, indice: c.indice } as Lote);
   return ajustarLote(pr, res, l, { frente: Math.round(frente * 100) / 100 });
 }
 
@@ -294,43 +304,45 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
 
     case "frente": case "f": case "testada": {
       if (!Number.isFinite(n1) || n1 <= 0) return numErr("frente 12");
-      if (lotes.length || quadra) { const e = conferirMedida(p, "frente", n1); if (e) return { msg: e, erro: true }; }
+      const avF = lotes.length || quadra ? conferirMedida(p, "frente", n1) : null;
+      const comAvF = (m: string) => (avF ? `${m} Atenção: ${avF}` : m);
       if (lotes.length) {
         let novo = pr;
         for (const l of lotes) novo = ajustarLote(novo, res, l, { frente: n1 });
-        return { pr: novo, msg: `${lotes.length === 1 ? `Lote ${lotes[0].id}` : `${lotes.length} lotes`} com frente travada em ${fmt(n1)} m — os demais da fileira se ajustaram.` };
+        return { pr: novo, msg: comAvF(`${lotes.length === 1 ? `Lote ${lotes[0].id}` : `${lotes.length} lotes`} com frente travada em ${fmt(n1)} m — os demais da fileira se ajustaram.`) };
       }
-      if (quadra) return { pr: ajustarQuadra(pr, res, quadra, { modo: "frente", valor: n1 }), msg: `Quadra ${quadra.nome}: frente padrão ${fmt(n1)} m.` };
+      if (quadra) return { pr: ajustarQuadra(pr, res, quadra, { modo: "frente", valor: n1 }), msg: comAvF(`Quadra ${quadra.nome}: frente padrão ${fmt(n1)} m.`) };
       return { pr: { ...pr, params: mudarLote(p, { frente: n1 }) }, msg: `Frente padrão do projeto: ${fmt(n1)} m (todas as quadras sem ajuste próprio; as faixas automáticas acompanham).` };
     }
     case "area": case "a": {
       if (!Number.isFinite(n1) || n1 <= 0) return numErr("area 300");
-      if (lotes.length || quadra) { const e = conferirMedida(p, "area", n1); if (e) return { msg: e, erro: true }; }
+      const avA = lotes.length || quadra ? conferirMedida(p, "area", n1) : null;
+      const comAvA = (m: string) => (avA ? `${m} Atenção: ${avA}` : m);
       if (lotes.length) {
         let novo = pr;
         for (const l of lotes) novo = ajustarLote(novo, res, l, { area: n1 });
-        return { pr: novo, msg: `Área travada em ${fmt(n1)} m² — a frente é calculada para chegar nela.` };
+        return { pr: novo, msg: comAvA(`Área travada em ${fmt(n1)} m² — a frente é calculada para chegar nela.`) };
       }
-      if (quadra) return { pr: ajustarQuadra(pr, res, quadra, { modo: "area", valor: n1 }), msg: `Quadra ${quadra.nome}: lotes de áreas iguais, alvo ${fmt(n1)} m².` };
+      if (quadra) return { pr: ajustarQuadra(pr, res, quadra, { modo: "area", valor: n1 }), msg: comAvA(`Quadra ${quadra.nome}: lotes de áreas iguais, alvo ${fmt(n1)} m².`) };
       return precisa("um lote ou uma quadra");
     }
     case "unir": case "juntar": {
       if (!lotes.length) return precisa("o lote");
       const eU = conferirUnir(p, res, lotes);
-      if (eU) return { msg: eU, erro: true };
+      if (eU && eU.startsWith("Não há")) return { msg: eU, erro: true };
       const ord = [...lotes].sort((x, y) => x.fileira - y.fileira || x.indice - y.indice);
       let novo = pr;
       const alvo = ord.length === 1 ? ord : ord.slice(0, -1);
       for (const l of alvo) novo = ajustarLote(novo, res, l, { unir: true });
-      return { pr: novo, sel: { tipo: "lotes", chaves: [chaveDoLote(ord[0])] }, msg: ord.length === 1 ? `Lote ${ord[0].id} unido ao seguinte.` : `${ord.length} lotes unidos.` };
+      const msgU = ord.length === 1 ? `Lote ${ord[0].id} unido ao seguinte.` : `${ord.length} lotes unidos.`;
+      return { pr: novo, sel: { tipo: "lotes", chaves: [chaveDoLote(ord[0])] }, msg: eU ? `${msgU} Atenção: ${eU}` : msgU };
     }
     case "dividir": case "desmembrar": {
       if (lotes.length !== 1) return precisa("um lote");
       const n = Number.isFinite(n1) ? Math.round(n1) : 2;
       if (n < 2 || n > 20) return { msg: "Divida em 2 a 20 partes.", erro: true };
       const eD = conferirDividir(p, lotes[0], n);
-      if (eD) return { msg: eD, erro: true };
-      return { pr: ajustarLote(pr, res, lotes[0], { dividir: n }), msg: `Lote ${lotes[0].id} dividido em ${n}.` };
+      return { pr: ajustarLote(pr, res, lotes[0], { dividir: n }), msg: eD ? `Lote ${lotes[0].id} dividido em ${n}. Atenção: ${eD} ${FORA}` : `Lote ${lotes[0].id} dividido em ${n}.` };
     }
     case "verde": case "institucional": case "lazer": case "app": {
       const tipo = TIPOS_AREA[cmd];

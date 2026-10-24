@@ -174,8 +174,14 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     const tolM = 10 / vv.s;
     let melhor: Pt | null = null, dm = tolM;
     const testar = (q: Pt) => { const d = dist(p, q); if (d < dm) { dm = d; melhor = q; } };
+    // perto do cursor (caixa da tolerância) — quinas de tudo o que já está traçado
+    const caixaM = Math.max(60, 2 * tolM);
+    const perto = (pol: { ext: Pt[] }) => pol.ext.some((q) => Math.abs(q[0] - p[0]) < caixaM && Math.abs(q[1] - p[1]) < caixaM);
     res.gleba.ext.forEach(testar);
-    for (const r of res.ruas) r.eixo.forEach(testar);
+    for (const r of res.ruas) { r.eixo.forEach(testar); for (const pg of r.pols) if (perto(pg)) pg.ext.forEach(testar); }
+    for (const l of res.lotes) if (perto(l.pol)) l.pol.ext.forEach(testar);
+    for (const q of res.quadras) if (perto(q.pol)) q.pol.ext.forEach(testar);
+    for (const a of res.areas) for (const pg of a.pols) if (perto(pg)) pg.ext.forEach(testar);
     if (melhor) { setSnap(melhor); return melhor; }
     // ortogonal à direção principal (Shift)
     if (shift.current && ancora) {
@@ -195,7 +201,16 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     // sobre um eixo ou a divisa
     const tolL = 7 / vv.s;
     let proj2: Pt | null = null, dl = tolL;
-    const linhas: Pt[][] = [...res.ruas.map((r) => r.eixo), [...res.gleba.ext, res.gleba.ext[0]]];
+    const fechar = (e: Pt[]) => [...e, e[0]];
+    // caixa do polígono (com a tolerância) contém o cursor: a linha pode passar por ele
+    const pertoL = (e: Pt[]) => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const q of e) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); } return p[0] >= x0 - tolL && p[0] <= x1 + tolL && p[1] >= y0 - tolL && p[1] <= y1 + tolL; };
+    const linhas: Pt[][] = [
+      ...res.ruas.map((r) => r.eixo), fechar(res.gleba.ext),
+      // divisas dos lotes e bordas das quadras e áreas: o ponto cai sobre a linha
+      ...res.lotes.filter((l) => pertoL(l.pol.ext)).map((l) => fechar(l.pol.ext)),
+      ...res.quadras.filter((q) => pertoL(q.pol.ext)).map((q) => fechar(q.pol.ext)),
+      ...res.areas.flatMap((a) => a.pols).filter((pg) => pertoL(pg.ext)).map((pg) => fechar(pg.ext)),
+    ];
     for (const l of linhas) for (let i = 0; i + 1 < l.length; i++) {
       const { d, t } = distSegmento(p, l[i], l[i + 1]);
       if (d < dl) { dl = d; proj2 = [l[i][0] + (l[i + 1][0] - l[i][0]) * t, l[i][1] + (l[i + 1][1] - l[i][1]) * t]; }
@@ -323,6 +338,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
   }
 
   const raf = useRef(0);
+  const pendente = useRef<(() => void) | null>(null);
   function onMove(e: RPointerEvent) {
     if (!v) return;
     shift.current = e.shiftKey;
@@ -344,7 +360,9 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       return;
     }
     cancelAnimationFrame(raf.current);
-    raf.current = requestAnimationFrame(() => {
+    // a última mudança do arraste fica pendente até o próximo quadro; ao soltar
+    // ela é aplicada antes de fechar o arraste (soltar rápido não a perde)
+    pendente.current = () => {
       if (a.tipo === "corte") onMudar(moverCorte(a.pr0, a.res0, a.corte, p), true);
       else if (a.tipo === "fundo") onMudar(moverFundo(a.pr0, a.res0, a.quadra, p), true);
       else if (a.tipo === "vertice") {
@@ -355,7 +373,8 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         if (a.inserir) eixo.splice(a.i, 0, q); else eixo[a.i] = q;
         onMudar(editarRua(a.pr0, a.rua, { eixo }), true);
       }
-    });
+    };
+    raf.current = requestAnimationFrame(() => { pendente.current?.(); pendente.current = null; });
   }
 
   function onUp(e: RPointerEvent) {
@@ -364,6 +383,11 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     setArrastando(false);
     setSnap(null);
     if (!a) return;
+    if (a.tipo !== "pan") {
+      cancelAnimationFrame(raf.current);
+      pendente.current?.();
+      pendente.current = null;
+    }
     if (a.tipo === "pan") {
       if (a.moveu) return;
       // clique simples: seleção

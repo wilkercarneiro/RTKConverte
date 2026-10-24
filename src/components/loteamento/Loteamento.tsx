@@ -29,14 +29,14 @@ type Etapa = "perguntas" | "projeto" | "entregas";
 interface Historico { passado: Projeto[]; atual: Projeto; futuro: Projeto[]; base: Projeto | null }
 
 /** Desfazer/refazer. Mudança transiente (arraste) não empilha: só o resultado final, ao soltar. */
-/** O que a edição pioraria nas regras do lote: o 1º lote que sai delas (ou null). */
+/** O que a edição pioraria nas regras do lote: o 1º lote que sai delas (ou null) — vira aviso, não bloqueio. */
 function violacaoNova(antes: Resultado, depois: Resultado | null): string | null {
   if (!depois) return "o cálculo falhou com essa mudança";
   const conta = (r: Resultado) => r.lotes.reduce((s, l) => s + l.problemas.length, 0);
   if (conta(depois) <= conta(antes)) return null;
   const ja = new Set(antes.lotes.flatMap((l) => l.problemas.map((t) => `${l.id}|${t}`)));
   const l = depois.lotes.find((x) => x.problemas.some((t) => !ja.has(`${x.id}|${t}`))) ?? depois.lotes.find((x) => x.problemas.length);
-  return l ? `o lote ${l.id} ficaria com ${l.problemas.find((t) => !ja.has(`${l.id}|${t}`)) ?? l.problemas[0]}` : "um lote sairia das regras";
+  return l ? `o lote ${l.id} ficou com ${l.problemas.find((t) => !ja.has(`${l.id}|${t}`)) ?? l.problemas[0]}` : "um lote saiu das medidas";
 }
 
 function useHistorico(inicial: Projeto | null) {
@@ -118,25 +118,44 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   }, [perimetro]);
   const res: Resultado | null = useMemo(() => (projeto ? calc(projeto) : null), [projeto, calc]);
 
-  const mostrar = useCallback((t: string, erro = false) => setMsg({ t, erro }), []);
-  // A edição respeita as regras do lote (mínimas e máximas de frente,
-  // profundidade e área): ajuste de lote/quadra que deixaria lote fora delas
-  // não entra. Mudar rua, área ou as próprias regras passa (é decisão de projeto).
+  // aviso da última edição: a mensagem de sucesso que o painel mostra logo em
+  // seguida o leva junto (e ele vale só para essa edição)
+  const avisoRef = useRef<string | null>(null);
+  const mostrar = useCallback((t: string, erro = false) => {
+    const a = avisoRef.current;
+    setMsg({ t: a && !t.includes(a) && !t.includes("Atenção:") ? `${t} Atenção: ${a}` : t, erro });
+  }, []);
+  // Edição livre: o operador mexe em lote, divisa e quadra à vontade. O que
+  // sair das medidas do projeto (frente, profundidade, área, forma) é aplicado
+  // e aparece como aviso — o lote fica marcado na planta até ser acertado.
+  const baseArraste = useRef<Resultado | null>(null);
+  const ultimoArraste = useRef<Projeto | null>(null);
   const mudar = useCallback((p: Projeto, transiente = false): boolean => {
-    const atual = projeto;
-    const r0 = res;
-    const soAjuste = !!atual && !!r0 && p.ruas === atual.ruas && p.areas === atual.areas && p.bordas === atual.bordas && p.params === atual.params && p.quadras !== atual.quadras;
-    if (soAjuste) {
-      const r1 = calc(p);
-      const viola = violacaoNova(r0!, r1);
-      if (viola) {
-        if (!transiente) mostrar(`Não aplicado: ${viola}. As medidas do lote definidas no projeto valem também na edição (mude-as nas perguntas, item 2, se precisar).`, true);
-        return false;
-      }
+    const r0 = transiente ? (baseArraste.current ??= res) : baseArraste.current ?? res;
+    const r1 = r0 ? calc(p) : null;
+    const viola = r0 ? violacaoNova(r0, r1) : null;
+    if (!r1 && r0) { if (!transiente) mostrar("Essa mudança não fecha o cálculo (geometria impossível) — não aplicada.", true); return false; }
+    if (transiente) ultimoArraste.current = p;
+    if (!transiente) {
+      baseArraste.current = null;
+      ultimoArraste.current = null;
+      avisoRef.current = viola;
+      if (viola) mostrar(`Aplicado. Atenção: ${viola} — fora das medidas do projeto; ajuste se quiser.`);
+      setTimeout(() => { avisoRef.current = null; }, 0);
     }
     hist.mudar(p, transiente);
     return true;
-  }, [hist, projeto, res, calc, mostrar]);
+  }, [hist, res, calc, mostrar]);
+  const fimArraste = useCallback(() => {
+    const r0 = baseArraste.current, final = ultimoArraste.current;
+    baseArraste.current = null;
+    ultimoArraste.current = null;
+    hist.fimArraste();
+    if (r0 && final) {
+      const viola = violacaoNova(r0, calc(final));
+      if (viola) mostrar(`Atenção: ${viola} — fora das medidas do projeto. A edição foi aplicada; ajuste se quiser.`);
+    }
+  }, [hist, calc, mostrar]);
 
   // atalhos globais: desfazer/refazer e "/" para a linha de comando
   useEffect(() => {
@@ -248,7 +267,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
 
           <div className="lot-centro">
             <Editor projeto={projeto} res={res} fuso={fuso} sel={sel} onSel={setSel} ferramenta={ferramenta} onFerramenta={setFerramenta}
-              onMudar={mudar} onFimArraste={hist.fimArraste} vista={vista} focar={focar} onMsg={(m) => mostrar(m)} />
+              onMudar={mudar} onFimArraste={fimArraste} vista={vista} focar={focar} onMsg={(m) => mostrar(m)} />
             <form className="lot-comando" onSubmit={(e) => { e.preventDefault(); rodarComando(cmd); setCmd(""); }}>
               <div className="lot-cmd-linha">
                 <span className="lot-cmd-prompt">Comando{sel ? ` · ${sel.tipo === "lotes" ? (qtdSel > 1 ? `${qtdSel} lotes` : `lote ${lotesDaSelecao(res, sel)[0]?.id ?? ""}`) : sel.tipo === "quadra" ? `quadra ${sel.nome}` : sel.tipo}` : ""}:</span>

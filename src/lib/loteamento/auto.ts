@@ -658,7 +658,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
   let quadrasCfg: QuadraCfg[] = [...pr.quadras];
   let guarda = 0;
   while (falta > 1 && guarda++ < 25) {
-    res = calcular(pr, perimetro);
+    res = calcular(pr, perimetro, { manterSobras: true });
     const valor = valorDosLotes(res, pr, perimetro);
     const melhor = melhorJanelaVerde(res, valor, falta);
     if (!melhor) break;
@@ -670,13 +670,13 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
     else for (const l of melhor.lotes) c.ajustes.push({ fileira: l.fileira, indice: Math.floor(l.indice + 1e-9), destino: "verde" });
     quadrasCfg = cfgs;
     pr = { ...pr, quadras: quadrasCfg.slice() };
-    res = calcular(pr, perimetro); // a meta confere no cálculo completo (o da planta)
+    res = calcular(pr, perimetro, { manterSobras: true }); // a meta confere no cálculo completo (o da planta)
     falta = (p.pctVerdeMin / 100) * G - verdeAtual();
   }
 
   // 3. institucional: lotes de uma ponta da quadra mais central
   //    (se a quadra central não basta, continua na vizinha mais próxima)
-  res = calcular(pr, perimetro); // lotes e metas do cálculo completo (o da planta)
+  res = calcular(pr, perimetro, { manterSobras: true }); // lotes e metas do cálculo completo (o da planta)
   let faltaInst = (p.pctInstitucionalMin / 100) * G - res.quadro.institucional;
   let referencia = centroide(res.gleba.ext);
   const usadas = new Set<string>();
@@ -711,7 +711,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
     }
     quadrasCfg = cfgs;
     pr = { ...pr, quadras: quadrasCfg.slice() };
-    res = calcular(pr, perimetro);
+    res = calcular(pr, perimetro, { manterSobras: true });
     faltaInst = (p.pctInstitucionalMin / 100) * G - res.quadro.institucional;
   }
 
@@ -726,12 +726,12 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
   //    menos na beira da estrada: ali o retalho é somado ao lote vizinho
   // (repete: unir dois lotes muda a fileira e pode sobrar outro pequeno)
   for (let rodada = 0; rodada < 3; rodada++) {
-    res = calcular(pr, perimetro);
+    res = calcular(pr, perimetro, { manterSobras: true });
     // o cálculo completo testa outras frentes nas quadras difíceis e pode
     // soltar retalho que o rápido não via: ele também vira área verde
     if (!semVerde) {
       const novas = res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
-      if (novas.length) { pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...novas] }; res = calcular(pr, perimetro); }
+      if (novas.length) { pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...novas] }; res = calcular(pr, perimetro, { manterSobras: true }); }
     }
     // só o que está ABAIXO das regras (área, frente, sem frente); o que passa do
     // máximo o motor já divide — unir aqui criaria lote ainda maior
@@ -765,7 +765,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
   // 6. fechamento: o retalho que ainda ficou e é praça de verdade vira área verde
   //    (a planta não sai com área rosa que podia ser praça)
   if (!semVerde) {
-    res = calcular(pr, perimetro);
+    res = calcular(pr, perimetro, { manterSobras: true });
     const novas = res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
     if (novas.length) pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...novas] };
   }

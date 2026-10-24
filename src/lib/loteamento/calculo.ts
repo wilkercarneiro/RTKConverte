@@ -58,6 +58,8 @@ export interface Lote {
   profundidade: number;
   /** lote de ponta que absorve a irregularidade da gleba (frente máxima não se aplica) */
   ponta?: boolean;
+  /** absorveu um retalho que não cabia em lugar nenhum (fora das medidas = aviso, não erro) */
+  retalho?: boolean;
   /** ângulo de projeto entre a frente e as divisas (graus), quando a fileira
    *  corta na direção da malha — lote em paralelogramo de propósito, não torto */
   angCorte?: number;
@@ -92,6 +94,8 @@ export interface Corte {
   /** início do lote à esquerda e posição do corte */
   s0: number;
   s: number;
+  /** fim da fileira (a divisa não passa dele) */
+  sFim?: number;
   arrastavel: boolean;
 }
 
@@ -248,6 +252,10 @@ interface Contexto {
   pecas?: Indice;
   /** busca de malha do gerador: só a nota importa (pula a redistribuição das pontas) */
   busca?: boolean;
+  /** nenhum retalho fica sem dono: o que cabe vira lote, o resto entra no lote vizinho */
+  juntar?: boolean;
+  /** pontos dos retalhos marcados como área pública (esses não viram lote) */
+  marcas?: Pt[];
 }
 
 /** Sonda um ponto logo do lado de fora da aresta e diz o que tem lá. */
@@ -777,6 +785,9 @@ interface ResultadoQuadra {
  */
 export const FOLGA_MAX = 1.03;
 export const acimaDaArea = (a: number, p: Parametros) => a > p.areaMax * FOLGA_MAX + 0.5;
+/** Profundidade-limite: a máxima com a mesma folga de 3% da área e da frente (mín. 0,5 m) —
+ *  o retalho que encosta no fundo e acrescenta 1 m num lote de 40 m não vira aviso. */
+export const limiteFundo = (p: Parametros) => Math.max(p.profundidadeMax * FOLGA_MAX, p.profundidadeMax + 0.5);
 export const acimaDaFrente = (f: number, p: Parametros) => f > p.frenteMax * FOLGA_MAX + 0.05;
 
 export function foraDasFaixas(
@@ -796,7 +807,7 @@ export function foraDasFaixas(
   // 10 m em cada uma não tem 20 m de frente
   else if (Math.min(l.frente, testada > 0 ? testada : l.frente) < p.frenteMin - 0.005) out.push(`frente ${fmt(Math.min(l.frente, testada > 0 ? testada : l.frente))} m abaixo do mínimo de ${fmt(p.frenteMin)} m`);
   else if (!esquina && acimaDaFrente(testada, p)) out.push(`frente ${fmt(testada)} m acima do máximo de ${fmt(p.frenteMax)} m`);
-  if (!semFrente && l.profundidade > fator * p.profundidadeMax + 0.5) out.push(`profundidade ${fmt(l.profundidade)} m acima do máximo de ${fmt(fator * p.profundidadeMax)} m`);
+  if (!semFrente && l.profundidade > fator * limiteFundo(p)) out.push(`profundidade ${fmt(l.profundidade)} m acima do máximo de ${fmt(fator * p.profundidadeMax)} m`);
   else if (!semFrente && !esquina && (l.rasa ?? l.profundidade) > 0 && (l.rasa ?? l.profundidade) < p.profundidadeMin - 0.5) out.push(`profundidade ${fmt(l.rasa ?? l.profundidade)} m abaixo do mínimo de ${fmt(p.profundidadeMin)} m`);
   return out;
 }
@@ -904,8 +915,8 @@ function fundoMaxDe(pol: Poligono, segs: Seg[]): number {
 /** Passa da profundidade máxima? Lote cuja diagonal nem chega lá não precisa ser medido. */
 function passaDoFundo(pol: Poligono, segs: Seg[], p: Parametros): boolean {
   const b = caixa(pol.ext);
-  if (Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1]) <= p.profundidadeMax + 0.5) return false;
-  return fundoMaxDe(pol, segs) > p.profundidadeMax + 0.5;
+  if (Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1]) <= limiteFundo(p)) return false;
+  return fundoMaxDe(pol, segs) > limiteFundo(p);
 }
 
 function frentesBrutas(pol: Poligono, naFrente: (a: Pt, b: Pt) => boolean): Seg[] {
@@ -1170,7 +1181,8 @@ function harmonizar(
     return c;
   };
   for (const l of lotes) {
-    if (destinos.has(`${l.fileira}:${l.indice}`)) { out.push(l); continue; }
+    // lote que o operador ajustou (trava, unir, dividir) fica como ele deixou — com aviso, se for o caso
+    if (destinos.has(`${l.fileira}:${l.indice}`) || l.ajustado) { out.push(l); continue; }
     let pol = l.pol;
     let segs = frentesDe(pol, naFrente);
     if (!segs.length) { out.push(l); continue; }
@@ -1206,7 +1218,7 @@ function harmonizar(
   // (fundo abaixo da profundidade mínima) somam-se ao vizinho da fileira quando
   // os dois juntos cabem nas máximas: sai um lote maior e bem formado em vez de
   // um triângulo ou de uma tira que ninguém compra
-  const livre = (x: ResultadoQuadra["lotes"][number]) => !destinos.has(`${x.fileira}:${x.indice}`);
+  const livre = (x: ResultadoQuadra["lotes"][number]) => !destinos.has(`${x.fileira}:${x.indice}`) && !x.ajustado;
   const torto = (pol: Poligono) => {
     if (anguloMinimo(pol) < 30) return true;
     const segs = frentesDe(pol, naFrente);
@@ -1367,7 +1379,7 @@ function anexarSobras(
     const a = areaPol(pol);
     if (acimaDaArea(a, p) || !formaDeLote(pol)) return false;
     const segs = frentesDe(pol, naFrente);
-    return segs.length > 0 && profundidadeDe(pol, segs, true) <= p.profundidadeMax + 0.5;
+    return segs.length > 0 && profundidadeDe(pol, segs, true) <= limiteFundo(p);
   };
   const encosta = (a: Poligono, b: Poligono) => {
     const ca = caixa(a.ext), cb = caixa(b.ext);
@@ -1450,7 +1462,7 @@ function conformar(
 ): { lotes: ResultadoQuadra["lotes"]; sobras: Poligono[] } {
   const out: ResultadoQuadra["lotes"] = [];
   const sobras: Poligono[] = [];
-  const livre = (x: ResultadoQuadra["lotes"][number]) => !destinos.has(`${x.fileira}:${x.indice}`);
+  const livre = (x: ResultadoQuadra["lotes"][number]) => !destinos.has(`${x.fileira}:${x.indice}`) && !x.ajustado; // o ajuste do operador não é desfeito
   // as MESMAS medidas e regras do aviso da planta (lados classificados, esquina
   // por ruas distintas) — conferir diferente daria lote bom descartado
   const valido = (pol: Poligono, ponta = false) => dentroDasFaixas(ctx, pol, p, ponta);
@@ -1461,7 +1473,7 @@ function conformar(
     let segs = frentesDe(pol, naFrente);
     if (!segs.length) { sobras.push(pol); continue; }
     // 1. fundo além da máxima: apara pela própria frente
-    if (fundoMaxDe(pol, segs) > p.profundidadeMax + 0.5) {
+    if (fundoMaxDe(pol, segs) > limiteFundo(p)) {
       const corredor = corredorDaFrente(pol, segs, p.profundidadeMax - 0.5, 0);
       const dentro = intersecao([pol], corredor).filter((x) => areaPol(x) > 0.5).sort((x, y) => areaPol(y) - areaPol(x));
       if (dentro.length && frentesDe(dentro[0], naFrente).length) {
@@ -1639,7 +1651,7 @@ function dividirQuadra(
   for (let i = 0; i < fileirasPol.length; i++) {
     const fp = fileirasPol[i];
     const segs = frentesBrutas(fp.pol, naFrente);
-    if (!segs.length || profundidadeDe(fp.pol, segs, true) <= p.profundidadeMax + 0.5) continue;
+    if (!segs.length || profundidadeDe(fp.pol, segs, true) <= limiteFundo(p)) continue;
     const corredor = corredorDaFrente(fp.pol, segs, p.profundidadeMax, 0);
     // o que encosta na estrada fica na fileira (é lote); o resto do fundo sai
     const fora = diferenca([fp.pol], corredor).filter((x) => areaPol(x) > 1 && !tocaEstrada(x));
@@ -1837,7 +1849,7 @@ function dividirQuadra(
           fileira: fi, indice: x.indice, arrastavel: !x.sub && !prox.sub,
           a: soma(F(x.b), mult(dc, Math.min(...ps))),
           b: soma(F(x.b), mult(dc, Math.max(...ps))),
-          o, dir: uf, s0: i === 0 ? ini : x.a, s: x.b,
+          o, dir: uf, s0: i === 0 ? ini : x.a, s: x.b, sFim: fim,
         });
       }
     });
@@ -1848,7 +1860,9 @@ function dividirQuadra(
   const restantes: Poligono[] = [];
   const padrao = Math.max(p.areaMin, p.areaPadrao);
   let extra = 0;
-  for (const sb of sobras) {
+  // retalho com frente: em lotes de área parecida com a padrão (serve também,
+  // no fim, para o retalho grande que sobrou — ele não vai inteiro para um lote só)
+  const lotearRetalho = (sb: Poligono, saida: ResultadoQuadra["lotes"], restos: Poligono[]) => {
     let fr = 0, maior: [Pt, Pt] | null = null;
     for (let i = 0; i < sb.ext.length; i++) {
       const a = sb.ext[i], b = sb.ext[(i + 1) % sb.ext.length];
@@ -1857,10 +1871,11 @@ function dividirQuadra(
       if (!maior || dist(a, b) > dist(maior[0], maior[1])) maior = [a, b];
     }
     const area = areaPol(sb);
-    if (!maior || fr < p.frenteMin - 0.005 || area < p.areaMin - 0.01) { restantes.push(sb); continue; }
+    if (!maior || fr < p.frenteMin - 0.005 || area < p.areaMin - 0.01) { restos.push(sb); return; }
     // retalho grande: divide em lotes de área parecida com a do padrão,
     // cortando perpendicular à frente dele
-    const m = Math.max(1, Math.min(Math.floor(fr / p.frenteMin), Math.round(area / padrao)));
+    // partes: perto da área padrão, mas nenhuma acima da máxima
+    const m = Math.max(1, Math.min(Math.floor(fr / p.frenteMin), Math.max(Math.round(area / padrao), Math.ceil(area / p.areaMax - 1e-6))));
     const d = unit(sub(maior[1], maior[0]));
     const o2 = maior[0];
     const us = sb.ext.map((q) => dot(sub(q, o2), d));
@@ -1877,20 +1892,22 @@ function dividirQuadra(
     for (let j = 0; j < m; j++) {
       const pedacos = intersecao([sb], [faixaReferencial(o2, d, esquerda(d), lim[j], lim[j + 1], -GR, GR)]).sort((x, y) => areaPol(y) - areaPol(x));
       if (!pedacos.length) continue;
-      for (const r of pedacos.slice(1)) restantes.push(r);
+      for (const r of pedacos.slice(1)) restos.push(r);
       // cada pedaço precisa da própria frente; o que não tem volta a ser retalho
       let frP = 0;
       for (let i = 0; i < pedacos[0].ext.length; i++) {
         const a = pedacos[0].ext[i], b = pedacos[0].ext[(i + 1) % pedacos[0].ext.length];
         if (naFrente(a, b)) frP += dist(a, b);
       }
-      if (frP < p.frenteMin - 0.005 || areaPol(pedacos[0]) < p.areaMin - 0.01) { restantes.push(pedacos[0]); continue; }
+      if (frP < p.frenteMin - 0.005 || areaPol(pedacos[0]) < p.areaMin - 0.01) { restos.push(pedacos[0]); continue; }
       const idx = extra++;
-      lotes.push({ pol: pedacos[0], area: areaPol(pedacos[0]), fileira: 9, indice: idx, ajustado: false });
+      // frente só para menos partes: o lote sai maior que a máxima — é retalho (aviso)
+      saida.push({ pol: pedacos[0], area: areaPol(pedacos[0]), fileira: 9, indice: idx, ajustado: false, retalho: acimaDaArea(areaPol(pedacos[0]), p) || undefined });
       const dest = ajR?.get(idx)?.destino;
       if (dest) destinos.set(`9:${idx}`, dest);
     }
-  }
+  };
+  for (const sb of sobras) lotearRetalho(sb, lotes, restantes);
   // retalho sem frente que encosta num lote é somado a ele (o lote da ponta
   // fica maior, como nas plantas da equipe); só sobra o que passaria da área
   // máxima — esse vira área verde lá na reserva
@@ -1909,7 +1926,7 @@ function dividirQuadra(
       const area = areaPol(u2[0]);
       // o retalho do fundo aparado não volta para o lote (ficaria fundo de novo)
       const novo: Poligono = { ext: limparAnel(u2[0].ext, 0.005), furos: [] };
-      if (profundidadeDe(novo, frentesBrutas(novo, naFrente), true) > p.profundidadeMax + 0.5) continue;
+      if (profundidadeDe(novo, frentesBrutas(novo, naFrente), true) > limiteFundo(p)) continue;
       if (!melhor || l.area < lotes[melhor.i].area) melhor = { i, pol: novo, area };
     }
     if (melhor) { lotes[melhor.i] = { ...lotes[melhor.i], pol: melhor.pol, area: melhor.area }; continue; }
@@ -1917,7 +1934,10 @@ function dividirQuadra(
   }
   const h0 = harmonizar(lotes, destinos, naFrente, lados, p, GR, ctx.busca);
   // a sobra não fica vazia: os lotes vizinhos a anexam (lote de ponta)
-  let h = ctx.busca ? { lotes: h0.lotes, sobras: [...finais, ...h0.sobras] } : anexarSobras(h0.lotes, [...finais, ...h0.sobras], destinos, naFrente, p, GR);
+  // no cálculo da planta o bico da esquina na estrada também não se perde:
+  // entra no lote vizinho como qualquer retalho
+  const bicos = ctx.juntar ? h0.viario : [];
+  let h = ctx.busca ? { lotes: h0.lotes, sobras: [...finais, ...h0.sobras] } : anexarSobras(h0.lotes, [...finais, ...h0.sobras, ...bicos], destinos, naFrente, p, GR);
   if (!ctx.busca) {
     // garantia: lote fora das medidas é consertado ou deixa de ser lote
     const c2 = conformar(ctx, h.lotes, destinos, naFrente, p, GR);
@@ -1925,7 +1945,45 @@ function dividirQuadra(
   }
   finais.length = 0;
   finais.push(...h.sobras);
-  if (cortouFundo && finais.reduce((s2, x) => s2 + areaPol(x), 0) > 50) problemas.push("fundo da quadra sem acesso (faixa além da profundidade máxima)");
+  // nenhum retalho sem dono: o que tem frente e cabe nas medidas é lote
+  // (o bico entre ruas, a ponta da fileira) — os demais entram no lote
+  // vizinho no fim do cálculo
+  if (ctx.juntar) {
+    // a faixa de fundo atrás de vários lotes é partida pelas divisas
+    // prolongadas: cada lote leva o pedaço que fica atrás dele (e não um lote
+    // só fica com a faixa inteira)
+    const linhas = cortes.map((c) => ({ a: c.a, d: unit(sub(c.b, c.a)) })).filter((l) => Number.isFinite(l.d[0]));
+    for (let i = finais.length - 1; i >= 0; i--) {
+      let pecas: Poligono[] = [finais[i]];
+      const cb = caixa(finais[i].ext);
+      const cantos: Pt[] = [cb.min, [cb.max[0], cb.min[1]], cb.max, [cb.min[0], cb.max[1]]];
+      for (const ln of linhas) {
+        // só a divisa cuja reta atravessa o retalho
+        const lados = cantos.map((q) => Math.sign(cross(ln.d, sub(q, ln.a))));
+        if (lados.every((x) => x >= 0) || lados.every((x) => x <= 0)) continue;
+        const n = esquerda(ln.d);
+        const lado = (sinal: number) => faixaReferencial(ln.a, ln.d, n, -GR, GR, sinal > 0 ? 0 : -GR, sinal > 0 ? GR : 0);
+        pecas = pecas.flatMap((pc) => [...intersecao([pc], [lado(1)]), ...intersecao([pc], [lado(-1)])]).filter((x) => areaPol(x) > 0.5);
+      }
+      if (pecas.length > 1) finais.splice(i, 1, ...pecas.map((x) => ({ ext: limparAnel(x.ext, 0.005), furos: x.furos })));
+    }
+    // retalho maior que o lote máximo, com frente para rua: vira lotes
+    for (let i = finais.length - 1; i >= 0; i--) {
+      const sb = finais[i];
+      if (areaPol(sb) <= p.areaMax * FOLGA_MAX || (ctx.marcas ?? []).some((m) => dentroPol(m, sb))) continue;
+      const antes = h.lotes.length, restos: Poligono[] = [];
+      lotearRetalho(sb, h.lotes, restos);
+      if (h.lotes.length > antes) finais.splice(i, 1, ...restos.filter((x) => areaPol(x) > 0.5));
+    }
+    for (let i = finais.length - 1; i >= 0; i--) {
+      const sb = finais[i];
+      if ((ctx.marcas ?? []).some((m) => dentroPol(m, sb))) continue;
+      if (!dentroDasFaixas(ctx, sb, p)) continue;
+      h.lotes.push({ pol: sb, area: areaPol(sb), fileira: 9, indice: 100 + extra++, ajustado: false });
+      finais.splice(i, 1);
+    }
+  }
+  if (cortouFundo && !ctx.juntar && finais.reduce((s2, x) => s2 + areaPol(x), 0) > 50) problemas.push("fundo da quadra sem acesso (faixa além da profundidade máxima)");
   // fora das faixas também conta como lote ruim: é o que faz o cálculo tentar
   // outra frente / outro número de fileiras para a quadra
   let tortos = 0, rasos = 0;
@@ -1946,7 +2004,7 @@ function dividirQuadra(
     else if (!esq && acimaDaFrente(segs.reduce((s2, [a, b]) => s2 + dist(a, b), 0), p)) ruins++;
     else if (ang < 50 && !deProjeto) ruins++; // cunha
   }
-  return { lotes: h.lotes, destinos, cortes, fundo, sobras: finais, canteiros: h0.viario, origem: o, u, v, fileiras: fileirasPol.length, problemas, ruins, nFaces: candidatas.length, tortos, largura: D, rasos };
+  return { lotes: h.lotes, destinos, cortes, fundo, sobras: finais, canteiros: ctx.juntar ? [] : h0.viario, origem: o, u, v, fileiras: fileirasPol.length, problemas, ruins, nFaces: candidatas.length, tortos, largura: D, rasos };
 }
 
 // ---------------------------------------------------------------------------
@@ -1980,6 +2038,8 @@ export interface OpcoesCalculo {
   rapido?: boolean;
   /** busca de malha (implica rápido): pula a redistribuição das pontas, que só muda o acabamento */
   busca?: boolean;
+  /** o gerador quer ver os retalhos (para fazê-los área verde): não junta nos lotes */
+  manterSobras?: boolean;
 }
 
 export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalculo = {}): Resultado {
@@ -2064,7 +2124,11 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
   const fixos = new Indice();
   for (const a of areas) for (const pol of a.pols) fixos.add(item(pol, a.tipo === "app" ? "faixa" : "area", a.id, a.nome));
   if (op.busca) op = { ...op, rapido: true };
-  const ctx: Contexto = { prof: p.profundidade, areaMin: p.areaMin, gleba, ladosGleba, confrontantes: perimetro.confrontantes, ruas, fixos, busca: op.busca };
+  const ctx: Contexto = {
+    prof: p.profundidade, areaMin: p.areaMin, gleba, ladosGleba, confrontantes: perimetro.confrontantes, ruas, fixos, busca: op.busca,
+    juntar: !op.rapido && !op.busca && !op.manterSobras,
+    marcas: (projeto.sobrasPublicas ?? []).map((m) => P(m.ponto)),
+  };
 
   // configs: cada quadra pega a config cuja âncora cai dentro dela
   const cfgs = projeto.quadras.map((c) => ({ c, pt: P(c.ancora) }));
@@ -2144,7 +2208,10 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     // (na busca rápida do gerador pula: a contagem de lotes quase não muda e custa o triplo)
     // (e uma ou duas fileiras, se o operador não escolheu): quadra triangular
     // ou funda demais costuma ter uma combinação sem lote fora das faixas
-    if (!op.rapido && !ancFrente && res.ruins > 0) {
+    // quadra com ajuste do operador (trava, unir, dividir) fica no arranjo em
+    // que ele mexeu: outra frente ou outro nº de fileiras jogaria a edição fora
+    const editada = (q.cfg?.ajustes ?? []).some((a) => a.frente !== undefined || a.area !== undefined || a.unir || (a.dividir ?? 0) > 1);
+    if (!op.rapido && !ancFrente && !editada && res.ruins > 0) {
       const nota = (r: ResultadoQuadra) => r.lotes.length - 3 * r.ruins - r.tortos - r.sobras.reduce((s2, x) => s2 + areaPol(x), 0) / Math.max(1, p.areaPadrao);
       const fileiras: (QuadraCfg["fileiras"] | undefined)[] = q.cfg?.fileiras && q.cfg.fileiras !== "auto" ? [undefined] : [undefined, 1, 2];
       // duas fileiras forçadas só são tentadas se a quadra tem fundo para as duas
@@ -2224,7 +2291,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
   }
 
   // --- retalhos encostados viram um só (o fundo aparado de vários lotes é UM retalho)
-  if (sobras.length > 1) { const u = uniaoFechada(sobras); sobras.length = 0; sobras.push(...u); }
+  if (sobras.length > 1 && !ctx.juntar) { const u = uniaoFechada(sobras); sobras.length = 0; sobras.push(...u); }
   // --- retalho minúsculo (canto de esquina, ponta de rua) é calçada: some no viário
   //     — só na beira da rua; a lasca do miolo (dente no fundo entre as
   //     fileiras) entra no lote vizinho, senão ficaria um furo de "viário"
@@ -2249,19 +2316,19 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
         sobras.splice(i, 1);
         continue;
       }
+      if (ctx.juntar) continue; // o passo final a junta mesmo fora das medidas
     }
     canteiros.push(...sobras.splice(i, 1));
   }
   // --- bico de quadra entre ruas (cruzamento em ângulo fechado) que não é
   //     praça (não cabe o círculo de 10 m) nem cabe num lote: é canteiro do
   //     cruzamento — entra no viário, em vez de ficar retalho sem destino
-  for (let i = sobras.length - 1; i >= 0; i--) {
-    const sb = sobras[i];
-    const a = areaPol(sb);
-    if (a >= 2 * p.areaPadrao || verdeValida([sb])) continue;
-    const frenteRua = ladosDe(ctx, sb, null).filter((l) => ehFrente(l.tipo)).reduce((s2, l) => s2 + l.comp, 0);
-    if (frenteRua >= 5) canteiros.push(...sobras.splice(i, 1));
-  }
+  const bicoDeCanteiro = (sb: Poligono) => {
+    if (areaPol(sb) >= 2 * p.areaPadrao || verdeValida([sb])) return false;
+    return ladosDe(ctx, sb, null).filter((l) => ehFrente(l.tipo)).reduce((s2, l) => s2 + l.comp, 0) >= 5;
+  };
+  // (no cálculo da planta o bico entra antes no lote vizinho — passo final)
+  if (!ctx.juntar) for (let i = sobras.length - 1; i >= 0; i--) if (bicoDeCanteiro(sobras[i])) canteiros.push(...sobras.splice(i, 1));
   // --- retalho colado numa área verde entra nela: a praça cresce num perímetro só
   for (let i = sobras.length - 1; i >= 0; i--) {
     const sb = sobras[i];
@@ -2280,6 +2347,30 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     areas.push({ id: `sp${k}`, tipo: m.tipo, nome: "", pols: [sb], area: areaPol(sb), origem: "sobra", cfg: k });
     fixos.add(item(sb, m.tipo === "app" ? "faixa" : "area", `sp${k}`, ROTULO_AREA[m.tipo]));
   });
+  // --- nenhuma sobra de terreno: o retalho entra no lote vizinho — de
+  //     preferência um que continue dentro das medidas; senão o que encosta
+  //     mais (o lote fica com aviso e o operador ajusta). Só sem lote vizinho
+  //     ele vira canteiro (bico na rua) ou fica remanescente.
+  if (ctx.juntar) {
+    for (let i = sobras.length - 1; i >= 0; i--) {
+      const sb = sobras[i];
+      const cb = caixa(sb.ext);
+      const perto = (l: Lote) => { const c2 = caixa(l.pol.ext); return c2.min[0] <= cb.max[0] + 0.1 && c2.max[0] >= cb.min[0] - 0.1 && c2.min[1] <= cb.max[1] + 0.1 && c2.max[1] >= cb.min[1] - 0.1; };
+      const perimetroDe = (pg: Poligono) => pg.ext.reduce((s2, q, k) => s2 + dist(q, pg.ext[(k + 1) % pg.ext.length]), 0);
+      const cands = lotes.filter(perto)
+        .map((l) => ({ l, u: uniaoFechada([l.pol, sb]) }))
+        .filter((x) => x.u.length === 1 && !x.u[0].furos.length)
+        .map((x) => ({ ...x, ok: dentroDasFaixas(ctx, x.u[0], p, !!x.l.ponta), contato: x.l.pol.ext.length ? perimetroDe(x.l.pol) + perimetroDe(sb) - perimetroDe(x.u[0]) : 0 }));
+      const viz = cands.filter((x) => x.ok).sort((a, b) => a.l.area - b.l.area)[0] ?? cands.sort((a, b) => b.contato - a.contato)[0];
+      if (viz) {
+        viz.l.pol = { ext: limparAnel(viz.u[0].ext, 0.005), furos: [] };
+        viz.l.area = areaPol(viz.l.pol);
+        if (!viz.ok) viz.l.retalho = true;
+        lotesIdx.add(item(viz.l.pol, "lote", viz.l.id, `Lote ${String(viz.l.numero).padStart(2, "0")} da Quadra ${viz.l.quadra}`));
+        sobras.splice(i, 1);
+      } else if (bicoDeCanteiro(sb)) canteiros.push(...sobras.splice(i, 1));
+    }
+  }
   // --- sobras entram no índice (para o lado do lote dizer "área remanescente")
   for (const [i, s] of sobras.entries()) fixos.add(item(s, "sobra", `sobra${i}`, "área remanescente"));
 
@@ -2303,7 +2394,10 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     l.profundidade = profundidadeDe(l.pol, segs, true);
     // lote de rua a rua (frente e fundo para rua): a regra vale para a frente principal
     l.problemas.push(...foraDasFaixas({ ...l, rasa: profundidadeDe(l.pol, segs) }, p, !fr.length, l.esquina || esquinaDe(segs), l.ponta ? 0 : frentePrincipal(segs), !!l.ponta));
-    for (const pr of l.problemas) problemas.push({ nivel: "erro", texto: `Lote ${l.id}: ${pr}`, alvo: { lote: l.id } });
+    // fora das medidas por decisão do operador (ajuste) ou por ter absorvido
+    // o retalho da gleba: é aviso — o lote fica marcado para ele acertar
+    const nivelLote: Problema["nivel"] = l.ajustado || l.retalho ? "aviso" : "erro";
+    for (const pr of l.problemas) problemas.push({ nivel: nivelLote, texto: `Lote ${l.id}: ${pr}${l.retalho && !l.ajustado ? " (absorveu retalho da gleba)" : ""}`, alvo: { lote: l.id } });
   }
   for (const q of quadras) for (const pr of q.problemas) problemas.push({ nivel: "aviso", texto: `Quadra ${q.nome}: ${pr}`, alvo: { quadra: q.nome } });
 

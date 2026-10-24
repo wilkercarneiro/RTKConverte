@@ -52,6 +52,9 @@ export function CampoNum({ valor, onAplicar, casas = 2, sufixo, min = 0, desabil
 const ROT_MODO: Record<ModoDivisao, string> = { frente: "Padronizada (frente fixa)", area: "Áreas iguais", quantidade: "Quantidade fixa" };
 const ROT_SOBRA: Record<Sobra, string> = { esquinas: "Lotes de esquina", ultimo: "Último lote", distribuir: "Distribuir entre todos", extra: "Lote extra (se couber)" };
 
+/** Edição livre: o que sai das medidas do projeto é aplicado e vira aviso na mensagem. */
+const comAviso = (m: string, aviso: string | null | undefined) => (aviso ? `${m} Atenção: ${aviso}` : m);
+
 export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Props) {
   const lotes = lotesDaSelecao(res, sel);
   const quadra = sel?.tipo === "quadra" ? quadraDe(res, sel.nome) : undefined;
@@ -112,8 +115,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
               <CampoNum valor={l.travaFrente ?? (l.travaArea ? undefined : undefined)} sufixo="m" titulo="Trava a frente; os lotes seguintes se ajustam"
                 onAplicar={(v) => {
                   const e = v === undefined ? null : conferirMedida(p, "frente", v);
-                  if (e) { onMsg(e, true); return; }
-                  if (onMudar(ajustarLote(projeto, res, l, v === undefined ? { frente: undefined } : { frente: v })) !== false) onMsg(v ? `Frente travada em ${fmt(v)} m — a fileira se reorganizou.` : "Frente solta.");
+                  if (onMudar(ajustarLote(projeto, res, l, v === undefined ? { frente: undefined } : { frente: v })) !== false) onMsg(comAviso(v ? `Frente travada em ${fmt(v)} m — a fileira se reorganizou.` : "Frente solta.", e));
                 }} />
               <span className="lot-dica">{l.travaFrente ? "travada" : `livre (${fmt(qq?.valor ?? p.frente)} m pela quadra)`}</span>
             </div>
@@ -122,21 +124,19 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
               <CampoNum valor={l.travaArea} sufixo="m²" titulo="Trava a área; a frente é calculada"
                 onAplicar={(v) => {
                   const e = v === undefined ? null : conferirMedida(p, "area", v);
-                  if (e) { onMsg(e, true); return; }
-                  onMudar(ajustarLote(projeto, res, l, v === undefined ? { area: undefined } : { area: v }));
+                  if (onMudar(ajustarLote(projeto, res, l, v === undefined ? { area: undefined } : { area: v })) !== false && e) onMsg(comAviso(`Área travada em ${fmt(v!)} m².`, e));
                 }} />
               <span className="lot-dica">{l.travaArea ? "travada" : "livre"}</span>
             </div>
             <div className="lot-botoes">
               <button onClick={() => {
                 const e = conferirUnir(p, res, [l]);
-                if (e) { onMsg(e, true); return; }
-                if (onMudar(ajustarLote(projeto, res, l, { unir: true })) !== false) onMsg(`Lote ${l.id} unido ao seguinte.`);
+                if (e?.startsWith("Não há")) { onMsg(e, true); return; }
+                if (onMudar(ajustarLote(projeto, res, l, { unir: true })) !== false) onMsg(comAviso(`Lote ${l.id} unido ao seguinte.`, e));
               }}>Unir ao seguinte</button>
               <button onClick={() => {
                 const e = conferirDividir(p, l, 2);
-                if (e) { onMsg(e, true); return; }
-                if (onMudar(ajustarLote(projeto, res, l, { dividir: 2 })) !== false) onMsg(`Lote ${l.id} dividido em 2.`);
+                if (onMudar(ajustarLote(projeto, res, l, { dividir: 2 })) !== false) onMsg(comAviso(`Lote ${l.id} dividido em 2.`, e));
               }}>Dividir em 2</button>
               {l.ajustado && <button onClick={() => { onMudar(ajustarLote(projeto, res, l, null)); onMsg("Travas removidas."); }}>Soltar travas</button>}
             </div>
@@ -168,20 +168,19 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
             <CampoNum valor={undefined} sufixo="m" onAplicar={(v) => {
               if (v === undefined) return;
               const e = conferirMedida(p, "frente", v);
-              if (e) { onMsg(e, true); return; }
               let novo = projeto;
               for (const l of lotes) novo = ajustarLote(novo, res, l, { frente: v });
-              onMudar(novo);
+              if (onMudar(novo) !== false && e) onMsg(comAviso(`${lotes.length} lotes com frente ${fmt(v)} m.`, e));
             }} />
           </div>
           <div className="lot-botoes">
             <button onClick={() => {
               const ord = [...lotes].sort((a, b) => a.fileira - b.fileira || a.indice - b.indice);
               const e = conferirUnir(p, res, ord);
-              if (e) { onMsg(e, true); return; }
+              if (e?.startsWith("Não há")) { onMsg(e, true); return; }
               let novo = projeto;
               for (const l of ord.slice(0, -1)) novo = ajustarLote(novo, res, l, { unir: true });
-              if (onMudar(novo) !== false) onSel({ tipo: "lotes", chaves: [chaveDoLote(ord[0])] });
+              if (onMudar(novo) !== false) { onSel({ tipo: "lotes", chaves: [chaveDoLote(ord[0])] }); if (e) onMsg(comAviso(`${ord.length} lotes unidos.`, e)); }
             }}>Unir todos</button>
             <button className="verde" onClick={() => virarArea("verde")}>→ Área verde</button>
             <button className="inst" onClick={() => virarArea("institucional")}>→ Institucional</button>
@@ -214,8 +213,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
               onAplicar={(v) => {
                 if (v === undefined) return;
                 const e = quadra.modo === "quantidade" ? null : conferirMedida(p, quadra.modo === "frente" ? "frente" : "area", v);
-                if (e) { onMsg(e, true); return; }
-                onMudar(ajustarQuadra(projeto, res, quadra, { modo: quadra.modo, valor: v }));
+                if (onMudar(ajustarQuadra(projeto, res, quadra, { modo: quadra.modo, valor: v })) !== false && e) onMsg(comAviso(`Quadra ${quadra.nome} ajustada.`, e));
               }} />
           </div>
           {quadra.modo !== "area" && (

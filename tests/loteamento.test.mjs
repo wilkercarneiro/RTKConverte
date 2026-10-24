@@ -374,35 +374,45 @@ test("medidas do lote: a proposta automática não deixa lote fora das faixas", 
 test("medidas do lote: área máxima menor divide o lote grande em vez de deixá-lo inteiro", () => {
   const pr = { ...pr0, params: { ...pr0.params, areaMax: 300, frenteMax: 12 } };
   const r = calcular(pr, perimetro);
-  const grandes = r.lotes.filter((l) => l.area > 300 * 1.03 + 0.5 && !l.esquina && !l.ponta);
+  // lote que absorveu retalho (nenhuma sobra de terreno) pode passar — mas sai com aviso
+  for (const l of r.lotes.filter((x) => x.retalho)) assert.ok(l.problemas.length > 0, `${l.id} absorveu retalho e está sem aviso`);
+  const grandes = r.lotes.filter((l) => l.area > 300 * 1.03 + 0.5 && !l.esquina && !l.ponta && !l.retalho);
   // os de esquina podem passar (frente nas duas ruas); o resto cabe na faixa
   assert.ok(grandes.length <= Math.ceil(0.02 * r.lotes.length), `${grandes.length} lotes acima de 300 m²: ${grandes.slice(0, 5).map((l) => l.id).join(", ")}`);
   assert.ok(r.lotes.length > r0.lotes.length, "dividir os grandes tinha de dar mais lotes");
 });
 
-test("medidas do lote: a edição não aceita frente, área, unir ou dividir fora das faixas", () => {
+test("edição livre: frente, área, unir, dividir e arrastar fora das faixas são aplicados com aviso", () => {
   const p = pr0.params;
   const l = r0.lotes.find((x) => !x.esquina && x.quadra === r0.quadras[1].nome);
   const sel = { tipo: "lotes", chaves: [{ quadra: l.quadra, fileira: l.fileira, indice: l.indice }] };
   const f = executar(`frente ${p.frenteMax + 5}`, pr0, r0, sel);
-  assert.ok(f.erro && !f.pr, f.msg);
-  assert.match(f.msg, /fora das medidas do projeto/);
+  assert.ok(f.pr && !f.erro, f.msg);
+  assert.match(f.msg, /Atenção: .*fora das medidas do projeto/);
+  // o lote editado aparece com aviso na planta
+  const rf = calcular(f.pr, perimetro);
+  const lf = rf.lotes.find((x) => x.quadra === l.quadra && x.fileira === l.fileira && x.indice === l.indice);
+  assert.ok(lf.problemas.some((t) => /frente .* acima do máximo/.test(t)), lf.problemas.join("; "));
   const a = executar(`area ${p.areaMin - 10}`, pr0, r0, sel);
-  assert.ok(a.erro && !a.pr, a.msg);
-  // unir dois lotes que passam da máxima
+  assert.ok(a.pr && !a.erro, a.msg);
   const apertado = { ...pr0, params: { ...p, areaMax: l.area + 1 } };
   const u = executar("unir", apertado, r0, sel);
-  assert.ok(u.erro && !u.pr, u.msg);
+  assert.ok(u.pr && !u.erro, u.msg);
   assert.match(u.msg, /área máxima/);
-  // dividir abaixo da mínima
   const d = executar("dividir 5", pr0, r0, sel);
-  assert.ok(d.erro && !d.pr, d.msg);
-  // arrastar a divisa para longe não passa da frente máxima
+  assert.ok(d.pr && !d.erro, d.msg);
+  // arrastar a divisa para longe: vai aonde o operador soltou (passa da frente máxima)
   const c = r0.quadras.flatMap((q) => q.cortes).find((x) => x.arrastavel);
   const longe = [c.a[0] + c.dir[0] * 500, c.a[1] + c.dir[1] * 500];
   const m = moverCorte(pr0, r0, c, longe);
   const trava = m.quadras.flatMap((q) => q.ajustes).find((x) => x.frente !== undefined);
-  assert.ok(trava && trava.frente <= p.frenteMax + 1e-9, `frente travada em ${trava?.frente}`);
+  assert.ok(trava && trava.frente > p.frenteMax, `frente travada em ${trava?.frente}`);
+});
+
+test("nenhuma sobra de terreno na planta: retalho vira lote ou entra no lote vizinho", () => {
+  assert.equal(r0.sobras.length, 0, `${r0.sobras.length} retalhos sem dono`);
+  const grandes = r0.canteiros.filter((x) => areaPols([x]) >= 30);
+  assert.equal(grandes.length, 0, `canteiros de ${grandes.map((x) => areaPols([x]).toFixed(0)).join(", ")} m²`);
 });
 
 test("área verde 0%: nenhum retalho vira área verde nem institucional", () => {
