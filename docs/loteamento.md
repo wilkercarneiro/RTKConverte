@@ -63,6 +63,13 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - na ponta da fileira, cunha (menos de 30°), lote raso ou triângulo largo junta-se ao vizinho se couber nas máximas; se não couber, vira retalho — menos na beira da estrada de acesso, onde fica lote com aviso;
   - há folga de 3% sobre as máximas para absorver a nesga da ponta sem criar lote nanico;
   - quadra difícil é refeita testando outras frentes e uma ou duas fileiras, e a malha de ruas que deixa menos lote fora das faixas ou torto ganha a nota.
+- **Regras de projetista (pesquisa de 23/10/2026).**
+  - Divisa lateral do lote perpendicular à rua (radial na curva); tolerância de 15° a 20° (códigos de Mattawa e Durham, EUA).
+  - Sobra abaixo do mínimo não é lote: é anexada aos vizinhos (Sherburne County, §11.1.5). Na ponta da fileira, a cunha e 1 a 3 lotes vizinhos são redivididos em um lote a menos, dentro das faixas.
+  - Fileira funda é aparada numa linha só, paralela à rua. O fundo vira um retalho único, e retalhos encostados se unem.
+  - Área verde só onde cabe um círculo de 10 m de raio, num perímetro único, sem fragmentos (Lei 9.413/81 de SP, art. 2º, IV, b). Retalho que não cumpre isso não vira verde; o que encosta numa área pública entra nela.
+  - Quadrinha de ponta (2 ou 3 lotes) vira um lote de ponta, com frente de até 1,5 vez a máxima: é o lote maior que ajusta a linha da propriedade.
+  - Junto à estrada ou rodovia, o gerador testa também a via paralela (minuta do código de parcelamento de Goiânia, 2014, art. 13, XVI): faixa de duas fileiras, uma de frente para a estrada.
 - **Área verde 0%.** Com a meta de verde em zero, nenhum retalho vira área pública: fica como **área remanescente** (do proprietário), desenhada e cotada na planta. O mesmo vale para institucional 0%.
 - **Edição dentro das regras.** Frente e área digitadas fora das faixas, unir acima da área máxima, dividir abaixo da mínima e arrastar a divisa além da frente máxima são recusados com o motivo. Toda edição de lote ou quadra é recalculada antes de entrar: se deixar lote fora das regras, não é aplicada.
 
