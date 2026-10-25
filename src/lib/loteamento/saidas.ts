@@ -382,7 +382,9 @@ export interface LadosNominais {
  */
 export function ladosNominais(l: Lote): LadosNominais {
   const out: LadosNominais = { frente: [], direito: [], fundos: [], esquerdo: [] };
-  const fr = l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via").sort((a, b) => b.comp - a.comp)[0] ?? l.lados[0];
+  // a frente escolhida pelo operador é a referência; senão, a rua mais longa
+  const principal = l.lados.filter((x) => x.principal);
+  const fr = (principal.length ? principal : l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via")).sort((a, b) => b.comp - a.comp)[0] ?? l.lados[0];
   if (!fr) return out;
   // quadrilátero (o caso comum): a ordem do anel decide, mesmo com fundo torto de divisa
   if (l.lados.length === 4) {
@@ -457,7 +459,8 @@ export function memorialDoLote(l: Lote, res: Resultado, nomes: Map<string, strin
   const seq = [...l.lados.slice(i0), ...l.lados.slice(0, i0)];
   const trechos = seq.map((x) => {
     const az = (Math.atan2(x.b[0] - x.a[0], x.b[1] - x.a[1]) * 180) / Math.PI;
-    const conf = x.tipo === "rua" || x.tipo === "via" ? `confrontando com a ${x.nome}` : `confrontando com ${x.nome}`;
+    // frente escolhida pelo operador (servidão, área verde, lote): confronta com quem está do outro lado
+    const conf = (x.tipo === "rua" || x.tipo === "via") && !x.semRua ? `confrontando com a ${x.nome}` : `confrontando com ${x.nome}`;
     return `deste segue ${conf}, com azimute de ${fmtAzimute((az + 360) % 360)} e distância de ${fmt(x.comp)} m, até o vértice ${nomeV(x.b)}, de coordenadas ${coord(x.b)}`;
   });
   const perim = l.lados.reduce((s, x) => s + x.comp, 0);

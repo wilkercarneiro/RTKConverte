@@ -347,6 +347,8 @@ export interface LoteDesenhado {
   /** contorno em UTM */
   anel: Pt[];
   destino?: TipoArea;
+  /** lado escolhido pelo operador como frente (UTM) — lote que dá para servidão, área verde, outro lote */
+  frente?: [Pt, Pt];
 }
 
 /**
@@ -370,6 +372,8 @@ export interface QuadraCfg {
   ajustes: AjusteLote[];
   /** lotes desenhados à mão (presente = a quadra é do operador, o sistema não redivide) */
   lotes?: LoteDesenhado[];
+  /** lados da quadra que o operador marcou como acesso (UTM): contam como frente de lote */
+  acessos?: [Pt, Pt][];
 }
 
 export interface Projeto {

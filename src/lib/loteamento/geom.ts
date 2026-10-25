@@ -329,7 +329,7 @@ export function verdeValida(pols: Poligono[], raio = 10): boolean {
 // ---------------------------------------------------------------------------
 
 /** Giro (graus, com sinal) no vértice i do anel. */
-function giroEm(anel: Anel, i: number): number {
+export function giroEm(anel: Anel, i: number): number {
   const n = anel.length;
   const a = anel[(i + n - 1) % n], q = anel[i], c = anel[(i + 1) % n];
   const u = sub(q, a), v = sub(c, q);

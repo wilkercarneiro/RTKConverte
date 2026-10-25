@@ -12,8 +12,10 @@ import { calcular, viarioDe } from "../src/lib/loteamento/calculo.ts";
 import { gerarPropostas } from "../src/lib/loteamento/auto.ts";
 import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
 import {
-  acertarMedida, alcasDoLote, apagarLotes, cortarLotes, desenharLote, dividirLote, moverDivisa, moverQuina, posicaoNoDesenho, unirLotes,
+  acertarMedida, alcasDoLote, apagarLotes, cfgDe, cortarLotes, definirFrente, desenharLote, dividirLote, ladosRetos, moverDivisa, moverQuina,
+  posicaoNoDesenho, unirLotes,
 } from "../src/lib/loteamento/edicao.ts";
+import { alternarAcesso } from "../src/lib/loteamento/acoes.ts";
 import { criarPlano, paraPlano, paraUtm } from "../src/lib/loteamento/plano.ts";
 import { areaPol, areaPols, diferenca, quinas, uniao } from "../src/lib/loteamento/geom.ts";
 import {
@@ -101,6 +103,102 @@ test("arrastar quina e divisa: os vizinhos que têm o ponto se ajustam, a quina 
   assert.ok(Math.abs(ls2.reduce((s2, x) => s2 + x.area, 0) - total) < 0.5);
   assert.ok(Math.abs(areaPols(uniao(ls2.map((x) => x.pol))) - total) < 0.5, "lotes sobrepostos");
   assert.ok(ls2.some((x) => Math.abs(x.area - l.area) > 5), "nenhum lote mudou");
+});
+
+test("arraste nunca trava: quina puxada por cima do vizinho, alinhada ou pela rua continua com alça e andando", () => {
+  const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
+  const l = q.lotes.find((x) => !x.esquina && x.numero > 3);
+  const dentro = alcasDoLote(l, q).find((a) => a.tipo === "quina" && !a.naBorda);
+  const fr = l.lados.find((x) => x.tipo === "rua");
+  const u = [(fr.b[0] - fr.a[0]) / fr.comp, (fr.b[1] - fr.a[1]) / fr.comp];
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  let pr = pr0, res = r0, k = posicaoNoDesenho(pr0, r0, l), p = dentro.p;
+  // três arrastes em cadeia: 1,6 lote de largura para o lado (passa por cima do
+  // vizinho), de volta até alinhar com a divisa e 2 m para dentro
+  for (const [dx, dy] of [[u[0] * 16, u[1] * 16], [-u[0] * 15.9, -u[1] * 15.9], [u[1] * 2, -u[0] * 2]]) {
+    const qq = res.quadras.find((x) => x.nome === q.nome);
+    const para = [p[0] + dx, p[1] + dy];
+    const ed = moverQuina(pr, res, qq, p, para, false, Infinity, k);
+    assert.ok(ed.sel, "o lote arrastado sumiu da seleção");
+    const r = calcular(ed.pr, perimetro);
+    const q2 = r.quadras.find((x) => x.nome === q.nome);
+    // o que se vê é o que se edita: um contorno guardado para cada lote desenhado
+    assert.equal(ed.pr.quadras[cfgDe(ed.pr, q2, r.plano)].lotes.length, q2.lotes.length, "contorno guardado sobrando (alça em ponto que não existe)");
+    const l2 = q2.lotes.find((x) => x.indice === ed.sel.indices[0]);
+    const nova = l2.pol.ext.reduce((m, v) => (dist(v, para) < dist(m, para) ? v : m), l2.pol.ext[0]);
+    assert.ok(dist(nova, para) < 0.05, `a quina não foi aonde o cursor foi (${dist(nova, para).toFixed(2)} m)`);
+    const comAlca = q2.lotes.some((o) => alcasDoLote(o, q2).some((a) => a.tipo === "quina" && dist(a.p, nova) < 0.05));
+    assert.ok(comAlca, "a quina ficou sem alça (não dá para pegar de novo)");
+    pr = ed.pr; res = r; k = ed.sel.indices[0]; p = nova;
+  }
+});
+
+test("divisa deslizando não abre fresta: fundo que é trecho do lado do vizinho e ponta na quina da rua", () => {
+  for (const q of r0.quadras.filter((x) => x.lotes.length >= 4)) {
+    const total = q.lotes.reduce((s2, x) => s2 + x.area, 0);
+    for (const l of q.lotes.filter((_, i) => i % 3 === 0)) for (const a of alcasDoLote(l, q).filter((x) => x.tipo === "divisa" && !x.naBorda)) {
+      for (const d of [-1.5, 1.5]) {
+        const ed = moverDivisa(pr0, r0, q, a.a, a.b, d, false, posicaoNoDesenho(pr0, r0, l));
+        const ls = calcular(ed.pr, perimetro).lotes.filter((x) => x.quadra === q.nome);
+        const soma = ls.reduce((s2, x) => s2 + x.area, 0);
+        assert.ok(Math.abs(soma - total) < 0.5, `${l.id}: divisa ${d} m abriu ${(total - soma).toFixed(2)} m² de fresta`);
+      }
+    }
+  }
+});
+
+test("frente escolhida: lote sem rua ganha frente, esquina escolhe a rua principal, quadra ganha acesso", () => {
+  const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
+  const l = q.lotes.find((x) => !x.esquina && x.numero > 3);
+  const fr = l.lados.find((x) => x.tipo === "rua");
+  const u = [(fr.b[0] - fr.a[0]) / fr.comp, (fr.b[1] - fr.a[1]) / fr.comp];
+  const c = l.pol.ext.reduce((s2, p) => [s2[0] + p[0] / l.pol.ext.length, s2[1] + p[1] / l.pol.ext.length], [0, 0]);
+  // corte paralelo à rua: o pedaço de trás fica sem frente
+  const h = fr.comp / 2 + 0.5;
+  const ct = cortarLotes(pr0, r0, [c[0] - u[0] * h, c[1] - u[1] * h], [c[0] + u[0] * h, c[1] + u[1] * h]);
+  const r1 = calcular(ct.pr, perimetro);
+  const sf = r1.lotes.find((x) => x.quadra === q.nome && x.problemas.some((t) => /sem frente/.test(t)));
+  assert.ok(sf, "o corte não criou o lote sem frente");
+  const lado = [...sf.lados].sort((a, b) => b.comp - a.comp).find((x) => x.tipo === "lote");
+  const ed = definirFrente(ct.pr, r1, r1.quadras.find((x) => x.nome === q.nome), sf, lado.a, lado.b);
+  const r2 = calcular(ed.pr, perimetro);
+  const sf2 = r2.lotes.find((x) => x.quadra === q.nome && x.indice === ed.sel.indices[0]);
+  assert.ok(!sf2.problemas.some((t) => /sem frente/.test(t)) && sf2.frente > 1, "frente escolhida não valeu");
+  assert.ok(sf2.lados.some((x) => x.principal && x.semRua), "o lado escolhido não ficou marcado");
+  const mem = memorialDoLote(sf2, r2, nomesDosPontos(pontosDeLocacao(r2, perimetro)), { loteamento: "TESTE", municipio: "X", uf: "BA", proprietario: "", fuso: 24 });
+  assert.match(mem.paragrafos.join(" "), /confrontando com Lote/, "memorial: o lado escolhido confronta com o lote vizinho");
+  assert.ok(ladosNominais(sf2).frente.some((x) => x.principal), "memorial: a frente nominal é o lado escolhido");
+  // a frente acompanha o lado quando ele gira (não pula para o lado oposto)
+  const q2 = r2.quadras.find((x) => x.nome === q.nome);
+  const ponta = sf2.lados.find((x) => x.principal).a;
+  const dd = [lado.b[0] - lado.a[0], lado.b[1] - lado.a[1]], Ld = Math.hypot(...dd);
+  const gi = moverQuina(ed.pr, r2, q2, ponta, [ponta[0] - (dd[1] / Ld) * 3, ponta[1] + (dd[0] / Ld) * 3], true, Infinity, ed.sel.indices[0]);
+  const sg = calcular(gi.pr, perimetro).lotes.find((x) => x.quadra === q.nome && x.indice === gi.sel.indices[0]);
+  const fp = sg.lados.filter((x) => x.principal);
+  assert.ok(fp.some((x) => Math.min(...[x.a, x.b].map((p) => Math.hypot(p[0] - ponta[0], p[1] - ponta[1]))) < 4), "a frente pulou de lado");
+  // corte depois da escolha: só o pedaço que fica com o lado tem a frente
+  const cg = l.pol.ext.reduce((s2, p) => [s2[0] + p[0] / l.pol.ext.length, s2[1] + p[1] / l.pol.ext.length], [0, 0]);
+  const ct2 = cortarLotes(ed.pr, r2, [sf2.pol.ext[0][0] - u[0] * 30, sf2.pol.ext[0][1] - u[1] * 30], [cg[0] + u[0] * 30, cg[1] + u[1] * 30]);
+  if (ct2) assert.ok(calcular(ct2.pr, perimetro).lotes.filter((x) => x.lados.some((y) => y.principal)).length <= 2, "o corte copiou a frente escolhida para os pedaços");
+  // clicar de novo tira
+  const ed2 = definirFrente(ed.pr, r2, r2.quadras.find((x) => x.nome === q.nome), sf2, lado.a, lado.b);
+  assert.ok(calcular(ed2.pr, perimetro).lotes.find((x) => x.quadra === q.nome && x.indice === ed.sel.indices[0]).problemas.some((t) => /sem frente/.test(t)));
+  // esquina: a rua escolhida é a única frente; a outra continua confrontação
+  const esq = r0.lotes.find((x) => x.esquina && x.lados.filter((y) => y.tipo === "rua" && y.comp >= 3).length >= 2);
+  const rua = esq.lados.filter((y) => y.tipo === "rua" && y.comp >= 3).sort((a, b) => a.comp - b.comp)[0];
+  const ee = definirFrente(pr0, r0, r0.quadras.find((x) => x.nome === esq.quadra), esq, rua.a, rua.b);
+  const esq2 = calcular(ee.pr, perimetro).lotes.find((x) => x.quadra === esq.quadra && x.indice === ee.sel.indices[0]);
+  assert.ok(!esq2.esquina && esq2.frente < rua.comp + 2, `esquina com frente ${esq2.frente}`);
+  // acesso da quadra: um lado de divisa da gleba vira frente dos lotes que encostam nele
+  const qa = r0.quadras.find((x) => x.lotes.some((y) => y.lados.some((z) => z.tipo === "divisa" && z.comp > 5)));
+  const ld = qa.lotes.flatMap((y) => y.lados).filter((z) => z.tipo === "divisa").sort((a, b) => b.comp - a.comp)[0];
+  const m = [(ld.a[0] + ld.b[0]) / 2, (ld.a[1] + ld.b[1]) / 2];
+  const dl = (s) => { const [a, b] = s; const ab = [b[0] - a[0], b[1] - a[1]]; const t = Math.max(0, Math.min(1, ((m[0] - a[0]) * ab[0] + (m[1] - a[1]) * ab[1]) / (ab[0] ** 2 + ab[1] ** 2))); return Math.hypot(m[0] - a[0] - ab[0] * t, m[1] - a[1] - ab[1] * t); };
+  const lq = ladosRetos(qa.pol).sort((x, y) => dl(x) - dl(y))[0];
+  const ac = alternarAcesso(pr0, r0, qa, lq[0], lq[1]);
+  const q5 = calcular(ac.pr, perimetro).quadras.find((x) => x.nome === qa.nome);
+  assert.equal(q5.acessos?.length, 1);
+  assert.ok(q5.lotes.some((y) => y.lados.some((z) => z.definida && !z.principal)), "nenhum lote ganhou frente no acesso");
 });
 
 test("apagar, desenhar, unir, dividir e cortar lotes à mão", () => {

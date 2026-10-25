@@ -13,9 +13,11 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
    - **Numeração e medidas.** Quadras por letra ou número, sentido dos lotes e "medidas de terreno".
 3. **Gerar o loteamento.** O sistema testa as direções do terreno e as defasagens da malha, reserva área verde e institucional onde custa menos lote e mostra as 3 propostas com mais lotes. Escolha uma.
 4. **Projeto (prancheta).** Um clique seleciona o lote, duplo clique seleciona a quadra e Shift+clique soma lotes.
-   - **Edição livre do lote (como no CAD).** O lote selecionado mostra alças só nas **quinas** (quadrados) e nas **divisas** (barras verdes).
-     - Arrastar a quina move o ponto em todos os lotes que o têm; a quina que está na rua ou na divisa da gleba **corre por ela** (Alt solta).
-     - Arrastar a divisa a desliza paralela a si mesma ("slide line" do Civil 3D): o lote fica mais largo ou mais fundo e o vizinho cede. As pontas da divisa correm pela rua e pela linha de fundo.
+   - **Edição livre do lote (como no CAD).** O lote selecionado mostra alças nas **quinas** (quadrados) e em cada **lado reto** (barras verdes; na rua, tracejadas). Toda quina tem alça — também a que ficou quase alinhada ou num lado curto; só o arco da esquina (é da rua), a dobra da rua e o "T" de um vizinho (a alça é do vizinho) não têm.
+     - Arrastar a quina move o ponto em todos os lotes que o têm. A borda da quadra é um **ímã** (14 px): perto da rua ou da divisa da gleba a quina corre por ela; mais longe, vai aonde o cursor for (Alt solta de vez).
+     - Puxar a quina por cima do vizinho é permitido: o lote arrastado tem a vez, o vizinho fica com o que sobra (e some se for engolido — a mensagem avisa, Ctrl+Z desfaz). O contorno guardado é sempre o desenhado, por isso nenhuma alça "trava"; se o próprio lote se cruzar, ele fica com o pedaço da quina que está na mão (a alça acompanha o cursor). Em zoom afastado, a barra de divisa colada em outra alça some até aproximar (as quinas ficam). Arraste que não muda nada (borda empurrada para a rua) não vira passo no desfazer.
+     - Arrastar a divisa a desliza paralela a si mesma ("slide line" do Civil 3D): o lote fica mais largo ou mais fundo e o vizinho cede. As pontas correm pela rua, pela linha de fundo ou pelo lado do lote de trás — sem abrir fresta: o lote cujo lado passa reto pela ponta (ou dobra na quina da rua) fica com a ponta velha e ganha a nova.
+     - **Frente escolhida (T).** Com um lote selecionado, a ferramenta Frente (T, ou ☆ na lista de confrontações) marca o lado que é a frente dele: servidão, área verde, outro lote — ou a rua principal de um lote de esquina. Só o lado escolhido conta como frente (medidas, avisos, memorial); clicar de novo tira. Sem lote selecionado, o T marca o lado da quadra que é o **acesso** dela (tracejado laranja): a quadra sem rua passa a ser dividida a partir dele e os lotes que encostam nele têm frente ali.
      - **L** desenha um lote (clique as quinas, Enter fecha): o contorno manda e os vizinhos se ajustam a ele. Duplo clique numa **área livre** (rosa) com o L transforma a área inteira em lote.
      - **C** corta lotes com uma linha (clique o início e o fim). **Delete** apaga o lote (a área fica livre).
      - `frente 12` e `area 300` deslizam a divisa lateral até o valor exato (no lote de esquina, vale a frente da rua da fileira). `unir` junta os selecionados (um só: ao vizinho de maior divisa). `dividir 3` divide em partes de área igual, com as divisas na direção das laterais do lote.
@@ -99,7 +101,7 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - Os lotes são cortados perpendicularmente à rua.
   - Lotes travados (frente ou área) entram primeiro, e os livres dividem o comprimento que sobra pela regra da quadra.
   - Ponta menor que o mínimo soma-se ao vizinho; pedaço sem frente vira sobra, que o gerador transforma em área verde.
-- **Ajustes manuais.** São presos à quadra por uma âncora (ponto UTM dentro dela). A quadra desenhada à mão guarda os contornos dos lotes em UTM (`QuadraCfg.lotes`); mover uma rua apara os lotes e o que ficar sem lote aparece como área livre. As quinas compartilhadas são um ponto só em todos os lotes (o "T" de um vizinho é inserido no lado do outro), por isso mover uma quina leva os vizinhos junto.
+- **Ajustes manuais.** São presos à quadra por uma âncora (ponto UTM dentro dela). A quadra desenhada à mão guarda os contornos dos lotes em UTM (`QuadraCfg.lotes`); mover uma rua apara os lotes e o que ficar sem lote aparece como área livre. As quinas compartilhadas são um ponto só em todos os lotes (o "T" de um vizinho é inserido no lado do outro), por isso mover uma quina leva os vizinhos junto. Depois de cada arraste, `assentar` (edicao.ts) grava exatamente o que o desenho mostra: contorno que se cruzou vira o maior pedaço (o resto vai ao vizinho de maior divisa) e o lote arrastado ganha a disputa com quem ele invadiu. A frente escolhida fica em `LoteDesenhado.frente` (acompanha o lado nas edições) e o acesso da quadra em `QuadraCfg.acessos` (UTM).
 - **Cache da divisão.** `calcular` guarda a divisão de cada quadra automática (por perímetro, parâmetros, ruas, áreas e configs); arrastar uma quina recalcula só a quadra desenhada (≈10 ms em vez de ≈150 ms).
 - **Plano de terreno.** O desenho é feito em UTM ÷ fator de escala combinado (ponto × altitude) no centro da gleba, para que as medidas do papel sejam as da trena. A locação volta para UTM multiplicando pelo fator.
 - **Onde roda.** Tudo roda no navegador, inclusive os PDF/DOCX/DXF; o gerador automático roda num Web Worker. Nenhuma edge function nova, e a VPS não ganha carga.
@@ -119,6 +121,8 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - lote 10×25 com 250,00 m²;
   - frente digitada: a divisa lateral desliza, o vizinho cede, a quadra se conserva;
   - arrastar quina e divisa (a quina da rua corre pela rua; sem sobreposição);
+  - arraste em cadeia que não trava (quina por cima do vizinho, alinhada, de volta: sempre com alça e indo aonde o cursor vai) e divisa que desliza sem abrir fresta;
+  - frente escolhida (lote sem rua, rua principal da esquina, acesso da quadra) e o memorial confrontando com o lote vizinho;
   - apagar, desenhar, unir, dividir e cortar lotes à mão;
   - geração com no máximo 4 quinas por lote e fundo com fundo nas quadras entre ruas;
   - comandos (unir, dividir, verde, largura);

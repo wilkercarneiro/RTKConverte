@@ -47,6 +47,7 @@ export function Avisos({ res, params: p, sel, onSel, onFocar, onFechar }: Props)
             <b>⚠ Lote {l.id}</b>
             <span className="lot-avisos-med">{l.frente > 0.05 ? `${fmt(l.frente)} m × ${fmt(l.profundidade)} m · ` : "sem frente · "}{fmt(l.area)} m²</span>
             {l.problemas.map((t) => <span key={t} className="lot-avisos-txt">{curto(t)}</span>)}
+            {l.problemas.some((t) => /sem frente/.test(t)) && <span className="lot-avisos-dica">Escolha a frente: clique no lote e em ☆ no lado que é a frente (ou ferramenta T).</span>}
           </li>
         ))}
       </ul>

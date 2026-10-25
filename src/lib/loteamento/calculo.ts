@@ -43,6 +43,12 @@ export interface Lado {
   ref?: string;
   /** texto do confrontante: "Rua 1", "Lote 5", "JOÃO DA SILVA" */
   nome: string;
+  /** frente escolhida pelo operador — no lote ou no acesso da quadra */
+  definida?: boolean;
+  /** o lado não é rua (servidão, área verde, outro lote): virou frente pela escolha */
+  semRua?: boolean;
+  /** a frente que o operador escolheu para ESTE lote: só ela conta como frente */
+  principal?: boolean;
 }
 
 export interface Lote {
@@ -74,6 +80,8 @@ export interface Lote {
   ajustado: boolean;
   /** desenhado à mão (a quadra é do operador): fora das medidas é aviso, nunca bloqueio */
   manual?: boolean;
+  /** lado que o operador escolheu como frente (plano) */
+  frenteDefinida?: [Pt, Pt];
   /** frente travada pelo operador (para o inspetor) */
   travaFrente?: number;
   travaArea?: number;
@@ -124,6 +132,8 @@ export interface Quadra {
   problemas: string[];
   /** curvas/chanfros das esquinas (para a locação e a planta) */
   curvas: CurvaEsquina[];
+  /** lados da quadra marcados como acesso pelo operador (plano) */
+  acessos?: [Pt, Pt][];
 }
 
 export interface AreaPublica {
@@ -260,6 +270,39 @@ interface Contexto {
   juntar?: boolean;
   /** pontos dos retalhos marcados como área pública (esses não viram lote) */
   marcas?: Pt[];
+  /** lados de acesso da quadra que está sendo dividida (o operador os escolheu como frente) */
+  acessosQuadra?: [Pt, Pt][];
+}
+
+/**
+ * Lado escolhido pelo operador como frente: o lado (ou o pedaço dele) que cai
+ * sobre um desses segmentos passa a contar como frente — "via", marcado como
+ * definido (o memorial continua dizendo com quem confronta). `ruaTambem`: o
+ * lado de rua também é marcado (a frente principal do lote de esquina).
+ * Devolve os lados marcados.
+ */
+function marcarFrentes(lados: Lado[], segs: [Pt, Pt][] | undefined, ruaTambem = false): Lado[] {
+  const marcados: Lado[] = [];
+  if (!segs?.length) return marcados;
+  for (const l of lados) {
+    if ((ehFrente(l.tipo) && !ruaTambem) || l.comp < 0.05) continue;
+    const m = lerp(l.a, l.b, 0.5);
+    const sobre = segs.some(([a, b]) => {
+      const L = dist(a, b);
+      if (L < 0.05) return false;
+      const d = unit(sub(b, a));
+      // a frente escolhida no lote (ruaTambem) é o lado exato: o 1º trecho do
+      // arco da esquina, quase alinhado com ele, não entra
+      if (Math.abs(cross(d, unit(sub(l.b, l.a)))) > (ruaTambem ? 0.02 : 0.1)) return false;
+      const t = dot(sub(m, a), d);
+      return Math.abs(cross(d, sub(m, a))) < (ruaTambem ? 0.1 : 0.3) && t > -0.5 && t < L + 0.5;
+    });
+    if (!sobre) continue;
+    if (!ehFrente(l.tipo)) { l.tipo = "via"; l.semRua = true; }
+    l.definida = true;
+    marcados.push(l);
+  }
+  return marcados;
 }
 
 /** Sonda um ponto logo do lado de fora da aresta e diz o que tem lá. */
@@ -1025,7 +1068,7 @@ function quadraDesenhada(ctx: Contexto, pol: Poligono, cfg: QuadraCfg, P: (q: Pt
     if (!pedacos.length) return;
     const pg: Poligono = { ext: limparAnel(pedacos[0].ext, 0.003), furos: pedacos[0].furos };
     usados.push(pg);
-    lotes.push({ pol: pg, area: areaPol(pg), fileira: 0, indice: k, ajustado: false, manual: true });
+    lotes.push({ pol: pg, area: areaPol(pg), fileira: 0, indice: k, ajustado: false, manual: true, frenteDefinida: ld.frente ? [P(ld.frente[0]), P(ld.frente[1])] : undefined });
     if (ld.destino) destinos.set(`0:${k}`, ld.destino);
   });
   const livre = diferenca([pol], usados).filter((x) => areaPol(x) > 1);
@@ -1046,6 +1089,7 @@ function dividirQuadra(
   ancoraFrente: Pt | null, opcaoFace = 0,
 ): ResultadoQuadra {
   const lados = ladosDe(ctx, pol, null);
+  marcarFrentes(lados, ctx.acessosQuadra);
   const fs = faces(lados).filter((f) => f.comp >= Math.min(p.frenteMin, 3));
   const vazio = (msg: string): ResultadoQuadra => ({
     lotes: [], destinos: new Map(), cortes: [], fundo: null, sobras: [pol], origem: pol.ext[0], u: [1, 0], v: [0, 1],
@@ -2226,6 +2270,9 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       canteiros.push(...(guardado.canteiros ?? []));
       desarmonicos += guardado.ruins + 0.5 * guardado.tortos;
     }
+    // lados de acesso que o operador marcou nesta quadra contam como frente na divisão
+    const acessosQ = q.cfg?.acessos?.map((sg) => [P(sg[0]), P(sg[1])] as [Pt, Pt]);
+    ctx.acessosQuadra = acessosQ;
     let res = guardado ?? (manual ? quadraDesenhada(ctx, polEsq, q.cfg!, P) : dividirQuadra(ctx, polEsq, q.cfg, p, modo, valor, sobra, ancFrente));
     // frente mais longa deixou lote torto/nanico (quadra com um lado diagonal):
     // tenta lotear pelas outras frentes e fica com a que dá mais lote bom
@@ -2293,7 +2340,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     const quadra: Quadra = {
       cfg: q.cfgIdx, nome, pol: polEsq, area: areaPol(polEsq), lotes: [], origem: res.origem, u: res.u, v: res.v,
       fundo: res.fundo, cortes: res.cortes, modo, valor, sobra, fileiras: res.fileiras, centro: q.centro,
-      ancoraUtm: q.cfg?.ancora, problemas: res.problemas, curvas,
+      ancoraUtm: q.cfg?.ancora, problemas: res.problemas, curvas, acessos: acessosQ,
     };
     let num = 0;
     let nAreaLotes = 0;
@@ -2323,8 +2370,13 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     void nAreaLotes;
     // quadra desenhada que ficou sem lote não vai para a planta nem para as
     // entregas, mas o editor ainda a acha (para voltar ao automático, preencher)
-    if (temLote) quadras.push(quadra); else if (manual) quadrasVazias.push(quadra);
+    if (temLote) quadras.push(quadra);
+    else if (manual) quadrasVazias.push(quadra);
+    // quadra sem nenhum lote (sem frente para rua): o editor precisa achá-la para
+    // o operador escolher a frente dela — com nome próprio, sem tomar a letra de outra
+    else if (!seq.length) quadrasVazias.push({ ...quadra, nome: q.cfg?.nome || `(sem frente ${quadrasVazias.length + 1})` });
   }
+  ctx.acessosQuadra = undefined;
 
   // --- retalhos encostados viram um só (o fundo aparado de vários lotes é UM retalho)
   if (sobras.length > 1 && !ctx.juntar) { const u = uniaoFechada(sobras); sobras.length = 0; sobras.push(...u); }
@@ -2431,7 +2483,14 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       continue;
     }
     l.lados = ladosDe(ctx, l.pol, lotesIdx, l.id);
-    const fr = l.lados.filter((x) => ehFrente(x.tipo));
+    // frente escolhida pelo operador: o lado de acesso da quadra e o lado marcado no lote
+    const qdl = quadras.find((x) => x.nome === l.quadra);
+    marcarFrentes(l.lados, qdl?.acessos);
+    // a frente escolhida no lote manda: só ela é frente — a rua do outro lado
+    // fica como confrontação (é assim que se escolhe a frente da esquina)
+    const principal = l.frenteDefinida ? marcarFrentes(l.lados, [l.frenteDefinida], true) : [];
+    for (const x of principal) x.principal = true;
+    const fr = principal.length ? principal : l.lados.filter((x) => ehFrente(x.tipo));
     l.frente = fr.reduce((s, x) => s + x.comp, 0);
     const ruasDistintas = new Set(fr.map((x) => x.ref));
     l.esquina = ruasDistintas.size >= 2;

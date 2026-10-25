@@ -12,7 +12,7 @@
 // por ela. Nada é recusado: o que sair das medidas vira aviso no lote.
 import {
   antiHorario, areaAssinada, areaPol, bufferLinha, cross, dentroPol, diferenca, dist, distSegmento, dot, esquerda, intersecao,
-  intersecaoRetas, lerp, limparAnel, mult, quinasDe, soma, sub, uniaoFechada, unit,
+  giroEm, intersecaoRetas, lerp, limparAnel, mult, quinasDe, soma, sub, uniaoFechada, unit,
 } from "./geom.ts";
 import type { Poligono, Pt } from "./geom.ts";
 import { ancoraDaQuadra } from "./auto.ts";
@@ -22,6 +22,9 @@ import { paraPlano, paraUtm } from "./plano.ts";
 import type { LoteDesenhado, Projeto, QuadraCfg } from "./modelo.ts";
 
 const TOL = 0.02;
+
+/** O que acompanha cada contorno: destino (área pública) e a frente escolhida (plano). */
+interface Meta { destino?: LoteDesenhado["destino"]; frente?: [Pt, Pt] }
 
 export interface Edicao {
   pr: Projeto;
@@ -73,7 +76,7 @@ export function posicaoNoDesenho(pr: Projeto, res: Resultado, l: Lote): number {
  * config. Os lotes viram contornos na ordem da numeração; as áreas públicas
  * feitas de lotes da quadra também (com o destino delas).
  */
-function contornos(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: number; aneis: Pt[][]; destinos: (LoteDesenhado["destino"])[] } {
+function contornos(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: number; aneis: Pt[][]; destinos: Meta[] } {
   const pl = res.plano;
   const ic = cfgDe(pr, q, pl);
   if (ic >= 0 && Array.isArray(pr.quadras[ic].lotes)) {
@@ -87,13 +90,13 @@ function contornos(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: nu
       const dentro = intersecao([pg], [q.pol]).sort((x, y) => areaPol(y) - areaPol(x))[0];
       return dentro ? limparAnel(dentro.ext, 0.003) : an;
     });
-    return { pr, i: ic, aneis: normalizar(aneis), destinos: c.lotes!.map((l) => l.destino) };
+    return { pr, i: ic, aneis: normalizar(aneis), destinos: c.lotes!.map((l) => ({ destino: l.destino, frente: l.frente ? [paraPlano(pl, l.frente[0]), paraPlano(pl, l.frente[1])] as [Pt, Pt] : undefined })) };
   }
   const aneis: Pt[][] = ordemDoDesenho(pr, q).map((l) => l.pol.ext.slice());
-  const destinos: (LoteDesenhado["destino"])[] = aneis.map(() => undefined);
+  const destinos: Meta[] = aneis.map(() => ({}));
   for (const a of res.areas) {
     if (a.origem !== "lotes" || a.cfg !== q.cfg || q.cfg < 0) continue;
-    for (const pg of a.pols) { aneis.push(pg.ext.slice()); destinos.push(a.tipo); }
+    for (const pg of a.pols) { aneis.push(pg.ext.slice()); destinos.push({ destino: a.tipo }); }
   }
   const base: QuadraCfg = ic >= 0 ? { ...pr.quadras[ic] } : { ancora: paraUtm(pl, ancoraDaQuadra(q)), ajustes: [] };
   base.ajustes = [];
@@ -104,19 +107,48 @@ function contornos(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: nu
 }
 
 /** Área pública (verde, institucional) feita de lotes da quadra mudou de tamanho? → frase de aviso. */
-function avisoPublica(antes: Pt[][], depois: Pt[][], destinos: (LoteDesenhado["destino"])[]): string {
-  const soma = (an: Pt[][]) => an.reduce((s2, a, k) => s2 + (destinos[k] ? Math.abs(areaAssinada(a)) : 0), 0);
-  const a0 = soma(antes), a1 = soma(depois);
+function avisoPublica(antes: Pt[][], depois: Pt[][], destinos: Meta[], destinosDepois = destinos): string {
+  const soma = (an: Pt[][], ds: Meta[]) => an.reduce((s2, a, k) => s2 + (ds[k]?.destino ? Math.abs(areaAssinada(a)) : 0), 0);
+  const a0 = soma(antes, destinos), a1 = soma(depois, destinosDepois);
   return Math.abs(a1 - a0) > 0.5 ? ` Atenção: a área pública desta quadra mudou de ${fmt(a0)} para ${fmt(a1)} m².` : "";
 }
 
-function gravar(pr: Projeto, res: Resultado, i: number, aneis: Pt[][], destinos: (LoteDesenhado["destino"])[]): Projeto {
+function gravar(pr: Projeto, res: Resultado, i: number, aneis: Pt[][], destinos: Meta[]): Projeto {
   const pl = res.plano;
   const lotes: LoteDesenhado[] = [];
   aneis.forEach((a, k) => {
     if (a.length < 3) return;
-    const d = destinos[k];
-    lotes.push(d ? { anel: a.map((p) => paraUtm(pl, p)), destino: d } : { anel: a.map((p) => paraUtm(pl, p)) });
+    const m = destinos[k] ?? {};
+    const ld: LoteDesenhado = { anel: a.map((p) => paraUtm(pl, p)) };
+    if (m.destino) ld.destino = m.destino;
+    // a frente escolhida acompanha o lado: o lado do contorno perto da linha
+    // dela (girado até 45°, deslocado até 30% do comprimento) e que se sobrepõe
+    // a ela. Longe disso o lote não tem mais aquele lado (o pedaço de trás de
+    // um corte, o lado que foi parar no fundo): a escolha cai e o aviso volta.
+    if (m.frente) {
+      const [fa, fb] = m.frente;
+      const L = dist(fa, fb);
+      const d = unit(sub(fb, fa));
+      const n = a.length;
+      let melhor = -1, dm = Math.max(1.5, 0.3 * L);
+      for (let j = 0; j < n; j++) {
+        const p = a[j], q = a[(j + 1) % n];
+        if (dist(p, q) < 0.5 || Math.abs(cross(d, unit(sub(q, p)))) > 0.71) continue;
+        const t0 = dot(sub(p, fa), d), t1 = dot(sub(q, fa), d);
+        if (Math.min(Math.max(t0, t1), L) - Math.max(Math.min(t0, t1), 0) < 0.5) continue;
+        const dd = Math.abs(cross(d, sub(lerp(p, q, 0.5), fa)));
+        if (dd < dm) { dm = dd; melhor = j; }
+      }
+      if (melhor >= 0) {
+        // o lado inteiro: junta as arestas alinhadas (o "T" de um vizinho no meio)
+        const reta = (x: number, y: number) => Math.abs(cross(unit(sub(a[y], a[x])), unit(sub(a[(melhor + 1) % n], a[melhor])))) < 0.02;
+        let i0 = melhor, i1 = (melhor + 1) % n;
+        for (let s = 0; s < n && reta((i0 - 1 + n) % n, i0) && (i0 - 1 + n) % n !== i1; s++) i0 = (i0 - 1 + n) % n;
+        for (let s = 0; s < n && reta(i1, (i1 + 1) % n) && (i1 + 1) % n !== i0; s++) i1 = (i1 + 1) % n;
+        ld.frente = [paraUtm(pl, a[i0]), paraUtm(pl, a[i1])];
+      }
+    }
+    lotes.push(ld);
   });
   const quadras = pr.quadras.slice();
   quadras[i] = { ...quadras[i], lotes };
@@ -137,8 +169,24 @@ export function voltarAoAutomatico(pr: Projeto, q: Quadra, pl?: Resultado["plano
 /** Lote ou área pública (verde, institucional) — numa quadra desenhada; `null` volta a ser lote. */
 export function mudarDestino(pr0: Projeto, res: Resultado, q: Quadra, indices: number[], destino: LoteDesenhado["destino"] | null): Edicao {
   const { pr, i, aneis, destinos } = contornos(pr0, res, q);
-  const novos = destinos.map((d, k) => (indices.includes(k) ? destino ?? undefined : d));
+  const novos = destinos.map((d, k) => (indices.includes(k) ? { ...d, destino: destino ?? undefined } : d));
   return { pr: gravar(pr, res, i, aneis, novos), msg: destino ? `${indices.length === 1 ? "Lote" : `${indices.length} lotes`} → área pública.` : "Voltou a ser lote." };
+}
+
+/**
+ * Lado do lote escolhido como frente (servidão, área verde, outro lote): o
+ * lote passa a ter frente ali — medidas, avisos e memorial. Clicar de novo no
+ * mesmo lado tira a escolha.
+ */
+export function definirFrente(pr0: Projeto, res: Resultado, q: Quadra, l: Lote, a: Pt, b: Pt): Edicao | null {
+  const k = posicaoNoDesenho(pr0, res, l);
+  if (k < 0 || dist(a, b) < 0.5) return null;
+  const { pr, i, aneis, destinos } = contornos(pr0, res, q);
+  const atual = destinos[k]?.frente;
+  const d = unit(sub(b, a));
+  const mesmo = !!atual && Math.abs(cross(d, unit(sub(atual[1], atual[0])))) < 0.1 && Math.abs(cross(d, sub(atual[0], a))) < 0.3;
+  const metas = destinos.map((m, j) => (j === k ? { ...m, frente: mesmo ? undefined : [a, b] as [Pt, Pt] } : m));
+  return { pr: gravar(pr, res, i, aneis, metas), msg: mesmo ? (l.lados.some((x) => x.tipo === "rua") ? "Escolha retirada — a frente do lote volta a ser a rua." : "Escolha retirada — o lote fica sem frente (aviso à esquerda).") : `Frente do lote escolhida: o lado de ${fmt(dist(a, b))} m — só ele conta como frente; medidas e avisos recalculados.`, sel: { quadra: q.nome, indices: [k] } };
 }
 
 /** Une o lote ao vizinho da quadra com quem ele divide a maior divisa. */
@@ -235,15 +283,126 @@ function moverPontos(aneis: Pt[][], mapa: { de: Pt; para: Pt }[], so?: (k: numbe
   })));
 }
 
+const distBorda = (q: Quadra, p: Pt): number => q.pol.ext.reduce((m, a, i) => Math.min(m, distSegmento(p, a, q.pol.ext[(i + 1) % q.pol.ext.length]).d), Infinity);
+
+const caixa = (a: Pt[]): [number, number, number, number] => {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of a) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  return [x0, y0, x1, y1];
+};
+
+/** O contorno se cruza (a quina passou por cima de outro lado do próprio lote)? */
+function seCruza(a: Pt[]): boolean {
+  const n = a.length;
+  for (let i = 0; i < n; i++) for (let j = i + 2; j < n; j++) {
+    if (i === 0 && j === n - 1) continue;
+    const p = a[i], r = sub(a[(i + 1) % n], p), s = sub(a[(j + 1) % n], a[j]);
+    const x = intersecaoRetas(p, r, a[j], s);
+    if (x && x.t > 1e-6 && x.t < 1 - 1e-6 && x.u > 1e-6 && x.u < 1 - 1e-6) return true;
+  }
+  return false;
+}
+
 /**
- * Arrasta uma quina. Na borda da quadra ela desliza pela borda (o lote não
- * sai da rua nem da divisa); `livre` solta de vez.
+ * Assenta os contornos depois de um arraste: o que se vê é o que se edita.
+ * Quina puxada por cima de outra divisa cruza o contorno (vira "gravata") ou
+ * invade o vizinho; o desenho mostra só o pedaço limpo, e as alças ficavam em
+ * pontos que não existiam no contorno gravado — a quina "travava". Aqui cada
+ * contorno vira o pedaço que aparece: o lote arrastado (`dono`) tem a vez, os
+ * outros ficam com o que sobra; o pedaço solto de um contorno que se cruzou vai
+ * para o vizinho que mais encosta nele. Contorno que some sai da lista: `mapa`
+ * dá a posição nova de cada um (-1 = sumiu).
  */
-export function moverQuina(pr0: Projeto, res: Resultado, q: Quadra, de: Pt, para: Pt, livre = false): Edicao {
+function assentar(antes: Pt[][], depois: Pt[][], destinos: Meta[], q: Quadra, dono: number, ponto?: Pt): { aneis: Pt[][]; destinos: Meta[]; mapa: number[] } {
+  const igual = depois.map((a, k) => a === antes[k] || (a.length === antes[k]?.length && a.every((p, j) => dist(p, antes[k][j]) < 1e-9)));
+  const caixas = depois.map(caixa);
+  const tocam = (k: number, j: number) => caixas[k][0] < caixas[j][2] && caixas[j][0] < caixas[k][2] && caixas[k][1] < caixas[j][3] && caixas[j][1] < caixas[k][3];
+  const pg = (a: Pt[]): Poligono => ({ ext: antiHorario(a), furos: [] });
+  const area = (ps: Poligono[]) => ps.reduce((s2, x) => s2 + areaPol(x), 0);
+  // caminho rápido: os contornos que mudaram continuam limpos, dentro da quadra e sem invadir ninguém
+  // (contorno que mudou e ficou sem área — quina solta sobre a quina oposta — vai pelo caminho completo e sai)
+  const limpo = depois.every((a, k) => igual[k] || (
+    a.length >= 3 && Math.abs(areaAssinada(a)) >= 0.05 && !seCruza(a) && area(diferenca([pg(a)], [q.pol])) < 0.05
+    && depois.every((b, j) => j === k || b.length < 3 || !tocam(k, j) || area(intersecao([pg(a)], [pg(b)])) < 0.05)
+  ));
+  if (limpo) return { aneis: depois, destinos, mapa: depois.map((_, k) => k) };
+  const ordem = [...(dono >= 0 && dono < depois.length ? [dono] : []), ...depois.map((_, k) => k).filter((k) => k !== dono)];
+  const usados: Poligono[] = [];
+  const fica: (Pt[] | null)[] = depois.map(() => null);
+  const soltos: Poligono[] = [];
+  for (const k of ordem) {
+    const a = depois[k];
+    if (a.length < 3 || Math.abs(areaAssinada(a)) < 0.05 && !seCruza(a)) continue;
+    const ped = diferenca(intersecao([pg(a)], [q.pol]), usados).filter((x) => areaPol(x) > 0.05).sort((x, y) => areaPol(y) - areaPol(x));
+    // o lote arrastado fica com o pedaço onde está a quina que o operador
+    // segura (não o maior): a alça acompanha o cursor, nunca "pula"
+    if (k === dono && ponto && ped.length > 1) {
+      const perto = (x: Poligono) => Math.min(...x.ext.map((v) => dist(v, ponto)));
+      ped.sort((x, y) => perto(x) - perto(y));
+    }
+    if (!ped.length) continue;
+    fica[k] = ped[0].ext;
+    // o pedaço solto também já tem dono (vai para um vizinho logo abaixo):
+    // os contornos seguintes não podem pegá-lo de novo — senão sobrepõe
+    usados.push({ ext: ped[0].ext, furos: [] }, ...ped.slice(1));
+    soltos.push(...ped.slice(1));
+  }
+  // pedaço solto vai para o vizinho com quem divide a maior divisa (nada de sobra)
+  const per = (p: Poligono) => p.ext.reduce((s2, x, j) => s2 + dist(x, p.ext[(j + 1) % p.ext.length]), 0);
+  for (const s of soltos) {
+    let melhor = -1, mc = 0.05, uniao: Poligono | null = null;
+    fica.forEach((a, k) => {
+      if (!a) return;
+      const u = uniaoFechada([pg(a), s]);
+      if (u.length !== 1 || u[0].furos.length) return;
+      const c = (per(pg(a)) + per(s) - per(u[0])) / 2;
+      if (c > mc) { mc = c; melhor = k; uniao = u[0]; }
+    });
+    if (melhor >= 0 && uniao) fica[melhor] = (uniao as Poligono).ext;
+  }
+  // rede final: nada sobreposto (o contorno guardado é só o contorno de fora —
+  // um furo ou a união de um pedaço solto podiam cobrir o lote de outro)
+  const finais: Poligono[] = [];
+  for (const k of ordem) {
+    const a = fica[k];
+    if (!a) continue;
+    const ped = diferenca([pg(a)], finais).filter((x) => areaPol(x) > 0.05).sort((x, y) => areaPol(y) - areaPol(x));
+    fica[k] = ped.length ? ped[0].ext : null;
+    if (ped.length) finais.push({ ext: ped[0].ext, furos: [] });
+  }
+  const aneis: Pt[][] = [], ds: Meta[] = [], mapa: number[] = [];
+  fica.forEach((a, k) => {
+    if (!a) { mapa.push(-1); return; }
+    mapa.push(aneis.length);
+    aneis.push(limparAnel(a, 0.003));
+    ds.push(destinos[k] ?? {});
+  });
+  return { aneis: normalizar(aneis), destinos: ds, mapa };
+}
+
+/** Edição de arraste: assenta, grava e devolve a seleção no lugar novo do lote arrastado. */
+function aplicarArraste(pr: Projeto, res: Resultado, q: Quadra, i: number, aneis: Pt[][], novos: Pt[][], destinos: Meta[], dono: number, msg: string, ponto?: Pt): Edicao {
+  const ass = assentar(aneis, novos, destinos, q, dono, ponto);
+  const sumiram = ass.mapa.filter((x) => x < 0).length;
+  const k = dono >= 0 ? ass.mapa[dono] : -1;
+  return {
+    pr: gravar(pr, res, i, ass.aneis, ass.destinos),
+    msg: `${msg}${sumiram ? ` ${sumiram === 1 ? "Um lote foi engolido" : `${sumiram} lotes foram engolidos`} (Ctrl+Z desfaz).` : ""}${avisoPublica(aneis, ass.aneis, destinos, ass.destinos)}`,
+    sel: k >= 0 ? { quadra: q.nome, indices: [k] } : undefined,
+  };
+}
+
+/**
+ * Arrasta uma quina. A borda da quadra (rua, divisa da gleba) é um ímã: com o
+ * cursor até `ima` metros dela, a quina corre pela borda (o lote não descola
+ * da rua); mais longe, ela vai aonde o operador puxar. `livre` solta de vez.
+ * `dono` = posição no desenho do lote arrastado (ele tem a vez se invadir o vizinho).
+ */
+export function moverQuina(pr0: Projeto, res: Resultado, q: Quadra, de: Pt, para: Pt, livre = false, ima = Infinity, dono = -1): Edicao {
   const { pr, i, aneis, destinos } = contornos(pr0, res, q);
-  const alvo = !livre && naBorda(q, de) ? pontoNaBorda(q, para) : para;
+  const alvo = !livre && naBorda(q, de) && distBorda(q, para) <= ima ? pontoNaBorda(q, para) : para;
   const novos = normalizar(moverPontos(aneis, [{ de, para: alvo }]));
-  return { pr: gravar(pr, res, i, novos, destinos), msg: `Quina movida ${fmt(dist(de, alvo))} m — os lotes vizinhos se ajustaram.${avisoPublica(aneis, novos, destinos)}` };
+  return aplicarArraste(pr, res, q, i, aneis, novos, destinos, dono, `Quina movida ${fmt(dist(de, alvo))} m — os lotes vizinhos se ajustaram.`, alvo);
 }
 
 /**
@@ -251,33 +410,53 @@ export function moverQuina(pr0: Projeto, res: Resultado, q: Quadra, de: Pt, para
  * lote; o vizinho do outro lado diminui). As pontas da divisa correm pela
  * borda da quadra ou pela linha de fundo, como na régua do projetista.
  */
-export function moverDivisa(pr0: Projeto, res: Resultado, q: Quadra, a: Pt, b: Pt, desloc: number, livre = false): Edicao {
+export function moverDivisa(pr0: Projeto, res: Resultado, q: Quadra, a: Pt, b: Pt, desloc: number, livre = false, dono = -1): Edicao {
   const { pr, i, aneis, destinos } = contornos(pr0, res, q);
   const novos = normalizar(deslizar(aneis, q, a, b, desloc, livre));
-  return { pr: gravar(pr, res, i, novos, destinos), msg: `Divisa deslocada ${fmt(Math.abs(desloc))} m — os lotes dos dois lados se ajustaram.${avisoPublica(aneis, novos, destinos)}` };
+  return aplicarArraste(pr, res, q, i, aneis, novos, destinos, dono, `Divisa deslocada ${fmt(Math.abs(desloc))} m — os lotes dos dois lados se ajustaram.`);
 }
 
 function deslizar(aneis: Pt[][], q: Quadra, a: Pt, b: Pt, desloc: number, livre: boolean): Pt[][] {
   const u = unit(sub(b, a));
   const n = esquerda(u);
   const A2 = soma(a, mult(n, desloc)), B2 = soma(b, mult(n, desloc));
+  // os lotes dos dois lados da divisa (os que têm um lado sobre ela)
+  const naDivisa = (an: Pt[]) => an.some((v, j) => {
+    const w = an[(j + 1) % an.length];
+    return dist(v, w) > TOL && distSegmento(v, a, b).d < TOL && distSegmento(w, a, b).d < TOL;
+  });
   // ponta que andou solta (Alt, ou sem guia): todos os lotes que a têm vão junto
   const soltas: Pt[] = [];
   const ponta = (e: Pt, alvo: Pt): Pt => {
     // Alt solta só a ponta de dentro: a da rua/divisa da gleba sempre corre pela borda
     if (livre && !naBorda(q, e)) { soltas.push(e); return alvo; }
-    // guia: a borda da quadra, ou a linha de outros lotes que passa pelo ponto
-    let guias: [Pt, Pt][] = [];
+    // guias: os lados dos lotes que chegam nesta ponta (a frente na rua, o
+    // fundo, a lateral do próprio lote quando a divisa é a frente ou o fundo),
+    // a borda da quadra e a linha de outros lotes que passa reta pelo ponto.
+    // Lote de trás (tem a ponta mas não a divisa) fica parado: a ponta tem de
+    // correr por um lado DELE — senão abre uma fresta entre ele e os que andam
+    const deTras = aneis.some((an) => !naDivisa(an) && an.some((v) => dist(v, e) < TOL));
+    const guias: [Pt, Pt][] = [];
+    for (const an of aneis) {
+      if (deTras && naDivisa(an)) continue;
+      for (let j = 0; j < an.length; j++) {
+        if (dist(an[j], e) > TOL) continue;
+        for (const viz of [an[(j + 1) % an.length], an[(j - 1 + an.length) % an.length]]) {
+          if (dist(viz, e) < 0.05 || distSegmento(viz, a, b).d < TOL) continue;
+          guias.push([e, viz]);
+        }
+      }
+    }
     if (naBorda(q, e)) {
       const ex = q.pol.ext;
-      guias = ex.map((x, k) => [x, ex[(k + 1) % ex.length]] as [Pt, Pt]).filter(([x, y]) => distSegmento(e, x, y).d < 0.05 || dist(e, x) < 0.05 || dist(e, y) < 0.05);
-      // lado vizinho também serve (a ponta pode passar da quina da quadra)
-    } else {
-      const l = linhaPorDentro(aneis, e, [a, b]);
-      if (l) guias = [l];
+      guias.push(...ex.map((x, k) => [x, ex[(k + 1) % ex.length]] as [Pt, Pt]).filter(([x, y]) => distSegmento(e, x, y).d < 0.05 || dist(e, x) < 0.05 || dist(e, y) < 0.05));
     }
+    const l0 = linhaPorDentro(aneis, e, [a, b]);
+    if (l0) guias.push(l0);
     let melhor: Pt | null = null, dm = Infinity;
     for (const [x, y] of guias) {
+      // guia paralela à divisa não dá ponto de encontro
+      if (Math.abs(cross(u, unit(sub(y, x)))) < 0.15) continue;
       const r = intersecaoRetas(A2, u, x, sub(y, x));
       if (!r) continue;
       const d = dist(r.pt, alvo);
@@ -297,13 +476,32 @@ function deslizar(aneis: Pt[][], q: Quadra, a: Pt, b: Pt, desloc: number, livre:
   }
   // só os lotes dos dois lados da divisa andam; o de trás (na outra fileira),
   // que só toca a ponta dela, fica como está — o ponto novo cai no lado dele
-  const naDivisa = (an: Pt[]) => an.some((v, j) => {
-    const w = an[(j + 1) % an.length];
-    return dist(v, w) > TOL && distSegmento(v, a, b).d < TOL && distSegmento(w, a, b).d < TOL;
-  });
   const guiadas = mapa.filter((m) => !soltas.some((x) => dist(x, m.de) < TOL));
   const livres = mapa.filter((m) => soltas.some((x) => dist(x, m.de) < TOL));
-  return moverPontos(moverPontos(aneis, livres), guiadas, (k) => naDivisa(aneis[k]));
+  // Na ponta, cada lote da divisa olha o lado dele que SAI da ponta: se a ponta
+  // nova cai nesse lado, o lote encolhe por ele (troca a ponta); senão o lote
+  // fica com a ponta velha e ganha a nova ao lado — é o lado que passa reto
+  // (a divisa é só um trecho dele, que segue encostado no lote de trás) ou a
+  // quina da rua (a ponta correu pelo outro lado da quina). Trocar nesses
+  // casos entortava o lado e abria fresta.
+  const naLinha = (p: Pt) => distSegmento(p, a, b).d < TOL;
+  const guiar = (an: Pt[]): Pt[] => {
+    const n = an.length, out: Pt[] = [];
+    for (let j = 0; j < n; j++) {
+      const v = an[j], m = guiadas.find((x) => dist(x.de, v) < TOL);
+      if (!m) { out.push(v); continue; }
+      const ehPonta = dist(v, a) < TOL || dist(v, b) < TOL;
+      const ant = an[(j - 1 + n) % n], seg = an[(j + 1) % n];
+      const antNaDivisa = naLinha(ant) && dist(ant, v) > TOL;
+      const fora = antNaDivisa ? seg : ant;
+      const noLado = dist(fora, v) < TOL || naLinha(fora) || distSegmento(m.para, v, fora).d < TOL;
+      if (!ehPonta || noLado || dist(m.para, v) < TOL) out.push(m.para);
+      else if (antNaDivisa) out.push(m.para, v);
+      else out.push(v, m.para);
+    }
+    return out;
+  };
+  return moverPontos(aneis, livres).map((an, k) => (naDivisa(aneis[k]) ? guiar(an) : an));
 }
 
 // ---------------------------------------------------------------------------
@@ -333,13 +531,13 @@ export function desenharLote(pr0: Projeto, res: Resultado, anel: Pt[]): Edicao |
   if (!q || melhor < 1) return null;
   const { pr, i, aneis, destinos } = contornos(pr0, res, q);
   // o lote desenhado manda sobre os lotes — não sobre a área pública da quadra
-  const publicas = aneis.filter((_, k) => destinos[k]).map((a) => ({ ext: antiHorario(a), furos: [] as Pt[][] }));
+  const publicas = aneis.filter((_, k) => destinos[k]?.destino).map((a) => ({ ext: antiHorario(a), furos: [] as Pt[][] }));
   const novo = diferenca(intersecao([pol], [q.pol]), publicas).sort((x, y) => areaPol(y) - areaPol(x))[0];
   if (!novo || areaPol(novo) < 1) return null;
   const ext = limparAnel(novo.ext, 0.005);
-  const outros: Pt[][] = [], dOutros: (LoteDesenhado["destino"])[] = [];
+  const outros: Pt[][] = [], dOutros: Meta[] = [];
   aneis.forEach((a, k) => {
-    if (destinos[k]) { outros.push(a); dOutros.push(destinos[k]); return; }
+    if (destinos[k]?.destino) { outros.push(a); dOutros.push(destinos[k]); return; }
     const resto = diferenca([{ ext: antiHorario(a), furos: [] }], [{ ext, furos: [] }]).filter((x) => areaPol(x) > 1).sort((x, y) => areaPol(y) - areaPol(x));
     if (!resto.length) return;
     outros.push(limparAnel(resto[0].ext, 0.003));
@@ -347,7 +545,7 @@ export function desenharLote(pr0: Projeto, res: Resultado, anel: Pt[]): Edicao |
   });
   const todos = normalizar([...outros, ext]);
   const k = todos.length - 1;
-  return { pr: gravar(pr, res, i, todos, [...dOutros, undefined]), msg: `Lote desenhado com ${fmt(areaPol({ ext, furos: [] }))} m² — os vizinhos se ajustaram ao contorno.`, sel: { quadra: q.nome, indices: [k] } };
+  return { pr: gravar(pr, res, i, todos, [...dOutros, {}]), msg: `Lote desenhado com ${fmt(areaPol({ ext, furos: [] }))} m² — os vizinhos se ajustaram ao contorno.`, sel: { quadra: q.nome, indices: [k] } };
 }
 
 export function unirLotes(pr0: Projeto, res: Resultado, q: Quadra, indices: number[]): Edicao | null {
@@ -426,7 +624,7 @@ export function cortarLotes(pr0: Projeto, res: Resultado, P: Pt, Q: Pt): Edicao 
     const ks = ls.map((l) => posicaoNoDesenho(pr0, res, l));
     const c = contornos(pr, res, q);
     pr = c.pr;
-    const novos: Pt[][] = [], dest: (LoteDesenhado["destino"])[] = [];
+    const novos: Pt[][] = [], dest: Meta[] = [];
     c.aneis.forEach((a, k) => {
       if (!ks.includes(k)) { novos.push(a); dest.push(c.destinos[k]); return; }
       const pg: Poligono = { ext: antiHorario(a), furos: [] };
@@ -457,7 +655,9 @@ export function acertarMedida(pr0: Projeto, res: Resultado, q: Quadra, l: Lote, 
   if (k < 0) return null;
   const { pr, i, aneis, destinos } = contornos(pr0, res, q);
   const anel = aneis[k];
-  const todasFrentes = l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via");
+  // a frente escolhida pelo operador é a frente que conta (é a que o painel mostra)
+  const principal = l.lados.filter((x) => x.principal);
+  const todasFrentes = principal.length ? principal : l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via");
   if (!todasFrentes.length) return null;
   const sobre = (f: { a: Pt; b: Pt }, a: Pt, b: Pt) => Math.abs(cross(unit(sub(f.b, f.a)), sub(lerp(a, b, 0.5), f.a))) < 0.05;
   const emAlgumaFrente = (a: Pt, b: Pt) => todasFrentes.some((f) => sobre(f, a, b));
@@ -478,7 +678,7 @@ export function acertarMedida(pr0: Projeto, res: Resultado, q: Quadra, l: Lote, 
   if (!cand.length) return null;
   // a que dá para um lote vizinho (área pública só se não houver outra); entre duas, a do vizinho maior (ele cede melhor)
   // (e nunca a de um lote que acabou de ser acertado na mesma operação)
-  const area = (m: number) => (m >= 0 ? Math.abs(areaAssinada(aneis[m])) - (destinos[m] ? 1e7 : 0) - (naoMexer.includes(m) ? 2e7 : 0) : -1);
+  const area = (m: number) => (m >= 0 ? Math.abs(areaAssinada(aneis[m])) - (destinos[m]?.destino ? 1e7 : 0) - (naoMexer.includes(m) ? 2e7 : 0) : -1);
   const lado = cand.sort((x, y) => area(y.viz) - area(x.viz))[0];
   // frente = soma dos lados de rua (a mesma medida do painel e do aviso da planta)
   const naFrente = emAlgumaFrente;
@@ -532,43 +732,66 @@ const centroDe = (an: Pt[]): Pt => [an.reduce((s, p) => s + p[0], 0) / an.length
 
 export interface Alca { tipo: "quina" | "divisa"; p: Pt; a?: Pt; b?: Pt; naBorda: boolean }
 
+/** Lados retos do polígono, de quina a quina (o arco da esquina fica de fora). */
+export function ladosRetos(pol: Poligono): [Pt, Pt][] {
+  const e = pol.ext, n = e.length;
+  const qs = [...new Set(quinasDe(e, 2, 3))].sort((x, y) => x - y);
+  const out: [Pt, Pt][] = [];
+  for (let k = 0; k < qs.length; k++) {
+    const i0 = qs[k], i1 = qs[(k + 1) % qs.length];
+    const a = e[i0], b = e[i1];
+    if (dist(a, b) < 1.5) continue;
+    let reto = true;
+    for (let j = i0; j !== i1 && reto; j = (j + 1) % n) if (distSegmento(e[(j + 1) % n], a, b).d > 0.05) reto = false;
+    if (reto) out.push([a, b]);
+  }
+  return out;
+}
+
 /**
  * Alças do lote: uma em cada quina (o arco da esquina não tem — é da rua) e
  * uma no meio de cada divisa que não é a borda da quadra (deslizar a divisa
  * muda a largura ou o fundo). Divisa da borda (rua, divisa da gleba) não anda.
  */
 export function alcasDoLote(l: Lote, q: Quadra): Alca[] {
-  const e = l.pol.ext;
+  const e = l.pol.ext, n = e.length;
   const out: Alca[] = [];
-  for (const i of quinasDe(e)) {
-    // o arco da esquina é da rua: sem alça no meio dele
-    if (dist(e[(i - 1 + e.length) % e.length], e[i]) < 2 || dist(e[i], e[(i + 1) % e.length]) < 2) continue;
-    // canto da própria quadra (da propriedade) que só este lote tem: arrastá-lo
-    // só abriria um buraco — fica fixo
-    const cantoDaQuadra = q.pol.ext.some((v) => dist(v, e[i]) < 0.05);
-    const dividida = q.lotes.some((o) => o !== l && o.pol.ext.some((v) => dist(v, e[i]) < 0.05));
-    if (cantoDaQuadra && !dividida) continue;
+  if (n < 3) return out;
+  // arco da esquina: dois ou mais lados curtos seguidos, virando pouco em cada
+  // ponto (a rua fazendo a curva) — é da rua, sem alça. Lado curto que o
+  // operador criou (quina dobrada, lasca) vira muito e continua com alça.
+  const curta = (j: number) => dist(e[((j % n) + n) % n], e[(((j + 1) % n) + n) % n]) < 2;
+  const deArco = (j: number) => curta(j) && (curta(j - 1) || curta(j + 1));
+  const giro = e.map((_, i) => Math.abs(giroEm(e, i)));
+  // ponto reto: é o "T" de um vizinho (o lado dele chega ali e vira) — sem alça
+  // neste lote; ponto reto que ninguém usa é quina que o operador alinhou: tem
+  // alça (senão ela sumia e não voltava)
+  const ehT = (p: Pt) => q.lotes.some((o) => o !== l && o.pol.ext.some((v, j) => dist(v, p) < TOL && Math.abs(giroEm(o.pol.ext, j)) >= 0.5));
+  // dobra da rua (ponto da borda da quadra que vira pouco): o lote segue a
+  // borda de qualquer jeito — a alça ali não mexeria em nada
+  const dobraDaRua = (i: number) => giro[i] < 12 && q.pol.ext.some((v) => dist(v, e[i]) < TOL);
+  const pontas: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (giro[i] < 0.5 && ehT(e[i])) continue;
+    pontas.push(i);
+    if (dobraDaRua(i) || (giro[i] < 35 && (deArco(i - 1) || deArco(i)))) continue;
     out.push({ tipo: "quina", p: e[i], naBorda: naBorda(q, e[i]) });
   }
-  // lados retos: junta os pedaços colineares (o "T" de um vizinho no meio da divisa)
-  const n = e.length;
-  const quinas = new Set(quinasDe(e, 2, 3));
-  const ini = [...quinas][0];
-  if (ini === undefined) return out;
-  const ordem = [...quinas].sort((a, b) => ((a - ini + n) % n) - ((b - ini + n) % n));
-  for (let k = 0; k < ordem.length; k++) {
-    const i0 = ordem[k], i1 = ordem[(k + 1) % ordem.length];
+  // lados retos de ponta a ponta (o "T" no meio não corta o lado)
+  for (let k = 0; k < pontas.length; k++) {
+    const i0 = pontas[k], i1 = pontas[(k + 1) % pontas.length];
     const a = e[i0], b = e[i1];
     if (dist(a, b) < 1.5) continue;
-    // o caminho entre as duas quinas tem de ser UMA reta fora da borda da quadra
-    // (o lado na rua, na divisa da gleba ou com o arco da esquina não anda)
-    let reto = true;
+    // o caminho entre as duas pontas tem de ser UMA reta (o arco da esquina não
+    // anda); o lado na borda (frente na rua, fundo na divisa) também tem alça
+    let reto = true, borda = true;
     for (let j = i0; j !== i1 && reto; j = (j + 1) % n) {
       const p0 = e[j], p1 = e[(j + 1) % n];
-      if (naBorda(q, lerp(p0, p1, 0.5)) || distSegmento(p1, a, b).d > 0.05) reto = false;
+      if (distSegmento(p1, a, b).d > 0.05 || deArco(j)) reto = false;
+      if (!naBorda(q, lerp(p0, p1, 0.5))) borda = false;
     }
     if (!reto) continue;
-    out.push({ tipo: "divisa", p: lerp(a, b, 0.5), a, b, naBorda: false });
+    out.push({ tipo: "divisa", p: lerp(a, b, 0.5), a, b, naBorda: borda });
   }
   return out;
 }

@@ -7,7 +7,8 @@ import {
   ajustarQuadra, centroLote, chaveDoLote, conferirMedida, editarRua, lotesDaSelecao, mudarArea, quadraDe, removerRua,
   renomearArea, restaurarQuadra,
 } from "../../lib/loteamento/acoes.ts";
-import { quadraDesenhada } from "../../lib/loteamento/edicao.ts";
+import { definirFrente, quadraDesenhada } from "../../lib/loteamento/edicao.ts";
+import type { Ferramenta } from "../../lib/loteamento/acoes.ts";
 import type { Selecao } from "../../lib/loteamento/acoes.ts";
 import { ROTULO_AREA } from "../../lib/loteamento/modelo.ts";
 import type { ModoDivisao, Projeto, Sobra, TipoArea } from "../../lib/loteamento/modelo.ts";
@@ -26,6 +27,7 @@ interface Props {
   onMsg: (m: string, erro?: boolean) => void;
   /** roda um comando da linha de comando (o painel e o teclado fazem a mesma coisa) */
   onComando: (texto: string) => void;
+  onFerramenta: (f: Ferramenta) => void;
 }
 
 /** Campo numérico que só aplica ao sair ou dar Enter (não recalcula a cada tecla). */
@@ -56,12 +58,13 @@ const ROT_MODO: Record<ModoDivisao, string> = { frente: "Padronizada (frente fix
 const ROT_SOBRA: Record<Sobra, string> = { esquinas: "Lotes de esquina", ultimo: "Último lote", distribuir: "Distribuir entre todos", extra: "Lote extra (se couber)" };
 
 /** Os pedacinhos do arco da esquina (mesma rua, menos de 2 m cada) viram uma linha só. */
-function agruparArcos(lados: Resultado["lotes"][number]["lados"]): { comp: number; tipo: string; nome: string; curva?: boolean }[] {
-  const out: { comp: number; tipo: string; nome: string; ref?: string; curva?: boolean }[] = [];
+type LadoLinha = { comp: number; tipo: string; nome: string; ref?: string; curva?: boolean; definida?: boolean; principal?: boolean; a: Pt; b: Pt };
+function agruparArcos(lados: Resultado["lotes"][number]["lados"]): LadoLinha[] {
+  const out: LadoLinha[] = [];
   for (const x of lados) {
     const ult = out[out.length - 1];
-    if (ult && x.comp < 2 && ult.tipo === x.tipo && ult.ref === x.ref && (ult.curva || ult.comp < 2)) { ult.comp += x.comp; ult.curva = true; continue; }
-    out.push({ comp: x.comp, tipo: x.tipo, nome: x.nome, ref: x.ref });
+    if (ult && x.comp < 2 && ult.tipo === x.tipo && ult.ref === x.ref && (ult.curva || ult.comp < 2)) { ult.comp += x.comp; ult.curva = true; ult.b = x.b; continue; }
+    out.push({ comp: x.comp, tipo: x.tipo, nome: x.nome, ref: x.ref, definida: x.definida, principal: x.principal, a: x.a, b: x.b });
   }
   return out;
 }
@@ -69,7 +72,7 @@ function agruparArcos(lados: Resultado["lotes"][number]["lados"]): { comp: numbe
 /** Edição livre: o que sai das medidas do projeto é aplicado e vira aviso na mensagem. */
 const comAviso = (m: string, aviso: string | null | undefined) => (aviso ? `${m} Atenção: ${aviso}` : m);
 
-export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onComando }: Props) {
+export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onComando, onFerramenta }: Props) {
   const lotes = lotesDaSelecao(res, sel);
   const quadra = sel?.tipo === "quadra" ? quadraDe(res, sel.nome) : undefined;
   const rua = sel?.tipo === "rua" ? res.ruas.find((r) => r.id === sel.id) : undefined;
@@ -151,11 +154,27 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
               <summary>Medidas e confrontações</summary>
               <table>
                 <tbody>
-                  {agruparArcos(l.lados).map((x, i) => (
-                    <tr key={i}><td>{fmt(x.comp)} m</td><td className={`t-${x.tipo}`}>{x.nome}{x.curva ? " (curva da esquina)" : ""}</td></tr>
-                  ))}
+                  {agruparArcos(l.lados).map((x, i) => {
+                    const rua = x.tipo === "rua" || (x.tipo === "via" && !x.definida);
+                    return (
+                      <tr key={i}>
+                        <td>{fmt(x.comp)} m</td>
+                        <td className={`t-${x.definida ? "definida" : x.tipo}`}>{x.nome}{x.curva ? " (curva da esquina)" : ""}{x.principal ? " — frente escolhida" : x.definida ? " — acesso da quadra" : ""}</td>
+                        <td>
+                          {!x.curva && x.comp >= 1.5 && qq && (
+                            <button className={`lot-estrela${x.principal ? " ativa" : ""}`}
+                              title={x.principal ? "Tirar a escolha: a frente volta a ser a rua" : rua ? "Esta rua é a frente do lote (as outras ficam como confrontação)" : "Este lado é a frente do lote (servidão, área verde, outro lote)"}
+                              onClick={() => { const ed = definirFrente(projeto, res, qq, l, x.a, x.b); if (ed) { onMudar(ed.pr); if (ed.sel) onSel({ tipo: "lotes", chaves: [{ quadra: ed.sel.quadra, fileira: 0, indice: ed.sel.indices[0] }] }); onMsg(ed.msg); } }}>
+                              {x.principal ? "★" : "☆"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
+              <p className="lot-dica">☆ escolhe a frente do lote: o lado que dá para a servidão ou área verde (lote sem rua) ou a rua principal da esquina. Só o lado escolhido conta como frente. Ou use a ferramenta Frente (T) e clique no lado.</p>
             </details>
             {qq && <button className="fantasma lot-link" onClick={() => onSel({ tipo: "quadra", nome: qq.nome })}>Ver a quadra {qq.nome} →</button>}
           </section>
@@ -245,6 +264,11 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
             }} />
           </div>
           <p className="lot-dica">Clique num lote para arrastar as quinas e as divisas dele. L desenha um lote, C corta lotes com uma linha.</p>
+          <div className="lot-botoes">
+            <button onClick={() => { onFerramenta("frente"); onMsg(`Clique no lado da quadra ${quadra.nome} que é o acesso (frente) dela — servidão, área verde, divisa com saída. Clicar de novo tira.`); }}
+              title="Para quadra sem rua (ou com acesso por outro lado): o lado marcado conta como frente dos lotes">Escolher o acesso (frente) da quadra</button>
+          </div>
+          {(quadra.acessos?.length ?? 0) > 0 && <p className="lot-dica">{quadra.acessos!.length} lado(s) marcados como acesso — traço laranja no desenho.</p>}
           <div className="lot-botoes">
             <button className="verde" onClick={() => virarArea("verde")}>→ Área verde</button>
             <button className="inst" onClick={() => virarArea("institucional")}>→ Institucional</button>

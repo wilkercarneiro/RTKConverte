@@ -2,12 +2,12 @@
 // desenho, os botões do painel e a linha de comando. Uma ação recebe o projeto
 // e o resultado atual e devolve um projeto NOVO (nunca muta), o que dá o
 // desfazer/refazer de graça.
-import { areaPol, centroide, dentroPol, dot, sub } from "./geom.ts";
+import { areaPol, centroide, cross, dentroPol, dist, dot, sub, unit } from "./geom.ts";
 import type { Pt } from "./geom.ts";
 import { ancoraDaQuadra } from "./auto.ts";
 import { fmt } from "./calculo.ts";
 import type { Corte, Lote, Quadra, Resultado } from "./calculo.ts";
-import { paraUtm } from "./plano.ts";
+import { paraPlano, paraUtm } from "./plano.ts";
 import { ROTULO_AREA, mudarLote, novoId } from "./modelo.ts";
 import {
   acertarMedida, apagarLotes, desenharLote, dividirLote, mudarDestino, posicaoNoDesenho, quadraDesenhada, unirComVizinho, unirLotes, voltarAoAutomatico,
@@ -145,6 +145,25 @@ export function moverCorte(pr: Projeto, res: Resultado, c: Corte, ponto: Pt): Pr
   return ajustarLote(pr, res, l, { frente: Math.round(frente * 100) / 100 });
 }
 
+/**
+ * Lado da quadra escolhido como acesso (a quadra dá para servidão, área verde,
+ * divisa com saída): conta como frente — a quadra automática é dividida a
+ * partir dele e os lotes que encostam nele têm frente. Clicar de novo tira.
+ * `a`/`b` no plano.
+ */
+export function alternarAcesso(pr: Projeto, res: Resultado, q: Quadra, a: Pt, b: Pt): { pr: Projeto; msg: string } {
+  const atuais = (q.cfg >= 0 ? pr.quadras[q.cfg]?.acessos : undefined) ?? [];
+  const d = unit(sub(b, a));
+  const P = (x: Pt) => paraPlano(res.plano, x);
+  const igual = (sg: [Pt, Pt]) => Math.abs(cross(d, unit(sub(P(sg[1]), P(sg[0]))))) < 0.1 && Math.abs(cross(d, sub(P(sg[0]), a))) < 0.5;
+  const tem = atuais.some(igual);
+  const novos: [Pt, Pt][] = tem ? atuais.filter((sg) => !igual(sg)) : [...atuais, [paraUtm(res.plano, a), paraUtm(res.plano, b)]];
+  return {
+    pr: ajustarQuadra(pr, res, q, { acessos: novos }),
+    msg: tem ? `Acesso retirado da quadra ${q.nome}.` : `Lado de ${fmt(dist(a, b))} m marcado como frente (acesso) da quadra ${q.nome} — os lotes que encostam nele têm frente ali.`,
+  };
+}
+
 export const quadraDoCorte = (res: Resultado, c: Corte): Quadra | undefined => res.quadras.find((q) => q.cortes.includes(c));
 
 export function moverFundo(pr: Projeto, res: Resultado, q: Quadra, ponto: Pt): Projeto {
@@ -230,7 +249,7 @@ export const renomearArea = (pr: Projeto, res: Resultado, id: string, nome: stri
 // Linha de comando
 // ---------------------------------------------------------------------------
 
-export type Ferramenta = "selecionar" | "rua" | "area" | "medir" | "lote" | "cortar";
+export type Ferramenta = "selecionar" | "rua" | "area" | "medir" | "lote" | "cortar" | "frente";
 
 export interface Saida {
   pr?: Projeto;
@@ -258,6 +277,7 @@ export const COMANDOS: { cmd: string; exemplo: string; desc: string; contexto: (
   { cmd: "dividir", exemplo: "dividir 2", desc: "divide o lote em partes iguais, com as divisas na direção das laterais dele", contexto: ["lote"] },
   { cmd: "apagar", exemplo: "apagar", desc: "apaga o lote (a área fica livre para desenhar outro) · Delete", contexto: ["lote", "rua", "area"] },
   { cmd: "desenhar lote", exemplo: "desenhar lote", desc: "desenha um lote: clique as quinas, Enter fecha (L) · duplo clique na área livre rosa vira lote", contexto: ["nada", "lote", "quadra"] },
+  { cmd: "definir", exemplo: "definir frente", desc: "escolher a frente: clique no lado do lote (ou da quadra) que é a frente dele (T)", contexto: ["lote", "quadra", "nada"] },
   { cmd: "cortar", exemplo: "cortar", desc: "corta lotes com uma linha: clique o início e o fim (C)", contexto: ["nada", "lote", "quadra"] },
   { cmd: "preencher", exemplo: "preencher", desc: "cada área livre (rosa) da quadra vira um lote", contexto: ["quadra"] },
   { cmd: "automatico", exemplo: "automatico", desc: "a quadra desenhada à mão volta a ser dividida pelo sistema", contexto: ["quadra"] },
@@ -330,6 +350,7 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       if (!feitos) return { msg: "Não consegui fazer lote da área livre desta quadra.", erro: true };
       return { pr: novo, msg: `${feitos === 1 ? "A área livre virou um lote" : `${feitos} áreas livres viraram lotes`} — ajuste as quinas se quiser.` };
     }
+    case "definir": return { ferramenta: "frente", msg: lotes.length === 1 ? "Clique no lado do lote que é a frente dele (clicar de novo tira)." : "Clique no lado da quadra que é o acesso (frente) dela — ou selecione um lote antes para escolher a frente dele." };
     case "cortar": case "corte": return { ferramenta: "cortar", msg: "Clique o início e o fim da linha de corte: cada lote que ela atravessa vira dois." };
     case "automatico": case "automatica": {
       if (!quadra) return precisa("a quadra (duplo clique num lote)");

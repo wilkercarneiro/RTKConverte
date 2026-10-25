@@ -39,7 +39,9 @@ function violacaoNova(antes: Resultado, depois: Resultado | null): string | null
   if (conta(depois) <= conta(antes)) return null;
   const ja = new Set(antes.lotes.flatMap((l) => l.problemas.map((t) => `${l.id}|${t}`)));
   const l = depois.lotes.find((x) => x.problemas.some((t) => !ja.has(`${x.id}|${t}`))) ?? depois.lotes.find((x) => x.problemas.length);
-  return l ? `o lote ${l.id} ficou com ${l.problemas.find((t) => !ja.has(`${l.id}|${t}`)) ?? l.problemas[0]}` : "um lote saiu das medidas";
+  if (!l) return "um lote saiu das medidas";
+  const t = l.problemas.find((x) => !ja.has(`${l.id}|${x}`)) ?? l.problemas[0];
+  return `o lote ${l.id} ficou ${/^sem /.test(t) ? "" : "com "}${t}`;
 }
 
 function useHistorico(inicial: Projeto | null) {
@@ -50,7 +52,11 @@ function useHistorico(inicial: Projeto | null) {
     if (transiente) return { ...e, atual: p, base: e.base ?? e.atual };
     return { passado: [...e.passado.slice(-100), e.base ?? e.atual], atual: p, futuro: [], base: null };
   }), []);
-  const fimArraste = useCallback(() => setH((e) => (e && e.base ? { passado: [...e.passado.slice(-100), e.base], atual: e.atual, futuro: [], base: null } : e)), []);
+  // arraste que não mudou nada (borda empurrada para fora da quadra): `descartar`
+  // volta ao projeto de antes e não vira passo vazio no desfazer
+  const fimArraste = useCallback((descartar = false) => setH((e) => (e && e.base
+    ? descartar ? { ...e, atual: e.base, base: null } : { passado: [...e.passado.slice(-100), e.base], atual: e.atual, futuro: [], base: null }
+    : e)), []);
   const desfazer = useCallback(() => setH((e) => (e && e.passado.length ? { passado: e.passado.slice(0, -1), atual: e.passado[e.passado.length - 1], futuro: [e.atual, ...e.futuro], base: null } : e)), []);
   const refazer = useCallback(() => setH((e) => (e && e.futuro.length ? { passado: [...e.passado, e.atual], atual: e.futuro[0], futuro: e.futuro.slice(1), base: null } : e)), []);
   return { h, iniciar, mudar, fimArraste, desfazer, refazer };
@@ -137,7 +143,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   const lembrarSelecao = useCallback((sentido: "desfazer" | "refazer" = "desfazer") => {
     const tem = sentido === "desfazer" ? hist.h?.passado.length : hist.h?.futuro.length;
     if (!res || sel?.tipo !== "lotes" || !tem) return;
-    selPorLugar.current = lotesDaSelecao(res, sel).map((l) => pontoInterno(l.pol));
+    selPorLugar.current = lotesDaSelecao(res, sel).map((l) => ({ pt: pontoInterno(l.pol), chave: chaveDoLote(l) }));
   }, [res, sel, hist.h]);
   const ultimoArraste = useRef<Projeto | null>(null);
   const mudar = useCallback((p: Projeto, transiente = false): boolean => {
@@ -160,9 +166,13 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     const r0 = baseArraste.current, final = ultimoArraste.current;
     baseArraste.current = null;
     ultimoArraste.current = null;
-    hist.fimArraste();
+    const r1 = r0 && final ? calc(final) : null;
+    // nada mudou no desenho (o projeto regravado difere só no arredondamento)
+    const forma = (r: Resultado) => r.lotes.map((l) => `${l.quadra}|${l.pol.ext.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).sort().join(";")}`).sort().join("/");
+    const nada = !!r0 && !!r1 && forma(r0) === forma(r1);
+    hist.fimArraste(nada);
+    if (nada) { mostrar("Nada mudou: a alça voltou ao lugar ou foi empurrada para fora da quadra (a borda é a rua — puxe para dentro para recuar o lote)."); return; }
     if (r0 && final) {
-      const r1 = calc(final);
       const viola = violacaoNova(r0, r1);
       // arraste exagerado pode esmagar um lote até sumir: isso tem de ser dito
       const sumiram = r1 ? r0.quadras.flatMap((q) => {
@@ -202,13 +212,17 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
 
   // Desfazer/refazer: a posição do lote na quadra muda quando ela é (des)congelada;
   // a seleção segue o LUGAR do lote (o ponto no meio dele), não a posição
-  const selPorLugar = useRef<Pt[] | null>(null);
+  const selPorLugar = useRef<{ pt: Pt; chave: ReturnType<typeof chaveDoLote> }[] | null>(null);
   useEffect(() => {
     const pts = selPorLugar.current;
     selPorLugar.current = null;
     if (!pts || !res) return;
-    // sem repetir (as partes de um lote dividido voltam ao mesmo lote)
-    const achados = [...new Set(pts.map((pt) => res.lotes.find((l) => dentroPol(pt, l.pol))).filter((l): l is NonNullable<typeof l> => !!l))];
+    // o lote que está no lugar; se ali não tem lote (o arraste o levou para
+    // longe), o mesmo lote da quadra; sem repetir (as partes de um lote
+    // dividido voltam ao mesmo lote)
+    const achar = ({ pt, chave }: (typeof pts)[number]) => res.lotes.find((l) => dentroPol(pt, l.pol))
+      ?? res.lotes.find((l) => l.quadra === chave.quadra && l.fileira === chave.fileira && l.indice === chave.indice);
+    const achados = [...new Set(pts.map(achar).filter((l): l is NonNullable<typeof l> => !!l))];
     setSel(achados.length ? { tipo: "lotes", chaves: achados.map(chaveDoLote) } : null);
   }, [res]);
 
@@ -285,6 +299,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
               ["rua", "Desenhar rua (R)", "M4 20 10 4M14 4l6 16M12 6v2M12 11v2M12 16v2"],
               ["lote", "Desenhar lote (L) — clique as quinas, Enter fecha; duplo clique na área livre rosa vira lote", "M4 4h16v16H4zM4 12h16M12 4v16"],
               ["cortar", "Cortar lotes com uma linha (C)", "M6 6a2 2 0 1 0 0 .01M6 18a2 2 0 1 0 0 .01M8 7l12 10M8 17l12-10"],
+              ["frente", "Escolher a frente (T): com um lote selecionado, clique no lado que é a frente dele; sem lote, no lado da quadra que é o acesso", "M4 20h16M7 20V9l5-5 5 5v11M10 20v-5h4v5"],
               ["area", "Desenhar área pública (A)", "M4 6l7-3 9 5-2 11-10 2-5-6z"],
               ["medir", "Medir (M)", "M3 17 17 3l4 4L7 21zM7 13l2 2M10 10l2 2M13 7l2 2"],
             ] as [Ferramenta, string, string][]).map(([f, t, d]) => (
@@ -334,7 +349,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
           </div>
 
           <Painel projeto={projeto} res={res} sel={sel} onSel={setSel} onMudar={(p) => mudar(p)}
-            onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onMsg={mostrar} onComando={rodarComando} />
+            onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onMsg={mostrar} onComando={rodarComando} onFerramenta={setFerramenta} />
 
           <div className="lot-rodape-etapa">
             <button onClick={() => setEtapa("perguntas")}>← Rever as perguntas</button>
@@ -362,6 +377,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
                   <li><b>Arrastar o fundo</b> move o desenho · <b>roda do mouse</b> aproxima</li>
                   <li><b>Lote selecionado</b>: arraste as <b>quinas</b> (quadrados) e as <b>divisas</b> (barras verdes). A quina na rua ou na divisa da gleba corre por ela; os lotes vizinhos se ajustam. <b>Alt</b> solta a quina da borda</li>
                   <li>Nada é bloqueado: o lote que sair das medidas fica vermelho e aparece na coluna de avisos, à esquerda</li>
+                  <li><b>T</b> escolhe a frente: com um lote selecionado, clique no lado que é a frente dele (servidão, área verde, outro lote); sem lote, clique no lado da quadra que é o acesso dela. Na lista de confrontações do lote, ☆ faz o mesmo</li>
                   <li><b>L</b> desenha um lote (clique as quinas; ele se ajusta aos vizinhos) · duplo clique numa área livre rosa vira lote · <b>C</b> corta lotes com uma linha · <b>Delete</b> apaga o lote</li>
                   <li><b>Rua selecionada</b>: arraste os pontos do eixo; o "+" dobra a rua</li>
                   <li><b>R</b> rua · <b>A</b> área · <b>M</b> medir · <b>S</b> selecionar · <b>F</b> enquadrar</li>
