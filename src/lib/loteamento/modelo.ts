@@ -338,6 +338,18 @@ export interface AjusteLote {
 }
 
 /**
+ * Lote desenhado à mão: a quadra que tem lotes desenhados deixa de ser
+ * dividida pelo sistema e passa a ser exatamente o que o operador traçou
+ * (mover quina, deslizar divisa, unir, dividir, apagar, desenhar). O que ficar
+ * fora de qualquer lote aparece como área livre da quadra.
+ */
+export interface LoteDesenhado {
+  /** contorno em UTM */
+  anel: Pt[];
+  destino?: TipoArea;
+}
+
+/**
  * Configuração de UMA quadra. A quadra é achada pela âncora (um ponto UTM
  * dentro dela): se uma rua for movida, a quadra que contém a âncora continua
  * sendo "a mesma" e leva os ajustes junto.
@@ -356,6 +368,8 @@ export interface QuadraCfg {
   /** ponto UTM sobre o lado escolhido como frente principal */
   frentePrincipal?: Pt;
   ajustes: AjusteLote[];
+  /** lotes desenhados à mão (presente = a quadra é do operador, o sistema não redivide) */
+  lotes?: LoteDesenhado[];
 }
 
 export interface Projeto {

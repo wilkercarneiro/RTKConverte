@@ -11,15 +11,14 @@ import proj4mod from "proj4";
 import { GEO_DEF, utmDef } from "../../../supabase/functions/_shared/geo.ts";
 import { caixa, centroide, dentroPol, dist, distSegmento, dot, esquerda, sub, unit } from "../../lib/loteamento/geom.ts";
 import type { Anel, Poligono, Pt } from "../../lib/loteamento/geom.ts";
-import type { Corte, Lote, Quadra, Resultado } from "../../lib/loteamento/calculo.ts";
+import type { Lote, Quadra, Resultado } from "../../lib/loteamento/calculo.ts";
 import { fmt } from "../../lib/loteamento/calculo.ts";
 import { paraPlano, paraUtm } from "../../lib/loteamento/plano.ts";
 import { cotaEm } from "../../lib/loteamento/terreno.ts";
 import type { Projeto } from "../../lib/loteamento/modelo.ts";
-import {
-  adicionarArea, adicionarRua, chaveDoLote, editarRua, lotesDaSelecao, moverCorte, moverFundo, quadraDe,
-} from "../../lib/loteamento/acoes.ts";
+import { adicionarArea, adicionarRua, chaveDoLote, editarRua, lotesDaSelecao, quadraDe } from "../../lib/loteamento/acoes.ts";
 import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
+import { alcasDoLote, cortarLotes, desenharLote, moverDivisa, moverQuina, posicaoNoDesenho } from "../../lib/loteamento/edicao.ts";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
 
@@ -50,8 +49,10 @@ interface Vista { cx: number; cy: number; s: number }
 
 type Arraste =
   | { tipo: "pan"; x0: number; y0: number; v0: Vista; moveu: boolean }
-  | { tipo: "corte"; corte: Corte; pr0: Projeto; res0: Resultado }
-  | { tipo: "fundo"; quadra: Quadra; pr0: Projeto; res0: Resultado }
+  /** quina do lote: `de` é o ponto (plano) no início do arraste */
+  | { tipo: "quina"; de: Pt; quadra: Quadra; lote: Lote; pr0: Projeto; res0: Resultado }
+  /** divisa do lote (a→b): desliza paralela, pela distância do cursor à posição inicial */
+  | { tipo: "divisa"; a: Pt; b: Pt; p0: Pt; quadra: Quadra; lote: Lote; pr0: Projeto; res0: Resultado }
   | { tipo: "vertice"; rua: string; i: number; pr0: Projeto; inserir: boolean };
 
 const COR_LOTE = "#FFFDF5";
@@ -170,10 +171,11 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
   }, [vista.satelite, v, vv.cx, vv.cy, vv.s, W, H, fuso, res.plano, tela, mundo]);
 
   // ---------------- encaixe (snap) ----------------
-  const encaixar = useCallback((p: Pt, ancora?: Pt): Pt => {
+  const encaixar = useCallback((p: Pt, ancora?: Pt, ignorar?: Pt): Pt => {
     const tolM = 10 / vv.s;
     let melhor: Pt | null = null, dm = tolM;
-    const testar = (q: Pt) => { const d = dist(p, q); if (d < dm) { dm = d; melhor = q; } };
+    // o ponto que está sendo arrastado não puxa a si mesmo
+    const testar = (q: Pt) => { if (ignorar && dist(q, ignorar) < 0.05) return; const d = dist(p, q); if (d < dm) { dm = d; melhor = q; } };
     // perto do cursor (caixa da tolerância) — quinas de tudo o que já está traçado
     const caixaM = Math.max(60, 2 * tolM);
     const perto = (pol: { ext: Pt[] }) => pol.ext.some((q) => Math.abs(q[0] - p[0]) < caixaM && Math.abs(q[1] - p[1]) < caixaM);
@@ -231,6 +233,17 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       onMudar(pr);
       onSel({ tipo: "area", id });
       onMsg("Área verde criada. Mude o tipo no painel ou digite: institucional / lazer.");
+    } else if (ferramenta === "lote" && desenho.length > 0 && desenho.length < 3) {
+      onMsg("O lote precisa de pelo menos 3 quinas — continue clicando (ou duplo clique numa área livre rosa).");
+      return;
+    } else if (ferramenta === "lote" && desenho.length >= 3) {
+      const ed = desenharLote(projeto, res, desenho);
+      if (!ed) onMsg("O contorno não pega nenhuma quadra — desenhe o lote dentro de uma quadra.");
+      else {
+        onMudar(ed.pr);
+        if (ed.sel) onSel({ tipo: "lotes", chaves: ed.sel.indices.map((indice) => ({ quadra: ed.sel!.quadra, fileira: 0, indice })) });
+        onMsg(ed.msg);
+      }
     }
     setDesenho([]);
     onFerramenta("selecionar");
@@ -248,6 +261,8 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         const k = e.key.toLowerCase();
         if (k === "r") onFerramenta("rua");
         else if (k === "a") onFerramenta("area");
+        else if (k === "l") onFerramenta("lote");
+        else if (k === "c") onFerramenta("cortar");
         else if (k === "m") onFerramenta("medir");
         else if (k === "s" || k === "v") onFerramenta("selecionar");
         else if (k === "f") enquadrar(res.gleba.ext);
@@ -284,21 +299,27 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
 
   /** Alças ativas (em coordenadas de tela) para o clique/arraste. */
   const alcas = useMemo(() => {
-    const out: { x: number; y: number; acao: Arraste; titulo: string; forma: "corte" | "fundo" | "vertice" | "mais" }[] = [];
+    const out: { x: number; y: number; acao: Arraste; titulo: string; forma: "quina" | "divisa" | "vertice" | "mais"; ang?: number }[] = [];
     if (!v) return out;
-    if (quadraAtiva) {
-      for (const c of quadraAtiva.cortes) {
-        if (!c.arrastavel) continue;
-        const m: Pt = [(c.a[0] + c.b[0]) / 2, (c.a[1] + c.b[1]) / 2];
-        // a alça fica na metade do corte que toca a rua (onde o operador olha a frente)
-        const alvo: Pt = dot(sub(c.a, quadraAtiva.origem), quadraAtiva.v) < dot(sub(c.b, quadraAtiva.origem), quadraAtiva.v) === (c.fileira === 0) ? c.a : c.b;
-        const pt = tela([(m[0] * 2 + alvo[0]) / 3, (m[1] * 2 + alvo[1]) / 3]);
-        out.push({ x: pt[0], y: pt[1], acao: { tipo: "corte", corte: c, pr0: projeto, res0: res }, titulo: "Arraste para mudar a frente — os lotes seguintes se ajustam", forma: "corte" });
-      }
-      if (quadraAtiva.fundo) {
-        const f = quadraAtiva.fundo;
-        const pt = tela([(f.a[0] + f.b[0]) / 2, (f.a[1] + f.b[1]) / 2]);
-        out.push({ x: pt[0], y: pt[1], acao: { tipo: "fundo", quadra: quadraAtiva, pr0: projeto, res0: res }, titulo: "Arraste para mover a linha de fundo", forma: "fundo" });
+    // lote selecionado: uma alça em cada quina e uma no meio de cada divisa
+    // (a borda da quadra — rua, divisa da gleba — não anda: a quina desliza nela)
+    if (lotesSel.length === 1 && quadraAtiva) {
+      const l = lotesSel[0];
+      for (const a of alcasDoLote(l, quadraAtiva)) {
+        const pt = tela(a.p);
+        if (a.tipo === "quina") {
+          out.push({
+            x: pt[0], y: pt[1], forma: "quina", acao: { tipo: "quina", de: a.p, quadra: quadraAtiva, lote: l, pr0: projeto, res0: res },
+            titulo: a.naBorda ? "Arraste a quina — ela corre pela rua/divisa; os vizinhos se ajustam (Alt solta da borda)" : "Arraste a quina — os lotes vizinhos se ajustam",
+          });
+        } else {
+          const d = sub(tela(a.b!), tela(a.a!));
+          out.push({
+            x: pt[0], y: pt[1], forma: "divisa", ang: (Math.atan2(d[1], d[0]) * 180) / Math.PI,
+            acao: { tipo: "divisa", a: a.a!, b: a.b!, p0: a.p, quadra: quadraAtiva, lote: l, pr0: projeto, res0: res },
+            titulo: "Arraste a divisa — o lote fica mais largo/fundo e o vizinho se ajusta",
+          });
+        }
       }
     }
     if (sel?.tipo === "rua") {
@@ -312,7 +333,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       }
     }
     return out;
-  }, [v, quadraAtiva, sel, res, projeto, tela]);
+  }, [v, quadraAtiva, lotesSel, sel, res, projeto, tela]);
 
   function onDown(e: RPointerEvent) {
     if (!v) return;
@@ -320,11 +341,22 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     const [x, y] = pos(e);
     const p = mundo(x, y);
     if (e.button === 1 || e.button === 2) { arraste.current = { tipo: "pan", x0: x, y0: y, v0: vv, moveu: true }; setArrastando(true); return; }
-    if (ferramenta === "rua" || ferramenta === "area") {
+    if (ferramenta === "rua" || ferramenta === "area" || ferramenta === "lote") {
       const q = encaixar(p, desenho[desenho.length - 1]);
       // o 2º clique do duplo clique repete o ponto: quem termina é o onDoubleClick
       if (ultimoPonto(desenho, q, 3 / vv.s)) return;
       setDesenho((d) => [...d, q]);
+      return;
+    }
+    if (ferramenta === "cortar") {
+      const q = encaixar(p, desenho[0]);
+      if (!desenho.length) { setDesenho([q]); return; }
+      const ed = cortarLotes(projeto, res, desenho[0], q);
+      setDesenho([]);
+      if (!ed) { onMsg("A linha não atravessa nenhum lote de lado a lado."); return; }
+      onMudar(ed.pr);
+      onSel(null);
+      onMsg(ed.msg);
       return;
     }
     if (ferramenta === "medir") {
@@ -332,13 +364,34 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       setDesenho((d) => (d.length >= 2 ? [q] : [...d, q]));
       return;
     }
-    const alca = alcas.find((a) => Math.hypot(a.x - x, a.y - y) <= 9);
-    if (alca) { arraste.current = alca.acao; setArrastando(true); return; }
+    // a quina ganha da divisa quando as duas estão perto do clique
+    const alca = alcas.filter((a) => Math.hypot(a.x - x, a.y - y) <= 10).sort((a, b) => (a.forma === "quina" ? 0 : 1) - (b.forma === "quina" ? 0 : 1) || Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
+    if (alca) {
+      arraste.current = alca.acao;
+      movido.current = false;
+      setArrastando(true);
+      return;
+    }
     arraste.current = { tipo: "pan", x0: x, y0: y, v0: vv, moveu: false };
   }
 
   const raf = useRef(0);
   const pendente = useRef<(() => void) | null>(null);
+  /** o arraste já mexeu no projeto (clique sem arrastar não muda nada, nem a seleção) */
+  const movido = useRef(false);
+  /** ímã do arraste de quina: só nas quinas do desenho de ANTES do arraste (a quina não puxa a si mesma) */
+  const imaDeQuina = (p: Pt, base: Resultado, de: Pt): Pt => {
+    const tol = 8 / vv.s;
+    let melhor: Pt | null = null, dm = tol;
+    // só puxa para um ponto mais perto do cursor do que a posição de onde a quina saiu
+    const testar = (q: Pt) => { if (dist(q, de) < 0.05) return; const d = dist(p, q); if (d < dm && d < dist(p, de)) { dm = d; melhor = q; } };
+    const perto = (e: Pt[]) => e.some((q) => Math.abs(q[0] - p[0]) < 60 && Math.abs(q[1] - p[1]) < 60);
+    base.gleba.ext.forEach(testar);
+    for (const l of base.lotes) if (perto(l.pol.ext)) l.pol.ext.forEach(testar);
+    for (const q of base.quadras) if (perto(q.pol.ext)) q.pol.ext.forEach(testar);
+    setSnap(melhor);
+    return melhor ?? p;
+  };
   function onMove(e: RPointerEvent) {
     if (!v) return;
     shift.current = e.shiftKey;
@@ -360,12 +413,20 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       return;
     }
     cancelAnimationFrame(raf.current);
+    const alt = e.altKey;
     // a última mudança do arraste fica pendente até o próximo quadro; ao soltar
     // ela é aplicada antes de fechar o arraste (soltar rápido não a perde)
     pendente.current = () => {
-      if (a.tipo === "corte") onMudar(moverCorte(a.pr0, a.res0, a.corte, p), true);
-      else if (a.tipo === "fundo") onMudar(moverFundo(a.pr0, a.res0, a.quadra, p), true);
-      else if (a.tipo === "vertice") {
+      // 1º movimento: a quadra passa a ser desenhada — a seleção vai para a posição do lote no desenho
+      if ((a.tipo === "quina" || a.tipo === "divisa") && !movido.current) {
+        movido.current = true;
+        onSel({ tipo: "lotes", chaves: [{ quadra: a.lote.quadra, fileira: 0, indice: posicaoNoDesenho(a.pr0, a.res0, a.lote) }] });
+      }
+      if (a.tipo === "quina") onMudar(moverQuina(a.pr0, a.res0, a.quadra, a.de, alt ? p : imaDeQuina(p, a.res0, a.de), alt).pr, true);
+      else if (a.tipo === "divisa") {
+        const n = esquerda(unit(sub(a.b, a.a)));
+        onMudar(moverDivisa(a.pr0, a.res0, a.quadra, a.a, a.b, dot(sub(p, a.p0), n), alt).pr, true);
+      } else if (a.tipo === "vertice") {
         const r = a.pr0.ruas.find((x2) => x2.id === a.rua);
         if (!r) return;
         const q = paraUtm(res.plano, encaixar(p));
@@ -406,14 +467,37 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
   }
 
   function onDuplo(e: React.MouseEvent) {
-    if (ferramenta === "rua" || ferramenta === "area") {
-      if (desenho.length >= (ferramenta === "rua" ? 2 : 3)) terminar();
+    if (ferramenta === "rua" || ferramenta === "area" || ferramenta === "lote") {
+      if (desenho.length >= (ferramenta === "rua" ? 2 : 3)) { terminar(); return; }
+      // duplo clique numa área livre (rosa) com a ferramenta Lote: vira um lote inteiro
+      if (ferramenta === "lote") {
+        const [x, y] = pos(e);
+        const pm = mundo(x, y);
+        const livre = res.sobras.find((sb) => dentroPol(pm, sb));
+        if (!livre) onMsg("Duplo clique dentro de uma área livre (rosa) vira lote; para um lote novo, clique as quinas e tecle Enter.");
+        if (livre) {
+          const ed = desenharLote(projeto, res, livre.ext);
+          setDesenho([]);
+          if (ed) {
+            onMudar(ed.pr);
+            if (ed.sel) onSel({ tipo: "lotes", chaves: ed.sel.indices.map((indice) => ({ quadra: ed.sel!.quadra, fileira: 0, indice })) });
+            onMsg(ed.msg);
+            onFerramenta("selecionar");
+          }
+        }
+      }
       return;
     }
     if (ferramenta !== "selecionar") return;
     const [x, y] = pos(e);
-    const alvo = alvoNoPonto(mundo(x, y));
+    const pm = mundo(x, y);
+    const alvo = alvoNoPonto(pm);
     if (alvo?.tipo === "lote") onSel({ tipo: "quadra", nome: alvo.l.quadra });
+    else {
+      // área livre de uma quadra (inclusive a desenhada que ficou sem lote): seleciona a quadra
+      const q = [...res.quadras, ...(res.quadrasVazias ?? [])].find((x2) => dentroPol(pm, x2.pol));
+      if (q) onSel({ tipo: "quadra", nome: q.nome });
+    }
   }
 
   function onWheel(e: RWheelEvent) {
@@ -506,17 +590,15 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
               : vista.cores === "area" ? corPorArea(l.area, faixaArea.min, faixaArea.max)
               : vista.cores === "relevo" && cotas ? corPorCota(cotas.m.get(l.id) ?? cotas.min, cotas.min, cotas.max)
               : l.ajustado ? "#FFF0BF" : COR_LOTE;
+            // lote fora das medidas: vermelho e contorno grosso — salta aos olhos
+            const ruim = l.problemas.length > 0;
             return (
-              <path key={l.id} d={d} fill={fill} fillOpacity={vista.satelite && !selecionado ? 0.8 : 1}
-                stroke={selecionado ? "#126B42" : "#4A5650"} strokeWidth={selecionado ? 2 : hover === l.id ? 1.6 : 0.7}
+              <path key={l.id} d={d} fill={fill} fillOpacity={vista.satelite && !selecionado ? 0.85 : 1}
+                stroke={selecionado ? "#126B42" : ruim ? "#C0262D" : "#4A5650"} strokeWidth={selecionado ? 2.2 : ruim ? 1.8 : hover === l.id ? 1.6 : 0.7}
                 vectorEffect="non-scaling-stroke" />
             );
           })}
           {quadraAtiva && <path d={pathPol(quadraAtiva.pol)} fill="none" stroke="#178552" strokeWidth={2.2} strokeDasharray="8 4" vectorEffect="non-scaling-stroke" />}
-          {quadraAtiva?.fundo && (
-            <line x1={quadraAtiva.fundo.a[0]} y1={quadraAtiva.fundo.a[1]} x2={quadraAtiva.fundo.b[0]} y2={quadraAtiva.fundo.b[1]}
-              stroke="#B7791F" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
-          )}
           {/* perímetro: vias em vermelho, rio em azul */}
           {res.ladosGleba.map((l, i) => (
             <line key={i} x1={l.a[0]} y1={l.a[1]} x2={l.b[0]} y2={l.b[1]}
@@ -542,8 +624,8 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
           );
         })}
         {textosLotes.map(({ l, c }) => (
-          <text key={l.id} x={c[0]} y={c[1]} className="lot-num">
-            <tspan x={c[0]} dy={verArea ? "-0.25em" : "0.35em"}>{l.numero}</tspan>
+          <text key={l.id} x={c[0]} y={c[1]} className={`lot-num${l.problemas.length ? " ruim" : ""}`}>
+            <tspan x={c[0]} dy={verArea ? "-0.25em" : "0.35em"}>{l.problemas.length ? "⚠ " : ""}{l.numero}</tspan>
             {verArea && <tspan x={c[0]} dy="1.25em" className="lot-num-area">{fmt(l.area)} m²</tspan>}
           </text>
         ))}
@@ -564,24 +646,38 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         })}
 
         {/* alças */}
-        {alcas.map((a, i) => a.forma === "corte"
-          ? <circle key={i} cx={a.x} cy={a.y} r={6.5} className="lot-alca"><title>{a.titulo}</title></circle>
-          : a.forma === "fundo"
-            ? <rect key={i} x={a.x - 6} y={a.y - 6} width={12} height={12} transform={`rotate(45 ${a.x} ${a.y})`} className="lot-alca fundo"><title>{a.titulo}</title></rect>
-            : a.forma === "vertice"
-              ? <rect key={i} x={a.x - 5} y={a.y - 5} width={10} height={10} className="lot-alca vert"><title>{a.titulo}</title></rect>
-              : <circle key={i} cx={a.x} cy={a.y} r={4.5} className="lot-alca mais"><title>{a.titulo}</title></circle>)}
+        {/* divisas primeiro: a quina fica por cima */}
+        {alcas.filter((a) => a.forma === "divisa").map((a, i) => (
+          <rect key={`d${i}`} x={a.x - 9} y={a.y - 3.5} width={18} height={7} rx={3.5} transform={`rotate(${a.ang ?? 0} ${a.x} ${a.y})`} className="lot-alca divisa"><title>{a.titulo}</title></rect>
+        ))}
+        {alcas.filter((a) => a.forma !== "divisa").map((a, i) => a.forma === "quina"
+          ? <rect key={i} x={a.x - 6} y={a.y - 6} width={12} height={12} rx={2} className="lot-alca quina"><title>{a.titulo}</title></rect>
+          : a.forma === "vertice"
+            ? <rect key={i} x={a.x - 5} y={a.y - 5} width={10} height={10} className="lot-alca vert"><title>{a.titulo}</title></rect>
+            : <circle key={i} cx={a.x} cy={a.y} r={4.5} className="lot-alca mais"><title>{a.titulo}</title></circle>)}
+        {/* medidas do lote durante o arraste */}
+        {arrastando && mouse && lotesSel.length === 1 && (() => {
+          const l = lotesSel[0];
+          const q = tela(mouse);
+          return (
+            <g pointerEvents="none">
+              <rect x={q[0] + 14} y={q[1] + 10} width={l.problemas.length ? 236 : 176} height={l.problemas.length ? 40 : 24} rx={6} fill="rgba(255,255,255,0.95)" stroke={l.problemas.length ? "#C0262D" : "#178552"} />
+              <text x={q[0] + 22} y={q[1] + 26} className="lot-medir">{fmt(l.frente)} m · {fmt(l.area)} m²</text>
+              {l.problemas.length > 0 && <text x={q[0] + 22} y={q[1] + 42} className="lot-medir ruim">⚠ {l.problemas[0].slice(0, 34)}</text>}
+            </g>
+          );
+        })()}
 
         {/* prévia das ferramentas */}
         {desenho.length > 0 && (() => {
           const pts = [...desenho, ...(alvoPrevia && ferramenta !== "medir" ? [alvoPrevia] : [])].map(tela);
-          const fechado = ferramenta === "area";
+          const fechado = ferramenta === "area" || ferramenta === "lote";
           return (
             <g>
               {fechado && pts.length >= 3 && <polygon points={pts.map((q) => q.join(",")).join(" ")} fill="rgba(23,133,82,0.15)" />}
               <polyline points={pts.map((q) => q.join(",")).join(" ")} fill="none" stroke="#178552" strokeWidth={ferramenta === "rua" ? Math.max(2, projeto.params.ruaLargura * vv.s) : 2}
                 strokeOpacity={ferramenta === "rua" ? 0.35 : 1} strokeLinejoin="round" />
-              <polyline points={pts.map((q) => q.join(",")).join(" ")} fill="none" stroke="#126B42" strokeWidth={1.5} strokeDasharray="6 4" />
+              <polyline points={pts.map((q) => q.join(",")).join(" ")} fill="none" stroke={ferramenta === "cortar" ? "#C0262D" : "#126B42"} strokeWidth={ferramenta === "cortar" ? 2.5 : 1.5} strokeDasharray="6 4" />
               {pts.map((q, i) => <circle key={i} cx={q[0]} cy={q[1]} r={3.5} fill="#126B42" />)}
             </g>
           );
@@ -621,7 +717,8 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
           <span>{fmt(cotas.max, 1)} m</span>
         </div>
       )}
-      <div className="lot-zoom">
+      {/* os botões não começam arraste nem tiram a seleção */}
+      <div className="lot-zoom" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
         <button onClick={() => setV({ ...vv, s: vv.s * 1.4 })} title="Aproximar">+</button>
         <button onClick={() => setV({ ...vv, s: vv.s / 1.4 })} title="Afastar">−</button>
         <button onClick={() => enquadrar(res.gleba.ext)} title="Enquadrar tudo (F)">⤢</button>

@@ -2,13 +2,17 @@
 // desenho, os botões do painel e a linha de comando. Uma ação recebe o projeto
 // e o resultado atual e devolve um projeto NOVO (nunca muta), o que dá o
 // desfazer/refazer de graça.
-import { dot, sub } from "./geom.ts";
+import { areaPol, centroide, dentroPol, dot, sub } from "./geom.ts";
 import type { Pt } from "./geom.ts";
 import { ancoraDaQuadra } from "./auto.ts";
 import { fmt } from "./calculo.ts";
 import type { Corte, Lote, Quadra, Resultado } from "./calculo.ts";
 import { paraUtm } from "./plano.ts";
 import { ROTULO_AREA, mudarLote, novoId } from "./modelo.ts";
+import {
+  acertarMedida, apagarLotes, desenharLote, dividirLote, mudarDestino, posicaoNoDesenho, quadraDesenhada, unirComVizinho, unirLotes, voltarAoAutomatico,
+} from "./edicao.ts";
+import type { Edicao } from "./edicao.ts";
 import type { AjusteLote, AreaDesenhada, Esquina, Parametros, Projeto, QuadraCfg, Rua, Sobra, TipoArea } from "./modelo.ts";
 
 /** Lote identificado pela posição (sobrevive à renumeração). */
@@ -30,7 +34,8 @@ export function lotesDaSelecao(res: Resultado, sel: Selecao): Lote[] {
     .filter((l): l is Lote => !!l);
 }
 
-export const quadraDe = (res: Resultado, nome: string): Quadra | undefined => res.quadras.find((q) => q.nome === nome);
+export const quadraDe = (res: Resultado, nome: string): Quadra | undefined =>
+  res.quadras.find((q) => q.nome === nome) ?? res.quadrasVazias?.find((q) => q.nome === nome);
 
 /** Garante uma config para a quadra (âncora num ponto interno) e devolve o índice. */
 function garantirCfg(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: number } {
@@ -71,6 +76,8 @@ export function ajustarQuadra(pr: Projeto, res: Resultado, q: Quadra, patch: Par
   return comCfg(pr, res, q, (c) => {
     const novo = { ...c, ...patch };
     for (const k of Object.keys(patch) as (keyof QuadraCfg)[]) if (patch[k] === undefined) delete novo[k];
+    // mudar a regra de divisão é pedir ao sistema que divida de novo: o desenho à mão sai
+    if (["modo", "valor", "sobra", "fileiras", "fundo", "frentePrincipal"].some((k) => k in patch)) delete novo.lotes;
     return novo;
   });
 }
@@ -186,6 +193,13 @@ export function mudarArea(pr: Projeto, res: Resultado, id: string, tipo: TipoAre
     if (tipo === null) delete quadras[a.cfg].destino;
     return { ...pr, quadras };
   }
+  if (a.origem === "lotes" && a.cfg !== undefined && a.cfg >= 0 && Array.isArray(pr.quadras[a.cfg]?.lotes)) {
+    // quadra desenhada: o destino está no contorno de cada lote
+    const quadras = pr.quadras.slice();
+    const c = quadras[a.cfg];
+    quadras[a.cfg] = { ...c, lotes: c.lotes!.map((l) => (l.destino === a.tipo ? (tipo ? { ...l, destino: tipo } : { anel: l.anel }) : l)) };
+    return { ...pr, quadras };
+  }
   if (a.origem === "lotes" && a.cfg !== undefined && a.cfg >= 0) {
     const quadras = pr.quadras.slice();
     const c = quadras[a.cfg];
@@ -216,7 +230,7 @@ export const renomearArea = (pr: Projeto, res: Resultado, id: string, nome: stri
 // Linha de comando
 // ---------------------------------------------------------------------------
 
-export type Ferramenta = "selecionar" | "rua" | "area" | "medir";
+export type Ferramenta = "selecionar" | "rua" | "area" | "medir" | "lote" | "cortar";
 
 export interface Saida {
   pr?: Projeto;
@@ -238,15 +252,20 @@ const num = (s: string | undefined) => {
 };
 
 export const COMANDOS: { cmd: string; exemplo: string; desc: string; contexto: ("nada" | "lote" | "quadra" | "rua" | "area")[] }[] = [
-  { cmd: "frente", exemplo: "frente 12", desc: "trava a frente do lote (os vizinhos se ajustam) · na quadra, muda a frente padrão · sem seleção, a do projeto", contexto: ["lote", "quadra", "nada"] },
-  { cmd: "area", exemplo: "area 300", desc: "trava a área do lote · na quadra, divide em áreas iguais deste tamanho", contexto: ["lote", "quadra"] },
-  { cmd: "unir", exemplo: "unir", desc: "une o lote com o seguinte (ou os selecionados)", contexto: ["lote"] },
-  { cmd: "dividir", exemplo: "dividir 2", desc: "divide o lote em partes iguais", contexto: ["lote"] },
+  { cmd: "frente", exemplo: "frente 12", desc: "deixa o lote com esta frente (a divisa desliza e o vizinho se ajusta) · na quadra, muda a frente padrão · \"frente padrão 12\" muda a do projeto", contexto: ["lote", "quadra", "nada"] },
+  { cmd: "area", exemplo: "area 300", desc: "deixa o lote com esta área (a divisa desliza) · na quadra, divide em áreas iguais deste tamanho", contexto: ["lote", "quadra"] },
+  { cmd: "unir", exemplo: "unir", desc: "une os lotes selecionados (um só: une ao vizinho de maior divisa)", contexto: ["lote"] },
+  { cmd: "dividir", exemplo: "dividir 2", desc: "divide o lote em partes iguais, com as divisas na direção das laterais dele", contexto: ["lote"] },
+  { cmd: "apagar", exemplo: "apagar", desc: "apaga o lote (a área fica livre para desenhar outro) · Delete", contexto: ["lote", "rua", "area"] },
+  { cmd: "desenhar lote", exemplo: "desenhar lote", desc: "desenha um lote: clique as quinas, Enter fecha (L) · duplo clique na área livre rosa vira lote", contexto: ["nada", "lote", "quadra"] },
+  { cmd: "cortar", exemplo: "cortar", desc: "corta lotes com uma linha: clique o início e o fim (C)", contexto: ["nada", "lote", "quadra"] },
+  { cmd: "preencher", exemplo: "preencher", desc: "cada área livre (rosa) da quadra vira um lote", contexto: ["quadra"] },
+  { cmd: "automatico", exemplo: "automatico", desc: "a quadra desenhada à mão volta a ser dividida pelo sistema", contexto: ["quadra"] },
   { cmd: "verde", exemplo: "verde", desc: "transforma em área verde", contexto: ["lote", "quadra", "area"] },
   { cmd: "institucional", exemplo: "institucional", desc: "transforma em área institucional", contexto: ["lote", "quadra", "area"] },
   { cmd: "lazer", exemplo: "lazer", desc: "transforma em área de lazer", contexto: ["lote", "quadra", "area"] },
   { cmd: "lote", exemplo: "lote", desc: "devolve a área para lotes", contexto: ["area", "lote"] },
-  { cmd: "soltar", exemplo: "soltar", desc: "tira as travas do lote / volta a quadra ao padrão", contexto: ["lote", "quadra"] },
+  { cmd: "soltar", exemplo: "soltar", desc: "na quadra automática, volta o lote (ou a quadra) à regra do projeto", contexto: ["lote", "quadra"] },
   { cmd: "qtd", exemplo: "qtd 8", desc: "quadra com N lotes por fileira, de frente igual", contexto: ["quadra"] },
   { cmd: "iguais", exemplo: "iguais", desc: "quadra em áreas iguais (absorve divisa torta)", contexto: ["quadra"] },
   { cmd: "padronizar", exemplo: "padronizar", desc: "quadra com frente padrão", contexto: ["quadra"] },
@@ -283,7 +302,8 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
   const [cmd0, ...args] = t.split(/\s+/);
   const cmd = cmd0.replace(/:$/, "");
   const a1 = args[0];
-  const n1 = num(a1);
+  // o número é o primeiro argumento numérico ("frente padrão 12" também vale)
+  const n1 = num(args.find((x) => Number.isFinite(num(x))) ?? a1);
   const lotes = lotesDaSelecao(res, sel);
   const quadra = sel?.tipo === "quadra" ? quadraDe(res, sel.nome) : undefined;
   const p = pr.params;
@@ -298,7 +318,24 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
     case "desfazer": case "u": case "undo": return { desfazer: true, msg: "Desfeito." };
     case "refazer": case "redo": return { refazer: true, msg: "Refeito." };
     case "rua": return { ferramenta: "rua", sel: null, msg: "Clique os pontos do eixo da rua. Enter ou duplo clique termina, Esc cancela. Shift trava o ângulo." };
-    case "desenhar": case "poligono": return { ferramenta: "area", sel: null, msg: "Clique o contorno da área. Enter fecha, Esc cancela." };
+    case "desenhar": case "poligono":
+      if (a1 === "lote") return { ferramenta: "lote", sel: null, msg: "Clique as quinas do lote (elas grudam nas dos vizinhos). Enter fecha; o lote se ajusta aos vizinhos. Duplo clique numa área livre rosa vira lote." };
+      return { ferramenta: "area", sel: null, msg: "Clique o contorno da área. Enter fecha, Esc cancela." };
+    case "preencher": {
+      if (!quadra) return precisa("a quadra (duplo clique num lote)");
+      const livres = res.sobras.filter((sb) => dentroPol(centroide(sb.ext), quadra.pol) && areaPol(sb) > 1);
+      if (!livres.length) return { msg: `A quadra ${quadra.nome} não tem área livre.` };
+      let novo = pr, feitos = 0;
+      for (const sb of livres) { const ed = desenharLote(novo, res, sb.ext); if (ed) { novo = ed.pr; feitos++; } }
+      if (!feitos) return { msg: "Não consegui fazer lote da área livre desta quadra.", erro: true };
+      return { pr: novo, msg: `${feitos === 1 ? "A área livre virou um lote" : `${feitos} áreas livres viraram lotes`} — ajuste as quinas se quiser.` };
+    }
+    case "cortar": case "corte": return { ferramenta: "cortar", msg: "Clique o início e o fim da linha de corte: cada lote que ela atravessa vira dois." };
+    case "automatico": case "automatica": {
+      if (!quadra) return precisa("a quadra (duplo clique num lote)");
+      if (!quadraDesenhada(pr, quadra, res.plano)) return { msg: `A quadra ${quadra.nome} já é dividida pelo sistema.` };
+      return { pr: voltarAoAutomatico(pr, quadra, res.plano), msg: `Quadra ${quadra.nome} voltou a ser dividida pelo sistema (o desenho à mão foi descartado; Ctrl+Z desfaz).` };
+    }
     case "medir": return { ferramenta: "medir", msg: "Clique dois pontos para medir." };
     case "ir": case "zoom": return irPara(args.join(""), res);
 
@@ -307,11 +344,15 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       const avF = lotes.length || quadra ? conferirMedida(p, "frente", n1) : null;
       const comAvF = (m: string) => (avF ? `${m} Atenção: ${avF}` : m);
       if (lotes.length) {
-        let novo = pr;
-        for (const l of lotes) novo = ajustarLote(novo, res, l, { frente: n1 });
-        return { pr: novo, msg: comAvF(`${lotes.length === 1 ? `Lote ${lotes[0].id}` : `${lotes.length} lotes`} com frente travada em ${fmt(n1)} m — os demais da fileira se ajustaram.`) };
+        const ed = emSequencia(pr, res, lotes, (p2, q, l, feitos) => acertarMedida(p2, res, q, l, "frente", n1, feitos));
+        if (!ed) return { msg: "Não achei uma divisa lateral para deslizar neste lote (ele não tem vizinho ao lado).", erro: true };
+        if (ed.erro) return { msg: ed.msg, erro: true };
+        return { pr: ed.pr, sel: selDe(ed, lotes), msg: comAvF(lotes.length === 1 ? ed.msg : `${lotes.length} lotes com ${fmt(n1)} m de frente — os vizinhos se ajustaram.`) };
       }
       if (quadra) return { pr: ajustarQuadra(pr, res, quadra, { modo: "frente", valor: n1 }), msg: comAvF(`Quadra ${quadra.nome}: frente padrão ${fmt(n1)} m.`) };
+      // sem nada selecionado, só muda o padrão do projeto se o operador pedir com todas as letras
+      // (seleção perdida não pode mexer no loteamento inteiro)
+      if (!/padrao|projeto/.test(t)) return { msg: `Nenhum lote selecionado. Clique num lote (ou duplo clique na quadra); para mudar a frente padrão do projeto digite: frente padrão ${fmt(n1)}`, erro: true };
       return { pr: { ...pr, params: mudarLote(p, { frente: n1 }) }, msg: `Frente padrão do projeto: ${fmt(n1)} m (todas as quadras sem ajuste próprio; as faixas automáticas acompanham).` };
     }
     case "area": case "a": {
@@ -319,38 +360,38 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       const avA = lotes.length || quadra ? conferirMedida(p, "area", n1) : null;
       const comAvA = (m: string) => (avA ? `${m} Atenção: ${avA}` : m);
       if (lotes.length) {
-        let novo = pr;
-        for (const l of lotes) novo = ajustarLote(novo, res, l, { area: n1 });
-        return { pr: novo, msg: comAvA(`Área travada em ${fmt(n1)} m² — a frente é calculada para chegar nela.`) };
+        const ed = emSequencia(pr, res, lotes, (p2, q, l, feitos) => acertarMedida(p2, res, q, l, "area", n1, feitos));
+        if (!ed) return { msg: "Não achei uma divisa lateral para deslizar neste lote (ele não tem vizinho ao lado).", erro: true };
+        if (ed.erro) return { msg: ed.msg, erro: true };
+        return { pr: ed.pr, sel: selDe(ed, lotes), msg: comAvA(lotes.length === 1 ? ed.msg : `${lotes.length} lotes com ${fmt(n1)} m² — os vizinhos se ajustaram.`) };
       }
       if (quadra) return { pr: ajustarQuadra(pr, res, quadra, { modo: "area", valor: n1 }), msg: comAvA(`Quadra ${quadra.nome}: lotes de áreas iguais, alvo ${fmt(n1)} m².`) };
       return precisa("um lote ou uma quadra");
     }
     case "unir": case "juntar": {
       if (!lotes.length) return precisa("o lote");
+      const qs = new Set(lotes.map((l) => l.quadra));
+      if (qs.size > 1) return { msg: "Só dá para unir lotes da mesma quadra.", erro: true };
+      const q = quadraDe(res, lotes[0].quadra)!;
+      const ed = lotes.length === 1 ? unirComVizinho(pr, res, q, lotes[0]) : unirLotes(pr, res, q, lotes.map((l) => posicaoNoDesenho(pr, res, l)));
+      if (!ed) return { msg: lotes.length === 1 ? "Este lote não tem vizinho com divisa em comum." : "Os lotes selecionados não se tocam — selecione lotes vizinhos.", erro: true };
       const eU = conferirUnir(p, res, lotes);
-      if (eU && eU.startsWith("Não há")) return { msg: eU, erro: true };
-      const ord = [...lotes].sort((x, y) => x.fileira - y.fileira || x.indice - y.indice);
-      let novo = pr;
-      const alvo = ord.length === 1 ? ord : ord.slice(0, -1);
-      for (const l of alvo) novo = ajustarLote(novo, res, l, { unir: true });
-      const msgU = ord.length === 1 ? `Lote ${ord[0].id} unido ao seguinte.` : `${ord.length} lotes unidos.`;
-      return { pr: novo, sel: { tipo: "lotes", chaves: [chaveDoLote(ord[0])] }, msg: eU ? `${msgU} Atenção: ${eU}` : msgU };
+      return { pr: ed.pr, sel: selDe(ed, lotes), msg: eU && !eU.startsWith("Não há") ? `${ed.msg} Atenção: ${eU}` : ed.msg };
     }
     case "dividir": case "desmembrar": {
       if (lotes.length !== 1) return precisa("um lote");
+      if (a1 !== undefined && !Number.isFinite(n1)) return { msg: `"${a1}" não é um número — ex.: dividir 3`, erro: true };
       const n = Number.isFinite(n1) ? Math.round(n1) : 2;
-      if (n < 2 || n > 20) return { msg: "Divida em 2 a 20 partes.", erro: true };
+      if (n < 2 || n > 60) return { msg: "Divida em 2 a 60 partes (para mais, divida as partes de novo).", erro: true };
       const eD = conferirDividir(p, lotes[0], n);
-      return { pr: ajustarLote(pr, res, lotes[0], { dividir: n }), msg: eD ? `Lote ${lotes[0].id} dividido em ${n}. Atenção: ${eD} ${FORA}` : `Lote ${lotes[0].id} dividido em ${n}.` };
+      const ed = dividirLote(pr, res, quadraDe(res, lotes[0].quadra)!, lotes[0], n);
+      if (!ed) return { msg: "Não consegui dividir este lote em partes iguais (forma muito irregular) — use a ferramenta Cortar (C).", erro: true };
+      const selD: Selecao = ed.sel ? { tipo: "lotes", chaves: [{ quadra: ed.sel.quadra, fileira: 0, indice: ed.sel.indices[0] }] } : selDe(ed, lotes);
+      return { pr: ed.pr, sel: selD, msg: eD ? `${ed.msg} Atenção: ${eD} ${FORA}` : ed.msg };
     }
     case "verde": case "institucional": case "lazer": case "app": {
       const tipo = TIPOS_AREA[cmd];
-      if (lotes.length) {
-        let novo = pr;
-        for (const l of lotes) novo = ajustarLote(novo, res, l, { destino: tipo });
-        return { pr: novo, sel: null, msg: `${lotes.length === 1 ? "Lote" : `${lotes.length} lotes`} → ${ROTULO_AREA[tipo]}.` };
-      }
+      if (lotes.length) return { pr: destinoDosLotes(pr, res, lotes, tipo), sel: null, msg: `${lotes.length === 1 ? "Lote" : `${lotes.length} lotes`} → ${ROTULO_AREA[tipo]}.` };
       if (quadra) return { pr: ajustarQuadra(pr, res, quadra, { destino: tipo }), sel: null, msg: `Quadra ${quadra.nome} → ${ROTULO_AREA[tipo]}.` };
       if (sel?.tipo === "area") return { pr: mudarArea(pr, res, sel.id, tipo), msg: `Área → ${ROTULO_AREA[tipo]}.` };
       return precisa("um lote, uma quadra ou uma área");
@@ -427,6 +468,15 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       return { pr: { ...pr, params: { ...p, esquina: tipo, esquinaValor: Number.isFinite(v) ? v : p.esquinaValor } }, msg: tipo === "nenhuma" ? "Esquinas em canto vivo." : `Esquinas em ${tipo} de ${fmt(Number.isFinite(v) ? v : p.esquinaValor)} m.` };
     }
     case "excluir": case "apagar": case "del": {
+      if (lotes.length) {
+        // quadra por quadra (cada uma com o seu desenho)
+        let novo = pr;
+        for (const nome of new Set(lotes.map((l) => l.quadra))) {
+          const q = quadraDe(res, nome);
+          if (q) novo = apagarLotes(novo, res, q, lotes.filter((l) => l.quadra === nome).map((l) => posicaoNoDesenho(pr, res, l))).pr;
+        }
+        return { pr: novo, sel: null, msg: `${lotes.length === 1 ? "Lote apagado" : `${lotes.length} lotes apagados`} — a área ficou livre. Desenhe um lote nela (L) ou mova as divisas dos vizinhos.` };
+      }
       if (sel?.tipo === "rua") return { pr: removerRua(pr, sel.id), sel: null, msg: "Rua apagada — as quadras vizinhas se juntaram." };
       if (sel?.tipo === "area") return { pr: mudarArea(pr, res, sel.id, null), sel: null, msg: "Área apagada." };
       return precisa("a rua ou a área");
@@ -438,6 +488,51 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
     default:
       return { msg: `Não conheço "${cmd0}". Digite "ajuda" para ver os comandos.`, erro: true };
   }
+}
+
+/**
+ * A mesma operação geométrica em vários lotes. Cada uma lê os contornos já
+ * mudados pela anterior (a quadra congelada é achada pela âncora).
+ */
+function emSequencia(pr: Projeto, res: Resultado, lotes: Lote[], f: (pr: Projeto, q: Quadra, l: Lote, feitos: number[]) => Edicao | null): Edicao | null {
+  let atual: Edicao | null = null, falha: Edicao | null = null, falhas = 0;
+  let p2 = pr;
+  const feitos: number[] = [];
+  const sel: { quadra: string; indices: number[] } = { quadra: lotes[0]?.quadra ?? "", indices: [] };
+  for (const l of lotes) {
+    const q = quadraDe(res, l.quadra);
+    if (!q) continue;
+    const k = posicaoNoDesenho(pr, res, l);
+    const ed = f(p2, q, l, l.quadra === lotes[0].quadra ? feitos : []);
+    if (!ed) { falhas++; continue; }
+    if (ed.erro) { falha = ed; falhas++; continue; }
+    p2 = ed.pr;
+    feitos.push(k);
+    if (l.quadra === sel.quadra) sel.indices.push(k);
+    atual = { ...ed, pr: p2 };
+  }
+  if (!atual) return falha;
+  return { ...atual, sel: lotes.length > 1 ? sel : atual.sel, msg: falhas && lotes.length > 1 ? `${atual.msg} (${falhas} lote(s) não deu para acertar)` : atual.msg };
+}
+
+/** Seleção depois de uma edição: os lotes que ela indicou (ou os mesmos, na posição do desenho). */
+function selDe(ed: Edicao, lotes: Lote[]): Selecao {
+  if (ed.sel) return { tipo: "lotes", chaves: ed.sel.indices.map((indice) => ({ quadra: ed.sel!.quadra, fileira: 0, indice })) };
+  return { tipo: "lotes", chaves: lotes.map((l) => chaveDoLote(l)) };
+}
+
+/** Lotes viram área pública: na quadra desenhada muda o destino do contorno; na automática, um ajuste. */
+export function destinoDosLotes(pr: Projeto, res: Resultado, lotes: Lote[], tipo: TipoArea | null): Projeto {
+  let novo = pr;
+  const porQuadra = new Map<string, Lote[]>();
+  for (const l of lotes) porQuadra.set(l.quadra, [...(porQuadra.get(l.quadra) ?? []), l]);
+  for (const [nome, ls] of porQuadra) {
+    const q = quadraDe(res, nome);
+    if (!q) continue;
+    if (quadraDesenhada(novo, q, res.plano)) novo = mudarDestino(novo, res, q, ls.map((l) => posicaoNoDesenho(novo, res, l)), tipo).pr;
+    else for (const l of ls) novo = ajustarLote(novo, res, l, { destino: tipo ?? undefined });
+  }
+  return novo;
 }
 
 function irPara(alvo: string, res: Resultado): Saida {

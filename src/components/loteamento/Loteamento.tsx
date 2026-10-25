@@ -12,7 +12,9 @@ import { calcular, fmt } from "../../lib/loteamento/calculo.ts";
 import type { Resultado } from "../../lib/loteamento/calculo.ts";
 import type { Projeto } from "../../lib/loteamento/modelo.ts";
 import { carregarProjeto, perimetroDoServico, projetoInicial, salvarProjeto } from "../../lib/loteamento/persistencia.ts";
-import { COMANDOS, contextoDe, executar, lotesDaSelecao } from "../../lib/loteamento/acoes.ts";
+import { COMANDOS, chaveDoLote, contextoDe, executar, lotesDaSelecao } from "../../lib/loteamento/acoes.ts";
+import { dentroPol } from "../../lib/loteamento/geom.ts";
+import { pontoInterno } from "../../lib/loteamento/auto.ts";
 import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { Passos, StatusSalvamento } from "../ui";
@@ -21,6 +23,7 @@ import { Assistente } from "./Assistente";
 import { Editor } from "./Editor";
 import type { OpcoesVista } from "./Editor";
 import { Painel } from "./Painel";
+import { Avisos } from "./Avisos";
 import { Entregas } from "./Entregas";
 import "./loteamento.css";
 
@@ -84,6 +87,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   const [cmd, setCmd] = useState("");
   const [historicoCmd, setHistoricoCmd] = useState<string[]>([]);
   const [ajuda, setAjuda] = useState(false);
+  const [verAvisos, setVerAvisos] = useState(true);
   const cmdRef = useRef<HTMLInputElement>(null);
 
   // carga
@@ -129,6 +133,12 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   // sair das medidas do projeto (frente, profundidade, área, forma) é aplicado
   // e aparece como aviso — o lote fica marcado na planta até ser acertado.
   const baseArraste = useRef<Resultado | null>(null);
+  // (só quando há o que desfazer/refazer: senão o res não muda e a lembrança ficaria pendurada)
+  const lembrarSelecao = useCallback((sentido: "desfazer" | "refazer" = "desfazer") => {
+    const tem = sentido === "desfazer" ? hist.h?.passado.length : hist.h?.futuro.length;
+    if (!res || sel?.tipo !== "lotes" || !tem) return;
+    selPorLugar.current = lotesDaSelecao(res, sel).map((l) => pontoInterno(l.pol));
+  }, [res, sel, hist.h]);
   const ultimoArraste = useRef<Projeto | null>(null);
   const mudar = useCallback((p: Projeto, transiente = false): boolean => {
     const r0 = transiente ? (baseArraste.current ??= res) : baseArraste.current ?? res;
@@ -152,8 +162,21 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     ultimoArraste.current = null;
     hist.fimArraste();
     if (r0 && final) {
-      const viola = violacaoNova(r0, calc(final));
-      if (viola) mostrar(`Atenção: ${viola} — fora das medidas do projeto. A edição foi aplicada; ajuste se quiser.`);
+      const r1 = calc(final);
+      const viola = violacaoNova(r0, r1);
+      // arraste exagerado pode esmagar um lote até sumir: isso tem de ser dito
+      const sumiram = r1 ? r0.quadras.flatMap((q) => {
+        const depois = r1.quadras.find((x) => x.nome === q.nome);
+        return depois && depois.lotes.length < q.lotes.length ? [`${q.lotes.length - depois.lotes.length} lote(s) da quadra ${q.nome} ficaram sem área e sumiram`] : [];
+      }) : [];
+      // área pública que o arraste mudou (a institucional/verde da quadra encosta no lote)
+      const pub = (r: Resultado) => r.quadro.verde + r.quadro.institucional + r.quadro.lazer;
+      const dPub = r1 ? pub(r1) - pub(r0) : 0;
+      const avPub = r1 && Math.abs(dPub) > 1 ? ` A área pública ${dPub < 0 ? "diminuiu" : "aumentou"} ${fmt(Math.abs(dPub))} m² (verde ${fmt((100 * (r1.quadro.verde + r1.quadro.lazer)) / r1.quadro.gleba, 1)}%, institucional ${fmt((100 * r1.quadro.institucional) / r1.quadro.gleba, 1)}%).` : "";
+      if (sumiram.length) mostrar(`Atenção: ${sumiram.join("; ")} — Ctrl+Z desfaz.${viola ? ` Também: ${viola}.` : ""}${avPub}`, true);
+      else if (viola) mostrar(`Atenção: ${viola} — fora das medidas do projeto. A edição foi aplicada; ajuste se quiser.${avPub}`);
+      else if (avPub) mostrar(`Atenção:${avPub} Ctrl+Z desfaz.`, true);
+      else mostrar("Pronto — os lotes vizinhos se ajustaram (Ctrl+Z desfaz).");
     }
   }, [hist, calc, mostrar]);
 
@@ -162,17 +185,32 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     const h = (e: KeyboardEvent) => {
       const alvo = e.target as HTMLElement;
       const digitando = alvo && (alvo.tagName === "INPUT" || alvo.tagName === "TEXTAREA" || alvo.tagName === "SELECT");
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !digitando) { e.preventDefault(); if (e.shiftKey) hist.refazer(); else hist.desfazer(); }
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y" && !digitando) { e.preventDefault(); hist.refazer(); }
+      // no campo de comando vazio o Ctrl+Z também desfaz (logo depois de um comando o foco fica lá)
+      const vazio = digitando && alvo === cmdRef.current && !cmdRef.current?.value;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && (!digitando || vazio)) { e.preventDefault(); lembrarSelecao(e.shiftKey ? "refazer" : "desfazer"); if (e.shiftKey) hist.refazer(); else hist.desfazer(); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y" && (!digitando || vazio)) { e.preventDefault(); lembrarSelecao("refazer"); hist.refazer(); }
       else if (etapa === "projeto" && !digitando && (e.key === "/" || e.key === ":")) { e.preventDefault(); cmdRef.current?.focus(); }
       else if (etapa === "projeto" && !digitando && (e.key === "Delete") && res && projeto) {
         const s = executar("excluir", projeto, res, sel);
         if (s.pr) { mudar(s.pr); setSel(null); mostrar(s.msg); }
+        else if (s.msg) mostrar(s.msg, s.erro);
       }
     };
     addEventListener("keydown", h);
     return () => removeEventListener("keydown", h);
-  }, [hist, etapa, res, projeto, sel, mudar, mostrar]);
+  }, [hist, etapa, res, projeto, sel, mudar, mostrar, lembrarSelecao]);
+
+  // Desfazer/refazer: a posição do lote na quadra muda quando ela é (des)congelada;
+  // a seleção segue o LUGAR do lote (o ponto no meio dele), não a posição
+  const selPorLugar = useRef<Pt[] | null>(null);
+  useEffect(() => {
+    const pts = selPorLugar.current;
+    selPorLugar.current = null;
+    if (!pts || !res) return;
+    // sem repetir (as partes de um lote dividido voltam ao mesmo lote)
+    const achados = [...new Set(pts.map((pt) => res.lotes.find((l) => dentroPol(pt, l.pol))).filter((l): l is NonNullable<typeof l> => !!l))];
+    setSel(achados.length ? { tipo: "lotes", chaves: achados.map(chaveDoLote) } : null);
+  }, [res]);
 
   async function marcarExportado() {
     if (servico.status === "gerado") return;
@@ -183,8 +221,8 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   function rodarComando(texto: string) {
     if (!projeto || !res) return;
     const s = executar(texto, projeto, res, sel);
-    if (s.desfazer) hist.desfazer();
-    if (s.refazer) hist.refazer();
+    if (s.desfazer) { lembrarSelecao(); hist.desfazer(); }
+    if (s.refazer) { lembrarSelecao("refazer"); hist.refazer(); }
     if (s.ajuda) setAjuda(true);
     const aceito = s.pr ? mudar(s.pr) : true;
     if (aceito && s.sel !== undefined) setSel(s.sel);
@@ -240,11 +278,13 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
       )}
 
       {etapa === "projeto" && res && (
-        <div className="lot-area-trabalho">
+        <div className={`lot-area-trabalho${verAvisos ? " com-avisos" : ""}`}>
           <nav className="lot-ferramentas" aria-label="Ferramentas">
             {([
               ["selecionar", "Selecionar e arrastar (S)", "M5 3l14 9-6 1.5L10 20z"],
               ["rua", "Desenhar rua (R)", "M4 20 10 4M14 4l6 16M12 6v2M12 11v2M12 16v2"],
+              ["lote", "Desenhar lote (L) — clique as quinas, Enter fecha; duplo clique na área livre rosa vira lote", "M4 4h16v16H4zM4 12h16M12 4v16"],
+              ["cortar", "Cortar lotes com uma linha (C)", "M6 6a2 2 0 1 0 0 .01M6 18a2 2 0 1 0 0 .01M8 7l12 10M8 17l12-10"],
               ["area", "Desenhar área pública (A)", "M4 6l7-3 9 5-2 11-10 2-5-6z"],
               ["medir", "Medir (M)", "M3 17 17 3l4 4L7 21zM7 13l2 2M10 10l2 2M13 7l2 2"],
             ] as [Ferramenta, string, string][]).map(([f, t, d]) => (
@@ -253,8 +293,8 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
               </button>
             ))}
             <span className="sep" />
-            <button title="Desfazer (Ctrl+Z)" disabled={!hist.h?.passado.length} onClick={hist.desfazer}>↶</button>
-            <button title="Refazer (Ctrl+Y)" disabled={!hist.h?.futuro.length} onClick={hist.refazer}>↷</button>
+            <button title="Desfazer (Ctrl+Z)" disabled={!hist.h?.passado.length} onClick={() => { lembrarSelecao(); hist.desfazer(); }}>↶</button>
+            <button title="Refazer (Ctrl+Y)" disabled={!hist.h?.futuro.length} onClick={() => { lembrarSelecao("refazer"); hist.refazer(); }}>↷</button>
             <span className="sep" />
             <button title="Imagem de satélite" className={vista.satelite ? "ativo" : ""} onClick={() => setVista({ ...vista, satelite: !vista.satelite })}>🛰</button>
             <button title="Medidas dos lados" className={vista.medidas ? "ativo" : ""} onClick={() => setVista({ ...vista, medidas: !vista.medidas })}>↔</button>
@@ -262,15 +302,20 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
             <button title={projeto.terreno ? "Colorir pelo relevo (cota)" : "Relevo ainda não lido (gere pelas Perguntas)"} disabled={!projeto.terreno}
               className={vista.cores === "relevo" ? "ativo" : ""} onClick={() => setVista({ ...vista, cores: vista.cores === "relevo" ? "situacao" : "relevo" })}>⛰</button>
             <span className="sep" />
+            <button title={verAvisos ? "Esconder os avisos dos lotes" : "Mostrar os avisos dos lotes"} className={`lot-btn-avisos${verAvisos ? " ativo" : ""}`} onClick={() => setVerAvisos(!verAvisos)}>
+              ⚠{res.lotes.some((l) => l.problemas.length) && <i>{res.lotes.filter((l) => l.problemas.length).length}</i>}
+            </button>
             <button title="Ver comandos e atalhos" onClick={() => setAjuda(true)}>?</button>
           </nav>
+
+          {verAvisos && <Avisos res={res} params={projeto.params} sel={sel} onSel={setSel} onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onFechar={() => setVerAvisos(false)} />}
 
           <div className="lot-centro">
             <Editor projeto={projeto} res={res} fuso={fuso} sel={sel} onSel={setSel} ferramenta={ferramenta} onFerramenta={setFerramenta}
               onMudar={mudar} onFimArraste={fimArraste} vista={vista} focar={focar} onMsg={(m) => mostrar(m)} />
             <form className="lot-comando" onSubmit={(e) => { e.preventDefault(); rodarComando(cmd); setCmd(""); }}>
               <div className="lot-cmd-linha">
-                <span className="lot-cmd-prompt">Comando{sel ? ` · ${sel.tipo === "lotes" ? (qtdSel > 1 ? `${qtdSel} lotes` : `lote ${lotesDaSelecao(res, sel)[0]?.id ?? ""}`) : sel.tipo === "quadra" ? `quadra ${sel.nome}` : sel.tipo}` : ""}:</span>
+                <span className="lot-cmd-prompt">Comando{sel && (sel.tipo !== "lotes" || qtdSel) ? ` · ${sel.tipo === "lotes" ? (qtdSel > 1 ? `${qtdSel} lotes` : `lote ${lotesDaSelecao(res, sel)[0]?.id ?? ""}`) : sel.tipo === "quadra" ? `quadra ${sel.nome}` : sel.tipo}` : ""}:</span>
                 <input ref={cmdRef} value={cmd} onChange={(e) => setCmd(e.target.value)} placeholder="ex.: frente 12 · unir · verde · largura 14 · ir A-12 · ajuda"
                   onKeyDown={(e) => {
                     if (e.key === "ArrowUp" && historicoCmd.length) { e.preventDefault(); setCmd(historicoCmd[0]); setHistoricoCmd((h) => [...h.slice(1), h[0]]); }
@@ -289,7 +334,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
           </div>
 
           <Painel projeto={projeto} res={res} sel={sel} onSel={setSel} onMudar={(p) => mudar(p)}
-            onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onMsg={mostrar} />
+            onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onMsg={mostrar} onComando={rodarComando} />
 
           <div className="lot-rodape-etapa">
             <button onClick={() => setEtapa("perguntas")}>← Rever as perguntas</button>
@@ -315,8 +360,9 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
                 <ul>
                   <li><b>Clique</b> seleciona o lote · <b>Shift+clique</b> soma lotes · <b>duplo clique</b> seleciona a quadra</li>
                   <li><b>Arrastar o fundo</b> move o desenho · <b>roda do mouse</b> aproxima</li>
-                  <li><b>Bolinha verde</b> entre lotes: arraste para mudar a frente — os seguintes se ajustam</li>
-                  <li><b>Losango</b>: move a linha de fundo da quadra</li>
+                  <li><b>Lote selecionado</b>: arraste as <b>quinas</b> (quadrados) e as <b>divisas</b> (barras verdes). A quina na rua ou na divisa da gleba corre por ela; os lotes vizinhos se ajustam. <b>Alt</b> solta a quina da borda</li>
+                  <li>Nada é bloqueado: o lote que sair das medidas fica vermelho e aparece na coluna de avisos, à esquerda</li>
+                  <li><b>L</b> desenha um lote (clique as quinas; ele se ajusta aos vizinhos) · duplo clique numa área livre rosa vira lote · <b>C</b> corta lotes com uma linha · <b>Delete</b> apaga o lote</li>
                   <li><b>Rua selecionada</b>: arraste os pontos do eixo; o "+" dobra a rua</li>
                   <li><b>R</b> rua · <b>A</b> área · <b>M</b> medir · <b>S</b> selecionar · <b>F</b> enquadrar</li>
                   <li><b>Enter</b> termina o desenho · <b>Backspace</b> tira o último ponto · <b>Esc</b> cancela</li>

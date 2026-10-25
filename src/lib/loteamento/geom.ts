@@ -323,3 +323,44 @@ export function verdeValida(pols: Poligono[], raio = 10): boolean {
   return ab.reduce((s2, x) => s2 + areaPol(x), 0) >= 0.7 * a;
 }
 
+
+// ---------------------------------------------------------------------------
+// Quinas do lote
+// ---------------------------------------------------------------------------
+
+/** Giro (graus, com sinal) no vértice i do anel. */
+function giroEm(anel: Anel, i: number): number {
+  const n = anel.length;
+  const a = anel[(i + n - 1) % n], q = anel[i], c = anel[(i + 1) % n];
+  const u = sub(q, a), v = sub(c, q);
+  if (Math.hypot(u[0], u[1]) < 1e-9 || Math.hypot(v[0], v[1]) < 1e-9) return 0;
+  return (Math.atan2(cross(u, v), dot(u, v)) * 180) / Math.PI;
+}
+
+/**
+ * Quinas do lote — o canto que o comprador enxerga: giro de 12° ou mais. O
+ * arco da esquina (vários lados curtos seguidos) conta como UMA quina. O
+ * cliente pede no máximo 4; lote de ponta pode ter 3.
+ */
+export function quinasDe(anel: Anel, curto = 2, giroMin = 12): number[] {
+  const n = anel.length;
+  if (n < 3) return [];
+  let k0 = -1;
+  for (let i = 0; i < n; i++) if (dist(anel[i], anel[(i + 1) % n]) >= curto) { k0 = (i + 1) % n; break; }
+  if (k0 < 0) return [];
+  const out: number[] = [];
+  let acc = 0, maior = -1, gMaior = 0;
+  for (let s = 0; s < n; s++) {
+    const i = (k0 + s) % n;
+    const g = giroEm(anel, i);
+    acc += g;
+    if (Math.abs(g) > gMaior) { gMaior = Math.abs(g); maior = i; }
+    if (dist(anel[i], anel[(i + 1) % n]) >= curto) {
+      if (Math.abs(acc) >= giroMin) out.push(maior);
+      acc = 0; maior = -1; gMaior = 0;
+    }
+  }
+  return out;
+}
+
+export const quinas = (anel: Anel): number => quinasDe(anel).length;

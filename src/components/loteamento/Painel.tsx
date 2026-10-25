@@ -4,9 +4,10 @@ import { useEffect, useState } from "react";
 import { fmt } from "../../lib/loteamento/calculo.ts";
 import type { Problema, Resultado } from "../../lib/loteamento/calculo.ts";
 import {
-  ajustarLote, ajustarQuadra, centroLote, chaveDoLote, conferirDividir, conferirMedida, conferirUnir, editarRua, lotesDaSelecao, mudarArea, quadraDe, removerRua,
+  ajustarQuadra, centroLote, chaveDoLote, conferirMedida, editarRua, lotesDaSelecao, mudarArea, quadraDe, removerRua,
   renomearArea, restaurarQuadra,
 } from "../../lib/loteamento/acoes.ts";
+import { quadraDesenhada } from "../../lib/loteamento/edicao.ts";
 import type { Selecao } from "../../lib/loteamento/acoes.ts";
 import { ROTULO_AREA } from "../../lib/loteamento/modelo.ts";
 import type { ModoDivisao, Projeto, Sobra, TipoArea } from "../../lib/loteamento/modelo.ts";
@@ -23,6 +24,8 @@ interface Props {
   onMudar: (pr: Projeto) => boolean | void;
   onFocar: (p: Pt) => void;
   onMsg: (m: string, erro?: boolean) => void;
+  /** roda um comando da linha de comando (o painel e o teclado fazem a mesma coisa) */
+  onComando: (texto: string) => void;
 }
 
 /** Campo numérico que só aplica ao sair ou dar Enter (não recalcula a cada tecla). */
@@ -52,10 +55,21 @@ export function CampoNum({ valor, onAplicar, casas = 2, sufixo, min = 0, desabil
 const ROT_MODO: Record<ModoDivisao, string> = { frente: "Padronizada (frente fixa)", area: "Áreas iguais", quantidade: "Quantidade fixa" };
 const ROT_SOBRA: Record<Sobra, string> = { esquinas: "Lotes de esquina", ultimo: "Último lote", distribuir: "Distribuir entre todos", extra: "Lote extra (se couber)" };
 
+/** Os pedacinhos do arco da esquina (mesma rua, menos de 2 m cada) viram uma linha só. */
+function agruparArcos(lados: Resultado["lotes"][number]["lados"]): { comp: number; tipo: string; nome: string; curva?: boolean }[] {
+  const out: { comp: number; tipo: string; nome: string; ref?: string; curva?: boolean }[] = [];
+  for (const x of lados) {
+    const ult = out[out.length - 1];
+    if (ult && x.comp < 2 && ult.tipo === x.tipo && ult.ref === x.ref && (ult.curva || ult.comp < 2)) { ult.comp += x.comp; ult.curva = true; continue; }
+    out.push({ comp: x.comp, tipo: x.tipo, nome: x.nome, ref: x.ref });
+  }
+  return out;
+}
+
 /** Edição livre: o que sai das medidas do projeto é aplicado e vira aviso na mensagem. */
 const comAviso = (m: string, aviso: string | null | undefined) => (aviso ? `${m} Atenção: ${aviso}` : m);
 
-export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Props) {
+export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onComando }: Props) {
   const lotes = lotesDaSelecao(res, sel);
   const quadra = sel?.tipo === "quadra" ? quadraDe(res, sel.nome) : undefined;
   const rua = sel?.tipo === "rua" ? res.ruas.find((r) => r.id === sel.id) : undefined;
@@ -80,11 +94,8 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
   }
 
   const virarArea = (tipo: TipoArea) => {
-    if (lotes.length) {
-      let novo = projeto;
-      for (const l of lotes) novo = ajustarLote(novo, res, l, { destino: tipo });
-      onMudar(novo); onSel(null); onMsg(`${lotes.length === 1 ? "Lote" : `${lotes.length} lotes`} → ${ROTULO_AREA[tipo]}.`);
-    } else if (quadra) { onMudar(ajustarQuadra(projeto, res, quadra, { destino: tipo })); onSel(null); onMsg(`Quadra ${quadra.nome} → ${ROTULO_AREA[tipo]}.`); }
+    if (lotes.length) onComando(tipo);
+    else if (quadra) { onMudar(ajustarQuadra(projeto, res, quadra, { destino: tipo })); onSel(null); onMsg(`Quadra ${quadra.nome} → ${ROTULO_AREA[tipo]}.`); }
   };
 
   return (
@@ -103,6 +114,11 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
               <div><b>{l.esquina ? "Esquina" : l.naDivisa ? "Divisa" : "Meio"}</b><span>{l.rua || "—"}</span></div>
             </div>
             {l.problemas.map((x) => <p key={x} className="lot-erro">⚠ {x}</p>)}
+            {(l.esquina || l.ponta) && !l.problemas.length && (
+              <p className="lot-dica">
+                {l.esquina ? "Lote de esquina: a frente soma as duas ruas, por isso a frente máxima e o fundo mínimo não valem para ele." : "Lote de ponta (onde a quadra afina): ajusta a linha da propriedade — a frente máxima não vale para ele."}
+              </p>
+            )}
             <p className="lot-dica">
               Faixas do projeto: frente {fmt(p.frenteMin)}–{fmt(p.frenteMax)} m · fundo {fmt(p.profundidadeMin)}–{fmt(p.profundidadeMax)} m · área {fmt(p.areaMin, 0)}–{fmt(p.areaMax, 0)} m².
             </p>
@@ -112,33 +128,20 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
             })()}
             <div className="lot-linha">
               <label>Frente</label>
-              <CampoNum valor={l.travaFrente ?? (l.travaArea ? undefined : undefined)} sufixo="m" titulo="Trava a frente; os lotes seguintes se ajustam"
-                onAplicar={(v) => {
-                  const e = v === undefined ? null : conferirMedida(p, "frente", v);
-                  if (onMudar(ajustarLote(projeto, res, l, v === undefined ? { frente: undefined } : { frente: v })) !== false) onMsg(comAviso(v ? `Frente travada em ${fmt(v)} m — a fileira se reorganizou.` : "Frente solta.", e));
-                }} />
-              <span className="lot-dica">{l.travaFrente ? "travada" : `livre (${fmt(qq?.valor ?? p.frente)} m pela quadra)`}</span>
+              <CampoNum valor={l.frente} sufixo="m" titulo="Digite a frente: a divisa lateral desliza e o vizinho se ajusta"
+                onAplicar={(v) => { if (v !== undefined) onComando(`frente ${String(v).replace(".", ",")}`); }} />
             </div>
             <div className="lot-linha">
               <label>Área</label>
-              <CampoNum valor={l.travaArea} sufixo="m²" titulo="Trava a área; a frente é calculada"
-                onAplicar={(v) => {
-                  const e = v === undefined ? null : conferirMedida(p, "area", v);
-                  if (onMudar(ajustarLote(projeto, res, l, v === undefined ? { area: undefined } : { area: v })) !== false && e) onMsg(comAviso(`Área travada em ${fmt(v!)} m².`, e));
-                }} />
-              <span className="lot-dica">{l.travaArea ? "travada" : "livre"}</span>
+              <CampoNum valor={l.area} sufixo="m²" titulo="Digite a área: a divisa lateral desliza e o vizinho se ajusta"
+                onAplicar={(v) => { if (v !== undefined) onComando(`area ${String(v).replace(".", ",")}`); }} />
             </div>
+            <p className="lot-dica">Arraste no desenho as quinas (quadrados) e as divisas (barras verdes). A quina na rua corre pela rua; os vizinhos se ajustam.</p>
             <div className="lot-botoes">
-              <button onClick={() => {
-                const e = conferirUnir(p, res, [l]);
-                if (e?.startsWith("Não há")) { onMsg(e, true); return; }
-                if (onMudar(ajustarLote(projeto, res, l, { unir: true })) !== false) onMsg(comAviso(`Lote ${l.id} unido ao seguinte.`, e));
-              }}>Unir ao seguinte</button>
-              <button onClick={() => {
-                const e = conferirDividir(p, l, 2);
-                if (onMudar(ajustarLote(projeto, res, l, { dividir: 2 })) !== false) onMsg(comAviso(`Lote ${l.id} dividido em 2.`, e));
-              }}>Dividir em 2</button>
-              {l.ajustado && <button onClick={() => { onMudar(ajustarLote(projeto, res, l, null)); onMsg("Travas removidas."); }}>Soltar travas</button>}
+              <button onClick={() => onComando("unir")} title="Une com o vizinho de maior divisa em comum">Unir ao vizinho</button>
+              <button onClick={() => onComando("dividir 2")}>Dividir em 2</button>
+              <button onClick={() => onComando("dividir 3")}>Em 3</button>
+              <button className="perigo" onClick={() => onComando("apagar")} title="A área fica livre para desenhar outro lote (Delete)">Apagar</button>
             </div>
             <div className="lot-botoes">
               <button className="verde" onClick={() => virarArea("verde")}>→ Área verde</button>
@@ -148,8 +151,8 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
               <summary>Medidas e confrontações</summary>
               <table>
                 <tbody>
-                  {l.lados.map((x, i) => (
-                    <tr key={i}><td>{fmt(x.comp)} m</td><td className={`t-${x.tipo}`}>{x.nome}</td></tr>
+                  {agruparArcos(l.lados).map((x, i) => (
+                    <tr key={i}><td>{fmt(x.comp)} m</td><td className={`t-${x.tipo}`}>{x.nome}{x.curva ? " (curva da esquina)" : ""}</td></tr>
                   ))}
                 </tbody>
               </table>
@@ -165,23 +168,11 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
           <p className="lot-dica">{lotes.map((l) => l.id).join(", ")} · {fmt(lotes.reduce((s, l) => s + l.area, 0))} m²</p>
           <div className="lot-linha">
             <label>Frente de todos</label>
-            <CampoNum valor={undefined} sufixo="m" onAplicar={(v) => {
-              if (v === undefined) return;
-              const e = conferirMedida(p, "frente", v);
-              let novo = projeto;
-              for (const l of lotes) novo = ajustarLote(novo, res, l, { frente: v });
-              if (onMudar(novo) !== false && e) onMsg(comAviso(`${lotes.length} lotes com frente ${fmt(v)} m.`, e));
-            }} />
+            <CampoNum valor={undefined} sufixo="m" onAplicar={(v) => { if (v !== undefined) onComando(`frente ${String(v).replace(".", ",")}`); }} />
           </div>
           <div className="lot-botoes">
-            <button onClick={() => {
-              const ord = [...lotes].sort((a, b) => a.fileira - b.fileira || a.indice - b.indice);
-              const e = conferirUnir(p, res, ord);
-              if (e?.startsWith("Não há")) { onMsg(e, true); return; }
-              let novo = projeto;
-              for (const l of ord.slice(0, -1)) novo = ajustarLote(novo, res, l, { unir: true });
-              if (onMudar(novo) !== false) { onSel({ tipo: "lotes", chaves: [chaveDoLote(ord[0])] }); if (e) onMsg(comAviso(`${ord.length} lotes unidos.`, e)); }
-            }}>Unir todos</button>
+            <button onClick={() => onComando("unir")}>Unir em um lote</button>
+            <button className="perigo" onClick={() => onComando("apagar")}>Apagar</button>
             <button className="verde" onClick={() => virarArea("verde")}>→ Área verde</button>
             <button className="inst" onClick={() => virarArea("institucional")}>→ Institucional</button>
           </div>
@@ -197,6 +188,15 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
             <div><b>{quadra.fileiras}</b><span>fileira{quadra.fileiras === 1 ? "" : "s"}</span></div>
           </div>
           {quadra.problemas.map((x) => <p key={x} className="lot-aviso">{x}</p>)}
+          {quadraDesenhada(projeto, quadra, res.plano) && (
+            <>
+              <p className="lot-dica"><b>Quadra desenhada à mão</b> — o sistema não a redivide. Mudar a divisão abaixo (ou "Voltar ao automático") descarta o desenho.</p>
+              <div className="lot-botoes">
+                {quadra.problemas.some((x) => /sem lote/.test(x)) && <button onClick={() => onComando("preencher")} title="Cada área livre da quadra vira um lote">Preencher área livre</button>}
+                <button onClick={() => onComando("automatico")}>Voltar ao automático</button>
+              </div>
+            </>
+          )}
           <div className="lot-linha">
             <label>Divisão</label>
             <select value={quadra.modo} onChange={(e) => {
@@ -244,7 +244,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg }: Pr
               if (n && n !== quadra.nome) { onMudar(ajustarQuadra(projeto, res, quadra, { nome: n })); onSel({ tipo: "quadra", nome: n }); }
             }} />
           </div>
-          <p className="lot-dica">Arraste as bolinhas verdes para mudar a frente de um lote (os seguintes se ajustam) e o losango para mover o fundo.</p>
+          <p className="lot-dica">Clique num lote para arrastar as quinas e as divisas dele. L desenha um lote, C corta lotes com uma linha.</p>
           <div className="lot-botoes">
             <button className="verde" onClick={() => virarArea("verde")}>→ Área verde</button>
             <button className="inst" onClick={() => virarArea("institucional")}>→ Institucional</button>

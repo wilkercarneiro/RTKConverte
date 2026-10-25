@@ -13,10 +13,16 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
    - **Numeração e medidas.** Quadras por letra ou número, sentido dos lotes e "medidas de terreno".
 3. **Gerar o loteamento.** O sistema testa as direções do terreno e as defasagens da malha, reserva área verde e institucional onde custa menos lote e mostra as 3 propostas com mais lotes. Escolha uma.
 4. **Projeto (prancheta).** Um clique seleciona o lote, duplo clique seleciona a quadra e Shift+clique soma lotes.
-   - **Arrastar a bolinha verde** entre dois lotes muda a frente; os lotes seguintes se ajustam.
-   - **Arrastar o losango** move a linha de fundo da quadra.
+   - **Edição livre do lote (como no CAD).** O lote selecionado mostra alças só nas **quinas** (quadrados) e nas **divisas** (barras verdes).
+     - Arrastar a quina move o ponto em todos os lotes que o têm; a quina que está na rua ou na divisa da gleba **corre por ela** (Alt solta).
+     - Arrastar a divisa a desliza paralela a si mesma ("slide line" do Civil 3D): o lote fica mais largo ou mais fundo e o vizinho cede. As pontas da divisa correm pela rua e pela linha de fundo.
+     - **L** desenha um lote (clique as quinas, Enter fecha): o contorno manda e os vizinhos se ajustam a ele. Duplo clique numa **área livre** (rosa) com o L transforma a área inteira em lote.
+     - **C** corta lotes com uma linha (clique o início e o fim). **Delete** apaga o lote (a área fica livre).
+     - `frente 12` e `area 300` deslizam a divisa lateral até o valor exato (no lote de esquina, vale a frente da rua da fileira). `unir` junta os selecionados (um só: ao vizinho de maior divisa). `dividir 3` divide em partes de área igual, com as divisas na direção das laterais do lote.
+     - A primeira mexida geométrica torna a quadra **desenhada à mão**: o sistema não a redivide mais. `automatico` (ou "Voltar ao automático" no painel) descarta o desenho; `preencher` faz lote de cada área livre da quadra.
+     - **Nada é bloqueado.** O lote que sair das medidas (frente, fundo, área, mais de 4 quinas, sem frente) fica vermelho com ⚠ e aparece na **coluna de avisos, à esquerda**, com as medidas e o motivo. Clique leva ao lote.
    - **Ferramentas:** R desenha rua (Shift trava o ângulo; os pontos grudam em vértices e eixos), A desenha área pública e M mede.
-   - **Linha de comando.** Exemplos: `frente 12`, `area 300`, `unir`, `dividir 2`, `verde`, `institucional`, `qtd 8`, `iguais`, `sobra esquinas`, `fileiras 1`, `fundo 25`, `largura 14`, `balao 10`, `nome Rua das Flores`, `esquina raio 6`, `ir A-12`, `preco 180`, `desfazer`. Para ver tudo, digite `ajuda` ou clique em "?".
+   - **Linha de comando.** Exemplos: `frente 12`, `area 300`, `unir`, `dividir 2`, `apagar`, `desenhar lote`, `cortar`, `preencher`, `automatico`, `verde`, `institucional`, `qtd 8`, `iguais`, `sobra esquinas`, `fileiras 1`, `fundo 25`, `largura 14`, `balao 10`, `nome Rua das Flores`, `esquina raio 6`, `ir A-12`, `preco 180`, `desfazer`. Para ver tudo, digite `ajuda` ou clique em "?".
    - **Painel à direita.** Mostra o item selecionado com campos editáveis, o quadro de áreas ao vivo (e o VGV, se houver preço por m²) e as pendências, que são clicáveis.
 5. **Entregas.**
    - **Para o cliente e a prefeitura:**
@@ -42,9 +48,19 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - Na divisa com vizinho, rio ou rodovia, a rua termina num cruzamento ou num balão de retorno.
   - O gerador testa duas soluções: a malha simples aparada nos cruzamentos e a malha com **rua de contorno**, a uma profundidade de lote da divisa (e a duas da estrada). Fica com a que rende mais lote bom.
   - Rua desenhada à mão contra a divisa vira pendência, e só sobra a malha ligada a algum acesso.
+- **Divisão da quadra por linhas transversais (revisão 10, 25/10/2026).**
+  - Na quadra entre duas ruas de frente (até 40° fora do paralelo), as divisas são linhas que atravessam a quadra de rua a rua; a linha de fundo (paralela ou na bissetriz, se as ruas se abrem) parte cada faixa em dois lotes. **Fundo com fundo por construção**: cada lote encosta o fundo em exatamente um lote da outra fileira.
+  - As linhas são perpendiculares à rua (à bissetriz). Se as pontas da quadra são oblíquas, giram de uma ponta à outra (leque) até 45°; na fileira única, seguem paralelas (até 30°).
+  - A fileira de frentes menores é a régua: ela recebe a frente padrão e a do outro lado sai um pouco mais larga (nunca abaixo da mínima).
+  - **Toda quina do contorno vira divisa** (dobra da divisa da gleba, fim da rua do outro lado, rua que dobra em arco no meio da quadra): o lote não ganha a 5ª quina. O arco da esquina conta como uma quina e fica inteiro no lote de esquina.
+  - Onde a quadra afina (ruas que se encontram), o par de lotes vira um lote de rua a rua (ponta, 3 ou 4 quinas).
+  - Quadra em que as ruas se encontram num canto (esquina, não de frente): cada fileira é dividida perpendicular à sua rua e as duas se encontram na bissetriz.
+  - Quadra que alarga: o lote que passaria do fundo máximo cede a parte de trás ao lote de costas para ele (a divisa de fundo daquele par anda; os dois seguem com 4 quinas).
+  - **Pontas:** os 1 a 4 lotes da ponta são redivididos — nas duas fileiras juntas, pelas mesmas linhas — em mais, menos ou o mesmo número de lotes, com as divisas na direção da fileira ou da ponta, ficando com o arranjo de menor "custo" (sem frente e abaixo da área pesam mais que qualquer excesso; fundo além do máximo, frente demais, mais de 4 quinas e ângulo agudo também contam).
+  - Quadrinha de 2 ou 3 lotes vira um lote de ponta se couber.
+  - Lote de rua a rua (frente para duas ruas) é o que as normas mandam evitar: a quadra entre duas ruas só fica com uma fileira se a de duas for bem pior.
 - **Fundo com fundo.**
-  - Na quadra de duas fileiras, a fileira de frente mais longa manda e a outra segue os mesmos cortes, de modo que as divisas laterais se encontram na linha de fundo.
-  - As pontas são a exceção, quando o ângulo exige redistribuir.
+  - Garantido pelas linhas transversais; as únicas exceções são o lote de rua a rua na ponta e a quadra em esquina.
 - **Ângulo e divisa torta.**
   - Numa fileira em que a profundidade varia, o lote raso fica mais largo até atingir a área de referência.
   - As pontas desproporcionais (menos de 80% ou mais de 145% do padrão, ou frente curta) são refeitas em áreas iguais, com até 3 lotes vizinhos dividindo a diferença.
@@ -71,7 +87,8 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - Quadrinha de ponta (2 ou 3 lotes) vira um lote de ponta, com frente de até 1,5 vez a máxima: é o lote maior que ajusta a linha da propriedade.
   - Junto à estrada ou rodovia, o gerador testa também a via paralela (minuta do código de parcelamento de Goiânia, 2014, art. 13, XVI): faixa de duas fileiras, uma de frente para a estrada.
 - **Área verde 0%.** Com a meta de verde em zero, nenhum retalho vira área pública: fica como **área remanescente** (do proprietário), desenhada e cotada na planta. O mesmo vale para institucional 0%.
-- **Edição dentro das regras.** Frente e área digitadas fora das faixas, unir acima da área máxima, dividir abaixo da mínima e arrastar a divisa além da frente máxima são recusados com o motivo. Toda edição de lote ou quadra é recalculada antes de entrar: se deixar lote fora das regras, não é aplicada.
+- **Forma do lote.** No máximo 4 quinas (o de ponta pode ter 3); lote com 5 ou mais quinas é erro na planta gerada e aviso no lote desenhado à mão — 5 quinas ou mais só com aprovação específica do órgão (Milton, WA; Cupertino chama de "pie-shaped" o lote com 5 divisas).
+- **Edição livre.** Nada é recusado: o que sair das medidas vira aviso no lote (vermelho no desenho e na coluna da esquerda).
 
 ## Como funciona por dentro
 
@@ -82,7 +99,8 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - Os lotes são cortados perpendicularmente à rua.
   - Lotes travados (frente ou área) entram primeiro, e os livres dividem o comprimento que sobra pela regra da quadra.
   - Ponta menor que o mínimo soma-se ao vizinho; pedaço sem frente vira sobra, que o gerador transforma em área verde.
-- **Ajustes manuais.** São presos à quadra por uma âncora (ponto UTM dentro dela) e ao lote pela posição na fileira. Mover uma rua não perde os ajustes da quadra.
+- **Ajustes manuais.** São presos à quadra por uma âncora (ponto UTM dentro dela). A quadra desenhada à mão guarda os contornos dos lotes em UTM (`QuadraCfg.lotes`); mover uma rua apara os lotes e o que ficar sem lote aparece como área livre. As quinas compartilhadas são um ponto só em todos os lotes (o "T" de um vizinho é inserido no lado do outro), por isso mover uma quina leva os vizinhos junto.
+- **Cache da divisão.** `calcular` guarda a divisão de cada quadra automática (por perímetro, parâmetros, ruas, áreas e configs); arrastar uma quina recalcula só a quadra desenhada (≈10 ms em vez de ≈150 ms).
 - **Plano de terreno.** O desenho é feito em UTM ÷ fator de escala combinado (ponto × altitude) no centro da gleba, para que as medidas do papel sejam as da trena. A locação volta para UTM multiplicando pelo fator.
 - **Onde roda.** Tudo roda no navegador, inclusive os PDF/DOCX/DXF; o gerador automático roda num Web Worker. Nenhuma edge function nova, e a VPS não ganha carga.
 - **Laboratório local.** Em `npm run dev`, a rota `#/lab/loteamento` abre a tela com uma gleba sintética de ~9,4 ha, sem login e sem banco.
@@ -99,7 +117,10 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - quadro de áreas fechando na gleba;
   - lotes sem sobreposição;
   - lote 10×25 com 250,00 m²;
-  - cascata ao travar a frente e ao arrastar a divisa;
+  - frente digitada: a divisa lateral desliza, o vizinho cede, a quadra se conserva;
+  - arrastar quina e divisa (a quina da rua corre pela rua; sem sobreposição);
+  - apagar, desenhar, unir, dividir e cortar lotes à mão;
+  - geração com no máximo 4 quinas por lote e fundo com fundo nas quadras entre ruas;
   - comandos (unir, dividir, verde, largura);
   - APP fora dos lotes;
   - ida e volta do plano de terreno;

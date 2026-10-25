@@ -617,8 +617,13 @@ const coberto = (res: Resultado, s: Poligono) => {
 };
 
 /** O lote encosta numa área verde? (verde cresce colado, num perímetro só) */
+const perimetroDe = (pg: Poligono) => pg.ext.reduce((s2, q, i) => s2 + dist(q, pg.ext[(i + 1) % pg.ext.length]), 0);
+/** Divide divisa (5 m ou mais) com a área verde — tocar num canto não é encostar. */
 const encostaEmVerde = (res: Resultado, pol: Poligono) =>
-  res.areas.some((a) => (a.tipo === "verde" || a.tipo === "lazer") && a.pols.some((v) => uniaoFechada([v, pol]).length === 1));
+  res.areas.some((a) => (a.tipo === "verde" || a.tipo === "lazer") && a.pols.some((v) => {
+    const u = uniaoFechada([v, pol]);
+    return u.length === 1 && (perimetroDe(v) + perimetroDe(pol) - perimetroDe(u[0])) / 2 >= 5;
+  }));
 
 /**
  * Reserva área verde e institucional onde custa menos lote:
@@ -859,12 +864,18 @@ function melhorJanelaVerde(res: Resultado, valor: Map<string, number>, falta: nu
   const avaliados = cands.map((c) => {
     const pols = c.lotes.map((l) => l.pol);
     const juntos = uniaoFechada(pols);
-    const viz = verdes.filter((v) => uniaoFechada([v, ...juntos]).length < 1 + juntos.length);
+    // encostar é dividir divisa (5 m ou mais), não tocar num canto
+    const per = perimetroDe;
+    const viz = verdes.filter((v) => juntos.some((j) => {
+      const u = uniaoFechada([v, j]);
+      return u.length === 1 && (per(v) + per(j) - per(u[0])) / 2 >= 5;
+    }));
     return { c, viz, nota: c.nota - (viz.length ? 0.2 : 0) };
   }).sort((a, b) => a.nota - b.nota);
   for (const a of avaliados.slice(0, 60)) {
     const pols = a.c.lotes.map((l) => l.pol);
-    if (verdeValida(uniaoFechada([...pols, ...a.viz]))) return a.c;
+    // com folga (raio de 11 m): a geometria final da quadra pode mexer uns centímetros
+    if (verdeValida(uniaoFechada([...pols, ...a.viz]), 11)) return a.c;
   }
   return null;
 }

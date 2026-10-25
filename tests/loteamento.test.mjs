@@ -10,9 +10,12 @@ import { perimetro } from "./fixtures/loteamento_gleba.mjs";
 import { projetoNovo } from "../src/lib/loteamento/modelo.ts";
 import { calcular, viarioDe } from "../src/lib/loteamento/calculo.ts";
 import { gerarPropostas } from "../src/lib/loteamento/auto.ts";
-import { ajustarLote, executar, moverCorte } from "../src/lib/loteamento/acoes.ts";
+import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
+import {
+  acertarMedida, alcasDoLote, apagarLotes, cortarLotes, desenharLote, dividirLote, moverDivisa, moverQuina, posicaoNoDesenho, unirLotes,
+} from "../src/lib/loteamento/edicao.ts";
 import { criarPlano, paraPlano, paraUtm } from "../src/lib/loteamento/plano.ts";
-import { areaPol, areaPols, diferenca, uniao } from "../src/lib/loteamento/geom.ts";
+import { areaPol, areaPols, diferenca, quinas, uniao } from "../src/lib/loteamento/geom.ts";
 import {
   arquivoLocacao, chavePonto, gerarDxf, gerarKml, ladosNominais, memorialDoLote, nomesDosPontos, pontosDeLocacao,
 } from "../src/lib/loteamento/saidas.ts";
@@ -61,35 +64,83 @@ test("lote padrão 10 × 25 sai com 250,00 m² exatos", () => {
   for (const l of meio) assert.ok(Math.abs(l.area - 250) < 0.01, `${l.id}: ${l.area}`);
 });
 
-test("travar a frente de um lote: a fileira se reorganiza e o comprimento se conserva", () => {
+test("frente digitada: a divisa lateral desliza, o vizinho cede e a quadra se conserva", () => {
   const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
-  const fil = (r, nome) => r.quadras.find((x) => x.nome === nome).lotes.filter((l) => l.fileira === 0).sort((a, b) => a.indice - b.indice);
-  const antes = fil(r0, q.nome);
-  const alvo = antes[4];
-  const pr = ajustarLote(pr0, r0, alvo, { frente: 15 });
-  const r = calcular(pr, perimetro);
-  const depois = fil(r, q.nome);
-  const travado = depois.find((l) => l.indice === alvo.indice);
-  assert.ok(Math.abs(travado.frente - 15) < 0.01, `frente ${travado.frente}`);
-  assert.ok(travado.ajustado);
-  const soma = (ls) => ls.reduce((s, l) => s + l.area, 0);
-  assert.ok(Math.abs(soma(antes) - soma(depois)) < 0.5, "a fileira perdeu área");
-  // os 5 m a mais saem das esquinas: some um lote, ou a ponta é redividida em
-  // lotes iguais — em qualquer caso nenhum lote da fileira fica fora das faixas
-  assert.ok(depois.length === antes.length - 1 || depois.length === antes.length, `${antes.length} → ${depois.length} lotes`);
-  for (const l of depois) assert.deepEqual(l.problemas, [], `${l.id}: ${l.problemas.join("; ")}`);
+  const alvo = q.lotes.find((l) => !l.esquina && l.problemas.length === 0 && l.numero > 3);
+  const ed = acertarMedida(pr0, r0, q, alvo, "frente", alvo.frente + 3);
+  assert.ok(ed && ed.sel, ed?.msg);
+  const r = calcular(ed.pr, perimetro);
+  const l = r.lotes.find((x) => x.quadra === q.nome && x.indice === ed.sel.indices[0]);
+  assert.ok(Math.abs(l.frente - (alvo.frente + 3)) < 0.02, `frente ${l.frente}`);
+  // a quadra inteira continua coberta, sem sobreposição
+  const ls = r.lotes.filter((x) => x.quadra === q.nome);
+  const soma = ls.reduce((s2, x) => s2 + x.area, 0);
+  assert.ok(Math.abs(soma - q.lotes.reduce((s2, x) => s2 + x.area, 0)) < 0.5, "a quadra perdeu área");
+  assert.ok(Math.abs(areaPols(uniao(ls.map((x) => x.pol))) - soma) < 0.5, "lotes sobrepostos");
+  assert.equal(ls.length, q.lotes.length);
 });
 
-test("arrastar a divisa trava a frente do lote de trás dela", () => {
-  // uma divisa arrastável entre dois lotes que existem (a reserva pode ter feito área verde)
-  const existe = (q, fil, i) => q.lotes.some((l) => l.fileira === fil && l.indice === i);
-  const q = r0.quadras.find((x) => x.cortes.some((c) => c.arrastavel && c.fileira === 0 && existe(x, 0, c.indice) && c.indice >= 2));
-  const c = q.cortes.find((x) => x.arrastavel && x.fileira === 0 && existe(q, 0, x.indice) && x.indice >= 2);
-  const p = [c.a[0] + c.dir[0] * 2, c.a[1] + c.dir[1] * 2]; // 2 m adiante
-  const pr = moverCorte(pr0, r0, c, p);
-  const r = calcular(pr, perimetro);
-  const l = r.quadras.find((x) => x.nome === q.nome).lotes.find((x) => x.fileira === 0 && x.indice === c.indice);
-  assert.ok(Math.abs(l.travaFrente - (c.s - c.s0 + 2)) < 0.02);
+test("arrastar quina e divisa: os vizinhos que têm o ponto se ajustam, a quina da rua corre pela rua", () => {
+  const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
+  const l = q.lotes.find((x) => !x.esquina && x.numero > 3);
+  const alcas = alcasDoLote(l, q);
+  assert.equal(alcas.filter((a) => a.tipo === "quina").length, 4, "lote retangular: 4 quinas");
+  assert.ok(alcas.filter((a) => a.tipo === "divisa").length >= 2, "divisas laterais e fundo");
+  const total = q.lotes.reduce((s2, x) => s2 + x.area, 0);
+  // quina na rua: o ponto continua sobre a borda da quadra
+  const naRua = alcas.find((a) => a.tipo === "quina" && a.naBorda);
+  const e1 = moverQuina(pr0, r0, q, naRua.p, [naRua.p[0] + 3, naRua.p[1] + 3]);
+  const r1 = calcular(e1.pr, perimetro);
+  const ls1 = r1.lotes.filter((x) => x.quadra === q.nome);
+  assert.ok(Math.abs(ls1.reduce((s2, x) => s2 + x.area, 0) - total) < 0.5, "quina na rua tirou área da quadra");
+  // divisa: o lote cresce exatamente o que o vizinho perde
+  const dv = alcas.find((a) => a.tipo === "divisa");
+  const e2 = moverDivisa(pr0, r0, q, dv.a, dv.b, 2);
+  const r2 = calcular(e2.pr, perimetro);
+  const ls2 = r2.lotes.filter((x) => x.quadra === q.nome);
+  assert.ok(Math.abs(ls2.reduce((s2, x) => s2 + x.area, 0) - total) < 0.5);
+  assert.ok(Math.abs(areaPols(uniao(ls2.map((x) => x.pol))) - total) < 0.5, "lotes sobrepostos");
+  assert.ok(ls2.some((x) => Math.abs(x.area - l.area) > 5), "nenhum lote mudou");
+});
+
+test("apagar, desenhar, unir, dividir e cortar lotes à mão", () => {
+  const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
+  const ord = [...q.lotes].sort((a, b) => a.numero - b.numero);
+  const l = ord[5];
+  // apagar: a área fica livre (rosa) e o quadro fecha
+  const ap = apagarLotes(pr0, r0, q, [posicaoNoDesenho(pr0, r0, l)]);
+  const ra = calcular(ap.pr, perimetro);
+  assert.equal(ra.lotes.length, r0.lotes.length - 1);
+  assert.ok(ra.sobras.some((s2) => Math.abs(areaPols([s2]) - l.area) < 1), "a área do lote apagado não ficou livre");
+  const qa = ra.quadro;
+  assert.ok(Math.abs(qa.lotes.area + qa.viario + qa.verde + qa.institucional + qa.lazer + qa.app + qa.sobras - qa.gleba) < 0.5);
+  // desenhar um contorno maior que o buraco: o lote novo manda e os vizinhos cedem
+  const c = l.pol.ext.reduce((a, p) => [a[0] + p[0] / l.pol.ext.length, a[1] + p[1] / l.pol.ext.length], [0, 0]);
+  const anel = l.pol.ext.map(([x, y]) => [c[0] + (x - c[0]) * 1.3, c[1] + (y - c[1]) * 1.3]);
+  const de = desenharLote(ap.pr, ra, anel);
+  const rd = calcular(de.pr, perimetro);
+  const novo = rd.lotes.find((x) => x.quadra === q.nome && x.indice === de.sel.indices[0]);
+  assert.ok(novo.area > l.area + 10, `lote desenhado com ${novo.area}`);
+  const lsd = rd.lotes.filter((x) => x.quadra === q.nome);
+  assert.ok(Math.abs(areaPols(uniao(lsd.map((x) => x.pol))) - lsd.reduce((s2, x) => s2 + x.area, 0)) < 0.5, "lote desenhado sobreposto");
+  // unir dois vizinhos e dividir em 3 partes iguais
+  const un = unirLotes(pr0, r0, q, [posicaoNoDesenho(pr0, r0, ord[7]), posicaoNoDesenho(pr0, r0, ord[8])]);
+  assert.ok(un, "não uniu vizinhos");
+  const ru = calcular(un.pr, perimetro);
+  const u = ru.lotes.find((x) => x.quadra === q.nome && x.indice === un.sel.indices[0]);
+  assert.ok(Math.abs(u.area - ord[7].area - ord[8].area) < 0.5);
+  assert.ok(!u.problemas.some((t) => /quinas/.test(t)), "a união criou quina a mais");
+  const dv = dividirLote(un.pr, ru, ru.quadras.find((x) => x.nome === q.nome), u, 3);
+  const rv = calcular(dv.pr, perimetro);
+  for (const k of dv.sel.indices) assert.ok(Math.abs(rv.lotes.find((x) => x.quadra === q.nome && x.indice === k).area - u.area / 3) < 1);
+  // cortar com uma linha atravessando um lote
+  const m = ord[10];
+  const cm = m.pol.ext.reduce((a, p) => [a[0] + p[0] / m.pol.ext.length, a[1] + p[1] / m.pol.ext.length], [0, 0]);
+  const fr = m.lados.find((x) => x.tipo === "rua");
+  const d = [(fr.b[0] - fr.a[0]) / fr.comp, (fr.b[1] - fr.a[1]) / fr.comp];
+  const ct = cortarLotes(pr0, r0, [cm[0] - d[0] * 40, cm[1] - d[1] * 40], [cm[0] + d[0] * 40, cm[1] + d[1] * 40]);
+  assert.ok(ct, "o corte não pegou lote");
+  assert.ok(calcular(ct.pr, perimetro).lotes.length > r0.lotes.length);
 });
 
 test("comandos: unir, dividir e virar área verde", () => {
@@ -359,12 +410,12 @@ test("medidas do lote: projeto antigo ganha faixas derivadas e elas acompanham o
 });
 
 test("medidas do lote: a proposta automática não deixa lote fora das faixas", async () => {
-  const { foraDasFaixas, esquinaDe } = await import("../src/lib/loteamento/calculo.ts");
+  const { foraDasFaixas, esquinaDe, limiteFundo } = await import("../src/lib/loteamento/calculo.ts");
   const p = pr0.params;
   for (const l of r0.lotes) {
     const f = 1; // lote de ponta também respeita área e fundo máximos
     assert.ok(l.area <= f * p.areaMax * 1.03 + 0.5, `${l.id} com ${l.area.toFixed(0)} m² (máx. ${p.areaMax})`);
-    assert.ok(l.profundidade <= f * p.profundidadeMax + 0.5, `${l.id} com ${l.profundidade.toFixed(1)} m de fundo`);
+    assert.ok(l.profundidade <= f * limiteFundo(p), `${l.id} com ${l.profundidade.toFixed(1)} m de fundo`);
     // lote de ponta (quadrinha da ponta da gleba virou um lote só) não tem frente máxima
     const esq = l.esquina || esquinaDe(l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via").map((x) => [x.a, x.b]));
     assert.deepEqual(foraDasFaixas(l, p, false, esq, l.ponta ? 0 : l.frente, !!l.ponta), [], l.id);
@@ -384,29 +435,52 @@ test("medidas do lote: área máxima menor divide o lote grande em vez de deixá
 
 test("edição livre: frente, área, unir, dividir e arrastar fora das faixas são aplicados com aviso", () => {
   const p = pr0.params;
-  const l = r0.lotes.find((x) => !x.esquina && x.quadra === r0.quadras[1].nome);
+  const q = r0.quadras.find((x) => x.fileiras === 2 && x.lotes.length > 10);
+  const l = q.lotes.find((x) => !x.esquina && x.numero > 3);
   const sel = { tipo: "lotes", chaves: [{ quadra: l.quadra, fileira: l.fileira, indice: l.indice }] };
   const f = executar(`frente ${p.frenteMax + 5}`, pr0, r0, sel);
   assert.ok(f.pr && !f.erro, f.msg);
   assert.match(f.msg, /Atenção: .*fora das medidas do projeto/);
-  // o lote editado aparece com aviso na planta
+  // o lote editado aparece com aviso (não erro) e o desenho é do operador
   const rf = calcular(f.pr, perimetro);
-  const lf = rf.lotes.find((x) => x.quadra === l.quadra && x.fileira === l.fileira && x.indice === l.indice);
+  const lf = rf.lotes.find((x) => x.quadra === f.sel.chaves[0].quadra && x.indice === f.sel.chaves[0].indice);
   assert.ok(lf.problemas.some((t) => /frente .* acima do máximo/.test(t)), lf.problemas.join("; "));
+  assert.ok(rf.problemas.filter((x) => x.alvo?.lote === lf.id).every((x) => x.nivel === "aviso"));
   const a = executar(`area ${p.areaMin - 10}`, pr0, r0, sel);
   assert.ok(a.pr && !a.erro, a.msg);
+  const sel2 = { tipo: "lotes", chaves: [sel.chaves[0], chaveDoLote(q.lotes.find((x) => x.numero === l.numero + 1))] };
   const apertado = { ...pr0, params: { ...p, areaMax: l.area + 1 } };
-  const u = executar("unir", apertado, r0, sel);
+  const u = executar("unir", apertado, r0, sel2);
   assert.ok(u.pr && !u.erro, u.msg);
   assert.match(u.msg, /área máxima/);
   const d = executar("dividir 5", pr0, r0, sel);
   assert.ok(d.pr && !d.erro, d.msg);
-  // arrastar a divisa para longe: vai aonde o operador soltou (passa da frente máxima)
-  const c = r0.quadras.flatMap((q) => q.cortes).find((x) => x.arrastavel);
-  const longe = [c.a[0] + c.dir[0] * 500, c.a[1] + c.dir[1] * 500];
-  const m = moverCorte(pr0, r0, c, longe);
-  const trava = m.quadras.flatMap((q) => q.ajustes).find((x) => x.frente !== undefined);
-  assert.ok(trava && trava.frente > p.frenteMax, `frente travada em ${trava?.frente}`);
+  // arrastar a divisa para longe: vai aonde o operador soltou
+  const dv = alcasDoLote(l, q).find((x) => x.tipo === "divisa");
+  const m = moverDivisa(pr0, r0, q, dv.a, dv.b, 15);
+  const rm = calcular(m.pr, perimetro);
+  assert.ok(rm.lotes.filter((x) => x.quadra === q.nome).some((x) => x.problemas.length), "mover 15 m não deixou aviso");
+});
+
+test("geração: lotes com no máximo 4 quinas e quadras entre ruas fundo com fundo", () => {
+  const nq = r0.lotes.filter((l) => quinas(l.pol.ext) > 4);
+  assert.ok(nq.length <= Math.ceil(0.01 * r0.lotes.length), `${nq.length} lotes com mais de 4 quinas: ${nq.map((l) => l.id).join(", ")}`);
+  // quadra de duas fileiras entre ruas de frente: toda divisa que chega na linha de fundo encontra a da outra fileira
+  let conferidas = 0;
+  for (const q of r0.quadras.filter((x) => x.fileiras === 2 && x.fundo)) {
+    const L = Math.hypot(q.fundo.b[0] - q.fundo.a[0], q.fundo.b[1] - q.fundo.a[1]);
+    const u = [(q.fundo.b[0] - q.fundo.a[0]) / L, (q.fundo.b[1] - q.fundo.a[1]) / L];
+    const naLinha = (fil) => [...new Set(q.lotes.filter((l) => l.fileira === fil).flatMap((l) => l.pol.ext)
+      .filter((p) => dSeg(p, q.fundo.a, q.fundo.b) < 0.05).map((p) => Math.round(((p[0] - q.fundo.a[0]) * u[0] + (p[1] - q.fundo.a[1]) * u[1]) * 10)))].sort((a, b) => a - b);
+    const a = naLinha(0), b = naLinha(1);
+    if (a.length < 4 || b.length < 4) continue;
+    const lo = Math.max(a[0], b[0]) + 5, hi = Math.min(a[a.length - 1], b[b.length - 1]) - 5;
+    const meio = (xs) => xs.filter((x) => x > lo && x < hi);
+    const sem = meio(a).filter((x) => !b.some((y) => Math.abs(y - x) <= 5)).length + meio(b).filter((x) => !a.some((y) => Math.abs(y - x) <= 5)).length;
+    assert.ok(sem <= 2, `quadra ${q.nome}: ${sem} divisas sem par no fundo`);
+    conferidas++;
+  }
+  assert.ok(conferidas >= 3, `só ${conferidas} quadras de duas fileiras conferidas`);
 });
 
 test("nenhuma sobra de terreno na planta: retalho vira lote ou entra no lote vizinho", () => {
