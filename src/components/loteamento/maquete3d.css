@@ -180,7 +180,6 @@ html.m3d-aberta body > * { max-width: 100vw; overflow: hidden; }
 .m3d-apresentar { background: rgba(255, 255, 255, 0.12) !important; }
 .m3d-apresentando .m3d-topo, .m3d-apresentando .m3d-painel, .m3d-apresentando .m3d-abrir-painel, .m3d-apresentando .m3d-base,
 .m3d-apresentando .m3d-ficha, .m3d-apresentando .m3d-dica, .m3d-apresentando .m3d-bussola, .m3d-apresentando .m3d-rotulos { opacity: 0; pointer-events: none; transition: opacity 0.5s; }
-.m3d-sair-apresentacao { position: absolute; top: 16px; right: 16px; height: 32px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--m3d-borda); color: rgba(255, 255, 255, 0.8); background: rgba(10, 14, 20, 0.5); cursor: pointer; font-size: 12px; }
 .m3d-gravando { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 9px; padding: 8px 14px; border-radius: 999px; background: rgba(10, 14, 20, 0.7); font-size: 13px; }
 .m3d-gravando i { width: 10px; height: 10px; border-radius: 50%; background: #ff4b3e; animation: m3d-pulsa 1s ease-in-out infinite; }
 @keyframes m3d-pulsa { 50% { opacity: 0.3; } }
@@ -203,7 +202,39 @@ html.m3d-aberta body > * { max-width: 100vw; overflow: hidden; }
 }
 
 
+/* cinema: faixas 2,35:1 que entram, legenda de lançamento no terço inferior */
+.m3d-faixas { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+.m3d-faixas i { position: absolute; left: 0; right: 0; height: 0; background: #000; transition: height 1.1s cubic-bezier(.2, .7, .2, 1); }
+.m3d-faixas i:first-child { top: 0; }
+.m3d-faixas i:last-child { bottom: 0; }
+.m3d-faixas.ativo i { height: 10.5vh; }
+.m3d-legenda-cinema {
+  position: absolute; left: 6vw; bottom: calc(10.5vh + 5vh); z-index: 5; pointer-events: none;
+  display: grid; gap: 6px; padding: 12px 90px 12px 18px; border-left: 4px solid var(--m3d-ouro);
+  background: linear-gradient(90deg, rgba(8, 10, 14, 0.66) 0%, rgba(8, 10, 14, 0.4) 60%, rgba(8, 10, 14, 0) 100%);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7); transition: opacity 0.25s, transform 0.25s;
+}
+.m3d-legenda-cinema b { font-size: clamp(22px, 3.2vw, 44px); font-weight: 750; letter-spacing: -0.01em; }
+.m3d-legenda-cinema span { font-size: clamp(13px, 1.5vw, 21px); color: rgba(255, 255, 255, 0.9); max-width: 60vw; }
+.m3d-cartela-abertura { position: absolute; left: 6vw; bottom: calc(10.5vh + 6vh); z-index: 5; pointer-events: none; display: grid; gap: 10px; animation: m3d-cartela 1s ease-out; text-shadow: 0 3px 18px rgba(0, 0, 0, 0.6); }
+.m3d-cartela-abertura i, .m3d-cartela-fecho i { width: 64px; height: 5px; background: var(--m3d-ouro); }
+.m3d-cartela-abertura b { font-size: clamp(32px, 5.2vw, 76px); font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
+.m3d-cartela-abertura span { font-size: clamp(14px, 1.6vw, 22px); color: rgba(255, 255, 255, 0.85); letter-spacing: 0.04em; }
+.m3d-cartela-fecho { position: absolute; inset: 0; z-index: 5; pointer-events: none; display: grid; place-content: center; justify-items: center; gap: 12px; text-align: center;
+  background: radial-gradient(60% 50% at 50% 50%, rgba(8, 10, 16, 0.7), rgba(8, 10, 16, 0.35)); animation: m3d-cartela-fade 1.2s ease-out; }
+.m3d-cartela-fecho b { font-size: clamp(30px, 5vw, 78px); font-weight: 800; letter-spacing: -0.02em; }
+.m3d-cartela-fecho span { font-size: clamp(15px, 1.8vw, 26px); color: rgba(255, 255, 255, 0.9); }
+.m3d-cartela-fecho small { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+@keyframes m3d-cartela { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+@keyframes m3d-cartela-fade { from { opacity: 0; } to { opacity: 1; } }
+.m3d-cinema-acoes { position: absolute; top: calc(10.5vh + 14px); right: 16px; z-index: 6; display: flex; gap: 8px; }
+.m3d-cinema-acoes button { height: 32px; padding: 0 12px; border-radius: 9px; border: 1px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.85); background: rgba(10, 14, 20, 0.45); cursor: pointer; font-size: 12px; }
+.m3d-som { width: 36px; padding: 0 !important; justify-content: center; }
+.m3d-som:not(.ligado) { opacity: 0.6; }
+.m3d-gravando { z-index: 6; top: calc(10.5vh + 14px); }
+
 /* foco: só no teclado, em dourado (o estilo global do app pintava a borda de verde) */
 .m3d button:focus { outline: none; box-shadow: none; }
 .m3d button:focus-visible { outline: 2px solid var(--m3d-ouro); outline-offset: 2px; }
-.m3d-acoes button:focus:not(:focus-visible) { border-color: var(--m3d-borda); color: var(--m3d-texto); }
+.m3d button:focus:not(:focus-visible) { border-color: var(--m3d-borda); color: var(--m3d-texto); }
+.m3d .m3d-voo:focus:not(:focus-visible), .m3d .m3d-perto:focus:not(:focus-visible) { color: #1b1405; }

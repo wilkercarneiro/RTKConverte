@@ -17,6 +17,7 @@ import {
 } from "../src/lib/loteamento/edicao.ts";
 import { alternarAcesso } from "../src/lib/loteamento/acoes.ts";
 import { cotaFinal, loteNoPonto, montarCena } from "../src/lib/loteamento/cena3d.ts";
+import { camNoTempo, roteiroDoVoo } from "../src/lib/loteamento/cinema3d.ts";
 import { pontoInterno } from "../src/lib/loteamento/auto.ts";
 import { criarPlano, paraPlano, paraUtm } from "../src/lib/loteamento/plano.ts";
 import { areaPol, areaPols, comprimento, dentroPol, diferenca, pontoNaPolilinha, quinas, uniao } from "../src/lib/loteamento/geom.ts";
@@ -621,6 +622,33 @@ test("maquete 3D: greide das ruas mais suave que o terreno, corte e aterro, decl
   const media = c.infoLotes.reduce((s2, x) => s2 + x.declMedia, 0) / c.infoLotes.length;
   assert.ok(media > 3 && media < 9, `declividade média dos lotes ${media}`);
   for (const x of c.infoLotes) assert.ok(x.cotaMax >= x.cotaMin);
+});
+
+test("maquete 3D: roteiro do voo de drone (tomadas no projeto, câmera sempre acima do chão, legendas com números reais)", () => {
+  const c = montarCena(r0, pr0.params, terrenoSintetico(r0));
+  const ref = c.cotaMin;
+  const mundo = {
+    res: r0, cena: c, raio: c.raio, aspecto: 16 / 9,
+    xz: (p) => [p[0] - c.centro[0], -(p[1] - c.centro[1])],
+    chao: (p) => cotaFinal(c.grade, p) - ref,
+  };
+  for (const abertura of [true, false]) {
+    const r = roteiroDoVoo(mundo, abertura);
+    assert.ok(r.duracao > 35 && r.duracao < 75, `duração ${r.duracao} s`);
+    for (let i = 1; i < r.chaves.length; i++) assert.ok(r.chaves[i].t > r.chaves[i - 1].t, "tempos fora de ordem");
+    assert.equal(!!r.transformacao, abertura);
+    // ao longo de todo o voo a câmera fica acima do terreno (morro no caminho não "corta")
+    for (let t = 0; t <= r.duracao; t += 0.25) {
+      const { pos } = camNoTempo(r, t);
+      const p = [pos[0] + c.centro[0], -pos[2] + c.centro[1]];
+      assert.ok(pos[1] > mundo.chao(p) + 2, `câmera enterrada em t=${t.toFixed(2)}`);
+      assert.ok(pos.every(Number.isFinite));
+    }
+    // a primeira legenda traz o número real de lotes; a rua de entrada aparece
+    assert.match(r.legendas[0].titulo, new RegExp(`^${r0.lotes.length} lotes`));
+    assert.ok(r.legendas.some((l) => /^Ruas de/.test(l.titulo)));
+    for (const l of r.legendas) assert.ok(l.t1 > l.t0 && l.t1 <= r.duracao + 1);
+  }
 });
 
 test("geração: lotes com no máximo 4 quinas e quadras entre ruas fundo com fundo", () => {

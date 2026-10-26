@@ -66,6 +66,13 @@ export interface Arvore {
   cor: number;
 }
 
+/** Poste de iluminação na calçada: o braço aponta para a rua (`dir`). */
+export interface Poste {
+  p: Pt;
+  z: number;
+  dir: Pt;
+}
+
 export interface InfoLote {
   declMedia: number;
   declMax: number;
@@ -83,6 +90,9 @@ export interface Cena {
   ruas: Poligono[];
   /** linhas do meio-fio (beira da pista), densificadas a cada ~2 m */
   meioFio: Pt[][];
+  postes: Poste[];
+  /** largura da pista de rolamento (m) — mão de direção dos carros */
+  larguraPista: number;
   volumes: { corte: number; aterro: number };
   infoLotes: InfoLote[];
   cotaMin: number;
@@ -363,12 +373,13 @@ export function montarCena(res: Resultado, params: Parametros, terreno: GradeTer
 
   const casas = [...montarCasas(res, g), ...montarEquipamentos(res, g)];
   const arvores = montarArvores(res, g, pista, calcada);
+  const postes = montarPostes(res, g, pista, calcada, arvores);
 
   let cotaMin = Infinity, cotaMax = -Infinity;
   for (let k = 0; k < n; k++) { cotaMin = Math.min(cotaMin, g.final[k]); cotaMax = Math.max(cotaMax, g.final[k]); }
   const centro: Pt = [(gb.min[0] + gb.max[0]) / 2, (gb.min[1] + gb.max[1]) / 2];
   return {
-    grade: g, casas, arvores, pista, ruas: caixaRuas, meioFio, volumes: { corte, aterro }, infoLotes,
+    grade: g, casas, arvores, pista, ruas: caixaRuas, meioFio, postes, larguraPista: Math.max(4, params.ruaPista), volumes: { corte, aterro }, infoLotes,
     cotaMin, cotaMax, centro, raio: Math.hypot(larg, alt) / 2,
   };
 }
@@ -548,6 +559,33 @@ function montarArvores(res: Resultado, g: Grade3D, pista: Poligono[], calcada: n
     const p: Pt = [meio[0] + v[0] * (prof - 2.5), meio[1] + v[1] * (prof - 2.5)];
     if (dentro.some((pg) => dentroPol(p, pg))) plantar(p, rnd, 0.7, 0.1);
   });
+  return out;
+}
+
+/**
+ * Iluminação pública: um poste a cada ~32 m, alternando os lados, na beira de
+ * fora da calçada (longe das árvores e dos outros postes — o cruzamento não
+ * ganha dois).
+ */
+function montarPostes(res: Resultado, g: Grade3D, pista: Poligono[], calcada: number, arvores: Arvore[]): Poste[] {
+  const out: Poste[] = [];
+  if (calcada < 1) return out;
+  for (const r of res.ruas) {
+    const L = comprimento(r.eixo);
+    const off = r.largura / 2 - 0.35;
+    let k = 0;
+    for (let s = 12; s < L - 8; s += 32, k++) {
+      const { pt, dir } = pontoNaPolilinha(r.eixo, s);
+      const nrm = esquerda(dir);
+      const lado = k % 2 ? 1 : -1;
+      const p: Pt = [pt[0] + nrm[0] * off * lado, pt[1] + nrm[1] * off * lado];
+      const i = Math.round((p[0] - g.x0) / g.passo), j = Math.round((p[1] - g.y0) / g.passo);
+      if (i < 0 || j < 0 || i >= g.nx || j >= g.ny || !g.rua[j * g.nx + i]) continue;
+      if (pista.some((pg) => dentroPol(p, pg))) continue;
+      if (out.some((o) => dist(o.p, p) < 14) || arvores.some((a) => dist(a.p, p) < 2.5)) continue;
+      out.push({ p, z: cotaFinal(g, p), dir: [-nrm[0] * lado, -nrm[1] * lado] });
+    }
+  }
   return out;
 }
 

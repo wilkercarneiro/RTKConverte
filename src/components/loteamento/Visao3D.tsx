@@ -15,6 +15,8 @@ import { desnivelDaGleba, intervaloCurvas, pintarCampo, pintarDivisa, pintarProj
 import type { Quadro } from "../../lib/loteamento/textura3d.ts";
 import { paraUtm } from "../../lib/loteamento/plano.ts";
 import { Maquete } from "./maquete3d.ts";
+import { Trilha } from "./trilha.ts";
+import type { Legenda } from "../../lib/loteamento/cinema3d.ts";
 import type { Rotulo } from "./maquete3d.ts";
 import "./maquete3d.css";
 
@@ -83,7 +85,19 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
   const rotulosRef = useRef<HTMLDivElement>(null);
   const bussolaRef = useRef<HTMLDivElement>(null);
   const dicaRef = useRef<HTMLDivElement>(null);
+  /** modo cinema (voo ou apresentação): sem painéis, faixas pretas, legendas */
   const [apresentando, setApresentando] = useState(false);
+  const [legenda, setLegenda] = useState<{ l: Legenda | null; alfa: number }>({ l: null, alfa: 0 });
+  const [som, setSom] = useState(true);
+  const [cartela, setCartela] = useState<"abertura" | "fecho" | null>(null);
+  const trilha = useRef<Trilha | null>(null);
+  const somRef = useRef(som);
+  somRef.current = som;
+  /** a trilha nasce no primeiro clique (o navegador só toca som depois de um gesto) */
+  const daTrilha = (): Trilha | null => {
+    try { trilha.current ??= new Trilha(); } catch { return null; }
+    return trilha.current;
+  };
   const [painelAberto, setPainelAberto] = useState(() => typeof window === "undefined" || window.innerWidth >= 760);
   const caixa = useRef<HTMLDivElement>(null);
   const maq = useRef<Maquete | null>(null);
@@ -165,6 +179,14 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
           onClique: (k) => setSel(k),
           onRotulos: (r) => aplicarRotulos(rotulosRef.current, r),
           onBussola: (rumo) => { if (bussolaRef.current) bussolaRef.current.style.transform = `rotate(${-rumo}rad)`; },
+          onLegenda: (l, alfa) => setLegenda({ l, alfa }),
+          onHora: (h) => setHora(Math.round(h * 10) / 10),
+          onCartela: (f) => setCartela(f),
+          onCinema: (ativo) => {
+            setApresentando(ativo);
+            // acabou o voo (ou foi interrompido): a música sai junto — menos na gravação, que fecha sozinha
+            if (!ativo && !m.gravando) trilha.current?.parar();
+          },
           onAnimacao: (rodando, prog) => {
             // estado do React só de vez em quando (o laço roda a 60 quadros)
             const agora = performance.now();
@@ -172,7 +194,6 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
               ultimoProg.current = agora;
               setAnim({ rodando, prog });
             }
-            if (!rodando && !m.gravando) setApresentando(false);
           },
         });
         maq.current = m;
@@ -193,7 +214,7 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
         if (vivo) setErro(e instanceof Error ? e.message : String(e));
       }
     })();
-    return () => { vivo = false; maq.current?.destruir(); maq.current = null; };
+    return () => { vivo = false; maq.current?.destruir(); maq.current = null; trilha.current?.fechar(); trilha.current = null; };
     // a maquete é montada uma vez por abertura
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -224,7 +245,7 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
     const h = (e: KeyboardEvent) => {
       e.stopPropagation();
       if (e.key !== "Escape") return;
-      if (apresentando && ocupado !== "video") { maq.current?.pararAnimacao(); setApresentando(false); }
+      if (apresentando && ocupado !== "video") maq.current?.pararAnimacao();
       else if (sel !== null) setSel(null);
       else if (ocupado !== "video") onFechar();
     };
@@ -296,7 +317,13 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
           <button disabled={!pronto || !!ocupado} onClick={() => acao("foto", async () => { const b = await maq.current!.foto(); if (b) baixar(b, `MAQUETE_${base}.png`); })} title="Foto em alta resolução (PNG)">
             <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" /></svg>{ocupado === "foto" ? "Gerando…" : "Foto"}
           </button>
-          <button disabled={!pronto || !!ocupado} onClick={() => acao("video", async () => { const r = await maq.current!.gravarVoo(); baixar(r.blob, `VOO_${base}.${r.ext}`); })} title="Vídeo pronto para o cliente (~40 s): nome do empreendimento, o terreno de hoje virando o projeto, voo de drone e os números">
+          <button disabled={!pronto || !!ocupado} onClick={() => acao("video", async () => {
+            setSel(null); setDepois(true);
+            const t = daTrilha();
+            t?.setMudo(!somRef.current);
+            const r = await maq.current!.gravarVoo(t ? { faixa: t.faixa, tocar: (d) => void t.tocar(d) } : undefined);
+            baixar(r.blob, `APRESENTACAO_${base}.${r.ext}`);
+          })} title="Vídeo pronto para o cliente (~1 min, com trilha): o terreno de hoje virando o projeto, o voo pela rua de entrada, a área verde e o miolo, o dia virando noite e os números">
             <svg viewBox="0 0 24 24"><path d="M3 7h12v10H3zM15 10l6-3v10l-6-3z" /></svg>{ocupado === "video" ? "Gravando…" : "Vídeo de apresentação"}
           </button>
           <button disabled={!pronto || !!ocupado} onClick={() => acao("glb", async () => baixar(await maq.current!.exportarGlb(), `MAQUETE_${base}.glb`))} title="Modelo 3D (glTF/GLB) para SketchUp, Blender, Twinmotion, Lumion">
@@ -424,18 +451,57 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
             <button className={!depois ? "ativo" : ""} disabled={gravando} onClick={() => { setDepois(false); maq.current?.alternarAntes(false); }}>Hoje</button>
             <button className={depois ? "ativo" : ""} disabled={gravando} onClick={() => { setDepois(true); maq.current?.alternarAntes(true); }}>Projeto</button>
           </div>
-          <button className="m3d-voo" disabled={!!ocupado} onClick={() => (anim.rodando ? maq.current?.pararAnimacao() : maq.current?.voo())}>
+          <button className="m3d-voo" disabled={!!ocupado} onClick={() => {
+            if (anim.rodando) { maq.current?.pararAnimacao(); return; }
+            setSel(null);
+            const d = maq.current?.voo() ?? 0;
+            const t = som && d ? daTrilha() : null;
+            if (t) { t.setMudo(false); void t.tocar(d); }
+          }}>
             {anim.rodando ? "■ Parar" : "▶ Voo de drone"}
           </button>
           <button disabled={gravando} onClick={() => maq.current?.visaoGeral()}>Vista geral</button>
           <button disabled={gravando} onClick={() => maq.current?.vistaDeCima()}>De cima</button>
           <button className="m3d-apresentar" disabled={!!ocupado} title="Tela cheia sem painéis: o terreno de hoje vira o projeto e o drone sobrevoa (Esc sai)"
-            onClick={() => { setSel(null); setDepois(true); setApresentando(true); maq.current?.apresentacao(() => setApresentando(false)); }}>
+            onClick={() => {
+              setSel(null); setDepois(true);
+              const d = maq.current?.apresentacao() ?? 0;
+              const t = som && d ? daTrilha() : null;
+              if (t) { t.setMudo(false); void t.tocar(d); }
+            }}>
             <svg viewBox="0 0 24 24"><path d="M4 5h16v11H4zM12 16v4M8 20h8M10 8l5 2.5-5 2.5z" /></svg>Apresentar
+          </button>
+          <button className={`m3d-som${som ? " ligado" : ""}`} title={som ? "Trilha sonora ligada (voo, apresentação e vídeo)" : "Trilha sonora desligada"} aria-pressed={som}
+            onClick={() => { setSom(!som); trilha.current?.setMudo(som); }}>
+            <svg viewBox="0 0 24 24">{som ? <path d="M4 9h4l5-4v14l-5-4H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11" /> : <path d="M4 9h4l5-4v14l-5-4H4zM17 9l5 6M22 9l-5 6" />}</svg>
           </button>
         </div>
       )}
-      {apresentando && !gravando && <button className="m3d-sair-apresentacao" onClick={() => { maq.current?.pararAnimacao(); setApresentando(false); }}>Sair da apresentação (Esc)</button>}
+
+      {/* cinema: faixas pretas e legenda no terço inferior */}
+      <div className={`m3d-faixas${apresentando || gravando ? " ativo" : ""}`} aria-hidden><i /><i /></div>
+      {legenda.l && (apresentando || gravando) && (
+        <div className="m3d-legenda-cinema" style={{ opacity: legenda.alfa, transform: `translateY(${(1 - legenda.alfa) * 10}px)` }}>
+          <b>{legenda.l.titulo}</b><span>{legenda.l.texto}</span>
+        </div>
+      )}
+      {/* cartelas ao vivo: título na abertura, fecho com os números */}
+      {apresentando && !gravando && cartela === "abertura" && (
+        <div className="m3d-cartela-abertura"><i /><b>{projeto.nome || "Loteamento"}</b><span>Loteamento · maquete 3D</span></div>
+      )}
+      {apresentando && !gravando && cartela === "fecho" && (
+        <div className="m3d-cartela-fecho">
+          <i /><b>{projeto.nome || "Loteamento"}</b>
+          <span>{res.lotes.length} lotes · {res.quadras.length} quadras · {fmt(res.quadro.gleba / 1e4, 2)} ha</span>
+          <small>Maquete ilustrativa — ocupação simulada; relevo do modelo digital de elevação</small>
+        </div>
+      )}
+      {apresentando && !gravando && (
+        <div className="m3d-cinema-acoes">
+          <button onClick={() => { setSom(!som); trilha.current?.setMudo(som); }}>{som ? "Som ligado" : "Sem som"}</button>
+          <button onClick={() => maq.current?.pararAnimacao()}>Sair (Esc)</button>
+        </div>
+      )}
       {gravando && <div className="m3d-gravando"><i />Gravando o vídeo de apresentação… não feche a maquete</div>}
       {pronto && anim.rodando && <div className="m3d-progresso"><i style={{ width: `${anim.prog * 100}%` }} /></div>}
       {pronto && <p className="m3d-dica">Arraste para girar · botão direito move · roda aproxima · clique num lote</p>}
