@@ -22,7 +22,15 @@ cleanup() { pg_ctl -D "$TMP/data" -m immediate stop >/dev/null 2>&1 || true; rm 
 trap cleanup EXIT
 
 initdb -D "$TMP/data" -U postgres -A trust -E UTF8 >/dev/null
-pg_ctl -D "$TMP/data" -o "-p $PORTA -c listen_addresses=localhost -c lc_messages=C -c client_min_messages=warning" -l "$LOG" -w start >/dev/null
+# socket na pasta temporária: o PostgreSQL do Ubuntu (runner do GitHub) usa
+# /var/run/postgresql, sem permissão de escrita para o usuário — o servidor não
+# subia e o CI falhava desde 2026-10-08. A conexão é por TCP (-h localhost).
+SOCK="$TMP"
+command -v cygpath >/dev/null && SOCK="$(cygpath -m "$TMP")"  # Git Bash: Postgres nativo do Windows
+if ! pg_ctl -D "$TMP/data" -o "-p $PORTA -c listen_addresses=localhost -c unix_socket_directories=$SOCK -c lc_messages=C -c client_min_messages=warning" -l "$LOG" -w start >/dev/null; then
+  cat "$LOG" >&2
+  exit 1
+fi
 
 PSQL=(psql -X -q -h localhost -p "$PORTA" -U postgres -d postgres -v ON_ERROR_STOP=1)
 
