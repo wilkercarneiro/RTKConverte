@@ -29,6 +29,7 @@ import {
 import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts";
 import { ehRecusa, escritorioDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { mensagemDeErro } from "../_shared/vertices_db.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -221,6 +222,7 @@ Deno.serve(async (req) => {
     };
     return json({ servico, vertices, trechos, preview });
   } catch (err) {
-    return json({ erro: err instanceof Error ? err.message : String(err) }, 400);
+    console.error("parse-txt:", err);
+    return json({ erro: mensagemDeErro(err) }, 400);
   }
 });

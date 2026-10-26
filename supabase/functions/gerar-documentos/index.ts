@@ -36,6 +36,7 @@ import type { NumerosSigef } from "../_shared/sigef_glebas.ts";
 import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
 import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
+import { mensagemDeErro } from "../_shared/vertices_db.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -753,6 +754,7 @@ Deno.serve(async (req) => {
       },
     });
   } catch (err) {
-    return json({ erro: err instanceof Error ? err.message : String(err) }, 400);
+    console.error("gerar-documentos:", err);
+    return json({ erro: mensagemDeErro(err) }, 400);
   }
 });

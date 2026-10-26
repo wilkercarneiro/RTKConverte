@@ -22,6 +22,8 @@ import { corrigirSobreposicao, parseCsvSigef } from "../_shared/sobreposicao.ts"
 import type { ParcelaSigef, VerticeSigef } from "../_shared/sobreposicao.ts";
 import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
+import type { ClienteVertices } from "../_shared/vertices_db.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -160,6 +162,8 @@ Deno.serve(async (req) => {
       servico_id, num_txt: null, rotulo_txt: null,
       descritivo: null, tipo_limite: null, eh_via: false,
       cns: null, matricula: null, apelido_txt: null,
+      // NOT NULL no banco (0014/0016): sem elas o INSERT do anel inteiro falhava
+      numerado: false, exibir_planta: true,
     };
     const novasLinhas = r.anel.map((p, i) => {
       const vc = verticeCert(p);
@@ -251,13 +255,11 @@ Deno.serve(async (req) => {
       if (viAntigo !== viNovo) avisos.push("vértice inicial do memorial foi reposicionado (o anterior foi removido pela correção)");
     }
 
-    // persiste (banco = fonte da verdade; o frontend recarrega e regera os documentos)
+    // persiste (banco = fonte da verdade; o frontend recarrega e regera os documentos).
+    // Vértices primeiro: se o INSERT falhar, os antigos voltam e o serviço fica intacto.
+    await substituirVertices(supa as unknown as ClienteVertices, servico_id, novasLinhas, vertRows);
     const { error: e1 } = await supa.from("servicos").update({ vertice_inicial: viNovo, status: "rascunho" }).eq("id", servico_id);
     if (e1) throw e1;
-    const { error: e2 } = await supa.from("vertices").delete().eq("servico_id", servico_id);
-    if (e2) throw e2;
-    const { error: e3 } = await supa.from("vertices").insert(novasLinhas);
-    if (e3) throw e3;
     // trechos_confrontantes não é mais usada pelo fluxo 'geo' — a confrontação já
     // foi persistida junto com os vértices acima.
 
@@ -276,6 +278,7 @@ Deno.serve(async (req) => {
       },
     });
   } catch (err) {
-    return json({ erro: err instanceof Error ? err.message : String(err) }, 400);
+    console.error("corrigir-sobreposicao:", err);
+    return json({ erro: mensagemDeErro(err) }, 400);
   }
 });

@@ -24,6 +24,8 @@ import type { LonLat } from "../_shared/satelite.ts";
 import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
 import { escritorioDoServico } from "../_shared/modelos.ts";
+import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
+import type { ClienteVertices } from "../_shared/vertices_db.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -247,8 +249,11 @@ Deno.serve(async (req) => {
 
     // O PDF saiu: agora o serviço pode assumir o perímetro do SIGEF.
     if (persistirReconciliados.length > 0) {
-      await supa.from("vertices").delete().eq("servico_id", servico_id);
-      await supa.from("vertices").insert(persistirReconciliados);
+      // antes o resultado não era conferido: um INSERT recusado deixava o serviço sem vértices
+      await substituirVertices(
+        supa as unknown as ClienteVertices, servico_id,
+        persistirReconciliados as unknown as Record<string, unknown>[], (vertRows ?? []) as Record<string, unknown>[],
+      );
     }
 
     const { data: vmax } = await supa.from("documentos_gerados").select("versao")
@@ -270,6 +275,7 @@ Deno.serve(async (req) => {
       resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!dados.logo, folha: folhaSaida },
     });
   } catch (err) {
-    return json({ erro: err instanceof Error ? err.message : String(err) }, 400);
+    console.error("gerar-planta:", err);
+    return json({ erro: mensagemDeErro(err) }, 400);
   }
 });

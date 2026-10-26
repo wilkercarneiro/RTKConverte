@@ -18,6 +18,8 @@ import { blocosPorNumeracao, montarVerticesUnidos, parseCsvSigef, unirEmBlocos }
 import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts";
 import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
+import type { ClienteVertices } from "../_shared/vertices_db.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -168,10 +170,8 @@ Deno.serve(async (req) => {
       servico_id, ...l,
       e: l.e === null || l.e === undefined ? null : l.e, n: l.n === null || l.n === undefined ? null : l.n,
     }));
-    const { error: eDel } = await supa.from("vertices").delete().eq("servico_id", servico_id);
-    if (eDel) throw eDel;
-    const { data: vertices, error: eIns } = await supa.from("vertices").insert(linhasVert).select().order("ordem");
-    if (eIns) throw eIns;
+    // se o INSERT falhar, os vértices atuais voltam: o serviço nunca fica vazio
+    const vertices = await substituirVertices(supa as unknown as ClienteVertices, servico_id, linhasVert, atuais as unknown as Record<string, unknown>[]);
     // as PARTES (uma gleba por bloco) acompanham o anel novo: mesmos nomes e
     // confrontantes internos, anel refeito com os E/N atuais
     if (blocos.length > 1) {
@@ -211,6 +211,7 @@ Deno.serve(async (req) => {
       },
     });
   } catch (err) {
-    return json({ erro: err instanceof Error ? err.message : String(err) }, 400);
+    console.error("reunir-certificados:", err);
+    return json({ erro: mensagemDeErro(err) }, 400);
   }
 });
