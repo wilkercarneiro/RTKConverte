@@ -29,6 +29,8 @@ interface Props {
   res: Resultado;
   perimetro: Perimetro;
   onExportou: () => void;
+  /** abre a maquete 3D */
+  onAbrir3D?: () => void;
 }
 
 function baixar(dados: BlobPart, nome: string, tipo: string) {
@@ -78,7 +80,7 @@ async function lerCarimbo(s: Servico): Promise<DadosCarimbo> {
   };
 }
 
-export function Entregas({ servico, projeto, res, perimetro, onExportou }: Props) {
+export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir3D }: Props) {
   const [folha, setFolha] = useState<Folha>("A1");
   const [formato, setFormato] = useState<FormatoLocacao>("csv-nome-e-n");
   const [op, setOp] = useState<OpcoesLocacao>(LOCACAO_PADRAO);
@@ -217,6 +219,35 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou }: Props
         </div>
       )}
       {erro && <div className="lot-alerta erro">{erro}</div>}
+
+      {onAbrir3D && (
+        <section className="lot-3d-chamada" onClick={onAbrir3D} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onAbrir3D(); } }}>
+          <div className="lot-3d-chamada-texto">
+            <span className="lot-3d-selo">NOVO · MAQUETE 3D</span>
+            <h3>Veja o loteamento pronto, no relevo real</h3>
+            <p>O terreno de hoje vira o projeto: ruas terraplenadas, {res.lotes.length} lotes com casas simuladas, áreas verdes arborizadas, sol e sombras. Declividade, corte e aterro, curvas de nível, voo de drone em vídeo e modelo 3D para Twinmotion/SketchUp.</p>
+            <span className="lot-3d-botao">Abrir a maquete 3D →</span>
+          </div>
+          <div className="lot-3d-chamada-arte" aria-hidden>
+            <svg viewBox="0 0 220 140">
+              <defs>
+                <linearGradient id="m3dceu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#ffd98a" /><stop offset="1" stopColor="#ff9f5a" /></linearGradient>
+                <linearGradient id="m3dsolo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#8a5a33" /><stop offset="1" stopColor="#c28d5c" /></linearGradient>
+              </defs>
+              <circle cx="176" cy="28" r="14" fill="url(#m3dceu)" />
+              <path d="M18 78 L110 40 L202 78 L110 116 Z" fill="#9cc283" />
+              <path d="M18 78 L110 116 L110 132 L18 94 Z" fill="url(#m3dsolo)" />
+              <path d="M202 78 L110 116 L110 132 L202 94 Z" fill="#6e4628" />
+              <path d="M60 61 L152 99" stroke="#43474d" strokeWidth="7" />
+              <path d="M98 45 L190 83" stroke="#43474d" strokeWidth="6" opacity="0.9" />
+              {[[72, 74], [92, 82], [112, 90], [132, 98], [104, 56], [124, 64], [144, 72], [164, 80]].map(([x, y], i) => (
+                <g key={i}><path d={`M${x} ${y} l7 -3 l7 3 l-7 3 z`} fill="#b36540" /><path d={`M${x} ${y} l0 5 l7 3 l0 -5 z`} fill="#f2e8dc" /><path d={`M${x + 14} ${y} l0 5 l-7 3 l0 -5 z`} fill="#d9cbb4" /></g>
+              ))}
+              {[[40, 80], [48, 84], [182, 82], [174, 86]].map(([x, y], i) => <circle key={i} cx={x} cy={y - 6} r="6" fill={i === 1 ? "#f2c230" : "#3f7d3a"} />)}
+            </svg>
+          </div>
+        </section>
+      )}
 
       <section className="bloco lot-entrega-cliente">
         <header><h3>Para o cliente e a prefeitura</h3><span className="desc">{res.lotes.length} lotes · {res.quadras.length} quadras · {fmt(res.quadro.gleba / 1e4, 4)} ha</span></header>

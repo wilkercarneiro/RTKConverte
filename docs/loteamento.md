@@ -42,6 +42,14 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
      - DXF de linhas.
    - **O que entra na locação:** cantos de lote e de quadra, PC/meio/PT das curvas de esquina, estacas do eixo das ruas (a cada 20 m, configurável) e, se pedido, os marcos do perímetro.
    - **Nome dos pontos:** curto, sem acento e o mesmo da planta e dos memoriais (A-07 = ponto 7 da quadra A). O código do ponto traz os lotes que ele divide (`QA L03/04`).
+6. **Maquete 3D** (botão **3D** na barra da prancheta ou o cartão no topo das Entregas). O projeto no relevo real, como a apresentação de Civil 3D/InfraWorks + Twinmotion — só que no navegador e em segundos.
+   - **Abertura:** o terreno de hoje (satélite) vira o projeto; as ruas são escavadas, as casas sobem em onda a partir do centro e as árvores crescem. "Hoje / Projeto" repete a transição.
+   - **O que aparece:** o bloco de terreno com as camadas do solo na lateral (maquete física), satélite em volta, pista com faixa, calçada e meio-fio, lotes com número, casas da simulação de ocupação (recuo de 4 m, telhado de 2 ou 4 águas, 1 ou 2 pavimentos, assentadas no ponto alto do lote com fundação aparente), prédio de laje na área institucional, árvores nas áreas verdes, APP como mata, árvores de calçada e de quintal, ipês floridos, rótulos das quadras.
+   - **Modos:** Projeto; Declividade (0–8, 8–15, 15–30 e ≥ 30% — o limite do art. 3º da Lei 6.766 — com o % da área dos lotes em cada faixa); Corte e aterro das ruas (volumes em m³); Curvas de nível (intervalo pelo desnível da gleba, mestras a cada 5).
+   - **Controles:** exagero vertical até 3× (as cores e medidas usam a cota real), hora do sol (posição real pela latitude e data, sombras longas, pôr do sol dourado e janelas que acendem), camadas (casas, árvores, meio-fio, sombras), vista geral, de cima (norte para cima), bússola, **voo de drone** (espiral, passeio na rua, subida) e **Apresentar** (tela limpa: o terreno de hoje vira o projeto e o drone sobrevoa; Esc sai). No celular o painel recolhe e a ficha sobe de baixo.
+   - **Clique no lote:** ficha com área, frente, fundo, cotas, desnível, declividade média (com a faixa), valor estimado (se houver preço por m²), confrontações e "Ver de perto".
+   - **Para o cliente:** foto em alta (PNG, 2× a tela), **vídeo de apresentação** (~36 s, MP4 no Chrome/Edge, senão WebM: cartela com o nome do empreendimento, o terreno de hoje virando o projeto, o voo e a cartela final com lotes, quadras e área) e **modelo GLB** em escala real (sem o exagero da tela; terreno com até ~90 mil nós, casas, meio-fio e árvores mescladas com cor por vértice, sem extensão obrigatória) para SketchUp, Blender, Twinmotion ou Lumion.
+   - **Como é calculado:** `cena3d.ts` (sem three.js, testado em node) monta a grade (até 300 mil nós; bicúbica sobre o modelo de elevação, buscado de novo cobrindo a margem da maquete), o greide das ruas por convolução normalizada (o terreno suavizado só com os nós da rua, raio ~9 m — o cruzamento sai contínuo), o talude 1:1,5 até o terreno natural, os volumes, a estatística de cada lote, as casas e as árvores. `textura3d.ts` pinta o chão (o desenho É a textura: sem tremido). `maquete3d.ts` (three.js) eleva tudo no shader a partir da cota real, então exagero, transição e crescimento são só uniforms. É uma estimativa de estudo: não substitui o projeto geométrico das vias nem a terraplenagem executiva.
 
 ## Regras de projeto que o gerador segue
 
@@ -104,7 +112,7 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
 - **Ajustes manuais.** São presos à quadra por uma âncora (ponto UTM dentro dela). A quadra desenhada à mão guarda os contornos dos lotes em UTM (`QuadraCfg.lotes`); mover uma rua apara os lotes e o que ficar sem lote aparece como área livre. As quinas compartilhadas são um ponto só em todos os lotes (o "T" de um vizinho é inserido no lado do outro), por isso mover uma quina leva os vizinhos junto. Depois de cada arraste, `assentar` (edicao.ts) grava exatamente o que o desenho mostra: contorno que se cruzou vira o maior pedaço (o resto vai ao vizinho de maior divisa) e o lote arrastado ganha a disputa com quem ele invadiu. A frente escolhida fica em `LoteDesenhado.frente` (acompanha o lado nas edições) e o acesso da quadra em `QuadraCfg.acessos` (UTM).
 - **Cache da divisão.** `calcular` guarda a divisão de cada quadra automática (por perímetro, parâmetros, ruas, áreas e configs); arrastar uma quina recalcula só a quadra desenhada (≈10 ms em vez de ≈150 ms).
 - **Plano de terreno.** O desenho é feito em UTM ÷ fator de escala combinado (ponto × altitude) no centro da gleba, para que as medidas do papel sejam as da trena. A locação volta para UTM multiplicando pelo fator.
-- **Onde roda.** Tudo roda no navegador, inclusive os PDF/DOCX/DXF; o gerador automático roda num Web Worker. Nenhuma edge function nova, e a VPS não ganha carga.
+- **Onde roda.** Tudo roda no navegador, inclusive os PDF/DOCX/DXF e a maquete 3D (three.js num pacote à parte, baixado só por quem abre a maquete); o gerador automático roda num Web Worker. Nenhuma edge function nova, e a VPS não ganha carga.
 - **Laboratório local.** Em `npm run dev`, a rota `#/lab/loteamento` abre a tela com uma gleba sintética de ~9,4 ha, sem login e sem banco.
 
 ## Para colocar no ar
@@ -123,6 +131,7 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - arrastar quina e divisa (a quina da rua corre pela rua; sem sobreposição);
   - arraste em cadeia que não trava (quina por cima do vizinho, alinhada, de volta: sempre com alça e indo aonde o cursor vai) e divisa que desliza sem abrir fresta;
   - frente escolhida (lote sem rua, rua principal da esquina, acesso da quadra) e o memorial confrontando com o lote vizinho;
+  - maquete 3D: casas dentro dos lotes e fora da rua, árvores fora do asfalto, clique acha o lote, greide que alisa o perfil das ruas, corte e aterro, declividade dos lotes;
   - apagar, desenhar, unir, dividir e cortar lotes à mão;
   - geração com no máximo 4 quinas por lote e fundo com fundo nas quadras entre ruas;
   - comandos (unir, dividir, verde, largura);

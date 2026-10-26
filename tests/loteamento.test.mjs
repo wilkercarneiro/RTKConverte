@@ -16,8 +16,10 @@ import {
   posicaoNoDesenho, unirLotes,
 } from "../src/lib/loteamento/edicao.ts";
 import { alternarAcesso } from "../src/lib/loteamento/acoes.ts";
+import { cotaFinal, loteNoPonto, montarCena } from "../src/lib/loteamento/cena3d.ts";
+import { pontoInterno } from "../src/lib/loteamento/auto.ts";
 import { criarPlano, paraPlano, paraUtm } from "../src/lib/loteamento/plano.ts";
-import { areaPol, areaPols, diferenca, quinas, uniao } from "../src/lib/loteamento/geom.ts";
+import { areaPol, areaPols, comprimento, dentroPol, diferenca, pontoNaPolilinha, quinas, uniao } from "../src/lib/loteamento/geom.ts";
 import {
   arquivoLocacao, chavePonto, gerarDxf, gerarKml, ladosNominais, memorialDoLote, nomesDosPontos, pontosDeLocacao,
 } from "../src/lib/loteamento/saidas.ts";
@@ -558,6 +560,67 @@ test("edição livre: frente, área, unir, dividir e arrastar fora das faixas s�
   const m = moverDivisa(pr0, r0, q, dv.a, dv.b, 15);
   const rm = calcular(m.pr, perimetro);
   assert.ok(rm.lotes.filter((x) => x.quadra === q.nome).some((x) => x.problemas.length), "mover 15 m não deixou aviso");
+});
+
+// relevo sintético para a maquete: rampa de 5% para leste com ondulações largas
+function terrenoSintetico(res) {
+  const pts = res.gleba.ext.map((p) => paraUtm(res.plano, p));
+  const e0 = Math.min(...pts.map((p) => p[0])) - 300, n0 = Math.min(...pts.map((p) => p[1])) - 300;
+  const nx = Math.ceil((Math.max(...pts.map((p) => p[0])) - e0 + 300) / 8), ny = Math.ceil((Math.max(...pts.map((p) => p[1])) - n0 + 300) / 8);
+  const h = [];
+  // + lombadas curtas (~40 m, 0,6 m): é isso que o greide da rua tem de alisar
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) h.push(300 + 0.05 * i * 8 + 3 * Math.sin((i * 8) / 40) * Math.cos((j * 8) / 35) + 0.6 * Math.sin((i * 8) / 6.5) * Math.sin((j * 8) / 7));
+  return { e0, n0, passo: 8, nx, ny, h, fonte: "dem", calibracao: 0 };
+}
+
+test("maquete 3D: casas dentro dos lotes e fora da rua, árvores fora da pista, clique acha o lote", () => {
+  const c = montarCena(r0, pr0.params, terrenoSintetico(r0));
+  const g = c.grade;
+  // a grade cobre a gleba com margem
+  for (const p of r0.gleba.ext) assert.ok(p[0] > g.x0 && p[1] > g.y0 && p[0] < g.x0 + (g.nx - 1) * g.passo && p[1] < g.y0 + (g.ny - 1) * g.passo);
+  const casas = c.casas.filter((x) => x.lote >= 0);
+  assert.ok(casas.length >= 0.9 * r0.lotes.length, `só ${casas.length} casas para ${r0.lotes.length} lotes`);
+  const ruas = r0.ruas.flatMap((r) => r.pols);
+  for (const k of casas) {
+    const v = [-k.u[1], k.u[0]];
+    for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const p = [k.c[0] + k.u[0] * a * k.larg / 2 + v[0] * b * k.prof / 2, k.c[1] + k.u[1] * a * k.larg / 2 + v[1] * b * k.prof / 2];
+      assert.ok(dentroPol(p, r0.lotes[k.lote].pol), `casa fora do lote ${r0.lotes[k.lote].id}`);
+      assert.ok(!ruas.some((r) => dentroPol(p, r)), `casa na rua (lote ${r0.lotes[k.lote].id})`);
+    }
+    assert.ok(k.piso >= k.fundacao && k.piso - k.fundacao < 8);
+  }
+  for (const a of c.arvores) assert.ok(!c.pista.some((pg) => dentroPol(a.p, pg)), "árvore no asfalto");
+  assert.ok(c.meioFio.length > 0 && c.meioFio.every((l) => l.length >= 2), "sem meio-fio");
+  for (const l of r0.lotes.filter((_, i) => i % 7 === 0)) {
+    const ce = pontoInterno(l.pol);
+    assert.equal(r0.lotes[loteNoPonto(r0, g, ce)]?.id, l.id);
+  }
+});
+
+test("maquete 3D: greide das ruas mais suave que o terreno, corte e aterro, declividade dos lotes", () => {
+  const c = montarCena(r0, pr0.params, terrenoSintetico(r0));
+  const g = c.grade;
+  // perfil longitudinal (pelo eixo de cada rua, a cada 2 m): o greide alisa as ondulações
+  let nat = 0, fin = 0;
+  for (const r of r0.ruas) {
+    const L = comprimento(r.eixo);
+    const hs = [];
+    for (let s2 = 4; s2 < L - 4; s2 += 2) hs.push(pontoNaPolilinha(r.eixo, s2).pt);
+    for (let k = 1; k + 1 < hs.length; k++) {
+      const d2 = (campo) => Math.abs(cotaFinal(g, hs[k + 1], campo) - 2 * cotaFinal(g, hs[k], campo) + cotaFinal(g, hs[k - 1], campo));
+      nat += d2("natural");
+      fin += d2("final");
+    }
+  }
+  assert.ok(fin < 0.6 * nat, `greide (aspereza ${fin}) não alisou o perfil do terreno (${nat})`);
+  assert.ok(c.volumes.corte > 1 && c.volumes.aterro > 1, "sem corte ou sem aterro");
+  // fora da gleba nada muda
+  for (let k = 0; k < g.final.length; k += 97) if (!g.gleba[k]) assert.equal(g.final[k], g.natural[k]);
+  // a rampa é de 5%: os lotes ficam por volta disso (as ondulações somam ou tiram)
+  const media = c.infoLotes.reduce((s2, x) => s2 + x.declMedia, 0) / c.infoLotes.length;
+  assert.ok(media > 3 && media < 9, `declividade média dos lotes ${media}`);
+  for (const x of c.infoLotes) assert.ok(x.cotaMax >= x.cotaMin);
 });
 
 test("geração: lotes com no máximo 4 quinas e quadras entre ruas fundo com fundo", () => {

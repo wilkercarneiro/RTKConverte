@@ -3,7 +3,8 @@
 // O perímetro é o do TXT (vértices do serviço). O projeto é só intenção e mora
 // na tabela `loteamentos`; quadras e lotes são recalculados a cada mudança, e
 // é isso que deixa o operador mexer num lote e ver o resto se ajustar.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { supabase } from "../../lib/supabase";
 import { rotuloCurto } from "../../lib/modalidades";
 import { useAutosave } from "../../lib/ux";
@@ -26,6 +27,26 @@ import { Painel } from "./Painel";
 import { Avisos } from "./Avisos";
 import { Entregas } from "./Entregas";
 import "./loteamento.css";
+
+// a maquete 3D (three.js) só é baixada por quem a abre
+const Visao3D = lazy(() => import("./Visao3D"));
+
+/** Se a maquete não carregar (sem rede, versão nova publicada), o serviço continua de pé. */
+class BarreiraMaquete extends Component<{ onFechar: () => void; children: ReactNode }, { erro: string | null }> {
+  state = { erro: null as string | null };
+  static getDerivedStateFromError(e: unknown) { return { erro: e instanceof Error ? e.message : String(e) }; }
+  render() {
+    if (!this.state.erro) return this.props.children;
+    return (
+      <div className="lot-3d-carregando">
+        <div style={{ textAlign: "center", maxWidth: 420, padding: 16 }}>
+          <p>Não deu para abrir a maquete 3D. Confira a conexão e tente de novo (se o sistema acabou de ser atualizado, recarregue a página).</p>
+          <button className="principal" onClick={this.props.onFechar}>Voltar ao projeto</button>
+        </div>
+      </div>
+    );
+  }
+}
 
 type Etapa = "perguntas" | "projeto" | "entregas";
 
@@ -81,6 +102,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   const [servico, setServico] = useState(servicoInicial);
   const fuso = servico.fuso_utm ?? 24;
   const perimetro = useMemo(() => perimetroDoServico(vertices, fuso), [vertices, fuso]);
+  const [ver3d, setVer3d] = useState(false);
   const hist = useHistorico(null);
   const projeto = hist.h?.atual ?? null;
   const [erroCarga, setErroCarga] = useState<string | null>(null);
@@ -314,6 +336,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
             <button title="Imagem de satélite" className={vista.satelite ? "ativo" : ""} onClick={() => setVista({ ...vista, satelite: !vista.satelite })}>🛰</button>
             <button title="Medidas dos lados" className={vista.medidas ? "ativo" : ""} onClick={() => setVista({ ...vista, medidas: !vista.medidas })}>↔</button>
             <button title="Colorir pelo tamanho do lote" className={vista.cores === "area" ? "ativo" : ""} onClick={() => setVista({ ...vista, cores: vista.cores === "area" ? "situacao" : "area" })}>▦</button>
+            <button title="Maquete 3D: o loteamento no relevo real, com casas, árvores e voo de drone" className="lot-btn-3d" onClick={() => setVer3d(true)}>3D</button>
             <button title={projeto.terreno ? "Colorir pelo relevo (cota)" : "Relevo ainda não lido (gere pelas Perguntas)"} disabled={!projeto.terreno}
               className={vista.cores === "relevo" ? "ativo" : ""} onClick={() => setVista({ ...vista, cores: vista.cores === "relevo" ? "situacao" : "relevo" })}>⛰</button>
             <span className="sep" />
@@ -360,7 +383,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
 
       {etapa === "entregas" && res && (
         <div className="conferencia-corpo fade">
-          <Entregas servico={servico} projeto={projeto} res={res} perimetro={perimetro} onExportou={marcarExportado} />
+          <Entregas servico={servico} projeto={projeto} res={res} perimetro={perimetro} onExportou={marcarExportado} onAbrir3D={() => setVer3d(true)} />
           <div><button onClick={() => setEtapa("projeto")}>← Voltar ao projeto</button></div>
         </div>
       )}
@@ -395,6 +418,13 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
             </div>
           </div>
         </div>
+      )}
+      {ver3d && res && projeto && (
+        <BarreiraMaquete onFechar={() => setVer3d(false)}>
+          <Suspense fallback={<div className="lot-3d-carregando">Abrindo a maquete 3D…</div>}>
+            <Visao3D projeto={projeto} res={res} perimetro={perimetro} fuso={fuso} onFechar={() => setVer3d(false)} />
+          </Suspense>
+        </BarreiraMaquete>
       )}
     </div>
   );
