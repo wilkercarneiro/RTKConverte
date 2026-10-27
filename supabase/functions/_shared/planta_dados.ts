@@ -24,6 +24,28 @@ export interface GlebaRow {
   anel?: [number, number][] | null;
   /** Descritivo das divisas internas; nulo = automático (gleba vizinha, mesmo dono). */
   confrontante_interno?: string | null;
+  // Divisão em partes (partilha): quem recebe a parte. Nulos = o imóvel.
+  denominacao?: string | null;
+  detentor_nome?: string | null;
+  detentor_cpf?: string | null;
+}
+
+/**
+ * O serviço visto como o GEO de UMA gleba: na partilha cada parte tem herdeiro
+ * e denominação próprios, que tomam o lugar do proprietário e do nome do imóvel.
+ * Sem herdeiro informado é o imóvel, com o nome da gleba na denominação — o que
+ * sempre foi.
+ */
+export function servicoDaGleba<S extends ServicoRow>(s: S, g: GlebaRow | null | undefined, nomeGleba: string): S {
+  const denominacao = (g?.denominacao ?? "").trim() || `${(s.denominacao ?? "").trim()} - ${nomeGleba}`;
+  if (!(g?.detentor_nome ?? "").trim()) return { ...s, denominacao };
+  return {
+    ...s, denominacao,
+    detentor_nome: g!.detentor_nome!.trim(),
+    detentor_cpf: (g!.detentor_cpf ?? "").trim() || null,
+    detentor_rg: null,
+    is_espolio: false, inventariante_nome: null, inventariante_cpf: null, inventariante_rg: null,
+  };
 }
 
 /**
@@ -45,6 +67,12 @@ export function casarNoRing(ring: VerticeMontado[], e: number, n: number, raio =
     if (d < dm) { dm = d; melhor = v; }
   }
   return melhor;
+}
+
+/** A linha da gleba de uma unidade, pelo nome que `calcularGleba` dá a ela. */
+export function glebaPorNome(rows: GlebaRow[], nome: string): GlebaRow | null {
+  const validas = glebasValidas(rows);
+  return validas.find((g, i) => ((g.nome ?? "").trim() || `GLEBA ${i + 1}`) === nome) ?? null;
 }
 
 const glebasValidas = (rows: GlebaRow[]) =>
@@ -103,7 +131,7 @@ export function glebasParaPlanta(
         areaFmt: fmtBR(areaHa, 4),
         tarefasFmt: fmtBR(areaHa * 10000 / 4356, 2),
         perimetroFmt: fmtBR(calcularPerimetroM(segs), 2),
-        identificacao: identificacaoDaGleba(servico, nome),
+        identificacao: identificacaoDaGleba(servico, nome, g),
         vertices,
         viasIdx,
         riosIdx,
@@ -116,10 +144,11 @@ export function glebasParaPlanta(
  * referência: matrícula/CNS (ou POSSE), denominação com o nome da gleba,
  * proprietário e CPF, e o inventariante quando é espólio.
  */
-function identificacaoDaGleba(s: ServicoRow, nomeGleba: string): string[] {
+function identificacaoDaGleba(s0: ServicoRow, nomeGleba: string, g?: GlebaRow | null): string[] {
+  const s = servicoDaGleba(s0, g, nomeGleba);
   const linhas: string[] = [];
   linhas.push(s.tipo_imovel === "posse" ? "(POSSE)" : `(MATR.${s.matricula ?? ""}/CNS.${s.cns ?? ""})`);
-  linhas.push(`${(s.denominacao ?? "").toUpperCase()} - ${nomeGleba}`);
+  linhas.push((s.denominacao ?? "").toUpperCase());
   linhas.push((s.detentor_nome ?? "").toUpperCase());
   if (s.detentor_cpf) linhas.push(`CPF:${s.detentor_cpf}`);
   if (s.is_espolio && s.inventariante_nome) {
@@ -175,8 +204,8 @@ export function perimetrosOdsDasGlebas(
     }
     return null;
   };
-  const textoAuto = (nomeVizinha: string) => {
-    const l = identificacaoDaGleba(servico, nomeVizinha);
+  const textoAuto = (viz: number | null) => {
+    const l = identificacaoDaGleba(servico, viz !== null ? nomeDe(viz) : "GLEBA VIZINHA", viz !== null ? glebas[viz] : null);
     return `${l[0]} ${l[1]}` + l.slice(2).map((x) => `\\ ${x}`).join("");
   };
 
@@ -193,7 +222,7 @@ export function perimetrosOdsDasGlebas(
       if (!interno) { linhas.push({ ...base }); return; }
       const proprio = (g.confrontante_interno ?? "").trim();
       const viz = outraCom(gi, v, prox);
-      const descritivo = proprio || textoAuto(viz !== null ? nomeDe(viz) : "GLEBA VIZINHA");
+      const descritivo = proprio || textoAuto(viz);
       linhas.push({ ...base, descritivo, tipoLimite: "LA1", cns: null, matricula: null });
     });
     return { nome: nomeDe(gi), linhas, semCodigo };
@@ -237,16 +266,19 @@ export function calcularGleba(
     const pa = posNoRing.get(a.ordem)!, pb = posNoRing.get(b.ordem)!;
     return ((pa - pb + n) % n === 1) || ((pb - pa + n) % n === 1);
   };
-  const outraCom = (a: VerticeMontado, b: VerticeMontado): string | null => {
+  const outraCom = (a: VerticeMontado, b: VerticeMontado): number | null => {
     for (let k = 0; k < glebas.length; k++) {
       if (k === gi) continue;
       const tem = (v: VerticeMontado) => casadas[k].some((x) => x?.ordem === v.ordem);
-      if (tem(a) && tem(b)) return (glebas[k].nome ?? "").trim() || `GLEBA ${k + 1}`;
+      if (tem(a) && tem(b)) return k;
     }
     return null;
   };
-  const textoAuto = (nomeVizinha: string) => {
-    const l = identificacaoDaGleba(servico, nomeVizinha);
+  // a divisa interna confronta com a gleba vizinha — na partilha, com o herdeiro dela
+  const textoAuto = (k: number | null) => {
+    const l = k === null
+      ? identificacaoDaGleba(servico, "GLEBA VIZINHA")
+      : identificacaoDaGleba(servico, (glebas[k].nome ?? "").trim() || `GLEBA ${k + 1}`, glebas[k]);
     return `${l[0]} ${l[1]}` + l.slice(2).map((x) => `\\ ${x}`).join("");
   };
   const proprio = (row.confrontante_interno ?? "").trim();
@@ -257,7 +289,7 @@ export function calcularGleba(
       const t = v.trecho;
       return { descritivo: t.descritivo, tipoLimite: t.tipoLimite, ehVia: t.ehVia, cns: t.cns ?? null, matricula: t.matricula ?? null, numerado: t.numerado, interno: false, exibirPlanta: !t.semRotulo };
     }
-    return { descritivo: proprio || textoAuto(outraCom(v, prox) ?? "GLEBA VIZINHA"), tipoLimite: "LA1", ehVia: false, cns: null, matricula: null, numerado: false, interno: true };
+    return { descritivo: proprio || textoAuto(outraCom(v, prox)), tipoLimite: "LA1", ehVia: false, cns: null, matricula: null, numerado: false, interno: true };
   });
   const mesmoLado = (a: typeof lados[number], b: typeof lados[number]) => a.descritivo === b.descritivo && a.tipoLimite === b.tipoLimite && a.ehVia === b.ehVia;
   const todosIguais = lados.every((l) => mesmoLado(l, lados[0]));
@@ -580,6 +612,8 @@ export function montarDadosPlanta(ctx: ContextoPlanta): DadosPlanta {
 export function dadosDasPartes(
   partes: { nome: string; calc: ServicoCalculado }[],
   servico: ServicoRow,
+  /** linhas das glebas, para a identificação de cada parte sair com o herdeiro dela */
+  rows: GlebaRow[] = [],
 ): { geometria: GeometriaPlanta; partes: ParteDaPlanta[]; glebas: GlebaPlanta[] } {
   const geos = partes.map((p) => geometriaDoCalculo(p.calc));
   const vertices: VerticePlanta[] = [];
@@ -597,7 +631,7 @@ export function dadosDasPartes(
       areaFmt: fmtBR(calc.areaHa, 4),
       tarefasFmt: fmtBR(calc.areaHa * 10000 / 4356, 2),
       perimetroFmt: fmtBR(calc.perimetroM, 2),
-      identificacao: identificacaoDaGleba(servico, partes[i].nome),
+      identificacao: identificacaoDaGleba(servico, partes[i].nome, glebaPorNome(rows, partes[i].nome)),
       vertices: g.vertices,
       viasIdx: g.vertices.flatMap((_, k) => (calc.ring[k].trecho.ehVia && !calc.ring[k].trecho.ehRio ? [k] : [])),
       riosIdx: g.vertices.flatMap((_, k) => (calc.ring[k].trecho.ehRio ? [k] : [])),

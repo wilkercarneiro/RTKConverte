@@ -24,7 +24,7 @@ import { patchOdsContent } from "../_shared/ods.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { Folha } from "../_shared/planta.ts";
 import {
-  anelExternoDasGlebas, bytesDeBase64, calcularGleba, carregarLogoPlanta, dadosDasPartes, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta,
+  anelExternoDasGlebas, bytesDeBase64, calcularGleba, glebaPorNome, servicoDaGleba, carregarLogoPlanta, dadosDasPartes, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta,
   ordensDasGlebas, verticesForaDasGlebas,
 } from "../_shared/planta_dados.ts";
 import type { GlebaRow } from "../_shared/planta_dados.ts";
@@ -316,7 +316,7 @@ Deno.serve(async (req) => {
     // é feita ANTES da confrontação justamente para o desenho já nascer certo.
     // Vértice fora de gleba não entra em documento nenhum: a geração diz quais
     // são, pelo número do TXT, e o operador decide se falta dividir.
-    const dp = unidades.length ? dadosDasPartes(unidades, servico) : null;
+    const dp = unidades.length ? dadosDasPartes(unidades, servico, glebaRows) : null;
     const fora = unidades.length ? verticesForaDasGlebas(glebaRows, vertRows) : [];
     if (fora.length) {
       const nums = fora.map((v) => String(v.num_txt ?? v.ordem + 1));
@@ -670,7 +670,8 @@ Deno.serve(async (req) => {
       );
       for (const [k, u] of unidades.entries()) {
         const pastaU = `${servico_id}/v${versao}/glebas/${k + 1}-${slug(u.nome)}`;
-        const servicoU = { ...servico, denominacao: `${servico.denominacao} - ${u.nome}` };
+        // na partilha a parte é de um herdeiro: a A3 dela sai no nome dele
+        const servicoU = servicoDaGleba(servico, glebaPorNome(glebaRows, u.nome), u.nome);
         const saida = { nome: u.nome, planta_pdf: null as string | null, areaHa: u.calc.areaHa };
         // planta A3 da unidade: o modelo da gleba é a folha A3, com o anel dela e os confrontantes dela
         try {

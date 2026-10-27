@@ -936,6 +936,46 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .ep-atalhos { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; margin: 0; }
 .ep-atalhos dt { font-family: var(--mono); color: var(--texto); white-space: nowrap; }
 .ep-atalhos dd { margin: 0; color: var(--texto-2); }
+/* ===== Divisão em partes iguais (DivisaoEditor) ===== */
+.chip.mod-divisao { background: #E6F4F1; color: #0F6B5C; }
+.dv { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, 1fr); gap: 20px; align-items: start; }
+.dv-mapa { border: 1px solid var(--borda); border-radius: var(--raio); background: #FBFCFB; padding: 10px; }
+.dv-mapa svg { display: block; width: 100%; height: auto; max-height: 520px; cursor: grab; touch-action: none; font-family: var(--fonte); }
+.dv-mapa svg:active { cursor: grabbing; }
+.dv-dica { margin: 8px 2px 0; font-size: 12px; color: var(--texto-3); }
+.dv-controles { display: grid; gap: 16px; }
+.dv-campo { display: grid; gap: 8px; font-size: 13px; font-weight: 600; color: var(--texto-2); }
+.dv-contador { display: inline-flex; align-items: center; gap: 6px; }
+.dv-contador button { width: 36px; padding: 0; font-size: 18px; }
+.dv-contador input { width: 70px; text-align: center; font-weight: 700; font-size: 16px; }
+.dv-opcoes { display: grid; gap: 6px; font-weight: 500; color: var(--texto); }
+.dv-opcoes label, .dv-check { display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--texto); font-size: 13.5px; }
+.dv-opcoes input, .dv-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--primaria); }
+.dv-sugestoes { display: flex; flex-wrap: wrap; gap: 6px; }
+.dv-sugestoes button { height: auto; min-height: 36px; padding: 6px 12px; display: grid; text-align: left; gap: 1px; }
+.dv-sugestoes button small { font-weight: 500; font-size: 11.5px; color: var(--texto-3); }
+.dv-sugestoes button.ativa { border-color: var(--primaria); background: var(--primaria-clara); color: var(--floresta); }
+.dv-giro { display: flex; align-items: center; gap: 8px; }
+.dv-giro input[type="range"] { flex: 1; height: auto; padding: 0; border: 0; accent-color: var(--primaria); }
+.dv-giro input[type="number"] { width: 84px; height: 34px; }
+.dv-resumo { display: grid; gap: 4px; font-size: 13px; color: var(--texto-2); background: var(--primaria-clara); border-radius: 10px; padding: 10px 12px; }
+.dv-resumo b { color: var(--floresta); }
+.dv-alerta { background: var(--alerta-claro); color: var(--alerta-escuro); border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 600; }
+.dv-tabela { width: 100%; margin-top: 16px; }
+.dv-tabela input { height: 34px; width: 100%; min-width: 120px; box-sizing: border-box; }
+.dv-tabela td { vertical-align: middle; }
+.dv-cor { display: inline-block; width: 14px; height: 14px; border-radius: 4px; }
+.dv-pct { display: inline-flex; align-items: center; gap: 4px; }
+.dv-pct input { width: 84px; min-width: 0; }
+.dv-sem { color: var(--perigo); font-weight: 700; }
+.dv-acoes { margin-top: 14px; }
+.dv-acoes .sub { flex: 1 1 320px; }
+.dv-recolhido > summary { cursor: pointer; list-style: revert; padding: 2px 0; }
+.dv-recolhido[open] > summary { margin-bottom: 12px; }
+.dv-recolhido .bloco { border: 0; padding: 0; box-shadow: none; }
+.dv-convite { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-style: dashed; }
+@media (max-width: 980px) { .dv { grid-template-columns: 1fr; } }
+
 .historico-doc-par { display: inline-flex; gap: 4px; }
 .historico-abrir { color: var(--primaria); }
 .ep-guardado { border-top: 1px solid var(--linha); padding-top: 10px; margin-top: 16px; }

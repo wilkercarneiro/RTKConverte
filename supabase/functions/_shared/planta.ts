@@ -1135,6 +1135,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     linha(c, tique.x1, tique.y1, tique.x2, tique.y2, 0.9);
     // o tique é linha do desenho como qualquer outra: nenhum rótulo passa por cima
     obstaculos.push(tique);
+    // Vértice compartilhado por duas glebas (divisa interna, ponto de partilha)
+    // passa aqui uma vez por anel: o código sai uma vez só, senão vira borrão.
+    if (v.codigo && codigosPendentes.some((cp) => cp.codigo === v.codigo)) continue;
     const w = f.widthOfTextAtSize(v.codigo, VERT_TAM);
     const lx = nx < 0 ? X(v.e) + nx * 8 - w : X(v.e) + nx * 8;
     const ly = Y(v.n) + ny * 8 - VERT_TAM / 2;

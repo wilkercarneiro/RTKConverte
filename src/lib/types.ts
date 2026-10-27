@@ -54,6 +54,24 @@ export interface Gleba {
    * por dentro). Nulo = automático: a gleba vizinha do mesmo imóvel/proprietário.
    */
   confrontante_interno?: string | null;
+  // ---- divisão em partes (partilha): quem recebe esta parte ----
+  /** Denominação própria da parte; nulo = "<DENOMINAÇÃO DO IMÓVEL> - <nome da gleba>". */
+  denominacao?: string | null;
+  /** Herdeiro/adquirente da parte; nulo = o proprietário do imóvel. */
+  detentor_nome?: string | null;
+  detentor_cpf?: string | null;
+  /** Fração da área total que coube a esta parte (0–1). */
+  fracao?: number | null;
+  /** Serviço completo criado para esta parte (o GEO individual). */
+  servico_parte_id?: string | null;
+}
+
+/** Parâmetros da divisão em partes, guardados no serviço para refazer a mesma divisão. */
+export interface ParametrosDivisao {
+  /** azimute das divisas (0 = norte–sul); nulo = o motor escolhe */
+  azimute?: number | null;
+  inverter?: boolean;
+  iguais?: boolean;
 }
 
 export interface Servico {
@@ -115,6 +133,8 @@ export interface Servico {
   inventariante_nome?: string | null;
   inventariante_cpf?: string | null;
   inventariante_rg?: string | null;
+  /** Divisão em partes iguais (partilha): presente = serviço nasceu para dividir. */
+  divisao?: ParametrosDivisao | null;
 }
 
 export interface Vertice {

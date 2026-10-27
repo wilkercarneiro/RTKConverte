@@ -20,6 +20,8 @@ import {
 } from "../lib/modalidades";
 import type { SituacaoImovel } from "../lib/modalidades";
 import { areaHaDoAnel, GlebasEditor } from "./GlebasEditor";
+import { DivisaoEditor } from "./DivisaoEditor";
+import { servicoDaParte, verticesDaParte } from "../lib/divisao_servico";
 import { glebasCobremTodos, ordensDasGlebas, partesDasGlebas, verticesForaDasGlebas } from "../lib/glebas";
 import type { Gleba } from "../lib/types";
 import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux";
@@ -330,6 +332,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // calcular o progresso, para que as duas telas nunca discordem.
   const ehConferencia = !vaiAoSigef(servico);
   const temGlebas = !!servico.tem_glebas;
+  // partilha: as glebas nasceram do motor de divisão em partes iguais
+  const ehDivisao = !!servico.divisao;
   // "temos o PDF" inclui o que ficou guardado: reabrir o serviço não pode
   // esconder a planta e as peças só porque o arquivo não está na memória
   const temSigef = !!sigefB64 || !!salvo.sigef;
@@ -592,6 +596,12 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         nome: g.nome,
         anel: g.anel,
         confrontante_interno: g.confrontante_interno ?? null,
+        // colunas da partilha (0022): só vão quando a gleba as tem — gleba de
+        // serviço comum continua gravando exatamente o que gravava
+        ...("detentor_nome" in g ? {
+          denominacao: g.denominacao ?? null, detentor_nome: g.detentor_nome ?? null, detentor_cpf: g.detentor_cpf ?? null,
+          fracao: g.fracao ?? null, servico_parte_id: g.servico_parte_id ?? null,
+        } : {}),
       }));
       const ids = linhas.map((l) => `"${l.id}"`).join(",");
       const del = supabase.from("glebas").delete().eq("servico_id", id);
@@ -682,6 +692,56 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
       setOcupado(false);
+    }
+  }
+
+  // ------- divisão em partes iguais (partilha) -------
+  function aplicarDivisaoNaTela(r: { vertices: Vertice[]; glebas: Gleba[]; divisao: Servico["divisao"] }) {
+    setVertices(r.vertices);
+    setGlebas(r.glebas);
+    setServico((s) => ({ ...s, tem_glebas: true, divisao: r.divisao ?? {} }));
+    avisar("ok", `Imóvel dividido em ${r.glebas.length} partes. Confira os confrontantes do perímetro e gere os documentos.`);
+  }
+  /** Serviço completo que vira partilha: liga as glebas e abre a etapa Divisão. */
+  function comecarDivisao() {
+    setServico((s) => ({ ...s, tem_glebas: true, divisao: { iguais: true } }));
+    setEtapa("glebas");
+  }
+
+  // Um serviço completo por parte, no nome do herdeiro. Os vértices levam os
+  // códigos do imóvel (o marco tem o mesmo nome nos dois GEOs) e as divisas
+  // internas já confrontam com a parte vizinha — ver verticesDaParte.
+  const [criandoGeos, setCriandoGeos] = useState(false);
+  const semCodigo = vertices.filter((v) => !v.codigo || v.codigo_provisorio).length;
+  async function criarGeosIndividuais() {
+    const partes = glebas.filter((g) => g.anel.length >= 3);
+    if (semCodigo > 0) { setErro("Gere os documentos do imóvel primeiro: os GEOs das partes usam os mesmos códigos dos marcos."); return; }
+    setCriandoGeos(true);
+    setErro(null);
+    try {
+      await salvar();
+      const novas = [...glebas];
+      let criados = 0;
+      for (const [k, g] of partes.entries()) {
+        if (g.servico_parte_id) continue;
+        const { data: novo, error } = await supabase.from("servicos").insert(servicoDaParte(servico, g)).select().single();
+        if (error) throw error;
+        const linhas = verticesDaParte(servico, vertices, partes, k, (novo as Servico).id);
+        const { error: eV } = await supabase.from("vertices").insert(linhas);
+        if (eV) throw eV;
+        const i = novas.indexOf(g);
+        novas[i] = { ...g, servico_parte_id: (novo as Servico).id };
+        if (g.id) await supabase.from("glebas").update({ servico_parte_id: (novo as Servico).id }).eq("id", g.id);
+        criados++;
+      }
+      setGlebas(novas);
+      avisar("ok", criados
+        ? `${criados} GEO(s) individual(is) criado(s), cada um no nome do herdeiro. Abra cada um para completar os dados da pessoa e gerar os documentos.`
+        : "Todas as partes já têm o seu GEO individual.");
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCriandoGeos(false);
     }
   }
 
@@ -1064,7 +1124,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     { chave: "dados", rotulo: "Dados", feita: pendencias.length === 0 },
     // Glebas ANTES de confrontar: a divisão organiza o desenho — a planta da
     // etapa seguinte e o documento completo já nascem pelos anéis das glebas.
-    ...(temGlebas ? [{ chave: "glebas" as Etapa, rotulo: "Glebas", feita: glebasOrdens.length > 0 }] : []),
+    ...(temGlebas ? [{ chave: "glebas" as Etapa, rotulo: ehDivisao ? "Divisão" : "Glebas", feita: glebasOrdens.length > 0 }] : []),
     { chave: "confrontantes", rotulo: "Confrontantes e vértices", feita: confrontantesPreenchidos > 0 },
     { chave: "documentos", rotulo: "Documentos", feita: ehConferencia ? docsProntos : !!plantaUrl && pecasProntas },
   ];
@@ -1290,6 +1350,15 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 </Secao>
               </div>
             </section>
+            {!temGlebas && !ehConferencia && chave === "completo" && (
+              <div className="bloco dv-convite">
+                <div>
+                  <b>Partilha ou herança?</b>
+                  <span className="sub"> Divida este imóvel em partes iguais: sai o GEO do imóvel inteiro e um GEO para cada parte, no nome de cada herdeiro.</span>
+                </div>
+                <button type="button" onClick={comecarDivisao}>Dividir em partes iguais</button>
+              </div>
+            )}
             {navEtapa}
           </>
         )}
@@ -1667,9 +1736,20 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             quando a planta for desenhada, que é o pedido do fluxo de gleba. */}
         {etapa === "glebas" && temGlebas && (
           <>
-            <section className="bloco" id="bloco-glebas">
+            {ehDivisao && (
+              <DivisaoEditor servico={servico} vertices={vertices} glebas={glebas}
+                onAplicar={aplicarDivisaoNaTela} onGlebas={setGlebas} />
+            )}
+            {!ehDivisao && (
+              <details className="bloco dv-recolhido">
+                <summary><b>Dividir automaticamente em partes iguais</b> <span className="sub">— partilha ou herança: o motor corta o imóvel em partes de mesma área</span></summary>
+                <DivisaoEditor servico={servico} vertices={vertices} glebas={glebas}
+                  onAplicar={aplicarDivisaoNaTela} onGlebas={setGlebas} />
+              </details>
+            )}
+            <section className={`bloco${ehDivisao ? " dv-glebas-manual" : ""}`} id="bloco-glebas">
               <header>
-                <h3>Glebas</h3>
+                <h3>{ehDivisao ? "Partes como glebas (ajuste manual)" : "Glebas"}</h3>
                 <span className="desc">
                   {glebas.length} gleba(s) — divida ANTES de confrontar: cada gleba é um anel próprio na planta dos confrontantes e no documento completo
                   {verticesFora.length > 0 && glebasOrdens.length > 0 && <> · <b>{verticesFora.length} vértice(s) fora de gleba</b> ({verticesFora.slice(0, 12).map((v) => v.num_txt).join(", ")}{verticesFora.length > 12 ? "…" : ""})</>}
@@ -1685,7 +1765,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 areaTotalHa={glebasOrdens.length ? 0 : (Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0)}
                 onChange={setGlebas}
               />
-              {glebas.filter((g) => g.anel.length >= 3).length > 0 && (
+              {!ehDivisao && glebas.filter((g) => g.anel.length >= 3).length > 0 && (
                 <div className="rodape-bloco">
                   <BotaoPerigo
                     titulo="Separar cada gleba em um serviço próprio"
@@ -2036,6 +2116,44 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 <p className="sub" style={{ margin: 0 }}>
                   Vértice inicial <span className="mono">{gerado.resumo.verticeInicial}</span> · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
                 </p>
+              </section>
+            )}
+
+            {/* ---- GEOs individuais da partilha ---- */}
+            {ehDivisao && glebas.filter((g) => g.anel.length >= 3).length >= 2 && (
+              <section className="bloco" id="bloco-geos-partes">
+                <header>
+                  <h3>GEO de cada parte</h3>
+                  <span className="desc">um serviço completo por parte, no nome do herdeiro, com os mesmos marcos do imóvel e as divisas internas já confrontando com a parte vizinha — segue para o SIGEF e para as peças como qualquer serviço</span>
+                </header>
+                <div className="tabela-scroll">
+                  <table className="dv-tabela">
+                    <thead><tr><th>Parte</th><th>Herdeiro</th><th>Área (ha)</th><th>GEO individual</th></tr></thead>
+                    <tbody>
+                      {glebas.filter((g) => g.anel.length >= 3).map((g, i) => (
+                        <tr key={g.id ?? i}>
+                          <td><b>{g.nome}</b></td>
+                          <td>{g.detentor_nome || <span className="sub">— sem herdeiro informado (sai no nome do proprietário)</span>}</td>
+                          <td className="mono">{areaHaDoAnel(g.anel).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</td>
+                          <td>{g.servico_parte_id
+                            ? <a href={`#/servico/${g.servico_parte_id}`}>abrir o GEO da parte →</a>
+                            : <span className="sub">ainda não criado</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="acoes-linha">
+                  <button className="principal" disabled={criandoGeos || semCodigo > 0 || glebas.every((g) => g.anel.length < 3 || g.servico_parte_id)}
+                    onClick={criarGeosIndividuais}>
+                    {criandoGeos ? "Criando os GEOs…" : `Criar os GEOs individuais (${glebas.filter((g) => g.anel.length >= 3 && !g.servico_parte_id).length})`}
+                  </button>
+                  <span className="sub">
+                    {semCodigo > 0
+                      ? `Gere os documentos do imóvel primeiro: ${semCodigo} marco(s) ainda sem código definitivo, e os GEOs das partes usam os mesmos códigos.`
+                      : "O GEO geral (todas as partes) é este serviço; cada parte ganha o seu."}
+                  </span>
+                </div>
               </section>
             )}
 

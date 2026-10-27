@@ -29,6 +29,7 @@ import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
 
 // só no `npm run dev`: fica num pedaço à parte que o build nunca carrega
 const LaboratorioPlanta = lazy(() => import("./components/planta/LaboratorioPlanta").then((m) => ({ default: m.LaboratorioPlanta })));
+const LaboratorioDivisao = lazy(() => import("./components/LaboratorioDivisao").then((m) => ({ default: m.LaboratorioDivisao })));
 
 export default function App() {
   const [logado, setLogado] = useState<boolean | null>(null);
@@ -91,6 +92,7 @@ export default function App() {
   // Laboratório do loteamento: só no servidor de desenvolvimento (some do build).
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/loteamento")) return <Laboratorio />;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/planta")) return <Suspense fallback={null}><LaboratorioPlanta /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/divisao")) return <Suspense fallback={null}><LaboratorioDivisao /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vértice", href: "#/" }} />;
@@ -142,9 +144,16 @@ export default function App() {
    * carimba aqui, uma vez só, antes de a tela de conferência abrir.
    */
   async function aplicarModalidade(parse: ResultadoParse, chave: ChaveServico): Promise<ResultadoParse> {
-    const campos = definicaoDe(chave).campos;
+    const def = definicaoDe(chave);
+    const campos = def.campos;
     const patch = { modalidade: campos.modalidade, tem_glebas: campos.tem_glebas };
     await supabase.from("servicos").update(patch).eq("id", parse.servico.id);
+    // A partilha grava à parte: se a coluna ainda não existir no banco, o serviço
+    // continua de glebas (e o motor fica no "Dividir automaticamente" da etapa).
+    if (campos.divisao) {
+      const { error } = await supabase.from("servicos").update({ divisao: { iguais: true } }).eq("id", parse.servico.id);
+      if (!error) return { ...parse, servico: { ...parse.servico, ...patch, divisao: { iguais: true } } };
+    }
     return { ...parse, servico: { ...parse.servico, ...patch } };
   }
 

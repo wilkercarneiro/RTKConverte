@@ -309,8 +309,10 @@ Deno.serve(async (req) => {
     // e somam as áreas; além delas, cada gleba ganha o seu jogo completo. Foi o
     // que o operador pediu: o cartório recebe o conjunto e a parcela.
     let casados: BlocoDaGleba[] = [];
+    let linhasGlebas: (GlebaRow & { denominacao?: string | null; detentor_nome?: string | null; detentor_cpf?: string | null })[] = [];
     if (blocos.length > 1) {
       const { data: glebaRows } = await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem");
+      linhasGlebas = (glebaRows ?? []) as typeof linhasGlebas;
       casados = casarBlocosComGlebas(blocos, (glebaRows ?? []) as GlebaRow[], servico.denominacao ?? "", servico.fuso_utm ?? 24, proj4);
       avisos.push(...avisosDoCasamento(casados, (glebaRows ?? []) as GlebaRow[]));
     }
@@ -477,9 +479,17 @@ Deno.serve(async (req) => {
     //    acima (ver PECAS_DA_GLEBA).
     for (const u of unidades) {
       const seguro = u.nome.replace(RE_NOME_ARQUIVO, "-").trim();
+      // Partilha: a parte tem herdeiro e denominação próprios, e o jogo dela sai
+      // no nome dele. Sem herdeiro informado, é o imóvel com o nome da gleba.
+      const linha = linhasGlebas.find((g) => (g.nome ?? "").trim() === u.nome);
+      const herdeiro = (linha?.detentor_nome ?? "").trim();
       await emitirJogo({
         ...dados,
-        denominacao: `${servico.denominacao} - ${u.nome}`,
+        ...(herdeiro ? {
+          requerentes: [{ nome: herdeiro, cpf: (linha?.detentor_cpf ?? "").trim(), genero: "M" as const, isEspolio: false }],
+          rg: null, endereco: "",
+        } : {}),
+        denominacao: (linha?.denominacao ?? "").trim() || `${servico.denominacao} - ${u.nome}`,
         areaHa: u.areaHa,
         perimetro: u.perimetro,
         sigef: u.sigef,

@@ -11,7 +11,7 @@
 import type { Modalidade, Servico } from "./types";
 
 /** Chave do cartão na tela — não é coluna do banco. */
-export type ChaveServico = "completo" | "conferencia" | "gleba" | "loteamento" | "pecas";
+export type ChaveServico = "completo" | "conferencia" | "gleba" | "divisao" | "loteamento" | "pecas";
 
 export interface DefinicaoServico {
   chave: ChaveServico;
@@ -25,7 +25,7 @@ export interface DefinicaoServico {
   entrega: string[];
   cta: string;
   /** Colunas gravadas ao criar. `tipo` decide qual pipeline abre. */
-  campos: { tipo: "geo" | "pecas"; modalidade: Modalidade; tem_glebas: boolean };
+  campos: { tipo: "geo" | "pecas"; modalidade: Modalidade; tem_glebas: boolean; divisao?: boolean };
   /** Cartão principal (topo) ou entrada secundária. */
   principal: boolean;
 }
@@ -65,6 +65,18 @@ export const SERVICOS: DefinicaoServico[] = [
     principal: true,
   },
   {
+    chave: "divisao",
+    titulo: "Divisão em partes iguais",
+    icone: "M3 3h18v18H3zM9 3l-2 18M16 3l-2 18",
+    resumo: "Partilha ou herança: o motor divide o imóvel em partes de mesma área (ou na fração de cada herdeiro), com divisas retas e frente para a estrada.",
+    requisitos: ["TXT do levantamento", "documentos do proprietário", "nome e CPF de cada herdeiro"],
+    entrega: ["GEO do imóvel inteiro com todas as partes", "Planta de cada parte", "Um GEO completo por herdeiro"],
+    cta: "Enviar TXT",
+    // partilha: o serviço nasce com `servicos.divisao` (o motor de divisão em partes iguais)
+    campos: { tipo: "geo", modalidade: "completo", tem_glebas: true, divisao: true },
+    principal: true,
+  },
+  {
     chave: "loteamento",
     titulo: "Loteamento",
     icone: "M3 3h18v18H3zM3 9h18M3 15h18M9 3v6M15 9v6M9 15v6",
@@ -99,6 +111,7 @@ export function chaveDoServico(s: Pick<Servico, "tipo" | "modalidade" | "tem_gle
   if (s.tipo === "pecas") return "pecas";
   if (s.modalidade === "conferencia") return "conferencia";
   if (s.modalidade === "loteamento") return "loteamento";
+  if ((s as { divisao?: unknown }).divisao) return "divisao";
   return s.tem_glebas ? "gleba" : "completo";
 }
 
@@ -107,6 +120,7 @@ export const rotuloCurto: Record<ChaveServico, string> = {
   completo: "Completo",
   conferencia: "Conferência",
   gleba: "Gleba",
+  divisao: "Divisão",
   loteamento: "Loteamento",
   pecas: "Peças",
 };
