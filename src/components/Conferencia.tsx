@@ -32,6 +32,7 @@ import type { PontoMapa } from "./MapaInterativo";
 import { aneisLonLat, lonLatDoVertice } from "../lib/sigef";
 import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
 import { HistoricoDocs } from "./HistoricoDocs";
+import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { Avisos, BotaoPerigo, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 
 /** Etapas do serviço: uma por vez, como abas dentro do cabeçalho. */
@@ -838,12 +839,21 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
       setPlantaUrl(r.planta_pdf);
       for (const a of r.avisos ?? []) avisar("alerta", a);
       avisar("ok", `Planta ${folhaEfetiva} gerada.`);
+      abrirPlantaSigef(r.planta_pdf);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
       setGerandoPlanta(false);
     }
   }
+
+  const nomePlanta = (servico.denominacao || "Planta").replace(/[\\/:*?"<>|]/g, "-").trim();
+  const abrirPlantaSigef = (url: string) => abrirPlanta({
+    url, servicoId: servico.id, nome: `Planta SIGEF - ${nomePlanta}`, titulo: `Planta ${folhaEfetiva} (SIGEF) · ${servico.denominacao ?? ""}`,
+  });
+  const abrirPlantaSistema = (url: string, rotulo: string) => abrirPlanta({
+    url, servicoId: servico.id, nome: `${rotulo} - ${nomePlanta}`, titulo: `${rotulo} · ${servico.denominacao ?? ""}`,
+  });
 
   // ------- etapa 3B: peças técnicas -------
   async function gerarPecas() {
@@ -909,6 +919,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
       });
       setGerado(r);
       for (const a of r.avisos ?? []) avisar("alerta", a);
+      if (r.planta_pdf) abrirPlantaSistema(r.planta_pdf, `Planta ${r.folha ?? folhaEfetiva}`);
       avisar("ok", r.planta_pdf ? "Memorial, planilha e planta gerados com sucesso." : "Memorial e planilha gerados com sucesso.");
       const { data } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
       if (data) setVertices(data as Vertice[]);
@@ -1995,9 +2006,14 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     <span className="ext">ODS</span> Planilha SIGEF
                   </a>
                   {gerado.planta_pdf && (
-                    <a className="botao-download" href={gerado.planta_pdf} target="_blank" rel="noreferrer">
-                      <span className="ext">PDF</span> Planta {gerado.folha ?? "A1"} {gerado.glebas?.length ? "geral, com todas as glebas" : "(dados do sistema)"}
-                    </a>
+                    <>
+                      <a className="botao-download" href={gerado.planta_pdf} target="_blank" rel="noreferrer">
+                        <span className="ext">PDF</span> Planta {gerado.folha ?? "A1"} {gerado.glebas?.length ? "geral, com todas as glebas" : "(dados do sistema)"}
+                      </a>
+                      <button type="button" className="botao-download" onClick={() => abrirPlantaSistema(gerado.planta_pdf!, `Planta ${gerado.folha ?? "A1"}`)}>
+                        <span className="ext">✎</span> Ver e editar a planta
+                      </button>
+                    </>
                   )}
                 </div>
                 {!!gerado.glebas?.length && (
@@ -2007,6 +2023,11 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                         <b>{g.nome}</b> <span className="sub">{g.areaHa.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} ha</span>
                         <div className="downloads">
                           {g.planta_pdf && <a className="botao-download" href={g.planta_pdf} target="_blank" rel="noreferrer"><span className="ext">PDF</span> Planta A3</a>}
+                          {g.planta_pdf && (
+                            <button type="button" className="botao-download" onClick={() => abrirPlantaSistema(g.planta_pdf!, `Planta A3 ${g.nome}`)}>
+                              <span className="ext">✎</span> Ver e editar
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -2044,6 +2065,11 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   <button className="principal" disabled={gerandoPlanta} onClick={gerarPlanta}>
                     {gerandoPlanta ? "Gerando planta…" : `Gerar Planta ${folhaEfetiva} do SIGEF (PDF)`}
                   </button>
+                  {plantaUrl && (
+                    <button type="button" className="botao-download" onClick={() => abrirPlantaSigef(plantaUrl)}>
+                      <span className="ext">✎</span> Ver e editar a planta
+                    </button>
+                  )}
                   {plantaUrl && (
                     <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
                       <span className="ext">PDF</span> Planta {folhaEfetiva} (SIGEF)

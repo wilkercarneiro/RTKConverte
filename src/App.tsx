@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { configOk, supabase } from "./lib/supabase";
 import { Login } from "./components/Login";
 import { AppShell } from "./components/AppShell";
@@ -26,6 +26,9 @@ import { definicaoDe } from "./lib/modalidades";
 import type { ChaveServico } from "./lib/modalidades";
 import { useRota } from "./lib/rota";
 import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
+
+// só no `npm run dev`: fica num pedaço à parte que o build nunca carrega
+const LaboratorioPlanta = lazy(() => import("./components/planta/LaboratorioPlanta").then((m) => ({ default: m.LaboratorioPlanta })));
 
 export default function App() {
   const [logado, setLogado] = useState<boolean | null>(null);
@@ -87,6 +90,7 @@ export default function App() {
 
   // Laboratório do loteamento: só no servidor de desenvolvimento (some do build).
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/loteamento")) return <Laboratorio />;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/planta")) return <Suspense fallback={null}><LaboratorioPlanta /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vértice", href: "#/" }} />;

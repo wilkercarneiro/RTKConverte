@@ -602,7 +602,7 @@ Deno.serve(async (req) => {
           }
           : undefined,
       });
-      plantaBuf = await gerarPlantaPdf(dadosPlanta);
+      plantaBuf = await gerarPlantaPdf(dadosPlanta, undefined, { editavel: true });
     } catch (e) {
       avisosGeracao.push(`Memorial e planilha gerados, mas a planta falhou: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -700,7 +700,7 @@ Deno.serve(async (req) => {
               ? { matricula: servico.conf_exibir_matricula !== false, denominacao: servico.conf_exibir_denominacao !== false, trt: servico.conf_exibir_trt !== false }
               : undefined,
           });
-          const pdfU = await gerarPlantaPdf(dadosPlantaU);
+          const pdfU = await gerarPlantaPdf(dadosPlantaU, undefined, { editavel: true });
           const path = `${pastaU}/planta-A3.pdf`;
           const up = await supa.storage.from("gerados").upload(path, pdfU, { upsert: true, contentType: "application/pdf" });
           if (up.error) throw up.error;

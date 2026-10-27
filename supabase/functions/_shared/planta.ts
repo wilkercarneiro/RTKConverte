@@ -4,8 +4,9 @@
 // assinatura, carimbo com a logo, bloco planimétrico, RT e rodapé.
 //   matrícula → folha A1 paisagem, COM quadro analítico e selos de cartório
 //   posse     → folha A3 paisagem, SEM quadro analítico, assinatura do posseiro
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, concatTransformationMatrix, degrees, popGraphicsState, pushGraphicsState, rgb } from "pdf-lib";
+import { PDFDocument, PDFFont, StandardFonts, concatTransformationMatrix, degrees, popGraphicsState, pushGraphicsState, rgb } from "pdf-lib";
 import { partesDescritivo, textoWinAnsi } from "./texto.ts";
+import { GravadorCena, embutirCena, embutirImagem, marcarObjeto, type PaginaPlanta } from "./planta_cena.ts";
 
 // ---------------------------------------------------------------------------
 // dados de entrada
@@ -223,7 +224,10 @@ function fmtMilhar(n: number): string {
   return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 }
 
-interface Ctx { page: PDFPage; f: PDFFont; fb: PDFFont }
+interface Ctx { page: PaginaPlanta; f: PDFFont; fb: PDFFont }
+
+/** Objeto e camada das próximas peças da cena (o editor seleciona por objeto). */
+const obj = (c: Ctx, id: string, cat: string, rotulo: string, travado = false) => marcarObjeto(c.page, id, cat, rotulo, travado);
 
 // Único ponto em que texto vira glifo. A limpeza WinAnsi mora aqui, e não em
 // cada chamador, porque a folha é desenhada numa passada só: um caractere que a
@@ -713,7 +717,13 @@ function medirQuadroNumerados(
 // ---------------------------------------------------------------------------
 // principal
 // ---------------------------------------------------------------------------
-export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise<Uint8Array> {
+/**
+ * `editavel`: embute no PDF a CENA do desenho (planta_cena.ts), que é o que o
+ * editor do navegador abre. O desenho não muda em nada — o gravador só repassa
+ * as chamadas à página —, por isso o PDF sem a opção continua byte a byte o de
+ * sempre.
+ */
+export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { editavel?: boolean } = {}): Promise<Uint8Array> {
   const posse = d.tipoImovel === "posse";
   // Qual folha sai. `d.folha` ausente reproduz a regra histórica — posse em A3,
   // resto em A1 — para que nenhum chamador antigo mude de comportamento por ter
@@ -752,12 +762,15 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   };
   const [W, H] = simples ? TELA_RETRATO : TELA_PAISAGEM;
   const pdf = await PDFDocument.create();
-  const page = pdf.addPage([W, H]);
+  // O gravador fica entre o desenho e a página: repassa cada chamada e a anota
+  // como peça da cena. Tudo abaixo desenha nele como desenharia na página.
+  const page = new GravadorCena(pdf.addPage([W, H]));
   const f = await pdf.embedFont(StandardFonts.Helvetica);
   const fb = await pdf.embedFont(StandardFonts.HelveticaBold);
   const c: Ctx = { page, f, fb };
 
   // molduras
+  obj(c, "moldura", "moldura", "Molduras");
   caixa(c, 14, 14, W - 28, H - 28, 2);
   caixa(c, 20, 20, W - 40, H - 40, 0.8);
 
@@ -825,6 +838,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // inteira encolhe para um A4, e 11pt na tela viram 3,9pt no papel.
   const GRID_TAM = simples ? 18 : 11;
   for (let e = e0; X(e) < dArea.x + dArea.w; e += passo) {
+    obj(c, `malha:e${e}`, "malha", `Malha E=${fmtMilhar(e)}`);
     linha(c, X(e), dArea.y, X(e), dArea.y + dArea.h, 0.4, CINZA, [2, 4]);
     const et = `E=${fmtMilhar(e)}`;
     const eLen = f.widthOfTextAtSize(et, GRID_TAM);
@@ -832,6 +846,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     texto(c, et, X(e) + 9, dArea.y + 12 + eLen, GRID_TAM, { cor: CINZA, rot: -90 });
   }
   for (let n = n0; Y(n) < dArea.y + dArea.h; n += passo) {
+    obj(c, `malha:n${n}`, "malha", `Malha N=${fmtMilhar(n)}`);
     linha(c, dArea.x, Y(n), dArea.x + dArea.w, Y(n), 0.4, CINZA, [2, 4]);
     const nt = `N=${fmtMilhar(n)}`;
     texto(c, nt, dArea.x + 6, Y(n) + 6, GRID_TAM, { cor: CINZA });
@@ -942,7 +957,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // depois de pronta, e a redução leva a folga junto, na mesma proporção.
   const FOLGA = Math.max(9, 0.011 * diagPoly);
 
-  for (const A of aneis) {
+  for (const [ai, A] of aneis.entries()) {
     const { vs, nv, normalAresta, trechoDoIdx } = A;
     for (let i = 0; i < nv; i++) {
       const t = trechoDoIdx(i);
@@ -952,6 +967,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       const a = vs[i], b = vs[(i + 1) % nv];
       // a linha dupla do rio é SEMPRE por fora: a normal vem do sentido do anel
       const { x: nx, y: ny } = normalAresta(i);
+      obj(c, `rio:${ai}:${t.inicioIdx}`, "rio", `Rio — ${linhasDescritivo(t.descritivo)[0] ?? ""}`);
       for (const off of [5, 11]) {
         const seg = { x1: X(a.e) + nx * off, y1: Y(a.n) + ny * off, x2: X(b.e) + nx * off, y2: Y(b.n) + ny * off };
         linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, AZUL_RIO);
@@ -969,10 +985,13 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     for (let i = 0; i < nv; i++) {
       const a = vs[i], b = vs[(i + 1) % nv];
       const seg = { x1: X(a.e), y1: Y(a.n), x2: X(b.e), y2: Y(b.n) };
+      // a poligonal é o terreno: no editor ela aparece, mas não se mexe
+      obj(c, "terreno", "terreno", "Traçado do terreno", true);
       linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 3.4, AZUL);
       obstaculos.push(seg);
       const t = trechoDoIdx(i);
       if (t.isEstrada && !t.isRio) {
+        obj(c, `estrada:${ai}:${t.inicioIdx}`, "estrada", `Estrada — ${linhasDescritivo(t.descritivo)[0] ?? ""}`);
         linha(c, seg.x1, seg.y1, seg.x2, seg.y2, LARG_ESTRADA, VERMELHO);
         vias.push(seg);
       }
@@ -993,7 +1012,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // Em modo PARTES as glebas são as próprias partes: as linhas já saíram do
   // laço dos anéis; aqui só entrariam de novo, por cima. O bloco de
   // identificação e o quadro analítico por parte continuam mais abaixo.
-  for (const gl of (partes.length ? [] : glebas)) {
+  for (const [gi, gl] of (partes.length ? [] : glebas).entries()) {
     const gv = gl.vertices;
     const viasGl = new Set(gl.viasIdx ?? []);
     const riosGl = new Set(gl.riosIdx ?? []);
@@ -1021,6 +1040,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
         const dx = q.x - p.x, dy = q.y - p.y;
         const len = Math.hypot(dx, dy) || 1;
         const nx = sg * dy / len, nyy = -sg * dx / len;
+        obj(c, `rio-gleba:${gi}`, "rio", `Rio — ${gl.nome}`);
         for (const off of [5, 11]) {
           const seg = { x1: p.x + nx * off, y1: p.y + nyy * off, x2: q.x + nx * off, y2: q.y + nyy * off };
           linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 2.8, AZUL_RIO);
@@ -1029,12 +1049,14 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
         }
       }
 
+      obj(c, "terreno", "terreno", "Traçado do terreno", true);
       linha(c, p.x, p.y, q.x, q.y, 3.4, AZUL);
       const seg = { x1: p.x, y1: p.y, x2: q.x, y2: q.y };
       obstaculos.push(seg);
       divisasGleba.push(seg);
       // estrada da gleba: a mesma linha vermelha única, por cima da azul
       if (viasGl.has(i) && !riosGl.has(i)) {
+        obj(c, `estrada-gleba:${gi}`, "estrada", `Estrada — ${gl.nome}`);
         linha(c, p.x, p.y, q.x, q.y, LARG_ESTRADA, VERMELHO);
         vias.push(seg);
       }
@@ -1095,11 +1117,12 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // do vizinho tinha de se virar em volta deles.
   const codigosPendentes: { codigo: string; lx: number; ly: number; ret: Ret }[] = [];
   const marcos: Seg[] = [];
-  for (const A of aneis) {
+  for (const [ai, A] of aneis.entries()) {
     const { vs, nv, normalAresta, normalVertice, trechos: trechosAnel } = A;
     const marcosAntes = marcos.length;
   for (let i = 0; i < nv; i++) {
     const v = vs[i];
+    obj(c, "terreno", "terreno", "Traçado do terreno", true);
     page.drawCircle({ x: X(v.e), y: Y(v.n), size: 1.4, color: PRETO });
     // fora do polígono pela bissetriz das duas arestas, não pelo centro da folha
     const { x: nx, y: ny } = normalVertice(i);
@@ -1108,6 +1131,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       x1: X(v.e) + nx * 2, y1: Y(v.n) + ny * 2,
       x2: X(v.e) + nx * 6, y2: Y(v.n) + ny * 6,
     };
+    obj(c, `tique:${ai}:${i}`, "tique", `Tique — ${v.codigo}`);
     linha(c, tique.x1, tique.y1, tique.x2, tique.y2, 0.9);
     // o tique é linha do desenho como qualquer outra: nenhum rótulo passa por cima
     obstaculos.push(tique);
@@ -1134,6 +1158,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     if (!vm) continue;
     const { x: gx, y: gy } = normalVertice(t.inicioIdx % nv);
     const x1 = X(vm.e), y1 = Y(vm.n), x2 = x1 + gx * 50, y2 = y1 + gy * 50;
+    obj(c, `marco:${ai}:${t.inicioIdx}`, "marco", `Divisão no ${vm.codigo}`);
     linha(c, x1, y1, x2, y2, 2.8, VERDE);
     marcos.push({ x1, y1, x2, y2 });
   }
@@ -1270,6 +1295,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
         }));
       const esc = melhorLivre(cands, obstaculos, ocupado, FOLGA, aneisTela)
         ?? menosPior(cands, obstaculos, ocupado, FOLGA, aneisTela);
+      obj(c, `via:${ai}:${t.inicioIdx}`, "rotulo-via", nome);
       texto(c, nome, esc.x, esc.y, esc.tam, { bold: true, cor: PRETO, rot });
       ocupado.push(esc.ret);
       rotulosTrecho.push(esc.ret);
@@ -1313,6 +1339,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
         ?? menosPior(candsN, obstaculos, ocupado, FOLGA, aneisTela);
       // disco branco OPACO: o número cai sobre a malha de coordenadas tanto
       // quanto o bloco caía, e um dígito sobre linha tracejada não se lê
+      obj(c, `num:${ai}:${t.inicioIdx}`, "rotulo-numero", `Confrontante ${rotulo}`);
       page.drawCircle({ x: escN.cx, y: escN.cy, size: R, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 1.4 });
       texto(c, rotulo, escN.cx, escN.cy - NUM_TAM * 0.35, NUM_TAM, { bold: true, center: true });
       ocupado.push(escN.ret);
@@ -1408,6 +1435,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     }
     const esc = melhorLivre(cands, obstaculos, ocupado, FOLGA, aneisTela)
       ?? menosPior(cands, obstaculos, ocupado, FOLGA, aneisTela);
+    obj(c, `conf:${ai}:${t.inicioIdx}`, "rotulo-confrontante", linhasDescritivo(t.descritivo).find((l) => !l.startsWith("(")) ?? esc.lbl[0] ?? "Confrontante");
     for (const [li, lt] of esc.lbl.entries()) texto(c, lt, esc.lx, esc.ty - li * esc.esp, esc.tam);
     ocupado.push(esc.ret);
     rotulosTrecho.push(esc.ret);
@@ -1469,6 +1497,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       byTopo = polo.y + (centroLinhas.length * esp) / 2;
     }
     // alinhado à esquerda, padrão da planta de referência
+    obj(c, "identificacao", "identificacao", "Identificação do imóvel");
     for (const [li, lt] of centroLinhas.entries()) {
       texto(c, lt, bx0, byTopo - tam - li * esp, tam, { bold: li === 1 });
     }
@@ -1482,9 +1511,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   //
   // Valem também para a conferência: lá o código é "P-1" (ver
   // DadosPlanta.conferencia), curto e sem cara de oficial.
-  for (const cp of codigosPendentes) {
+  for (const [ci, cp] of codigosPendentes.entries()) {
     if (ocupado.some((o) => retCruzaRet(cp.ret, o))) { rotulosOcultos++; continue; }
     ocupado.push(cp.ret);
+    obj(c, `cod:${ci}`, "codigo-vertice", cp.codigo);
     texto(c, cp.codigo, cp.lx, cp.ly, VERT_TAM, { cor: PRETO });
   }
 
@@ -1518,6 +1548,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     };
     const p = (pt: [number, number]) => `${pt[0].toFixed(2)} ${pt[1].toFixed(2)}`;
     // disco branco + anéis
+    obj(c, "bussola", "bussola", "Rosa dos ventos");
     page.drawCircle({ x: bx, y: by, size: R, borderWidth: 1.4, borderColor: PRETO, color: rgb(1, 1, 1) });
     page.drawCircle({ x: bx, y: by, size: R - 7, borderWidth: 0.6, borderColor: CINZA });
     // marcações a cada 45° (coordenadas da página: y p/ cima)
@@ -1633,7 +1664,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // planimétrico aperta o passo dos campos até o piso; só depois o quadro cede
   // (e aí as linhas são cortadas com a nota).
   const satImg = d.satelite
-    ? (d.satelite.tipo === "png" ? await pdf.embedPng(d.satelite.bytes) : await pdf.embedJpg(d.satelite.bytes))
+    ? await embutirImagem(pdf, page, d.satelite.bytes, d.satelite.tipo)
     : null;
   const SITUACAO_MIN = sbH * 0.14;
   const situacaoAlvo = Math.max(SITUACAO_MIN, SEC_TIT + 12 + (satImg ? (SB_W - 12) * satImg.height / satImg.width : 200));
@@ -1658,6 +1689,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   if (!semQuadro && !simples) {
     const h = hQuadro;
     const base = yCursor - h;
+    obj(c, "quadro", "quadro", "Quadro analítico");
     const topoUtil = secao(base, h, "QUADRO ANALÍTICO");
     const heads = ["VÉRTICE", "LADO", "LONGITUDE", "LATITUDE", "AZIMUTE", "DIST.(m)", "ALTIT."];
     const cols = [68, 136, 80, 80, 62, 54, 44];
@@ -1732,6 +1764,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // ---- PLANTA DE SITUAÇÃO (imagem de satélite enviada na geração) ----
   if (!simples) {
     const h = hSituacao;
+    obj(c, "situacao", "situacao", "Planta de situação");
     const topoUtil = secao(yCursor - h, h, "PLANTA DE SITUAÇÃO");
     if (satImg) {
       const maxW = SB_W - 12, maxH = topoUtil - (yCursor - h) - 12;
@@ -1754,8 +1787,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   if (!simples && d.logo) {
     const h = hCarimbo;
     const base = yCursor - h;
+    obj(c, "carimbo", "carimbo", "Carimbo da empresa");
     const topoUtil = secao(base, h, "CARIMBO DA EMPRESA");
-    const img = d.logo.tipo === "png" ? await pdf.embedPng(d.logo.bytes) : await pdf.embedJpg(d.logo.bytes);
+    const img = await embutirImagem(pdf, page, d.logo.bytes, d.logo.tipo);
     const maxW = SB_W - 80, maxH = topoUtil - base - 24;
     const sc = Math.min(maxW / img.width, maxH / img.height);
     page.drawImage(img, {
@@ -1770,6 +1804,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   if (!simples) {
     const h = hPlani;
     const base = yCursor - h;
+    obj(c, "planimetrico", "planimetrico", "Planimétrico");
     const topoUtil = secao(base, h, "PLANIMÉTRICO DO IMÓVEL GEORREFERENCIADO");
     const colEsq = sbX + 12, colDir = sbX + SB_W / 2 + 8;
     const colW = SB_W / 2 - 20;
@@ -1832,6 +1867,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       }
     }
     // ---- assinaturas (RT | proprietários) e, embaixo, os selos do cartório ----
+    obj(c, "assinaturas", "planimetrico", "Assinaturas e selos do cartório");
     const bandTop = base + PLANI_BAND_H;
     const seloTop = base + SELO_CART_H;
     const meio = sbX + SB_W / 2;
@@ -1880,6 +1916,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   if (!simples) {
     const h = hRodape;
     const topo = yCursor;
+    obj(c, "rodape", "rodape", "Rodapé");
     caixa(c, sbX, topo - h, SB_W, h);
     // Com glebas, área e perímetro saem POR GLEBA — é o que a planta de
     // referência faz ("GLEBA 1: 502,2827 HA/1.153,08 TAREFAS"). Um total só não
@@ -1928,9 +1965,11 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       ["PLANTA DE SITUAÇÃO", d.satelite],
     ] as const).entries()) {
       const cx = x0 + i * meia;
+      if (i === 0) obj(c, "carimbo", "carimbo", "Carimbo da empresa");
+      else obj(c, "situacao", "situacao", "Planta de situação");
       const topoUtil = caixaTitulo(c, cx, faixaY, meia, FAIXA_H, titulo);
       if (arte) {
-        const img = arte.tipo === "png" ? await pdf.embedPng(arte.bytes) : await pdf.embedJpg(arte.bytes);
+        const img = await embutirImagem(pdf, page, arte.bytes, arte.tipo);
         // a logo respira dentro da célula; o satélite ocupa quase tudo
         const folga = i === 0 ? 46 : 12;
         const sc = Math.min((meia - folga * 2) / img.width, (topoUtil - faixaY - folga) / img.height);
@@ -1955,6 +1994,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
       ["FOLHA", folha],
     ];
     const linhaH = SELO_H / 3;
+    obj(c, "selo", "selo", "Selo");
     caixa(c, x0, 20, x1 - x0, SELO_H);
     for (const [i, [rot, val]] of campos.entries()) {
       const col = i % 2, row = Math.floor(i / 2);
@@ -1968,6 +2008,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
 
     // ÁREA TOTAL no canto do desenho, como no modelo
     const total = ["AREA  TOTAL:", `${d.areaFmt} HECTARES`, `${d.tarefasFmt} TAREFAS`];
+    obj(c, "area", "area", "Área total");
     for (const [i, t] of total.entries()) {
       texto(c, t, dArea.x + dArea.w - 16 - f.widthOfTextAtSize(t, 26), dArea.y + 76 - i * 32, 26);
     }
@@ -1984,8 +2025,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // Desenhado no FIM, quando `obstaculos` e `ocupado` já têm tudo: assim o bloco
   // desvia dos traços do desenho, dos nomes dos vizinhos e dos códigos de
   // vértice, em vez de ser desviado por eles.
-  for (const gl of glebas) {
+  for (const [gi, gl] of glebas.entries()) {
     const anelGl: Pt[] = gl.vertices.map((v) => ({ x: X(v.e), y: Y(v.n) }));
+    obj(c, `gleba:${gi}`, "gleba", `Identificação — ${gl.nome}`);
 
     // centroide da ÁREA: em gleba com um lado muito subdividido a média dos
     // vértices puxa o bloco para aquele lado
@@ -2059,6 +2101,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   if (simples) {
     // mesma caixa reservada lá em cima em `legendaRet` — nenhum rótulo caiu aqui
     const lx = legendaRet.x1 + 6, boxW = legendaRet.x2 - legendaRet.x1, boxH = legendaRet.y2 - legendaRet.y1;
+    obj(c, "legenda", "legenda", "Legenda");
     page.drawRectangle({ x: legendaRet.x1, y: legendaRet.y1, width: boxW, height: boxH, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 0.8 });
     const lyTop = legendaRet.y2;
     texto(c, "LEGENDAS / ABREVIATURAS", lx, lyTop - 17, 11, { bold: true });
@@ -2080,6 +2123,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
   // não disputa espaço com nada: escreve onde ninguém pôde desenhar.
   if (quadroNum.h > 0) {
     const qx = dAreaCheia.x, qy = dAreaCheia.y, qw = dAreaCheia.w, qh = quadroNum.h;
+    obj(c, "quadro-confrontantes", "quadro-confrontantes", "Quadro de confrontantes");
     page.drawRectangle({ x: qx, y: qy, width: qw, height: qh, color: rgb(1, 1, 1), borderColor: PRETO, borderWidth: 0.8 });
     texto(c, "CONFRONTANTES", qx + 8, qy + qh - 16, 12, { bold: true });
     linha(c, qx, qy + qh - 24, qx + qw, qy + qh - 24, 0.5);
@@ -2138,6 +2182,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta): Promise
     page.scaleContent(s, s);
     page.translateContent((w2 - W * s) / 2, (h2 - H * s) / 2);
     page.setSize(w2, h2);
+  }
+  if (opts.editavel) {
+    embutirCena(pdf, { ...page.cena(), nomeFolha: folha });
   }
 
   return await pdf.save();

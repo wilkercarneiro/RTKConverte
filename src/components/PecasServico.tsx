@@ -12,6 +12,7 @@ import { contarPreenchidos, useAutosave, useAvisos } from "../lib/ux";
 import { ehRioPorLimite, ehViaPorLimite, numerarConfrontantes, viasDaPlanta } from "../lib/trechos";
 import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
+import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { Avisos, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 import { Icone, ICONE } from "./Icone";
 
@@ -240,6 +241,12 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     }
   }
 
+  const abrirPlantaGerada = (url: string) => servico && abrirPlanta({
+    url, servicoId: servico.id,
+    nome: `Planta - ${(servico.denominacao || "Planta").replace(/[\\/:*?"<>|]/g, "-").trim()}`,
+    titulo: `Planta ${folhaEfetiva} · ${servico.denominacao ?? ""}`,
+  });
+
   async function gerarPlanta() {
     if (!servico) return;
     if (!pdfB64) { setErro("Envie o PDF do SIGEF para gerar a planta"); return; }
@@ -255,6 +262,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       setPlantaUrl(r.planta_pdf);
       for (const a of r.avisos ?? []) avisar("alerta", a);
       avisar("ok", `Planta ${folhaEfetiva} gerada.`);
+      abrirPlantaGerada(r.planta_pdf);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
@@ -668,6 +676,11 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                 <button className="principal" disabled={!!ocupado} onClick={gerarPlanta}>
                   Gerar Planta {folhaEfetiva} (PDF)
                 </button>
+                {plantaUrl && (
+                  <button type="button" className="botao-download" onClick={() => abrirPlantaGerada(plantaUrl)}>
+                    <span className="ext">✎</span> Ver e editar a planta
+                  </button>
+                )}
                 {plantaUrl && (
                   <a className="botao-download" href={plantaUrl} target="_blank" rel="noreferrer">
                     <span className="ext">PDF</span> Planta {folhaEfetiva}

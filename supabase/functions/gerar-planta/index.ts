@@ -245,7 +245,7 @@ Deno.serve(async (req) => {
       satelite: sat.imagem,
     });
 
-    const pdfBytes = await gerarPlantaPdf(dados);
+    const pdfBytes = await gerarPlantaPdf(dados, undefined, { editavel: true });
 
     // O PDF saiu: agora o serviço pode assumir o perímetro do SIGEF.
     if (persistirReconciliados.length > 0) {
