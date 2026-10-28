@@ -217,9 +217,7 @@ test("partilha · planta com metragem: cada lado das partes sai medido, sem repe
   // lados distintos: soma dos lados das glebas menos as divisas internas (cada uma conta 2×)
   const chave = (v) => `${v.e.toFixed(2)},${v.n.toFixed(2)}`;
   const lados = new Set(dp.glebas.flatMap((g) => g.vertices.map((v, i) => [chave(v), chave(g.vertices[(i + 1) % g.vertices.length])].sort().join("|"))));
-  assert.ok(m.length > 0 && m.length <= lados.size, `${m.length} medidas para ${lados.size} lados`);
-  // a maioria cabe (lado curto ou vizinho de rótulo cede)
-  assert.ok(m.length >= lados.size * 0.6, `só ${m.length} de ${lados.size} lados medidos`);
+  assert.equal(m.length, lados.size, "todo lado de toda parte sai medido, divisa compartilhada uma vez");
   const textos = com.itens.filter((i) => i.k === "texto").map((i) => i.t);
   assert.ok(textos.some((t) => /^\d{1,3}(\.\d{3})*,\d{2} m$/.test(t)), "texto no formato 123,45 m");
 });

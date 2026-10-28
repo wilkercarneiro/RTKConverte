@@ -1552,7 +1552,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
         const p = { x: X(a.e), y: Y(a.n) }, q = { x: X(b.e), y: Y(b.n) };
         const dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy);
         const w = f.widthOfTextAtSize(rot, MET_TAM);
-        if (len < w + 8) continue;
+        if (len < 0.5) continue;   // vértices coincidentes: não há lado
         // texto sempre de pé: o ângulo fica em (-90°, 90°]
         let ang = Math.atan2(dy, dx) * 180 / Math.PI;
         if (ang > 90) ang -= 180;
@@ -1564,7 +1564,8 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
         // no meio e dentro primeiro; depois desliza pelo lado (o meio de um lado
         // longo costuma ser onde mora o nome da estrada) e só então vai para fora
         let feito = false;
-        const folgaT = Math.min(0.4, (len - w) / (2 * len));
+        // lado mais curto que o texto: só o meio (a medida fica centrada nele)
+        const folgaT = Math.max(0, Math.min(0.4, (len - w) / (2 * len)));
         const posicoes = [0.5, 0.5 - folgaT * 0.5, 0.5 + folgaT * 0.5, 0.5 - folgaT, 0.5 + folgaT];
         busca: for (const lado of [1, -1]) {
           const ix = nx * lado, iy = ny * lado;
@@ -1582,7 +1583,16 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
             break busca;
           }
         }
-        if (!feito) rotulosOcultos++;
+        // Todo lado tem de sair medido: sem lugar livre, vai no meio, por
+        // dentro, mesmo encostando em outro texto (o operador ajusta no editor).
+        if (!feito) {
+          const desce = vx * nx + vy * ny < 0 ? MET_TAM : 0;
+          const mx = p.x + dx / 2, my = p.y + dy / 2;
+          const ox = mx - ux * w / 2 + nx * (3 + desce), oy = my - uy * w / 2 + ny * (3 + desce);
+          ocupado.push(inflar(retTextoRot(ox, oy, w, MET_TAM, ang), 0.5));
+          obj(c, `metragem:${ai}:${i}`, "metragem", `Lado ${a.codigo} – ${b.codigo}`);
+          texto(c, rot, ox, oy, MET_TAM, { rot: ang });
+        }
       }
     }
   }
