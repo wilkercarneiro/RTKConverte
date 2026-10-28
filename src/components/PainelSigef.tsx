@@ -29,6 +29,17 @@ interface Props {
   altura?: number | string;
 }
 
+/**
+ * A falha do WFS chega com a URL inteira de cada camada (centenas de caracteres
+ * sem espaço). Na tela basta o motivo.
+ */
+function resumoFalha(detalhe: string): string {
+  if (/dns error|failed to lookup|Name or service not known/i.test(detalhe)) return "o endereço do servidor do INCRA não foi encontrado";
+  if (/timed? ?out|tempo esgotado/i.test(detalhe)) return "o servidor do INCRA demorou demais";
+  const curto = detalhe.replace(/\(?https?:\/\/\S+\)?/g, "").replace(/\s+/g, " ").trim();
+  return curto.length > 160 ? `${curto.slice(0, 160)}…` : curto;
+}
+
 const chaveDe = (aneis: LonLat[][]) => JSON.stringify(aneis.map((a) => a.map((p) => [Math.round(p[0] * 1e7), Math.round(p[1] * 1e7)])));
 
 export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altura }: Props) {
@@ -162,7 +173,7 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
           <p className="sub">
             {nParcelas} parcela(s) certificada(s) num raio de {raio} m
             {online?.estado === "ok" && <> · <b>SIGEF consultado agora</b>{online.detalhe ? ` (${online.detalhe})` : ""}</>}
-            {online?.estado === "falhou" && <> · <b>o INCRA não respondeu</b>, valendo a cópia da base local{online.detalhe ? ` (${online.detalhe})` : ""}</>}
+            {online?.estado === "falhou" && <> · <b>o INCRA não respondeu</b>, valendo a cópia da base local{online.detalhe ? ` (${resumoFalha(online.detalhe)})` : ""}</>}
             {online?.estado === "sem-uf" && <> · <b>informe a UF</b> para consultar o SIGEF na hora</>}
             {totalBase !== null && <> · base local com {totalBase} parcela(s){uf ? `, ${naUf ?? 0} em ${uf.toUpperCase()}` : ""}</>}.
           </p>
