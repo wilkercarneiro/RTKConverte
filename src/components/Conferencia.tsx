@@ -36,6 +36,7 @@ import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { temRecurso } from "../lib/recursos";
+import { temPermissao } from "../lib/permissoes";
 import { Avisos, BotaoPerigo, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 
 /** Etapas do serviço: uma por vez, como abas dentro do cabeçalho. */
@@ -257,6 +258,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // Fundo de satélite do mapa de vértices: a imagem limpa (entrada/mapa.jpg)
   // e a georreferência (mapa.json) que posiciona cada ponto sobre ela.
   const [mapaSat, setMapaSat] = useState<FundoSatelite | null>(null);
+  const [verAvisos, setVerAvisos] = useState(false);
   const [fundoMapa, setFundoMapa] = useState<"mapa" | "satelite" | "esquema">(temRecurso("sigef.mapa") ? "mapa" : "esquema");
   async function carregarMapaSat() {
     const dl = await supabase.storage.from("gerados").download(`${inicial.servico.id}/entrada/mapa.json`);
@@ -1150,57 +1152,75 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
   })();
   const proximoTipo = (t: Vertice["tipo"]): Vertice["tipo"] => (t === "M" ? "P" : t === "P" ? "V" : "M");
 
+  const avisosTopo: { texto: string; detalhe?: string }[] = [];
+  if (inicial.preview.foraDaUf) avisosTopo.push({ texto: "As coordenadas estão fora da UF informada." });
+  if (inicial.preview.partes) {
+    avisosTopo.push({
+      texto: `TXT em ${inicial.preview.partes.length} partes (${inicial.preview.partes.map((p) => p.numeracao).join(" · ")}): cada uma é um anel próprio.`,
+      detalhe: inicial.preview.partes.map((p) => `${p.nome}: pontos ${p.numeracao} (${p.pontos})`).join("\n"),
+    });
+  }
+  if (inicial.preview.certificados) {
+    const c = inicial.preview.certificados;
+    avisosTopo.push({
+      texto: `${c.total} vértice(s) certificado(s) de ${c.parcelas} parcela(s) vizinha(s) unidos: ${c.igualados} igualado(s), ${c.inseridos} inserido(s)`
+        + (c.removidos.length > 0 ? `; pontos ${c.removidos.join(", ")} do TXT descartados (sobre a divisa certificada)` : "")
+        + (inicial.preview.fusoOrigem === "certificados" ? `; fuso ${inicial.preview.fuso}S definido pelos CSVs` : "") + ".",
+      detalhe: c.avisos.join("\n") || undefined,
+    });
+  }
+
   return (
     <div className="conferencia">
       <Avisos avisos={avisos} onFechar={fechar} />
 
-      <header className="topo">
-        <button className="fantasma voltar" onClick={onVoltar}>← Serviços</button>
-        <span className="sep" aria-hidden="true">/</span>
-        <h1 className="titulo">{servico.denominacao || servico.nome_arquivo_txt || "Serviço"}</h1>
-        <span className={`chip mod-${chave}`}>{rotuloCurto[chave]}</span>
-        {servico.nome_arquivo_txt && <span className="arquivo">{servico.nome_arquivo_txt}</span>}
-        <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
-        <span className="esticar" />
-        {/* Fuso ambíguo era só um alerta em texto: os candidatos viram botões,
-            porque a decisão é entre dois valores concretos. */}
+      {/* Cabeçalho em três faixas: quem é o serviço; o que pede decisão (fuso
+          ambíguo); o resto dos avisos recolhido num selo. Antes tudo dividia uma
+          linha só e, fixo no topo, comia meia tela em monitor médio. */}
+      <header className="topo topo-limpo">
+        <div className="topo-linha">
+          <button className="fantasma voltar" onClick={onVoltar}>← Serviços</button>
+          <span className="sep" aria-hidden="true">/</span>
+          <h1 className="titulo">{servico.denominacao || servico.nome_arquivo_txt || "Serviço"}</h1>
+          <span className={`chip mod-${chave}`}>{rotuloCurto[chave]}</span>
+          <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
+          <span className="esticar" />
+          {avisosTopo.length > 0 && (
+            <button type="button" className={verAvisos ? "topo-selo ativo" : "topo-selo"} aria-expanded={verAvisos}
+              onClick={() => setVerAvisos((v) => !v)}>
+              {avisosTopo.length} {avisosTopo.length === 1 ? "aviso" : "avisos"}
+            </button>
+          )}
+          <label>Fuso
+            <select value={servico.fuso_utm ?? 24} disabled={reunindo} onChange={(e) => trocarFuso(Number(e.target.value))}>
+              {[18, 19, 20, 21, 22, 23, 24, 25].map((z) => (
+                <option key={z} value={z}>{z}S{inicial.preview.candidatos.includes(z) ? " •" : ""}</option>
+              ))}
+            </select>
+          </label>
+          {temCertificados && (
+            <button className="fantasma" disabled={reunindo} onClick={() => reunirCertificados(servico.fuso_utm ?? 24)}
+              title="Refaz a união entre o TXT e os vértices certificados dos vizinhos no fuso atual">
+              {reunindo ? "reunindo…" : "refazer união"}
+            </button>
+          )}
+        </div>
+        {/* Fuso ambíguo pede uma decisão entre dois valores: fica à vista. */}
         {inicial.preview.fusoAmbiguo && (
-          <span className="alerta" style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-            fuso ambíguo — confirme:
+          <div className="topo-decisao" role="alert">
+            <b>Fuso ambíguo.</b> As coordenadas cabem em mais de um fuso. Confirme qual é o do levantamento:
             {inicial.preview.candidatos.map((z) => (
-              <button key={z} onClick={() => trocarFuso(z)}
-                style={{ padding: "0 8px", height: 24, fontSize: 12, fontWeight: 700 }}
-                aria-pressed={servico.fuso_utm === z}>{z}S</button>
+              <button key={z} onClick={() => trocarFuso(z)} aria-pressed={servico.fuso_utm === z}
+                className={servico.fuso_utm === z ? "principal" : ""}>{z}S</button>
             ))}
-          </span>
+          </div>
         )}
-        {inicial.preview.foraDaUf && <em className="alerta">coordenadas fora da UF informada!</em>}
-        {inicial.preview.partes && (
-          <em className="alerta" title={inicial.preview.partes.map((p) => `${p.nome}: pontos ${p.numeracao} (${p.pontos})`).join("\n")}>
-            TXT em {inicial.preview.partes.length} partes ({inicial.preview.partes.map((p) => p.numeracao).join(" · ")}) — cada uma é um anel próprio
-          </em>
+        {verAvisos && avisosTopo.length > 0 && (
+          <ul className="topo-avisos">
+            {avisosTopo.map((a, i) => <li key={i} title={a.detalhe}>{a.texto}</li>)}
+          </ul>
         )}
-        {inicial.preview.certificados && (
-          <em className="alerta" title={inicial.preview.certificados.avisos.join("\n") || undefined}>
-            {inicial.preview.certificados.total} vértice(s) certificado(s) de {inicial.preview.certificados.parcelas} parcela(s) vizinha(s) unidos ·{" "}
-            {inicial.preview.certificados.igualados} igualado(s), {inicial.preview.certificados.inseridos} inserido(s)
-            {inicial.preview.certificados.removidos.length > 0 && <> · pontos {inicial.preview.certificados.removidos.join(", ")} do TXT descartados (sobre a divisa certificada)</>}
-            {inicial.preview.fusoOrigem === "certificados" && <> · fuso {inicial.preview.fuso}S definido pelos CSVs</>}
-          </em>
-        )}
-        <label>Fuso UTM
-          <select value={servico.fuso_utm ?? 24} disabled={reunindo} onChange={(e) => trocarFuso(Number(e.target.value))}>
-            {[18, 19, 20, 21, 22, 23, 24, 25].map((z) => (
-              <option key={z} value={z}>{z}S{inicial.preview.candidatos.includes(z) ? " •" : ""}</option>
-            ))}
-          </select>
-        </label>
-        {temCertificados && (
-          <button className="fantasma" disabled={reunindo} onClick={() => reunirCertificados(servico.fuso_utm ?? 24)}
-            title="Refaz a união entre o TXT e os vértices certificados dos vizinhos no fuso atual">
-            {reunindo ? "reunindo…" : "refazer união"}
-          </button>
-        )}
+        {servico.nome_arquivo_txt && servico.denominacao && <span className="arquivo topo-arquivo">{servico.nome_arquivo_txt}</span>}
         <Passos passos={passos} onClick={(_, i) => setEtapa(etapas[i].chave)} />
       </header>
 
@@ -2346,7 +2366,6 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             </button>
           )}
           <span className="acoes">
-            <button disabled={ocupado} onClick={apenasSalvar}>Salvar rascunho</button>
             {!ehConferencia && (
               <select value={folhaEfetiva} title="Folha da planta que sai junto com o memorial e a planilha" aria-label="Folha da planta"
                 onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
@@ -2354,12 +2373,23 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 <option value="A3">Planta A3 (sem quadro analítico)</option>
               </select>
             )}
-            <button disabled={ocupado} className="principal" onClick={gerar}
-              title={pendencias.length
-                ? `Pendências: ${pendencias.map((p) => p.msg).join("; ")}`
-                : "Gerar Memorial DOCX + Planilha ODS + Planta PDF"}>
-              {ocupado ? "Gerando…" : "Gerar documentos"}
-            </button>
+            <button disabled={ocupado} onClick={apenasSalvar}>Salvar rascunho</button>
+            {/* Com pendência, o botão não finge que vai gerar: diz quantas faltam
+                e leva à primeira. Sem a permissão, fica travado com o motivo. */}
+            {!temPermissao("documentos.gerar") ? (
+              <button className="principal" disabled title="Você não tem a permissão de gerar documentos. Fale com quem gerencia a equipe.">
+                Gerar documentos
+              </button>
+            ) : pendencias.length > 0 && !ocupado ? (
+              <button className="principal botao-pendencias" onClick={() => irParaCampo(pendencias[0].alvo, true)}
+                title={`Pendências: ${pendencias.map((p) => p.msg).join("; ")}`}>
+                Resolver {pendencias.length} {pendencias.length === 1 ? "pendência" : "pendências"} →
+              </button>
+            ) : (
+              <button disabled={ocupado} className="principal" onClick={gerar} title="Gerar Memorial DOCX + Planilha ODS + Planta PDF">
+                {ocupado ? "Gerando…" : "Gerar documentos"}
+              </button>
+            )}
           </span>
         </div>
         {pendencias.length > 0 && (

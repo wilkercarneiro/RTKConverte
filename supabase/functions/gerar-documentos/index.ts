@@ -33,7 +33,7 @@ import { anelLonLatDeEN, garantirImagemSatelite } from "../_shared/satelite.ts";
 import type { ImagemSatelite } from "../_shared/satelite.ts";
 import { numerosDoSigefPorAnel, numerosTotaisDoSigef } from "../_shared/sigef_glebas.ts";
 import type { NumerosSigef } from "../_shared/sigef_glebas.ts";
-import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
+import { exigirPermissao, exigirServicoDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
 import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
@@ -119,6 +119,8 @@ Deno.serve(async (req) => {
     if (!servico_id) return json({ erro: "servico_id ausente" }, 400);
     const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
     if (recusa) return json({ erro: recusa.erro }, recusa.status);
+    const semPermissao = await exigirPermissao(clienteDoUsuario(req), "documentos.gerar", "gerar documentos");
+    if (semPermissao) return json({ erro: semPermissao.erro }, semPermissao.status);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 

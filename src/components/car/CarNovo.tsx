@@ -11,6 +11,7 @@ import type { KmlLido } from "../../lib/car/kml.ts";
 import { calcularCar, fmtHa, fmtNum, projetoNovo } from "../../lib/car/motor.ts";
 import { criarServicoCar } from "../../lib/car/persistencia.ts";
 import { Icone, ICONE } from "../Icone";
+import { Passos } from "../ui";
 import "./car.css";
 
 async function textoDoArquivo(f: File): Promise<string> {
@@ -84,15 +85,13 @@ export function CarNovo({ definicao, clienteId, onCriado, onVoltar }: {
 
   return (
     <div className="upload-tela fade">
-      <div className="stepper">
-        <span className={`step ${lido ? "feita" : "ativa"}`}><span className="num">1</span> KML da área total</span>
-        <span className="step-seta">→</span>
-        <span className="step"><span className="num">2</span> Reserva legal e APP</span>
-        <span className="step-seta">→</span>
-        <span className="step"><span className="num">3</span> Shapefiles</span>
-      </div>
+      <Passos rotulo="Etapas do CAR" passos={[
+        { rotulo: "KML da área total", estado: lido ? "feita" : "ativa" },
+        { rotulo: "Reserva legal e APP", estado: "futura" },
+        { rotulo: "Shapefiles", estado: "futura" },
+      ]} />
       <div className="upload-card">
-        {onVoltar && <button className="fantasma" style={{ justifySelf: "start", padding: 0 }} onClick={onVoltar}>← Início</button>}
+        {onVoltar && <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para o Início</button>}
         <div>
           <h2>{definicao.titulo}</h2>
           <p className="sub">{definicao.resumo}</p>
@@ -112,7 +111,7 @@ export function CarNovo({ definicao, clienteId, onCriado, onVoltar }: {
           ) : (
             <>
               <Icone d={ICONE.upload} size={36} traco={1.6} />
-              <b style={{ marginTop: 6 }}>Arraste o KML da área total aqui</b>
+              <b className="dz-titulo">Arraste o KML da área total aqui</b>
               <span>ou clique para escolher · .kml ou .kmz · polígono ou linha fechada</span>
             </>
           )}
@@ -134,15 +133,15 @@ export function CarNovo({ definicao, clienteId, onCriado, onVoltar }: {
                 <span>Nome do imóvel</span>
                 <input value={nome} onChange={(e) => setNome(e.target.value)} />
               </label>
-              <div style={{ display: "flex", gap: 12 }}>
-                <label className="car-campo" style={{ width: 110 }}>
+              <div className="car-novo-local">
+                <label className="car-campo car-campo-uf">
                   <span>UF <small className="sub">opcional</small></span>
                   <select value={uf} onChange={(e) => { setUf(e.target.value); guardar("uf", e.target.value); }}>
                     <option value="">—</option>
                     {UFS.map((u) => <option key={u}>{u}</option>)}
                   </select>
                 </label>
-                <label className="car-campo" style={{ flex: 1 }}>
+                <label className="car-campo car-campo-municipio">
                   <span>Município <small className="sub">opcional</small></span>
                   <input value={municipio} onChange={(e) => setMunicipio(e.target.value)} />
                 </label>
@@ -153,7 +152,7 @@ export function CarNovo({ definicao, clienteId, onCriado, onVoltar }: {
             </div>
           </div>
         )}
-        {erro && <div className="erro">{erro}</div>}
+        {erro && <div className="erro" role="alert">{erro}</div>}
       </div>
     </div>
   );

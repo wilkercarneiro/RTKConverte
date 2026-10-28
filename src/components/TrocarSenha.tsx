@@ -27,11 +27,11 @@ function FormSenha({ onOk, rotulo }: { onOk: () => void; rotulo: string }) {
 
   return (
     <form onSubmit={salvar}>
-      <label>Senha nova<input type="password" value={nova} onChange={(e) => setNova(e.target.value)} autoComplete="new-password" required /></label>
+      <label>Senha nova<input type="password" value={nova} onChange={(e) => setNova(e.target.value)} autoComplete="new-password" required aria-describedby="regra-senha" /></label>
       <label>Repita a senha nova<input type="password" value={conf} onChange={(e) => setConf(e.target.value)} autoComplete="new-password" required /></label>
-      <p className="sub" style={{ margin: 0 }}>Pelo menos 8 caracteres, com letras e números.</p>
+      <p className="sub regra-senha" id="regra-senha">Pelo menos 8 caracteres, com letras e números.</p>
       <button type="submit" className="principal" disabled={salvando}>{salvando ? "Salvando…" : rotulo}</button>
-      {erro && <div className="erro" style={{ margin: 0 }}>{erro}</div>}
+      {erro && <div className="erro" role="alert">{erro}</div>}
     </form>
   );
 }
@@ -40,13 +40,13 @@ function FormSenha({ onOk, rotulo }: { onOk: () => void; rotulo: string }) {
 export function TrocarSenhaObrigatoria({ email, onOk }: { email: string | null; onOk: () => void }) {
   return (
     <div className="centro">
-      <div className="login-box" style={{ textAlign: "left" }}>
+      <div className="login-box esquerda">
         <Logo size={28} />
-        <h2 style={{ marginTop: 14 }}>Crie a sua senha</h2>
+        <h2>Crie a sua senha</h2>
         <p>Bem-vindo ao Vértice{email ? <>, <b>{email}</b></> : null}. Você entrou com a senha provisória do cadastro. Para continuar, crie uma senha só sua.</p>
         <FormSenha onOk={onOk} rotulo="Salvar e entrar" />
-        <p className="sub" style={{ marginTop: 14 }}>
-          <a href="#" onClick={(e) => { e.preventDefault(); supabase.auth.signOut(); }}>Sair</a>
+        <p className="sub sair-link">
+          <button type="button" className="link" onClick={() => supabase.auth.signOut()}>Sair e entrar com outra conta</button>
         </p>
       </div>
     </div>
@@ -64,7 +64,7 @@ export function TrocarSenhaCartao() {
       </header>
       <div className="form-senha">
         <FormSenha onOk={() => setOk(true)} rotulo="Trocar senha" />
-        {ok && <div className="ok" style={{ marginTop: 10 }}>Senha trocada.</div>}
+        {ok && <div className="ok" role="status">Senha trocada. Use a nova no próximo acesso.</div>}
       </div>
     </section>
   );

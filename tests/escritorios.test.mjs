@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ehRecusa, escritorioDoUsuario, exigirServicoDoUsuario, exigirUsuario,
+  ehRecusa, escritorioDoUsuario, exigirPermissao, exigirServicoDoUsuario, exigirUsuario,
 } from "../supabase/functions/_shared/acesso.ts";
 import {
   SEM_ESCRITORIO, baixarModelo, caminhosDaLogo, caminhosDoModelo, escritorioDoServico,
@@ -114,4 +114,14 @@ test("escritorioDoServico: serviço sem escritorio_id = antes da migração", as
     from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { modelos_compartilhados: true }, error: null }) }) }) }),
   };
   assert.deepEqual(await escritorioDoServico(supa, { escritorio_id: "e1" }), { id: "e1", compartilhados: true });
+});
+
+test("exigirPermissao: só um false explícito do banco recusa", async () => {
+  const cli = (rpc) => ({ rpc: async () => rpc });
+  assert.equal(await exigirPermissao(cli({ data: true, error: null }), "servicos.criar", "criar serviços"), null);
+  // banco sem a 0025: a RPC não existe → não trava
+  assert.equal(await exigirPermissao(cli({ data: null, error: { code: "PGRST202" } }), "servicos.criar", "x"), null);
+  const r = await exigirPermissao(cli({ data: false, error: null }), "documentos.gerar", "gerar documentos");
+  assert.equal(r?.status, 403);
+  assert.match(r?.erro ?? "", /gerar documentos/);
 });

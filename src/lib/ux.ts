@@ -81,24 +81,49 @@ export interface AvisoItem {
   texto: string;
 }
 
+// Um store de módulo só, para o sistema inteiro: qualquer tela chama
+// `avisarGlobal` e o <AvisosGlobais/> (montado uma vez no AppShell) desenha.
+// Antes cada tela tinha a sua pilha, e um aviso disparado logo antes de trocar
+// de tela morria junto com ela.
+
 let seqAviso = 0;
+let pilha: AvisoItem[] = [];
+const ouvintes = new Set<() => void>();
+const avisar_ = () => ouvintes.forEach((f) => f());
 
+export function fecharAviso(id: number): void {
+  if (!pilha.some((a) => a.id === id)) return;
+  pilha = pilha.filter((a) => a.id !== id);
+  avisar_();
+}
+
+/** Empilha um aviso. Erro fica mais tempo: quem precisa ler um erro costuma precisar de mais tempo. */
+export function avisarGlobal(tom: AvisoItem["tom"], texto: string, duracao = 6000): number {
+  const id = ++seqAviso;
+  // o mesmo texto duas vezes seguidas (duplo clique, recarga) vira um aviso só
+  pilha = [...pilha.filter((a) => !(a.texto === texto && a.tom === tom)), { id, tom, texto }].slice(-5);
+  avisar_();
+  setTimeout(() => fecharAviso(id), tom === "erro" ? Math.max(duracao, 12000) : duracao);
+  return id;
+}
+
+export function assinarAvisos(f: () => void): () => void {
+  ouvintes.add(f);
+  return () => { ouvintes.delete(f); };
+}
+
+export const avisosAtuais = (): AvisoItem[] => pilha;
+
+const SEM_AVISOS: AvisoItem[] = [];
+
+/**
+ * Compatível com a API antiga: `avisar` agora cai no store global e `avisos`
+ * vem sempre vazio — o <Avisos> antigo não desenha nada, quem desenha é o
+ * <AvisosGlobais/>.
+ */
 export function useAvisos(duracao = 6000) {
-  const [avisos, setAvisos] = useState<AvisoItem[]>([]);
-
-  const fechar = useCallback((id: number) => {
-    setAvisos((as) => as.filter((a) => a.id !== id));
-  }, []);
-
-  const avisar = useCallback((tom: AvisoItem["tom"], texto: string) => {
-    const id = ++seqAviso;
-    setAvisos((as) => [...as, { id, tom, texto }]);
-    // erro não desaparece sozinho: quem precisa ler um erro costuma precisar
-    // de mais tempo do que o toast dá
-    if (tom !== "erro") setTimeout(() => fechar(id), duracao);
-  }, [duracao, fechar]);
-
-  return { avisos, avisar, fechar };
+  const avisar = useCallback((tom: AvisoItem["tom"], texto: string) => { avisarGlobal(tom, texto, duracao); }, [duracao]);
+  return { avisos: SEM_AVISOS, avisar, fechar: fecharAviso };
 }
 
 // ---------------------------------------------------------------------------

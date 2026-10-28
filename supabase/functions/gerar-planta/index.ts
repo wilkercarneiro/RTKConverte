@@ -24,7 +24,7 @@ import { numerosDoSigefPorAnel, numerosTotaisDoSigef } from "../_shared/sigef_gl
 import type { NumerosSigef } from "../_shared/sigef_glebas.ts";
 import { anelLonLatDeEN, garantirImagemSatelite } from "../_shared/satelite.ts";
 import type { LonLat } from "../_shared/satelite.ts";
-import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
+import { exigirPermissao, exigirServicoDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
 import { escritorioDoServico } from "../_shared/modelos.ts";
 import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
@@ -66,6 +66,8 @@ Deno.serve(async (req) => {
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
     const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
     if (recusa) return json({ erro: recusa.erro }, recusa.status);
+    const semPermissao = await exigirPermissao(clienteDoUsuario(req), "documentos.gerar", "gerar documentos");
+    if (semPermissao) return json({ erro: semPermissao.erro }, semPermissao.status);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { data: servico } = await supa.from("servicos").select().eq("id", servico_id).single();

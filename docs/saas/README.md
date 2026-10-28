@@ -59,6 +59,22 @@ No primeiro acesso, o cliente cria a própria senha antes de ver o sistema.
 8. **Push** da branch para a `main`: a Vercel publica a página em `/` e o sistema em `/app/`. Links antigos (`/#/servico/…`) e links de redefinição de senha são redirecionados para `/app/` pela própria página.
 9. Avisar a equipe da D'Prol que o endereço do sistema passa a ser `/app/`.
 
+## Equipe da empresa (0025)
+
+- O dono (e quem ele autorizar com "Gerenciar a equipe") abre **Equipe** no menu: adiciona pessoas (o sistema cria a conta com uma senha provisória aleatória, mostrada uma vez para ser passada), escolhe um perfil pronto (Operador, Projetista, Consulta, Gerente) ou marca permissão por permissão, desativa sem apagar, gera senha nova e remove.
+- Permissões (`src/lib/permissoes.ts`, mesma lista em `definir_membro`): criar serviços, gerar documentos, excluir serviços, cadastrar/editar clientes, excluir clientes, RT e credenciados, dados da empresa, gerenciar a equipe (só o dono concede).
+- O banco trava o administrativo e o destrutivo com policies RESTRICTIVE; criar serviço e gerar documento são travados na tela e nas edge functions (`exigirPermissao` em `_shared/acesso.ts`).
+- Desativado perde o acesso na hora. Plano pode ter `limite_usuarios` (painel → Planos); o banco recusa passar dele.
+- Histórico (`atividades`): serviço criado/excluído, cliente criado/excluído, documento gerado, mudanças na equipe. A empresa vê em Equipe → Histórico; o superadmin, na aba Histórico da empresa.
+- Testes: `tests/rls/equipe.sql` (rodado pelo `npm run test:rls`).
+
+### Publicar a equipe (pendente de aval)
+
+1. Backup do banco.
+2. `0025_equipe.sql` numa transação; reiniciar o REST (`docker service update --force sb_rtkconverte_rest`).
+3. Funções: `parse-txt`, `gerar-documentos`, `gerar-planta`, `gerar-pecas` (index.ts + `_shared/acesso.ts` de cada uma) e a nova `equipe` (`index.ts`, `deno.json`, `functions/_shared/cnpj.ts`), com `equipe` incluída em `FUNCTIONS_IMPORT_MAPS` e `FUNCTIONS_VERIFY_JWT_MAP` do serviço `sb_rtkconverte_functions` (como foi feito com a `superadmin`).
+4. Push da `main` (o site novo depende da 0025 para a página Equipe; o resto funciona nos dois estados).
+
 ## Volta atrás
 
 Nenhuma das migrações apaga dados. Para desfazer o bloqueio por plano num aperto: `update escritorios set plano_id = (select id from planos where nome = 'Completo'), status = 'ativo';`. Para desfazer o isolamento, ver `docs/multiescritorio/README.md`.

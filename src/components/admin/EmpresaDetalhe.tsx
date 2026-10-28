@@ -2,20 +2,22 @@
 // usuários (adicionar, redefinir senha, remover) e o uso do sistema.
 import { useCallback, useEffect, useState } from "react";
 import {
-  adicionarUsuario, atualizarEmpresa, definirRecursoEmpresa, lerSenhaPadrao, mensagemDeAcesso,
+  adicionarUsuario, atividadesDaEmpresa, atualizarEmpresa, definirRecursoEmpresa, lerSenhaPadrao, mensagemDeAcesso,
   recursosDaEmpresa, redefinirSenha, removerUsuario, usoModalidades, usuariosDaEmpresa,
 } from "../../lib/admin";
-import type { Empresa, RecursoEmpresa, StatusEmpresa, UsuarioEmpresa } from "../../lib/admin";
+import type { AtividadeEmpresa, Empresa, RecursoEmpresa, StatusEmpresa, UsuarioEmpresa } from "../../lib/admin";
+import { rotuloAtividade } from "../../lib/equipe";
 import { recursoDe } from "../../lib/recursos";
 import {
   cnpjValido, emailValido, formatarCnpj, formatarTelefone, problemaDaSenha, telefoneValido,
 } from "../../../supabase/functions/_shared/cnpj.ts";
 import type { DadosAdmin } from "./PainelAdmin";
+import { confirmar } from "../ui";
 import {
   Carregando, ICO, Kpi, PlanoTag, StatusPill, Topo, copiar, fmtCnpj, fmtData, fmtNum, fmtTel, iniciais, quando,
 } from "./comum";
 
-type Aba = "geral" | "recursos" | "usuarios" | "uso";
+type Aba = "geral" | "recursos" | "usuarios" | "uso" | "historico";
 
 export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
   const e = d.empresas.find((x) => x.id === id);
@@ -35,7 +37,8 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
     const pergunta = status === "ativo"
       ? `Reativar ${e!.nome}? A equipe volta a acessar tudo.`
       : `${status === "suspenso" ? "Suspender" : "Cancelar"} ${e!.nome}? A equipe perde o acesso aos dados até ser reativada (nada é apagado).`;
-    if (!confirm(pergunta)) return;
+    if (!(await confirmar({ titulo: status === "ativo" ? "Reativar a empresa?" : status === "suspenso" ? "Suspender o acesso?" : "Cancelar a empresa?",
+      texto: pergunta, confirmar: status === "ativo" ? "Reativar" : "Suspender", perigo: status !== "ativo" }))) return;
     try {
       await atualizarEmpresa(e!.id, { status });
       await d.recarregar();
@@ -75,7 +78,7 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
       </div>
 
       <nav className="sa-abas" aria-label="Seções da empresa">
-        {([["geral", "Cadastro e plano"], ["recursos", "Recursos"], ["usuarios", "Usuários"], ["uso", "Uso"]] as [Aba, string][]).map(([a, r]) => (
+        {([["geral", "Cadastro e plano"], ["recursos", "Recursos"], ["usuarios", "Usuários"], ["uso", "Uso"], ["historico", "Histórico"]] as [Aba, string][]).map(([a, r]) => (
           <button key={a} type="button" className={aba === a ? "ativo" : ""} onClick={() => setAba(a)}>{r}</button>
         ))}
       </nav>
@@ -84,6 +87,7 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
       {aba === "recursos" && <RecursosEmpresa e={e} d={d} />}
       {aba === "usuarios" && <Usuarios e={e} d={d} />}
       {aba === "uso" && <Uso e={e} />}
+      {aba === "historico" && <Historico e={e} />}
     </>
   );
 }
@@ -223,7 +227,7 @@ function Usuarios({ e, d }: { e: Empresa; d: DadosAdmin }) {
   }
 
   async function resetar(u: UsuarioEmpresa) {
-    if (!confirm(`Voltar a senha de ${u.email} para a senha padrão? A pessoa terá de criar uma nova no próximo acesso.`)) return;
+    if (!(await confirmar({ titulo: "Redefinir a senha?", texto: `A senha de ${u.email} volta a ser a senha padrão, e a pessoa cria uma nova no próximo acesso.`, confirmar: "Redefinir" }))) return;
     try {
       await redefinirSenha(u.user_id, senhaPadrao);
       setMsg({ tipo: "ok", texto: `Senha de ${u.email} redefinida para a padrão.`, copiar: textoAcesso(u.email) });
@@ -232,7 +236,7 @@ function Usuarios({ e, d }: { e: Empresa; d: DadosAdmin }) {
   }
 
   async function remover(u: UsuarioEmpresa) {
-    if (!confirm(`Apagar a conta ${u.email}? Ela deixa de existir (os serviços da empresa continuam).`)) return;
+    if (!(await confirmar({ titulo: "Apagar a conta?", texto: `A conta ${u.email} deixa de existir. Os serviços da empresa continuam.`, confirmar: "Apagar", perigo: true }))) return;
     try {
       await removerUsuario(u.user_id);
       setMsg({ tipo: "ok", texto: `${u.email} removido.` });
@@ -252,13 +256,14 @@ function Usuarios({ e, d }: { e: Empresa; d: DadosAdmin }) {
       {!lista ? <Carregando /> : (
         <div className="sa-tabela-wrap">
           <table className="sa-tabela">
-            <thead><tr><th>Login</th><th>Papel</th><th>Desde</th><th>Último acesso</th><th>Senha</th><th /></tr></thead>
+            <thead><tr><th>Pessoa</th><th>Papel</th><th>Permissões</th><th>Último acesso</th><th>Senha</th><th /></tr></thead>
             <tbody>
               {lista.map((u) => (
                 <tr key={u.user_id}>
-                  <td><b>{u.email}</b></td>
-                  <td>{u.papel === "dono" ? "Dono" : "Operador"}</td>
-                  <td>{fmtData(u.desde)}</td>
+                  <td><b>{u.nome || u.email}</b>{u.nome && <div className="sub" style={{ fontSize: 12 }}>{u.email}</div>}
+                    {u.ativo === false && <span className="sa-pill cancelado" style={{ marginTop: 4 }}>Desativado</span>}</td>
+                  <td>{u.papel === "dono" ? "Dono" : "Equipe"}<div className="sub" style={{ fontSize: 12 }}>desde {fmtData(u.desde)}</div></td>
+                  <td>{u.papel === "dono" ? "todas" : u.permissoes ? `${u.permissoes.length} de 8` : "—"}</td>
                   <td>{quando(u.ultimo_acesso)}</td>
                   <td>{u.senha_provisoria ? <span className="sa-pill suspenso">Provisória</span> : <span className="sa-pill ativo">Própria</span>}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -307,6 +312,35 @@ function Uso({ e }: { e: Empresa }) {
               <b>{u.total}</b>
             </div>
           ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Historico({ e }: { e: Empresa }) {
+  const [itens, setItens] = useState<AtividadeEmpresa[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  useEffect(() => { atividadesDaEmpresa(e.id).then(setItens).catch((x) => setErro(String(x.message ?? x))); }, [e.id]);
+  return (
+    <section className="sa-card">
+      <header><h3>Histórico da empresa</h3><span className="sub">serviços, documentos, clientes e equipe (últimos 200)</span></header>
+      {erro ? <div className="sa-aviso erro">{erro}</div> : !itens ? <Carregando /> : itens.length === 0 ? (
+        <div className="sa-vazio">Nada registrado ainda. O histórico conta a partir da ativação da equipe.</div>
+      ) : (
+        <div className="sa-tabela-wrap">
+          <table className="sa-tabela">
+            <thead><tr><th>Quando</th><th>Quem</th><th>O quê</th></tr></thead>
+            <tbody>
+              {itens.map((a) => (
+                <tr key={a.id}>
+                  <td style={{ whiteSpace: "nowrap" }}>{new Date(a.created_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</td>
+                  <td>{a.quem}</td>
+                  <td>{rotuloAtividade(a.acao)} <b>{a.alvo}</b></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>

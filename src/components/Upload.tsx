@@ -10,6 +10,7 @@ import type { PreviewParse, Servico, Trecho, Vertice } from "../lib/types";
 import { parseCsvSigef } from "../../supabase/functions/_shared/certificados.ts";
 import type { VerticeSigef } from "../../supabase/functions/_shared/certificados.ts";
 import { Icone, ICONE } from "./Icone";
+import { Passos, type Passo } from "./ui";
 import { PlantaCertificada } from "./PlantaCertificada";
 import { PainelSigef } from "./PainelSigef";
 import { temRecurso } from "../lib/recursos";
@@ -38,10 +39,12 @@ interface GrupoCsv {
 
 type Fase = "pergunta" | "certificados" | "txt";
 
-export function Upload({ definicao, onParsed, onVoltar }: {
+export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início" }: {
   definicao: DefinicaoServico;
   onParsed: (r: ResultadoParse) => void;
   onVoltar?: () => void;
+  /** para onde o "voltar" leva — aparece no botão */
+  voltarPara?: string;
 }) {
   // A pergunta cabe ao serviço que vai ao SIGEF (completo e com glebas). A
   // conferência de área é prévia sem certificação: segue direto para o TXT.
@@ -149,26 +152,17 @@ export function Upload({ definicao, onParsed, onVoltar }: {
   }
 
   // ---- trilha de etapas ----
-  const passos: { rotulo: string; estado: "feita" | "ativa" | "" }[] = [
+  const passos: Passo[] = [
     ...(perguntaCabe ? [{ rotulo: "Área certificada", estado: fase === "txt" ? "feita" as const : "ativa" as const }] : []),
-    { rotulo: "Upload do TXT", estado: fase === "txt" ? "ativa" : "" },
+    { rotulo: "Upload do TXT", estado: fase === "txt" ? "ativa" : "futura" },
     ...(definicao.chave === "loteamento"
-      ? [{ rotulo: "Perguntas", estado: "" as const }, { rotulo: "Projeto", estado: "" as const }, { rotulo: "Entregas", estado: "" as const }]
-      : [{ rotulo: "Conferência", estado: "" as const }, { rotulo: "Documentos", estado: "" as const }]),
+      ? [{ rotulo: "Perguntas", estado: "futura" as const }, { rotulo: "Projeto", estado: "futura" as const }, { rotulo: "Entregas", estado: "futura" as const }]
+      : [{ rotulo: "Conferência", estado: "futura" as const }, { rotulo: "Documentos", estado: "futura" as const }]),
   ];
-  const stepper = (
-    <div className="stepper">
-      {passos.map((p, i) => (
-        <span key={p.rotulo} style={{ display: "contents" }}>
-          {i > 0 && <span className="step-seta">→</span>}
-          <span className={`step ${p.estado}`}><span className="num">{i + 1}</span> {p.rotulo}</span>
-        </span>
-      ))}
-    </div>
-  );
+  const stepper = <Passos passos={passos} rotulo="Etapas do novo serviço" />;
   const cabecalho = (
     <>
-      {onVoltar && <button className="fantasma" style={{ justifySelf: "start", padding: 0 }} onClick={onVoltar}>← Início</button>}
+      {onVoltar && <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
       <div>
         <h2>{definicao.titulo}</h2>
         <p className="sub">{definicao.resumo}</p>
@@ -207,10 +201,10 @@ export function Upload({ definicao, onParsed, onVoltar }: {
     return (
       <div className="upload-tela fade">
         {stepper}
-        <div className="upload-card" style={{ width: "min(100%, 1400px)" }}>
+        <div className="upload-card largo">
           {cabecalho}
           <div>
-            <h3 style={{ margin: "0 0 6px" }}>Confrontantes com área certificada</h3>
+            <h3 className="titulo-etapa">Confrontantes com área certificada</h3>
             <p className="sub">
               Envie o CSV de exportação do SIGEF de cada vizinho certificado (um arquivo por parcela). Na
               planta, marque os vértices que fazem divisa com o imóvel levantado — só esses entram no
@@ -232,20 +226,20 @@ export function Upload({ definicao, onParsed, onVoltar }: {
             <input ref={inputCsvRef} type="file" accept=".csv" multiple hidden onClick={(e) => e.stopPropagation()}
               onChange={(e) => { if (e.target.files?.length) carregarCsvs(e.target.files); e.target.value = ""; }} />
           </div>
-          {erroCsv && <div className="erro">{erroCsv}</div>}
+          {erroCsv && <div className="erro" role="alert">{erroCsv}</div>}
 
           {grupos.map((g, i) => (
             <section className="cert-grupo" key={g.id}>
               <header>
                 <span className="nome">Confrontante {i + 1} · {g.nome}</span>
-                <span className="sub" style={{ fontSize: 13 }}>
+                <span className="sub pequeno">
                   {g.vertices[0]?.codigo.split("-")[0]}{g.parcela ? ` · parcela ${g.parcela.slice(0, 8)}…` : ""} · {g.vertices.length} vértices no CSV ·{" "}
                   {g.selecionados.size > 0
                     ? `${g.selecionados.size} escolhido(s)`
                     : <em className="alerta">nenhum vértice escolhido — esta parcela não entra no serviço</em>}
                 </span>
                 <span className="esticar" />
-                <button type="button" className="remover" onClick={() => removerGrupo(g.id)}>remover parcela</button>
+                <button type="button" className="remover" onClick={() => removerGrupo(g.id)} aria-label={`Remover a parcela ${g.nome}`}>remover parcela</button>
               </header>
               <PlantaCertificada vertices={g.vertices} selecionados={g.selecionados} onChange={(s) => setSelecao(g.id, s)} />
             </section>
@@ -255,26 +249,26 @@ export function Upload({ definicao, onParsed, onVoltar }: {
             <section className="cert-grupo">
               <header>
                 <span className="nome">Mapa das parcelas</span>
-                <span className="sub" style={{ fontSize: 13 }}>satélite Esri + relevo AWS · em azul os CSVs enviados, em amarelo as parcelas certificadas já na base</span>
+                <span className="sub pequeno">satélite Esri + relevo AWS · em azul os CSVs enviados, em amarelo as parcelas certificadas já na base</span>
               </header>
               <PainelSigef modo="vizinhanca" destaques={destaquesSigef} ignorar={destaquesSigef.map((d) => d.codigo)} uf={uf || null} altura={420} />
             </section>
           )}
 
           {grupos.length > 0 && (
-            <label style={{ display: "grid", gap: 4, width: 260 }}>
+            <label className="campo-tolerancia">
               <span>Tolerância para igualar (m)</span>
-              <input className="mono" style={{ width: 90 }} value={tolerancia} onChange={(e) => setTolerancia(e.target.value)} />
-              <small className="sub" style={{ fontSize: 12 }}>
+              <input className="mono" inputMode="decimal" value={tolerancia} onChange={(e) => setTolerancia(e.target.value)} />
+              <small className="sub">
                 ponto do TXT a menos disso de um vértice certificado vira ele; os demais são inseridos entre os pontos do TXT
               </small>
             </label>
           )}
 
           <div className="rodape-cert">
-            <button className="fantasma" style={{ padding: 0 }} onClick={() => setFase("pergunta")}>← Voltar</button>
+            <button className="fantasma voltar-para" onClick={() => setFase("pergunta")}>← Voltar à pergunta</button>
             <span className="esticar" />
-            {grupos.length > 0 && totalSelecionados === 0 && <span className="sub" style={{ fontSize: 13 }}>escolha ao menos um vértice para continuar</span>}
+            {grupos.length > 0 && totalSelecionados === 0 && <span className="sub pequeno">escolha ao menos um vértice para continuar</span>}
             <button className="principal" disabled={totalSelecionados === 0} onClick={() => setFase("txt")}>
               Continuar para o TXT →
             </button>
@@ -306,22 +300,22 @@ export function Upload({ definicao, onParsed, onVoltar }: {
         <p className="sub">Envie o TXT gerado pela máquina de topografia. O sistema detecta o fuso,
           converte as coordenadas e sugere os trechos de confrontantes pelos rótulos.
           {usaCertificados && " Na próxima tela o perímetro já aparece com os vértices do vizinho encaixados."}</p>
-        <div className="acoes-linha" style={{ alignItems: "start", gap: 24 }}>
-          <label style={{ display: "grid", gap: 6, width: 200 }}>
-            <span>UF do imóvel <span className="sub" style={{ fontSize: 12.5 }}>opcional</span></span>
+        <div className="acoes-linha upload-campos">
+          <label className="campo-uf">
+            <span>UF do imóvel <span className="sub opcional">opcional</span></span>
             <select value={uf} onChange={(e) => { setUf(e.target.value); guardar("uf", e.target.value); }}>
               <option value="">—</option>
               {UFS.map((u) => <option key={u}>{u}</option>)}
             </select>
-            {uf && lembrar("uf") === uf && <small className="sub" style={{ fontSize: 12 }}>última UF usada</small>}
+            {uf && lembrar("uf") === uf && <small className="sub">última UF usada</small>}
           </label>
-          <label style={{ display: "grid", gap: 6, width: 260 }}>
-            <span>Fuso UTM <span className="sub" style={{ fontSize: 12.5 }}>define a projeção do serviço</span></span>
+          <label className="campo-fuso">
+            <span>Fuso UTM <span className="sub opcional">define a projeção do serviço</span></span>
             <select value={fuso} onChange={(e) => { setFuso(e.target.value); guardar("fuso", e.target.value); }}>
               <option value="">automático{usaCertificados ? " (pelos CSVs dos vizinhos)" : " (pelo TXT)"}</option>
               {[18, 19, 20, 21, 22, 23, 24, 25].map((z) => <option key={z} value={z}>{z}S · MC {6 * z - 183}°</option>)}
             </select>
-            <small className="sub" style={{ fontSize: 12 }}>
+            <small className="sub">
               {fuso ? (lembrar("fuso") === fuso ? "último fuso usado — confira para este imóvel" : "fuso fixado para este serviço") : "pode ser ajustado na conferência"}
             </small>
           </label>
@@ -356,15 +350,15 @@ export function Upload({ definicao, onParsed, onVoltar }: {
           ) : (
             <>
               <Icone d={ICONE.upload} size={36} traco={1.6} />
-              <b style={{ marginTop: 6 }}>Arraste o TXT aqui</b>
+              <b className="dz-titulo">Arraste o TXT aqui</b>
               <span>ou clique para escolher o arquivo</span>
-              <code style={{ marginTop: 6 }}>ID;E;N;h;σpos;σh</code>
+              <code className="dz-formato">ID;E;N;h;σpos;σh</code>
             </>
           )}
           <input ref={inputRef} type="file" accept=".txt" hidden
             onChange={(e) => { const f = e.target.files?.[0]; if (f) processar(f); }} />
         </div>
-        {erro && <div className="erro">{erro}</div>}
+        {erro && <div className="erro" role="alert">{erro}</div>}
       </div>
     </div>
   );

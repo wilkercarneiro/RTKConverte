@@ -14,7 +14,7 @@ export interface Empresa {
   ultimo_servico: string | null; ultimo_acesso: string | null; excecoes: number;
 }
 
-export interface Plano { id: string; nome: string; descricao: string | null; cor: string; ordem: number; ativo: boolean }
+export interface Plano { id: string; nome: string; descricao: string | null; cor: string; ordem: number; ativo: boolean; limite_usuarios?: number | null }
 export interface RecursoBanco {
   chave: string; nome: string; grupo: string; descricao: string | null;
   padrao: boolean; ordem: number; ativo: boolean; criado_em: string;
@@ -22,7 +22,12 @@ export interface RecursoBanco {
 export interface UsuarioEmpresa {
   user_id: string; email: string; papel: "dono" | "membro"; desde: string;
   ultimo_acesso: string | null; senha_provisoria: boolean;
+  /** equipe (0025) */
+  nome?: string | null; ativo?: boolean; permissoes?: string[];
 }
+export interface AtividadeEmpresa { id: number; acao: string; alvo: string | null; detalhe: Record<string, unknown> | null; created_at: string; quem: string }
+export const atividadesDaEmpresa = async (id: string): Promise<AtividadeEmpresa[]> =>
+  ok(await supabase.rpc("sa_atividades", { p_escritorio: id, p_limite: 200 })) ?? [];
 export interface RecursoEmpresa { chave: string; liberado: boolean; origem: "excecao" | "plano" | "padrao"; excecao: boolean | null }
 export interface Contato {
   id: string; nome: string; empresa: string | null; telefone: string; email: string | null;
@@ -65,7 +70,10 @@ export async function definirRecursoEmpresa(id: string, chave: string, liberado:
 }
 
 export async function salvarPlano(p: Partial<Plano> & { nome: string }): Promise<Plano> {
-  const linha = { nome: p.nome.trim(), descricao: p.descricao ?? null, cor: p.cor ?? "#178552", ordem: p.ordem ?? 0, ativo: p.ativo ?? true };
+  const linha = {
+    nome: p.nome.trim(), descricao: p.descricao ?? null, cor: p.cor ?? "#178552", ordem: p.ordem ?? 0, ativo: p.ativo ?? true,
+    ...(p.limite_usuarios !== undefined ? { limite_usuarios: p.limite_usuarios || null } : {}),
+  };
   const r = p.id
     ? await supabase.from("planos").update(linha).eq("id", p.id).select().single()
     : await supabase.from("planos").insert(linha).select().single();

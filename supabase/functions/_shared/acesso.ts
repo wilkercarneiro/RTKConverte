@@ -20,7 +20,7 @@ export interface ClienteUsuario {
       eq: (c: string, v: string) => { maybeSingle: () => PromiseLike<{ data: unknown; error: unknown }> };
     };
   };
-  rpc: (fn: string) => PromiseLike<{ data: unknown; error: unknown }>;
+  rpc: (fn: string, args?: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }>;
 }
 
 export type Recusa = { erro: string; status: number };
@@ -62,6 +62,17 @@ export async function escritorioDoUsuario(cli: ClienteUsuario): Promise<{ escrit
     };
   }
   return { escritorioId: linha.id };
+}
+
+/**
+ * Exige uma permissão da equipe (0025: servicos.criar, documentos.gerar…). O dono
+ * tem todas. Banco sem a 0025 (a RPC não existe): não trava, como sempre foi.
+ * Só um `false` explícito recusa.
+ */
+export async function exigirPermissao(cli: ClienteUsuario, permissao: string, oQue: string): Promise<Recusa | null> {
+  const { data, error } = await cli.rpc("tem_permissao", { p: permissao });
+  if (error || data !== false) return null;
+  return { erro: `Você não tem permissão para ${oQue}. Fale com o responsável pela equipe.`, status: 403 };
 }
 
 export function ehRecusa(x: unknown): x is Recusa {

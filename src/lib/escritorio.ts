@@ -18,6 +18,10 @@ export interface Escritorio {
   /** situação da empresa no SaaS (0024); ausente antes dela */
   status?: "ativo" | "suspenso" | "cancelado";
   plano?: string | null;
+  /** equipe (0025): desativado perde o acesso; permissões do membro; nome dele */
+  ativo?: boolean;
+  permissoes?: string[];
+  meu_nome?: string | null;
 }
 
 export type EstadoEscritorio =
@@ -58,21 +62,4 @@ export async function salvarConfigEmpresa(linhas: { key: string; value: string }
     if (error) return error.message;
   }
   return null;
-}
-
-export interface Membro { user_id: string; email: string; papel: "dono" | "membro"; desde: string }
-
-export async function listarMembros(): Promise<Membro[]> {
-  const { data } = await supabase.rpc("listar_membros");
-  return (data as Membro[] | null) ?? [];
-}
-
-export async function adicionarMembro(email: string): Promise<string | null> {
-  const { error } = await supabase.rpc("adicionar_membro", { p_email: email });
-  return error ? error.message : null;
-}
-
-export async function removerMembro(userId: string): Promise<string | null> {
-  const { error } = await supabase.rpc("remover_membro", { p_user: userId });
-  return error ? error.message : null;
 }

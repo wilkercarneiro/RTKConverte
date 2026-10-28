@@ -275,15 +275,13 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     return (
       <div className="upload-tela fade">
         <Avisos avisos={avisos} onFechar={fechar} />
-        <div className="stepper">
-          <span className="step ativa"><span className="num">1</span> PDF do SIGEF</span>
-          <span className="step-seta">→</span>
-          <span className="step"><span className="num">2</span> Conferência</span>
-          <span className="step-seta">→</span>
-          <span className="step"><span className="num">3</span> Peças técnicas</span>
-        </div>
+        <Passos rotulo="Etapas do novo serviço" passos={[
+          { rotulo: "PDF do SIGEF", estado: "ativa" },
+          { rotulo: "Conferência", estado: "futura" },
+          { rotulo: "Peças técnicas", estado: "futura" },
+        ]} />
         <div className="upload-card">
-          <button className="fantasma" style={{ justifySelf: "start", padding: 0 }} onClick={onVoltar}>← Início</button>
+          <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para o Início</button>
           <div>
             <h2>Peças a partir do PDF do SIGEF</h2>
             <p className="sub">Já tem o memorial do SIGEF em mãos? Envie o PDF de prévia/certificação:
@@ -295,7 +293,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
             {ocupado ? (<><span className="spinner" /> <b>{ocupado}</b></>) : (
               <>
                 <Icone d={ICONE.upload} size={36} traco={1.6} />
-                <b style={{ marginTop: 6 }}>Arraste o PDF do SIGEF aqui</b>
+                <b className="dz-titulo">Arraste o PDF do SIGEF aqui</b>
                 <span>ou clique para escolher o arquivo</span>
               </>
             )}
@@ -389,7 +387,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
     <div className="conferencia" style={{ paddingBottom: 40 }}>
       <Avisos avisos={avisos} onFechar={fechar} />
       <header className="topo">
-        <button className="fantasma voltar" onClick={onVoltar}>← Serviços</button>
+        <button className="fantasma voltar" onClick={onVoltar}>← {servicoId ? "Serviços" : "Início"}</button>
         <span className="sep" aria-hidden="true">/</span>
         <h1 className="titulo">{servico.denominacao || "Peças técnicas"}</h1>
         <span className="chip mod-pecas">Peças</span>

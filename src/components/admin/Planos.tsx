@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { excluirPlano, matrizPlanos, salvarMatrizPlano, salvarPlano } from "../../lib/admin";
 import type { Plano } from "../../lib/admin";
 import type { DadosAdmin } from "./PainelAdmin";
+import { confirmar } from "../ui";
 import { Carregando, ICO, Ico, Topo } from "./comum";
 
 type Matriz = Record<string, Record<string, boolean>>; // plano → recurso → liberado
@@ -65,7 +66,7 @@ export function Planos({ d }: { d: DadosAdmin }) {
   async function apagar(p: Plano) {
     const n = d.empresas.filter((e) => e.plano_id === p.id).length;
     if (n > 0) { setMsg({ tipo: "erro", texto: `${p.nome} tem ${n} empresa(s). Mude o plano delas antes, ou só desative o plano.` }); return; }
-    if (!confirm(`Excluir o plano ${p.nome}?`)) return;
+    if (!(await confirmar({ titulo: `Excluir o plano ${p.nome}?`, texto: "O plano sai do catálogo. Nenhuma empresa está nele.", confirmar: "Excluir", perigo: true }))) return;
     try { await excluirPlano(p.id); setEditando(null); await Promise.all([d.recarregar(), carregar()]); }
     catch (e) { setMsg({ tipo: "erro", texto: String(e instanceof Error ? e.message : e) }); }
   }
@@ -92,6 +93,11 @@ export function Planos({ d }: { d: DadosAdmin }) {
                 <option value="1">Ativo (aparece no cadastro de empresa)</option><option value="0">Inativo</option>
               </select>
             </label>
+            <label>Limite de usuários ativos
+              <input type="number" min={1} placeholder="sem limite" value={editando.limite_usuarios ?? ""}
+                onChange={(e) => setEditando({ ...editando, limite_usuarios: e.target.value ? Math.max(1, Number(e.target.value)) : null })} />
+              <small className="sub" style={{ fontWeight: 400 }}>vazio = sem limite; a empresa não ativa ninguém além disso</small>
+            </label>
             <label className="largo">Descrição<input value={editando.descricao ?? ""} onChange={(e) => setEditando({ ...editando, descricao: e.target.value })} placeholder="Para quem é este plano" /></label>
           </div>
           <div className="sa-rodape-form">
@@ -115,6 +121,7 @@ export function Planos({ d }: { d: DadosAdmin }) {
                         <span className="cor" style={{ background: p.cor }} />
                         <b>{p.nome}</b>
                         <small>{d.empresas.filter((e) => e.plano_id === p.id).length} empresa(s){p.ativo ? "" : " · inativo"}</small>
+                        <small>{p.limite_usuarios ? `até ${p.limite_usuarios} usuário(s)` : "usuários sem limite"}</small>
                         <button type="button" onClick={() => setEditando(p)}>Editar</button>
                       </div>
                     </th>

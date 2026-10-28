@@ -30,6 +30,8 @@ import { useRota } from "./lib/rota";
 import { carregarConta } from "./lib/conta";
 import type { Conta } from "./lib/conta";
 import { servicoLiberado } from "./lib/recursos";
+import { definirPermissoes } from "./lib/permissoes";
+import { Equipe } from "./components/Equipe";
 import { TrocarSenhaObrigatoria } from "./components/TrocarSenha";
 import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
 
@@ -38,6 +40,7 @@ const LaboratorioPlanta = lazy(() => import("./components/planta/LaboratorioPlan
 const LaboratorioDivisao = lazy(() => import("./components/LaboratorioDivisao").then((m) => ({ default: m.LaboratorioDivisao })));
 const LaboratorioCar = lazy(() => import("./components/car/Laboratorio").then((m) => ({ default: m.LaboratorioCar })));
 const LaboratorioAdmin = lazy(() => import("./components/admin/LaboratorioAdmin").then((m) => ({ default: m.LaboratorioAdmin })));
+const LaboratorioCasca = lazy(() => import("./components/LaboratorioCasca").then((m) => ({ default: m.LaboratorioCasca })));
 // painel do superadmin: só quem administra o SaaS baixa este pedaço
 const PainelAdmin = lazy(() => import("./components/admin/PainelAdmin").then((m) => ({ default: m.PainelAdmin })));
 
@@ -68,7 +71,13 @@ export default function App() {
     // a conta antes do escritório: os recursos do plano precisam estar lidos
     // antes da primeira tela (temRecurso é síncrono)
     Promise.all([carregarConta(), carregarEscritorio()]).then(([c, e]) => {
-      if (!cancelado) { setConta(c); setEscritorio(e); }
+      if (cancelado) return;
+      // permissões antes da primeira tela (temPermissao é síncrono, como temRecurso)
+      definirPermissoes(e.estado === "ok" && Array.isArray(e.escritorio.permissoes)
+        ? { dono: e.escritorio.papel === "dono", lista: e.escritorio.permissoes }
+        : null);
+      setConta(c);
+      setEscritorio(e);
     });
     return () => { cancelado = true; };
   }, [logado, usuario]);
@@ -112,6 +121,7 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/divisao")) return <Suspense fallback={null}><LaboratorioDivisao /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/car")) return <Suspense fallback={null}><LaboratorioCar /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/admin")) return <Suspense fallback={null}><LaboratorioAdmin /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/casca")) return <Suspense fallback={null}><LaboratorioCasca /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vértice", href: "#/" }} />;
@@ -151,6 +161,7 @@ export default function App() {
   }
   if (escritorio.estado === "sem-escritorio") return <SemEscritorio email={usuario} />;
   if (empresaBloqueada && escritorio.estado === "ok") return <EmpresaBloqueada nome={escritorio.escritorio.nome} status={escritorio.escritorio.status!} />;
+  if (escritorio.estado === "ok" && escritorio.escritorio.ativo === false) return <EmpresaBloqueada nome={escritorio.escritorio.nome} status="desativado" />;
 
   /** Serviço criado a partir de um cliente: vincula e pré-preenche o detentor. */
   async function vincularCliente(parse: ResultadoParse, clienteId?: string): Promise<ResultadoParse> {
@@ -194,9 +205,10 @@ export default function App() {
 
   const abrirServico = (s: Servico) => ir({ t: "servico", id: s.id });
   const papel = escritorio.estado === "ok"
-    ? `${escritorio.escritorio.papel === "dono" ? "Dono" : "Operador"} · ${escritorio.escritorio.nome}`
+    ? `${escritorio.escritorio.papel === "dono" ? "Dono" : "Equipe"} · ${escritorio.escritorio.nome}`
     : "Operador";
-  const casca = { rota, ir, usuario: usuario ? { nome: usuario, papel } : undefined, superadmin: conta.superadmin };
+  const nomeUsuario = (escritorio.estado === "ok" && escritorio.escritorio.meu_nome) || usuario;
+  const casca = { rota, ir, usuario: nomeUsuario ? { nome: nomeUsuario, papel } : undefined, superadmin: conta.superadmin };
 
   switch (rota.t) {
     case "novo": {
@@ -298,6 +310,9 @@ export default function App() {
     case "config":
       return <AppShell {...casca}><Configuracoes escritorio={escritorio} /></AppShell>;
 
+    case "equipe":
+      return <AppShell {...casca}><Equipe escritorio={escritorio} /></AppShell>;
+
     case "marca":
       return <AppShell {...casca}><Marca /></AppShell>;
 
@@ -320,9 +335,18 @@ function EmpresaBloqueada({ nome, status }: { nome: string; status: string }) {
     <div className="centro">
       <div className="login-box" style={{ textAlign: "left" }}>
         <Logo size={28} />
-        <h2 style={{ marginTop: 14 }}>Acesso {status === "cancelado" ? "encerrado" : "suspenso"}</h2>
-        <p>O acesso da <b>{nome}</b> ao Vértice está {status === "cancelado" ? "encerrado" : "suspenso"} no momento. Os seus dados continuam guardados.</p>
-        <p>Fale com o suporte do Vértice para reativar.</p>
+        {status === "desativado" ? (
+          <>
+            <h2 style={{ marginTop: 14 }}>Seu acesso foi desativado</h2>
+            <p>O responsável pela <b>{nome}</b> desativou o seu acesso ao Vértice. Fale com ele para reativar.</p>
+          </>
+        ) : (
+          <>
+            <h2 style={{ marginTop: 14 }}>Acesso {status === "cancelado" ? "encerrado" : "suspenso"}</h2>
+            <p>O acesso da <b>{nome}</b> ao Vértice está {status === "cancelado" ? "encerrado" : "suspenso"} no momento. Os seus dados continuam guardados.</p>
+            <p>Fale com o suporte do Vértice para reativar.</p>
+          </>
+        )}
         <button onClick={() => supabase.auth.signOut()}>Sair</button>
       </div>
     </div>

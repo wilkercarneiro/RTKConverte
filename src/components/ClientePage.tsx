@@ -5,12 +5,12 @@ import { supabase } from "../lib/supabase";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { useAutosave, useAvisos } from "../lib/ux";
 import { Avisos, BotaoPerigo, Secao, StatusSalvamento } from "./ui";
-import { SERVICOS, chaveDoServico, rotuloCurto } from "../lib/modalidades";
-import { servicoLiberado } from "../lib/recursos";
+import { chaveDoServico, rotuloCurto } from "../lib/modalidades";
 import type { ChaveServico } from "../lib/modalidades";
+import { temPermissao } from "../lib/permissoes";
 import type { Cliente, Servico } from "../lib/types";
-import { Icone } from "./Icone";
 import { iniciais } from "./Clientes";
+import { NovoServico } from "./NovoServico";
 
 interface Props {
   clienteId: string;
@@ -23,13 +23,21 @@ interface Props {
 export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico }: Props) {
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [servicos, setServicos] = useState<Servico[]>([]);
+  const [erroCarga, setErroCarga] = useState<string | null>(null);
+  const [tentativa, setTentativa] = useState(0);
   const { avisos, avisar, fechar } = useAvisos();
+  const editar = temPermissao("clientes.editar");
 
   useEffect(() => {
-    supabase.from("clientes").select().eq("id", clienteId).single().then(({ data }) => setCliente(data as Cliente));
+    setErroCarga(null);
+    supabase.from("clientes").select().eq("id", clienteId).maybeSingle().then(({ data, error }) => {
+      if (error) setErroCarga(error.message);
+      else if (!data) setErroCarga("Este cliente não existe mais, ou não é da sua empresa.");
+      else setCliente(data as Cliente);
+    });
     supabase.from("servicos").select().eq("cliente_id", clienteId).order("created_at", { ascending: false })
       .then(({ data }) => setServicos((data as Servico[]) ?? []));
-  }, [clienteId]);
+  }, [clienteId, tentativa]);
 
   async function gravar(c: Cliente | null) {
     if (!c) return;
@@ -40,8 +48,19 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
 
   // O cadastro do cliente é a origem dos dados de todos os serviços dele:
   // perder uma correção aqui se propaga. Salva sozinho.
-  const auto = useAutosave(cliente, gravar, { ativo: cliente !== null, atraso: 1200 });
+  const auto = useAutosave(cliente, gravar, { ativo: cliente !== null && editar, atraso: 1200 });
 
+  if (erroCarga) {
+    return (
+      <div className="pagina">
+        <button className="fantasma voltar" onClick={onVoltar}>← Clientes</button>
+        <div className="aviso-erro-pagina" role="alert">
+          <span>Não foi possível abrir o cliente. {erroCarga}</span>
+          <button onClick={() => setTentativa((n) => n + 1)}>Tentar de novo</button>
+        </div>
+      </div>
+    );
+  }
   if (!cliente) return <div className="centro"><span className="spinner" />&nbsp; Carregando cliente…</div>;
 
   function campo<K extends keyof Cliente>(k: K, v: Cliente[K]) {
@@ -83,20 +102,13 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
             <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
           </p>
         </div>
-        {/* Um botão por modalidade, direto de SERVICOS: acrescentar uma
-            modalidade não exige mais tocar nesta tela. */}
-        <div className="acoes">
-          {SERVICOS.filter((d) => servicoLiberado(d.chave)).map((d) => (
-            <button key={d.chave} onClick={() => onNovoServico(d.chave)} title={d.resumo}
-              style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <Icone d={d.icone} size={16} /> {d.titulo}
-            </button>
-          ))}
-        </div>
       </div>
 
+      {temPermissao("servicos.criar") && <NovoServico onNovo={onNovoServico} compacto titulo={`Novo serviço para ${cliente.nome.split(/\s+/)[0]}`} />}
+
       <section className="bloco">
-        <header><h3>Dados do cliente</h3><span className="desc">origem do detentor em todos os serviços deste cliente</span></header>
+        <header><h3>Dados do cliente</h3><span className="desc">{editar ? "origem do detentor em todos os serviços deste cliente · salva sozinho" : "somente leitura: você não tem a permissão de editar clientes"}</span></header>
+        <fieldset className="sem-borda" disabled={!editar}>
         <div className="grade">
           <label>Nome <input value={cliente.nome} onChange={(e) => campo("nome", e.target.value)} /></label>
           <label>CPF/CNPJ <input className="mono" value={cliente.cpf_cnpj ?? ""} onChange={(e) => campo("cpf_cnpj", e.target.value || null)} /></label>
@@ -107,8 +119,8 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
           </label>
           <label>Telefone <input value={cliente.telefone ?? ""} onChange={(e) => campo("telefone", e.target.value || null)} /></label>
           <label>E-mail <input value={cliente.email ?? ""} onChange={(e) => campo("email", e.target.value || null)} /></label>
-          <label style={{ gridColumn: "span 2" }}>Endereço <input value={cliente.endereco ?? ""} onChange={(e) => campo("endereco", e.target.value || null)} /></label>
-          <label style={{ gridColumn: "span 2" }}>Observações <input value={cliente.observacoes ?? ""} onChange={(e) => campo("observacoes", e.target.value || null)} /></label>
+          <label className="largo">Endereço <input value={cliente.endereco ?? ""} onChange={(e) => campo("endereco", e.target.value || null)} /></label>
+          <label className="largo">Observações <input value={cliente.observacoes ?? ""} onChange={(e) => campo("observacoes", e.target.value || null)} /></label>
         </div>
 
         <div className="secoes" style={{ marginTop: 22 }}>
@@ -129,24 +141,27 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
             )}
           </Secao>
         </div>
+        </fieldset>
 
         <div className="rodape-bloco">
-          <button className="principal" onClick={salvar}>Salvar cliente</button>
+          {auto.estado === "erro" && <button className="principal" onClick={salvar}>Tentar salvar de novo</button>}
           <span className="esticar" />
           <span className="sub" style={{ fontSize: 12.5 }}>
             {servicos.length > 0
               ? `excluir mantém os ${servicos.length} serviço(s), sem cliente vinculado`
               : "este cliente não tem serviços"}
           </span>
-          <BotaoPerigo titulo={`Excluir cliente "${cliente.nome}"`}
-            confirmacao={servicos.length > 0 ? `excluir e desvincular ${servicos.length} serviço(s)` : "excluir mesmo"}
-            onConfirmar={excluirCliente}>Excluir cliente</BotaoPerigo>
+          {temPermissao("clientes.excluir") && (
+            <BotaoPerigo titulo={`Excluir cliente "${cliente.nome}"`}
+              confirmacao={servicos.length > 0 ? `excluir e desvincular ${servicos.length} serviço(s)` : "excluir mesmo"}
+              onConfirmar={excluirCliente}>Excluir cliente</BotaoPerigo>
+          )}
         </div>
       </section>
 
       <section className="bloco lista">
         <header><h3>Serviços deste cliente</h3><span className="desc">{servicos.length} serviço(s)</span></header>
-        {servicos.length === 0 ? <p className="vazio">Nenhum serviço ainda — crie pelos botões acima.</p> : (
+        {servicos.length === 0 ? <p className="vazio">Nenhum serviço ainda{temPermissao("servicos.criar") ? ". Escolha uma modalidade acima para começar." : "."}</p> : (
           <table className="tabela-vertices dash-lista">
             <thead><tr><th>Modalidade</th><th>Imóvel</th><th>Status</th><th>Criado em</th></tr></thead>
             <tbody>
@@ -167,7 +182,7 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
       <section className="bloco">
         <header><h3>Histórico de documentos</h3>
           <span className="desc">todas as versões geradas, com download a qualquer momento</span></header>
-        {servicos.length === 0 ? <p className="sub" style={{ margin: 0 }}>—</p> : servicos.map((s) => (
+        {servicos.length === 0 ? <p className="vazio">Os documentos gerados nos serviços deste cliente ficam guardados aqui, com todas as versões.</p> : servicos.map((s) => (
           <div key={s.id} style={{ marginBottom: 14 }}>
             <b style={{ fontSize: 13 }}>{s.denominacao ?? s.id.slice(0, 8)}</b>
             <span className={`chip mod-${chaveDoServico(s)}`} style={{ marginLeft: 8 }}>{rotuloCurto[chaveDoServico(s)]}</span>

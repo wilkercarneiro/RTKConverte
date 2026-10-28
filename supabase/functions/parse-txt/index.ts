@@ -27,7 +27,7 @@ import {
   blocosPorNumeracao, fusoPelosCertificados, montarVerticesUnidos, parseCsvSigef, unirEmBlocos,
 } from "../_shared/certificados.ts";
 import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts";
-import { ehRecusa, escritorioDoUsuario } from "../_shared/acesso.ts";
+import { ehRecusa, escritorioDoUsuario, exigirPermissao } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
 
@@ -62,6 +62,8 @@ Deno.serve(async (req) => {
     // o serviço nasce no escritório de quem enviou (null = banco ainda sem escritórios)
     const acesso = await escritorioDoUsuario(clienteDoUsuario(req));
     if (ehRecusa(acesso)) return json({ erro: acesso.erro }, acesso.status);
+    const semPermissao = await exigirPermissao(clienteDoUsuario(req), "servicos.criar", "criar serviços");
+    if (semPermissao) return json({ erro: semPermissao.erro }, semPermissao.status);
     const nomeArquivo = typeof nome_arquivo === "string" && nome_arquivo ? nome_arquivo : "pontos.txt";
 
     // ---- confrontantes com área certificada (opcional) ----

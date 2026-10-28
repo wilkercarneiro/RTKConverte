@@ -38,7 +38,7 @@ PSQL=(psql -X -q -h localhost -p "$PORTA" -U postgres -d postgres -v ON_ERROR_ST
 for f in supabase/migrations/*.sql; do
   case "$(basename "$f")" in
     0018_*|0019_*) continue ;;  # PostGIS (parcelas do SIGEF) — fora deste teste
-    0020_escritorios.sql|0024_saas.sql) continue ;;  # aplicadas abaixo, entre as etapas
+    0020_escritorios.sql|0024_saas.sql|0025_equipe.sql) continue ;;  # aplicadas abaixo, entre as etapas
     # usa servicos.tipo, que só nasce na 0005: em produção foi aplicada depois
     0002_confrontacao_no_vertice.sql) continue ;;
   esac
@@ -59,3 +59,8 @@ echo "migração aplicada: $MIGRACAO_SAAS"
 PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f tests/rls/saas.sql 2>&1 >/dev/null \
   | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
 echo "testes do SaaS (planos, recursos, superadmin): todos passaram"
+
+"${PSQL[@]}" -f supabase/migrations/0025_equipe.sql >/dev/null
+echo "migração aplicada: supabase/migrations/0025_equipe.sql"
+PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f tests/rls/equipe.sql 2>&1 >/dev/null   | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
+echo "testes da equipe (permissões, desativação, limite, histórico): todos passaram"

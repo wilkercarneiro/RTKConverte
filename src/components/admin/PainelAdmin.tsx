@@ -20,6 +20,7 @@ import { Planos } from "./Planos";
 import { RecursosAdmin } from "./RecursosAdmin";
 import { Contatos } from "./Contatos";
 import { ConfigAdmin } from "./ConfigAdmin";
+import { AvisosGlobais, DialogosGlobais } from "../ui";
 
 export type AbaAdmin = "visao" | "empresas" | "planos" | "recursos" | "contatos" | "config";
 
@@ -133,6 +134,8 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
         {erro && <div className="sa-aviso erro" style={{ marginTop: 20 }}>{erro}</div>}
         {pagina}
       </main>
+      <AvisosGlobais />
+      <DialogosGlobais />
     </div>
   );
 }
