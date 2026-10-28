@@ -983,6 +983,26 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .dv-m-estrada td:first-child { color: #B42318; }
 .dv-m-divisa td:first-child { font-style: italic; }
 .dv-m-total td { font-weight: 700; }
+.dv-zoom { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+.dv-zoom button { height: 30px; min-width: 30px; padding: 0 10px; border: 1px solid var(--borda); border-radius: 6px; background: #fff; font-size: 13px; cursor: pointer; }
+.dv-zoom button:disabled { opacity: .45; cursor: default; }
+.dv-zoom button.ativa { background: #E6F2EC; border-color: #1E7A4E; color: #0E3B2B; font-weight: 600; }
+.dv-zoom-sep { width: 1px; height: 22px; background: var(--borda); margin: 0 4px; }
+.dv-zoom-check { display: flex; align-items: center; gap: 5px; font-size: 12.5px; margin-left: auto; }
+.dv-mapa svg.dv-mover { cursor: move; }
+.dv-detalhe { margin-top: 10px; border: 1px solid var(--borda); border-radius: 8px; background: #fff; padding: 10px 12px; }
+.dv-detalhe-tit { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dv-fechar { margin-left: auto; border: 0; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: var(--texto-3); }
+.dv-detalhe-totais { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 8px 0; }
+.dv-detalhe-totais div { display: flex; flex-direction: column; }
+.dv-detalhe-totais span { font-size: 11.5px; color: var(--texto-3); }
+.dv-detalhe-totais b { font-size: 15px; }
+.dv-detalhe-totais small { font-size: 11.5px; color: var(--texto-3); }
+.dv-detalhe table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+.dv-detalhe th { text-align: left; font-size: 11.5px; color: var(--texto-3); font-weight: 600; padding: 4px 6px 4px 0; }
+.dv-detalhe td { padding: 3px 6px 3px 0; border-top: 1px solid var(--linha); }
+.dv-detalhe td:first-child { width: 40px; }
+.dv-detalhe td:nth-child(2) { width: 110px; white-space: nowrap; }
 .dv-locacao { margin-top: 14px; flex-wrap: wrap; }
 .dv-locacao select { max-width: 100%; height: 34px; }
 .dv-locacao .sub { flex: 1 1 320px; }
