@@ -8,11 +8,14 @@
        * leva para o sistema, que agora mora em /app/. Depois liga as cenas
        * (só com JS, sem "reduzir movimento" e em tela com altura suficiente). */
       (function () {
+        function doSistema(h) { return h.indexOf("#/") === 0 || /access_token|type=recovery|error_description/.test(h); }
         var h = location.hash || "";
-        if (h.indexOf("#/") === 0 || /access_token|type=recovery|error_description/.test(h)) {
+        if (doSistema(h)) {
           location.replace("/app/" + h);
           return;
         }
+        // hash trocado sem recarregar (link colado na mesma aba)
+        addEventListener("hashchange", function () { if (doSistema(location.hash)) location.replace("/app/" + location.hash); });
         var d = document.documentElement;
         d.classList.add("js");
         try {
