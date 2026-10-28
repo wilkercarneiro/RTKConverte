@@ -37,7 +37,15 @@ No primeiro acesso, o cliente cria a própria senha antes de ver o sistema.
 
 ## Publicar (ordem)
 
-> Nada disto foi feito ainda. Cada passo de produção precisa do aval do Wilker.
+> **Publicado em 2026-10-28** (aval do Wilker: "pode publicar tudo"), nesta ordem, menos o passo 4 (ver abaixo):
+> - backups em `/opt/supabase/rtkconverte/backup-banco-20261028-saas/` e `backup-funcoes-20261028-saas/`;
+> - funções do repositório (`08bbe70` + `ba2dd5d` + `superadmin`); `superadmin` entrou em `FUNCTIONS_IMPORT_MAPS` e `FUNCTIONS_VERIFY_JWT_MAP` do serviço `sb_rtkconverte_functions`;
+> - migrações 0020 + 0024 numa transação; REST reiniciado (o `NOTIFY pgrst` não bastou);
+> - modelos neutros gerados por `scripts/modelos-neutros.mjs` a partir dos modelos em uso, em `templates/padrao/`;
+> - Auth: `GOTRUE_DISABLE_SIGNUP=true` (antes qualquer um criava conta pela API e, com a 0020, a própria empresa), `GOTRUE_SITE_URL` e `GOTRUE_URI_ALLOW_LIST` em `https://rtk-converte.vercel.app`;
+> - push da `main`.
+>
+> **Pendente:** passo 4. A criação da conta de superadmin foi barrada pela trava de permissões do Claude Code (dar acesso de administrador pede confirmação explícita). O Wilker cria por este comando na VPS: `docker exec <db> psql -U postgres -c "insert into super_admins (user_id) select id from auth.users where email = '<e-mail>'"`, depois de criar a conta no Auth.
 
 1. **Backup do banco** da VPS (`scripts/backup-banco.sh`, ou `pg_dump` no `sb_rtkconverte_db`).
 2. **Edge functions na VPS** (ver a memória `rtkconverte-vps`): as que estão no ar são de antes do `08bbe70` e não conhecem escritórios. Depois da 0020, um serviço criado por elas sem `escritorio_id` só funciona enquanto houver UMA empresa. Antes de cadastrar a segunda empresa, publique:
