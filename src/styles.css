@@ -223,6 +223,7 @@ label small, label .sub { font-weight: 400; }
 .chip.mod-conferencia { background: #EAF0FB; color: #1E40AF; }
 .chip.mod-gleba { background: #F3EAFB; color: #6B21A8; }
 .chip.mod-loteamento { background: #FDF0E4; color: #9A4A0B; }
+.chip.mod-car { background: #E5F3E8; color: #1F6B36; }
 .chip.mod-pecas { background: var(--alerta-claro); color: var(--alerta-escuro); }
 .chip.tipo-geo, .chip.ok-chip { background: var(--primaria-clara); color: var(--floresta); }
 .chip.tipo-pecas { background: #F3EAFB; color: #6B21A8; }

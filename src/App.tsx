@@ -10,6 +10,8 @@ import { Conferencia } from "./components/Conferencia";
 import { PecasServico } from "./components/PecasServico";
 import { Loteamento } from "./components/loteamento/Loteamento";
 import { Laboratorio } from "./components/loteamento/Laboratorio";
+import { Car } from "./components/car/Car";
+import { CarNovo } from "./components/car/CarNovo";
 import { Configuracoes } from "./components/Configuracoes";
 import { ClientePage } from "./components/ClientePage";
 import { Marca } from "./components/Marca";
@@ -30,6 +32,7 @@ import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
 // só no `npm run dev`: fica num pedaço à parte que o build nunca carrega
 const LaboratorioPlanta = lazy(() => import("./components/planta/LaboratorioPlanta").then((m) => ({ default: m.LaboratorioPlanta })));
 const LaboratorioDivisao = lazy(() => import("./components/LaboratorioDivisao").then((m) => ({ default: m.LaboratorioDivisao })));
+const LaboratorioCar = lazy(() => import("./components/car/Laboratorio").then((m) => ({ default: m.LaboratorioCar })));
 
 export default function App() {
   const [logado, setLogado] = useState<boolean | null>(null);
@@ -72,7 +75,8 @@ export default function App() {
       if (cancelado) return;
       if (!s) { setErroServico("Serviço não encontrado."); setCarregandoServico(false); return; }
       const servico = s as Servico;
-      if (servico.tipo === "pecas") { setAberto({ servico, vertices: [], trechos: [], preview: previewVazio(servico) }); setCarregandoServico(false); return; }
+      // peças e CAR não têm vértices: o CAR guarda o perímetro do KML no próprio projeto
+      if (servico.tipo === "pecas" || servico.modalidade === "car") { setAberto({ servico, vertices: [], trechos: [], preview: previewVazio(servico) }); setCarregandoServico(false); return; }
       const [{ data: vertices }, { data: trechos }] = await Promise.all([
         supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem"),
         supabase.from("trechos_confrontantes").select().eq("servico_id", servico.id).order("vertice_inicio_ordem"),
@@ -93,6 +97,7 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/loteamento")) return <Laboratorio />;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/planta")) return <Suspense fallback={null}><LaboratorioPlanta /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/divisao")) return <Suspense fallback={null}><LaboratorioDivisao /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/car")) return <Suspense fallback={null}><LaboratorioCar /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vértice", href: "#/" }} />;
@@ -173,6 +178,17 @@ export default function App() {
           </AppShell>
         );
       }
+      if (def.entradaKml) {
+        return (
+          <AppShell {...casca}>
+            <CarNovo definicao={def} clienteId={rota.clienteId} onVoltar={() => ir({ t: "inicio" })}
+              onCriado={(servico) => {
+                setAberto({ servico, vertices: [], trechos: [], preview: previewVazio(servico) });
+                substituir({ t: "servico", id: servico.id });
+              }} />
+          </AppShell>
+        );
+      }
       return (
         <AppShell {...casca}>
           <Upload
@@ -211,7 +227,9 @@ export default function App() {
             ? <PecasServico servicoId={aberto.servico.id} onVoltar={() => ir({ t: "servicos" })} />
             : aberto.servico.modalidade === "loteamento"
               ? <Loteamento key={aberto.servico.id} servico={aberto.servico} vertices={aberto.vertices} onVoltar={() => ir({ t: "servicos" })} />
-              : <Conferencia inicial={aberto} onVoltar={() => ir({ t: "servicos" })} />}
+              : aberto.servico.modalidade === "car"
+                ? <Car key={aberto.servico.id} servico={aberto.servico} onVoltar={() => ir({ t: "servicos" })} />
+                : <Conferencia inicial={aberto} onVoltar={() => ir({ t: "servicos" })} />}
         </AppShell>
       );
     }

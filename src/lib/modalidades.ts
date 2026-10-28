@@ -11,7 +11,7 @@
 import type { Modalidade, Servico } from "./types";
 
 /** Chave do cartão na tela — não é coluna do banco. */
-export type ChaveServico = "completo" | "conferencia" | "gleba" | "divisao" | "loteamento" | "pecas";
+export type ChaveServico = "completo" | "conferencia" | "gleba" | "divisao" | "loteamento" | "car" | "pecas";
 
 export interface DefinicaoServico {
   chave: ChaveServico;
@@ -26,6 +26,8 @@ export interface DefinicaoServico {
   cta: string;
   /** Colunas gravadas ao criar. `tipo` decide qual pipeline abre. */
   campos: { tipo: "geo" | "pecas"; modalidade: Modalidade; tem_glebas: boolean; divisao?: boolean };
+  /** A entrada é o KML (CAR), não o TXT: abre a tela própria em vez do Upload. */
+  entradaKml?: boolean;
   /** Cartão principal (topo) ou entrada secundária. */
   principal: boolean;
 }
@@ -88,6 +90,18 @@ export const SERVICOS: DefinicaoServico[] = [
     principal: true,
   },
   {
+    chave: "car",
+    titulo: "CAR",
+    icone: "M12 22c4-3 7-7 7-11a7 7 0 0 0-14 0c0 4 3 8 7 11zM12 8v8M9 11l3 3 3-3",
+    resumo: "Cadastro Ambiental Rural: a partir do KML da área total, marque a reserva legal e trace os rios da APP. A área produtiva sai do que sobra.",
+    requisitos: ["KML da área total do imóvel", "porcentagem da reserva legal", "rios do imóvel e a faixa de APP"],
+    entrega: ["Shapefile da área total", "Shapefile da reserva legal", "Shapefile da área produtiva", "Shapefile da APP"],
+    cta: "Enviar KML",
+    campos: { tipo: "geo", modalidade: "car", tem_glebas: false },
+    entradaKml: true,
+    principal: true,
+  },
+  {
     chave: "pecas",
     titulo: "Peças a partir do PDF do SIGEF",
     icone: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6",
@@ -111,6 +125,7 @@ export function chaveDoServico(s: Pick<Servico, "tipo" | "modalidade" | "tem_gle
   if (s.tipo === "pecas") return "pecas";
   if (s.modalidade === "conferencia") return "conferencia";
   if (s.modalidade === "loteamento") return "loteamento";
+  if (s.modalidade === "car") return "car";
   if ((s as { divisao?: unknown }).divisao) return "divisao";
   return s.tem_glebas ? "gleba" : "completo";
 }
@@ -122,6 +137,7 @@ export const rotuloCurto: Record<ChaveServico, string> = {
   gleba: "Gleba",
   divisao: "Divisão",
   loteamento: "Loteamento",
+  car: "CAR",
   pecas: "Peças",
 };
 

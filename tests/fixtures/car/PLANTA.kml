@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document>
+	<name>PLANTA.kml</name>
+	<open>1</open>
+ 
+	<StyleMap id="inPlineX"><Pair><key>normal</key><styleUrl>#inline0x</styleUrl></Pair><Pair><key>highlight</key><styleUrl>#inline1x</styleUrl></Pair></StyleMap>
+	<Style id="inline0x"><LineStyle><width>2</width></LineStyle><PolyStyle></PolyStyle></Style>
+	<Style id="inline1x"><LineStyle><width>2</width></LineStyle><PolyStyle></PolyStyle></Style>
+	<StyleMap id="m_ylw-pushpin">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#s_ylw-pushpin</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#s_ylw-pushpin_hl0</styleUrl>
+		</Pair>
+	</StyleMap>
+ 
+	<StyleMap id="inPline">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#inline0</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#inline1</styleUrl>
+		</Pair>
+	</StyleMap>
+	<StyleMap id="inline">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#inline0</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#inline1</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Style id="inline0">
+		<LineStyle>
+			<color>ff0000ff</color>
+			<width>2</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<Style id="inline1">
+		<LineStyle>
+			<color>ff0000ff</color>
+			<width>2</width>
+		</LineStyle>
+		<PolyStyle>
+			<fill>0</fill>
+		</PolyStyle>
+	</Style>
+	<Style id="SH_INSERT">
+		<IconStyle>
+			<scale>1.2</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle_highlight.png</href>
+			</Icon>
+		</IconStyle>
+	</Style>
+	<Style id="SN_INSERT">
+		<IconStyle>
+			<scale>1.2</scale>
+			<Icon>
+				<href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href>
+			</Icon>
+		</IconStyle>
+	</Style>
+	<StyleMap id="M_INSERT">
+		<Pair>
+			<key>normal</key>
+			<styleUrl>#SN_INSERT</styleUrl>
+		</Pair>
+		<Pair>
+			<key>highlight</key>
+			<styleUrl>#SH_INSERT</styleUrl>
+		</Pair>
+	</StyleMap>
+	<Style id="IconStyle0">
+		<IconStyle>
+			<Icon>
+			</Icon>
+		</IconStyle>
+	</Style>
+   <Style id="COLOR5">
+      <LineStyle>
+      <color>FFFF0000</color>
+      <width>2</width>
+      </LineStyle>
+      <PolyStyle>
+         <fill>0</fill>
+      </PolyStyle>
+   </Style>
+   <Placemark>
+      <name>PLINHA-1</name>
+      <styleUrl>#COLOR5</styleUrl>
+      <LineString>
+         <tessellate>1</tessellate>
+			          <coordinates>
+                    -39.317443128521,-11.593438062575,0
+                    -39.317715543532,-11.593715527501,0
+                    -39.318075375162,-11.594078234441,0
+                    -39.318639732235,-11.594533414684,0
+                    -39.318614374853,-11.594616960344,0
+                    -39.318555751513,-11.594825602995,0
+                    -39.318122040570,-11.594669294198,0
+                    -39.317750505953,-11.594539017394,0
+                    -39.317748669015,-11.594524639292,0
+                    -39.317346545998,-11.594375023084,0
+                    -39.317153870311,-11.594305439851,0
+                    -39.316822978810,-11.594179409724,0
+                    -39.316998128176,-11.593836903563,0
+                    -39.317237663218,-11.593359937555,0
+                    -39.316965714872,-11.593101691583,0
+                    -39.316724131026,-11.592871994933,0
+                    -39.316794765180,-11.592804331008,0
+                    -39.317100469525,-11.593102224461,0
+                    -39.317098158525,-11.593105648402,0
+                    -39.317261160389,-11.593263536295,0
+                    -39.317443128521,-11.593438062575,0
+			          </coordinates>
+		</LineString>
+	</Placemark>
+ 
+</Document>
+</kml>

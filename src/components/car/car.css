@@ -1,0 +1,85 @@
+/* Serviço de CAR: prancheta + painel, no mesmo desenho do loteamento. */
+.car-pagina { padding-bottom: 0; }
+.car-resumo-topo { font-size: 13px; color: var(--texto-2); white-space: nowrap; }
+.car-resumo-topo b { color: var(--texto); font-variant-numeric: tabular-nums; }
+.car-dica { font-size: 12.5px; color: var(--texto-3); line-height: 1.5; margin: 0; }
+.car-falta { color: var(--perigo); font-weight: 600; }
+.car-ok { color: var(--floresta); font-size: 12.5px; font-weight: 600; margin-left: auto; }
+.car-cartao header .car-falta { margin-left: auto; font-size: 12.5px; }
+
+.car-area-trabalho {
+  display: grid; grid-template-columns: 52px minmax(0, 1fr) 370px;
+  height: calc(100vh - 118px); min-height: 560px;
+}
+.car-ferramentas { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0; border-right: 1px solid var(--borda); background: var(--card); }
+.car-ferramentas button { width: 38px; height: 38px; padding: 0; display: grid; place-items: center; border-radius: 10px; font-size: 17px; border: 1px solid transparent; background: transparent; color: var(--texto-2); }
+.car-ferramentas button:hover:not(:disabled) { background: #F0F3F1; color: var(--texto); }
+.car-ferramentas button.ativo { background: var(--primaria-clara); color: var(--floresta); border-color: var(--primaria); }
+.car-ferramentas .sep { width: 26px; height: 1px; background: var(--borda); margin: 4px 0; }
+
+.car-centro { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.car-prancheta { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #E9ECE6; touch-action: none; user-select: none; }
+.car-prancheta svg { display: block; }
+.car-alca { fill: #fff; stroke: #12201A; stroke-width: 1.5; }
+.car-alca.desenho { fill: #FFE48A; }
+.car-rotulo { font: 600 12px var(--fonte); fill: #fff; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: rgb(10 40 80 / 85%); stroke-width: 3px; }
+.car-escala {
+  position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 80px);
+  font-size: 12px; color: #fff; background: rgb(18 32 26 / 72%); padding: 6px 10px; border-radius: 8px; pointer-events: none;
+}
+.car-enquadrar { position: absolute; right: 12px; top: 12px; width: 36px; height: 36px; padding: 0; border-radius: 10px; font-size: 18px; background: var(--card); }
+.car-msg {
+  position: absolute; left: 50%; top: 12px; transform: translateX(-50%); max-width: min(640px, calc(100% - 120px));
+  display: flex; gap: 8px; align-items: flex-start; padding: 8px 8px 8px 14px; border-radius: 10px;
+  background: var(--card); border: 1px solid var(--borda); box-shadow: 0 6px 20px rgb(0 0 0 / 12%); font-size: 13px;
+}
+.car-msg.erro { border-color: var(--perigo); color: var(--perigo); }
+.car-msg button { height: 22px; padding: 0 6px; }
+
+.car-painel { overflow-y: auto; border-left: 1px solid var(--borda); background: #FAFBFA; padding: 14px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.car-cartao { background: var(--card); border: 1px solid var(--borda); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.car-cartao header { display: flex; align-items: center; gap: 8px; }
+.car-cartao header h3 { font-size: 15px; margin: 0; }
+.car-cont { margin-left: auto; font-size: 12px; color: var(--texto-3); }
+.car-cartao > button.ativo, .car-botoes button.ativo { background: var(--primaria-clara); border-color: var(--primaria); color: var(--floresta); }
+
+.car-quadro { width: 100%; border-collapse: collapse; font-size: 13px; }
+.car-quadro td { padding: 5px 0; border-bottom: 1px solid #EEF0EE; font-variant-numeric: tabular-nums; }
+.car-quadro td:nth-child(2), .car-quadro td:nth-child(3) { text-align: right; padding-left: 8px; white-space: nowrap; }
+.car-quadro tr:last-child td { border-bottom: 0; }
+.car-quadro i, .car-baixar i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
+
+.car-campo { display: grid; gap: 4px; font-size: 13px; }
+.car-campo > span:first-child { color: var(--texto-2); }
+.car-entrada { display: inline-flex; align-items: center; gap: 6px; }
+.car-entrada input { width: 84px; }
+.car-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.car-check small { color: var(--texto-3); }
+.car-botoes { display: flex; gap: 8px; flex-wrap: wrap; }
+.car-botoes button { flex: 1; }
+
+.car-rio { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; padding: 8px; border: 1px solid var(--borda); border-radius: 10px; }
+.car-rio.sel { border-color: var(--primaria); background: var(--primaria-clara); }
+.car-rio-nome { grid-column: 1 / 3; min-width: 0; }
+.car-rio select { grid-column: 1 / 3; min-width: 0; }
+.car-rio > button { grid-column: 3; grid-row: 1; height: 28px; padding: 0 8px; }
+.car-rio .car-entrada { grid-column: 3; grid-row: 2; }
+.car-rio .car-entrada input { width: 64px; }
+
+.car-avisos { background: #FFF8EC; border-color: #F1D9A8; }
+.car-avisos p { margin: 0; font-size: 12.5px; color: var(--alerta-escuro); line-height: 1.45; }
+
+.car-baixar { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+.car-baixar span { flex: 1; display: flex; flex-direction: column; }
+.car-baixar small { font: 11px var(--mono); color: var(--texto-3); }
+.car-baixar button { height: 30px; padding: 0 12px; }
+
+.car-novo-previa { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.car-novo-previa svg { flex: none; background: #F6F7F4; border: 1px solid var(--borda); border-radius: 12px; }
+.car-novo-dados { flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: 10px; }
+.car-novo-dados p { margin: 0; }
+
+@media (max-width: 900px) {
+  .car-area-trabalho { grid-template-columns: 52px minmax(0, 1fr); grid-template-rows: minmax(420px, 1fr) auto; height: auto; }
+  .car-painel { grid-column: 1 / 3; border-left: 0; border-top: 1px solid var(--borda); }
+}

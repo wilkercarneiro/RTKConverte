@@ -239,6 +239,14 @@ begin
       using (servico_do_escritorio(servico_id))
       with check (servico_do_escritorio(servico_id));
   end if;
+  -- car_projetos (0023), idem
+  if to_regclass('car_projetos') is not null then
+    drop policy if exists car_projetos_autenticado on car_projetos;
+    drop policy if exists car_projetos_do_escritorio on car_projetos;
+    create policy car_projetos_do_escritorio on car_projetos for all to authenticated
+      using (servico_do_escritorio(servico_id))
+      with check (servico_do_escritorio(servico_id));
+  end if;
 end $$;
 
 -- escritorios: vê o próprio; o dono só renomeia (coluna `nome`). Quem decide

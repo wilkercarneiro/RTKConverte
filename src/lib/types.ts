@@ -33,8 +33,10 @@ export interface DocumentoGerado {
  *                 planta opcionais, sem SIGEF e sem peças
  *   loteamento  — projeto de parcelamento da gleba: quadras, lotes, ruas e áreas
  *                 públicas, planta do loteamento e arquivo de locação para o campo
+ *   car         — Cadastro Ambiental Rural: do KML da área total saem reserva
+ *                 legal, APP de rio e área produtiva em shapefile para o SICAR
  */
-export type Modalidade = "completo" | "conferencia" | "loteamento";
+export type Modalidade = "completo" | "conferencia" | "loteamento" | "car";
 
 /** Folha da planta. `undefined` mantém a regra histórica: posse → A3, resto → A1. */
 export type Folha = "A1" | "A3" | "A4";

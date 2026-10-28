@@ -49,6 +49,10 @@ export function progressoDe(s: Pick<Servico, "modalidade" | "tipo" | "status">, 
     // o loteamento é desenhado na tela; "gerado" = já saíram planta e locação
     return montar([s.status === "gerado"], ["projetar o loteamento e exportar"]);
   }
+  if (s.modalidade === "car") {
+    // como o loteamento: "gerado" = os shapefiles já foram baixados
+    return montar([s.status === "gerado"], ["marcar reserva e APP e baixar os shapefiles"]);
+  }
   if (!vaiAoSigef(s)) {
     return montar([d.docs], ["gerar memorial e planta"]);
   }

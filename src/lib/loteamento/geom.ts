@@ -222,12 +222,15 @@ export const intersecao = (a: Poligono[], b: Poligono[]): Poligono[] => booleana
 /**
  * Faixa de largura total `largura` ao redor de uma polilinha aberta (rua pelo
  * eixo, APP pela margem). Pontas retas no fim do eixo; dobras em esquadria.
+ * "redonda" arredonda pontas e dobras: é a faixa à distância fixa da linha
+ * (APP de rio do CAR), que numa curva não pode ganhar o bico da esquadria.
  */
-export function bufferLinha(linha: Pt[], largura: number, pontas: "reta" | "quadrada" = "reta"): Poligono[] {
+export function bufferLinha(linha: Pt[], largura: number, pontas: "reta" | "quadrada" | "redonda" = "reta"): Poligono[] {
   if (linha.length < 2 || largura <= 0) return [];
   const co = new ClipperLib.ClipperOffset(4, 0.01 * ESC);
-  co.AddPath(paraPath(linha), ClipperLib.JoinType.jtMiter,
-    pontas === "reta" ? ClipperLib.EndType.etOpenButt : ClipperLib.EndType.etOpenSquare);
+  co.AddPath(paraPath(linha), pontas === "redonda" ? ClipperLib.JoinType.jtRound : ClipperLib.JoinType.jtMiter,
+    pontas === "reta" ? ClipperLib.EndType.etOpenButt
+      : pontas === "quadrada" ? ClipperLib.EndType.etOpenSquare : ClipperLib.EndType.etOpenRound);
   const tree = new ClipperLib.PolyTree();
   co.Execute(tree, (largura / 2) * ESC);
   return daArvore(tree);
