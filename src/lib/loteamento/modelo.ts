@@ -92,6 +92,14 @@ export interface Parametros {
   precoM2: number;
   /** acréscimo do lote de esquina no quadro de vendas (%) */
   acrescimoEsquina: number;
+  /** máximo de quinas do lote (padrão 4; 0 = sem limite — divisão de imóvel rural) */
+  quinasMax?: number;
+  /**
+   * Divisão de imóvel: o contorno não recua (toda terra tem dono). A quina no
+   * contorno só corre por ele, o lado sobre o contorno não tem alça e a ponta
+   * da divisa deslizada segue o contorno de vértice em vértice.
+   */
+  bordaFixa?: boolean;
 }
 
 export const PARAMETROS_PADRAO: Parametros = {

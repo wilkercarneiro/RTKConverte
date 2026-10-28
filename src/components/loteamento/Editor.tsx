@@ -79,6 +79,8 @@ function corPorArea(a: number, min: number, max: number): string {
 }
 
 export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerramenta, onMudar, onFimArraste, vista, focar, onMsg }: Props) {
+  // divisão de imóvel: o contorno não recua (ver Parametros.bordaFixa)
+  const bordaFixa = !!projeto.params.bordaFixa;
   const caixaRef = useRef<HTMLDivElement>(null);
   const [tam, setTam] = useState({ w: 900, h: 600 });
   const [v, setV] = useState<Vista | null>(null);
@@ -316,7 +318,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
             x: pt[0], y: pt[1], forma: "quina", acao: { tipo: "quina", de: a.p, quadra: quadraAtiva, lote: l, pr0: projeto, res0: res },
             titulo: a.naBorda ? "Arraste a quina — ela corre pela rua/divisa; os vizinhos se ajustam (Alt solta da borda)" : "Arraste a quina — os lotes vizinhos se ajustam",
           });
-        } else {
+        } else if (!(bordaFixa && a.naBorda)) {
           const d = sub(tela(a.b!), tela(a.a!));
           out.push({
             x: pt[0], y: pt[1], forma: "divisa", ang: (Math.atan2(d[1], d[0]) * 180) / Math.PI,
@@ -478,7 +480,9 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         const dono = posicaoNoDesenho(a.pr0, a.res0, a.lote);
         // a borda da quadra é ímã (14 px): perto dela a quina corre pela rua; longe, vai aonde o cursor for
         const ed = a.tipo === "quina"
-          ? moverQuina(a.pr0, a.res0, a.quadra, a.de, alt ? p : imaDeQuina(p, a.res0, a.de), alt, 14 / vv.s, dono)
+          ? bordaFixa
+            ? moverQuina(a.pr0, a.res0, a.quadra, a.de, p, false, Infinity, dono)
+            : moverQuina(a.pr0, a.res0, a.quadra, a.de, alt ? p : imaDeQuina(p, a.res0, a.de), alt, 14 / vv.s, dono)
           : moverDivisa(a.pr0, a.res0, a.quadra, a.a, a.b, dot(sub(p, a.p0), esquerda(unit(sub(a.b, a.a)))), alt, dono);
         const k = ed.sel?.indices[0];
         if (k !== undefined && (!movido.current || k !== selDoArraste.current)) {

@@ -983,26 +983,32 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .dv-m-estrada td:first-child { color: #B42318; }
 .dv-m-divisa td:first-child { font-style: italic; }
 .dv-m-total td { font-weight: 700; }
-.dv-zoom { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
-.dv-zoom button { height: 30px; min-width: 30px; padding: 0 10px; border: 1px solid var(--borda); border-radius: 6px; background: #fff; font-size: 13px; cursor: pointer; }
-.dv-zoom button:disabled { opacity: .45; cursor: default; }
-.dv-zoom button.ativa { background: #E6F2EC; border-color: #1E7A4E; color: #0E3B2B; font-weight: 600; }
-.dv-zoom-sep { width: 1px; height: 22px; background: var(--borda); margin: 0 4px; }
-.dv-zoom-check { display: flex; align-items: center; gap: 5px; font-size: 12.5px; margin-left: auto; }
-.dv-mapa svg.dv-mover { cursor: move; }
-.dv-detalhe { margin-top: 10px; border: 1px solid var(--borda); border-radius: 8px; background: #fff; padding: 10px 12px; }
-.dv-detalhe-tit { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dv-fechar { margin-left: auto; border: 0; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: var(--texto-3); }
+.dv-gerar { display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: flex-end; margin-bottom: 12px; }
+.dv-gerar .dv-campo { margin: 0; }
+.dv-prancheta { height: 680px; min-height: 520px; border: 1px solid var(--borda); border-radius: var(--raio); overflow: hidden; background: var(--card); }
+.dv-painel header { display: flex; align-items: center; gap: 8px; }
+.dv-painel header h3 { margin: 0; font-size: 15px; }
+.dv-painel header .fantasma { margin-left: auto; height: 26px; padding: 0 8px; }
+.dv-lados { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+.dv-lados th { text-align: left; font-size: 11.5px; color: var(--texto-3); font-weight: 600; padding: 4px 6px 4px 0; }
+.dv-lados td { padding: 3px 6px 3px 0; border-top: 1px solid var(--linha); }
+.dv-lados td:first-child { width: 34px; }
+.dv-lados td:nth-child(2) { white-space: nowrap; }
+.dv-area-alvo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; }
+.dv-area-alvo label { display: flex; align-items: center; gap: 6px; }
+.dv-area-alvo input { width: 110px; height: 30px; }
+.dv-area-alvo button { height: 30px; }
+.dv-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dv-lista li { display: grid; grid-template-columns: 14px 1fr auto; gap: 2px 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--borda); border-radius: 9px; background: #fff; cursor: pointer; font-size: 13px; }
+.dv-lista li:hover { border-color: var(--primaria); }
+.dv-lista li small { grid-column: 3; color: var(--texto-3); font-size: 11.5px; }
+.dv-linha-sel td { background: var(--primaria-clara); }
+.dv-cor-btn { border: 0; padding: 0; cursor: pointer; }
 .dv-detalhe-totais { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 8px 0; }
 .dv-detalhe-totais div { display: flex; flex-direction: column; }
 .dv-detalhe-totais span { font-size: 11.5px; color: var(--texto-3); }
 .dv-detalhe-totais b { font-size: 15px; }
 .dv-detalhe-totais small { font-size: 11.5px; color: var(--texto-3); }
-.dv-detalhe table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
-.dv-detalhe th { text-align: left; font-size: 11.5px; color: var(--texto-3); font-weight: 600; padding: 4px 6px 4px 0; }
-.dv-detalhe td { padding: 3px 6px 3px 0; border-top: 1px solid var(--linha); }
-.dv-detalhe td:first-child { width: 40px; }
-.dv-detalhe td:nth-child(2) { width: 110px; white-space: nowrap; }
 .dv-locacao { margin-top: 14px; flex-wrap: wrap; }
 .dv-locacao select { max-width: 100%; height: 34px; }
 .dv-locacao .sub { flex: 1 1 320px; }

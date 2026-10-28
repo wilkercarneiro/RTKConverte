@@ -345,7 +345,7 @@ function areaAbaixo(
 }
 
 /** Se os dois pontos estão na MESMA aresta do perímetro, qual é ela. */
-function arestaComum(a: PontoParte, b: PontoParte, nV: number): number | null {
+export function arestaComum(a: PontoParte, b: PontoParte, nV: number): number | null {
   const arestasDe = (p: PontoParte): number[] => p.novo ? [p.novo.aresta] : [p.vertice!, (p.vertice! - 1 + nV) % nV];
   const A = arestasDe(a), B = arestasDe(b);
   // vértice→vértice: só se forem vizinhos no anel (a aresta que sai do primeiro)
@@ -374,12 +374,10 @@ export function ladosDaParte(r: ResultadoDivisao, k: number, nVertices: number):
   return anel.map((a, j) => {
     const b = anel[(j + 1) % anel.length];
     const aresta = arestaComum(a, b, nVertices);
-    // parte k fica entre a divisa k−1 e a divisa k
-    const divisa = aresta === null && a.novo && b.novo && a.novo.divisa === b.novo.divisa ? a.novo.divisa : null;
-    return {
-      de: a, ate: b, comprimentoM: dist([a.e, a.n], [b.e, b.n]), aresta,
-      vizinha: divisa === null ? null : divisa === k ? k + 1 : k - 1,
-    };
+    // lado por dentro do imóvel: a vizinha é a outra parte que tem os dois pontos
+    const tem = (p: ParteDivisao, q: PontoParte) => p.anel.some((x) => Math.abs(x.e - q.e) < 0.002 && Math.abs(x.n - q.n) < 0.002);
+    const vizinha = aresta === null ? r.partes.findIndex((p, j) => j !== k && tem(p, a) && tem(p, b)) : -1;
+    return { de: a, ate: b, comprimentoM: dist([a.e, a.n], [b.e, b.n]), aresta, vizinha: vizinha >= 0 ? vizinha : null };
   });
 }
 

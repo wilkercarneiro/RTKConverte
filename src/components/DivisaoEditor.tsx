@@ -1,17 +1,29 @@
 // Etapa DIVISÃO EM PARTES IGUAIS (partilha): o motor corta o imóvel em partes de
-// mesma área (ou na fração de cada herdeiro), o operador confere na prévia, gira
-// as divisas se quiser, diz quem recebe cada parte e aplica.
+// mesma área (ou na fração de cada herdeiro) e o operador ajusta na PRANCHETA DO
+// LOTEAMENTO — o mesmo editor, as mesmas ferramentas e o mesmo manuseio: clicar
+// numa parte mostra os lados e a área, arrastar quina e divisa, cortar, desenhar,
+// unir, dividir, "area 33619" na linha de comando, Ctrl+Z, roda do mouse.
 //
-// Aplicar grava os pontos novos das divisas como vértices M do perímetro e cada
-// parte como uma gleba. A partir daí o serviço segue o caminho das glebas — a
-// planta geral com todas as partes, a A3 de cada uma — e, com os códigos
-// alocados, cada parte vira um GEO individual no nome do herdeiro.
-import { useEffect, useMemo, useRef, useState } from "react";
+// Por baixo, a divisão vira um projeto de loteamento sem ruas: o imóvel é uma
+// quadra e cada parte é um lote desenhado (ver divisao_prancheta.ts). Aplicar
+// grava os pontos novos das divisas como vértices M do perímetro e cada parte
+// como uma gleba; a partir daí o serviço segue o caminho das glebas e, com os
+// códigos alocados, cada parte vira um GEO individual no nome do herdeiro.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import proj4 from "proj4";
 import type { Gleba, ParametrosDivisao, Servico, Vertice } from "../lib/types";
-import { dividir, ladosDaParte, sugerirDivisoes, type ResultadoDivisao } from "../lib/divisao";
+import { dividir, sugerirDivisoes } from "../lib/divisao";
 import { ROTULO_DIVISAO, aplicarDivisao, denominacaoDaParte, entradaDoServico, medidasDasPartes, pontosLocacaoDivisao, publicadorUtm, type InfoParte } from "../lib/divisao_servico";
+import { aneisDasGlebas, aneisDosLotes, anelBruto, limparAvisos, perimetroDaDivisao, projetoDaDivisao, projetoServe, resultadoDosLotes } from "../lib/divisao_prancheta";
 import { FORMATOS, arquivoLocacao, type FormatoLocacao } from "../lib/loteamento/saidas";
+import { calcular } from "../lib/loteamento/calculo";
+import type { Lote, Resultado } from "../lib/loteamento/calculo";
+import type { Projeto } from "../lib/loteamento/modelo";
+import { COMANDOS, chaveDoLote, contextoDe, executar, lotesDaSelecao, type Ferramenta, type Selecao } from "../lib/loteamento/acoes";
+import type { Pt } from "../lib/loteamento/geom";
+import { Editor, type OpcoesVista } from "./loteamento/Editor";
+import { Avisos } from "./loteamento/Avisos";
+import "./loteamento/loteamento.css";
 
 const CORES_PARTE = ["#2E86AB", "#E07A1F", "#3BA55C", "#A23B72", "#C9A227", "#5B5FC7", "#D1495B", "#1B998B", "#8D6A9F", "#6C8EAD"];
 const fmt = (v: number, c = 4) => v.toLocaleString("pt-BR", { minimumFractionDigits: c, maximumFractionDigits: c });
@@ -19,6 +31,11 @@ const fmtM = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 1
 const fmtM2 = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // a divisão só tem pontos: o DXF de linhas do loteamento não se aplica
 const FORMATOS_LOCACAO = FORMATOS.filter((f) => f.id !== "dxf");
+// da linha de comando do loteamento, o que serve para partes (sem rua, quadra, área pública)
+const CMDS_DIVISAO = new Set(["area", "unir", "dividir", "apagar", "desenhar lote", "cortar", "preencher", "medir", "ir", "desfazer", "refazer"]);
+const COMANDOS_DIVISAO = COMANDOS.filter((c) => CMDS_DIVISAO.has(c.cmd));
+/** As mensagens do loteamento falam de lote; aqui é parte. */
+const paraPartes = (t: string) => t.replace(/\b([Ll])otes?\b/g, (m, l: string) => (l === "L" ? "Parte" : "parte") + (m.endsWith("s") ? "s" : ""));
 
 interface Props {
   servico: Servico;
@@ -28,6 +45,8 @@ interface Props {
   onAplicar: (r: { vertices: Vertice[]; glebas: Gleba[]; divisao: ParametrosDivisao }) => void;
   /** herdeiro/nome/denominação editados depois de aplicada */
   onGlebas: (g: Gleba[]) => void;
+  /** guarda o rascunho da prancheta no serviço (só no serviço de divisão) */
+  onRascunho?: (d: ParametrosDivisao) => void;
 }
 
 function infoDe(g: Gleba | undefined, k: number): InfoParte {
@@ -39,8 +58,25 @@ function infoDe(g: Gleba | undefined, k: number): InfoParte {
   };
 }
 
-export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas }: Props) {
+interface Historico { passado: Projeto[]; atual: Projeto | null; futuro: Projeto[]; base: Projeto | null }
+
+/** Desfazer/refazer como no loteamento: o arraste empilha só o resultado, ao soltar. */
+function useHistorico(inicial: () => Projeto | null) {
+  const [h, setH] = useState<Historico>(() => ({ passado: [], atual: inicial(), futuro: [], base: null }));
+  const mudar = useCallback((p: Projeto, transiente = false) => setH((e) => {
+    if (transiente) return { ...e, atual: p, base: e.base ?? e.atual };
+    const antes = e.base ?? e.atual;
+    return { passado: antes ? [...e.passado.slice(-100), antes] : e.passado, atual: p, futuro: [], base: null };
+  }), []);
+  const fimArraste = useCallback(() => setH((e) => (e.base ? { passado: [...e.passado.slice(-100), e.base], atual: e.atual, futuro: [], base: null } : e)), []);
+  const desfazer = useCallback(() => setH((e) => (e.passado.length ? { passado: e.passado.slice(0, -1), atual: e.passado[e.passado.length - 1], futuro: e.atual ? [e.atual, ...e.futuro] : e.futuro, base: null } : e)), []);
+  const refazer = useCallback(() => setH((e) => (e.futuro.length ? { passado: e.atual ? [...e.passado, e.atual] : e.passado, atual: e.futuro[0], futuro: e.futuro.slice(1), base: null } : e)), []);
+  return { h, mudar, fimArraste, desfazer, refazer };
+}
+
+export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, onRascunho }: Props) {
   const aplicadaAntes = vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO) && glebas.length >= 2;
+  const fuso = servico.fuso_utm ?? 24;
   const [n, setN] = useState(() => (aplicadaAntes ? glebas.length : 2));
   const [iguais, setIguais] = useState(servico.divisao?.iguais ?? !glebas.some((g) => g.fracao && Math.abs(g.fracao - 1 / glebas.length) > 1e-6));
   const [pct, setPct] = useState<number[]>(() => glebas.length >= 2 && glebas.every((g) => g.fracao) ? glebas.map((g) => Math.round(g.fracao! * 10000) / 100) : []);
@@ -48,51 +84,147 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas }
   const [inverter, setInverter] = useState(!!servico.divisao?.inverter);
   const [linhas, setLinhas] = useState<InfoParte[]>(() => Array.from({ length: Math.max(n, glebas.length) }, (_, k) => infoDe(glebas[k], k)));
 
-  const publicar = useMemo(() => publicadorUtm(servico.fuso_utm ?? 24, (f, t, c) => proj4(f, t, c)), [servico.fuso_utm]);
-  const fracoes = useMemo(() => {
-    if (iguais) return Array(n).fill(1);
-    const base = Array.from({ length: n }, (_, k) => pct[k] ?? 100 / n);
-    return base.map((v) => Math.max(0.01, v));
-  }, [iguais, n, pct]);
-  const somaPct = fracoes.reduce((s, f) => s + f, 0);
+  const publicar = useMemo(() => publicadorUtm(fuso, (f, t, c) => proj4(f, t, c)), [fuso]);
+  const fracoesDe = (nn: number, ig: boolean, pc: number[]) => (ig ? Array(nn).fill(1) : Array.from({ length: nn }, (_, k) => Math.max(0.01, pc[k] ?? 100 / nn)));
+  const fracoes = useMemo(() => fracoesDe(n, iguais, pct), [n, iguais, pct]);
   const ent = useMemo(() => entradaDoServico(vertices, fracoes, inverter, publicar), [vertices, fracoes, inverter, publicar]);
+  const perimetro = useMemo(() => perimetroDaDivisao(ent), [ent]);
   const sugestoes = useMemo(() => (ent.anel.length >= 3 ? sugerirDivisoes(ent) : []), [ent]);
-  const az = azManual ?? sugestoes[0]?.azimute ?? 0;
-  const r: ResultadoDivisao = useMemo(() => dividir(ent, az), [ent, az]);
   const temEstrada = !!ent.estrada?.some(Boolean);
   const comCodigo = vertices.some((v) => v.codigo && !v.codigo_provisorio);
-  const nomesPartes = linhas.slice(0, n).map((l, i) => l.nome.trim() || `PARTE ${i + 1}`);
-  const medidas = useMemo(() => medidasDasPartes(ent, r, nomesPartes), [ent, r, nomesPartes.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const nomeProjeto = servico.denominacao || "Divisão";
+
+  // ---------------- o motor gera; a prancheta guarda o que o operador fez ----------------
+  /** Partes do motor para estes parâmetros, como projeto da prancheta (null = não dá nesta direção). */
+  const gerarProjeto = (nn: number, ig: boolean, pc: number[], az: number | null, inv: boolean): { pr: Projeto | null; motivo?: string } => {
+    const e = entradaDoServico(vertices, fracoesDe(nn, ig, pc), inv, publicar);
+    if (e.anel.length < 3) return { pr: null, motivo: "o perímetro tem menos de 3 vértices" };
+    const azUsar = az ?? sugerirDivisoes(e)[0]?.azimute;
+    if (azUsar === undefined) return { pr: null, motivo: "nenhuma direção de divisas reta divide este imóvel" };
+    const r = dividir(e, azUsar);
+    if (!r.ok) return { pr: null, motivo: r.motivo };
+    return { pr: projetoDaDivisao(e, r.partes.map((p) => anelBruto(e, p)), nomeProjeto) };
+  };
+  const hist = useHistorico(() => {
+    const salvo = (servico.divisao as (ParametrosDivisao & { projeto?: Projeto }) | null | undefined)?.projeto;
+    if (projetoServe(salvo, ent)) return salvo;
+    if (aplicadaAntes) return projetoDaDivisao(ent, aneisDasGlebas(glebas), nomeProjeto);
+    return gerarProjeto(n, iguais, pct, azManual, inverter).pr;
+  });
+  const projeto = hist.h.atual;
+
+  const cache = useRef(new WeakMap<Projeto, Resultado | null>());
+  const calc = useCallback((p: Projeto): Resultado | null => {
+    if (cache.current.has(p)) return cache.current.get(p)!;
+    let r: Resultado | null = null;
+    try { r = limparAvisos(calcular(p, perimetro), temEstrada); } catch (e) { console.error(e); }
+    cache.current.set(p, r);
+    return r;
+  }, [perimetro, temEstrada]);
+  const res = useMemo(() => (projeto ? calc(projeto) : null), [projeto, calc]);
+  const nPartes = res?.lotes.length ?? n;
+  const fracoesRd = nPartes === fracoes.length ? fracoes : undefined;
+  // as partes como o operador deixou, de volta ao formato da divisão (marcos, glebas, locação)
+  const rd = useMemo(() => (res ? resultadoDosLotes(ent, aneisDosLotes(res), fracoesRd, azManual ?? sugestoes[0]?.azimute ?? 0) : null), [res, ent, fracoesRd, azManual, sugestoes]);
+  const lotesOrdem: Lote[] = useMemo(() => (res ? [...res.lotes].sort((a, b) => a.numero - b.numero) : []), [res]);
+  // o desenho mostra a área como os documentos vão imprimir (pontos arredondados
+  // a 0,001"), a mesma da tabela — os comandos seguem medindo no desenho
+  const resVista = useMemo(() => {
+    if (!res || !rd?.ok) return res;
+    const area = new Map(lotesOrdem.map((l, k) => [l.id, rd.partes[k]?.areaM2 ?? l.area]));
+    const troca = (l: Lote) => ({ ...l, area: area.get(l.id) ?? l.area });
+    return { ...res, lotes: res.lotes.map(troca), quadras: res.quadras.map((q) => ({ ...q, lotes: q.lotes.map(troca) })) };
+  }, [res, rd, lotesOrdem]);
+
+  // rascunho no serviço: a prancheta volta como estava ao reabrir
+  useEffect(() => {
+    if (!onRascunho || !projeto) return;
+    const t = setTimeout(() => onRascunho({ ...(servico.divisao ?? {}), azimute: azManual, inverter, iguais, projeto } as ParametrosDivisao), 1200);
+    return () => clearTimeout(t);
+  }, [projeto]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------------- prancheta (cópia do fluxo do loteamento) ----------------
+  const [sel, setSel] = useState<Selecao>(null);
+  const [ferramenta, setFerramenta] = useState<Ferramenta>("selecionar");
+  const [vista, setVista] = useState<OpcoesVista>({ satelite: true, medidas: true, cores: "situacao" });
+  const [focar, setFocar] = useState<{ pt: Pt; n: number } | null>(null);
+  const [msg, setMsg] = useState<{ t: string; erro?: boolean } | null>(null);
+  const [cmd, setCmd] = useState("");
+  const [verAvisos, setVerAvisos] = useState(false);
+  const [areaAlvo, setAreaAlvo] = useState("");
+  const cmdRef = useRef<HTMLInputElement>(null);
+  const dentro = useRef(false);
+  const mostrar = useCallback((t: string, erro = false) => setMsg({ t, erro }), []);
+
+  const mudar = useCallback((p: Projeto, transiente = false): boolean => {
+    if (!calc(p)) { if (!transiente) mostrar("Essa mudança não fecha o cálculo (geometria impossível) — não aplicada.", true); return false; }
+    hist.mudar(p, transiente);
+    return true;
+  }, [calc, hist, mostrar]);
+  const fimArraste = useCallback(() => { hist.fimArraste(); mostrar("Pronto — as partes vizinhas se ajustaram (Ctrl+Z desfaz)."); }, [hist, mostrar]);
+
+  const regerar = (nn: number, ig: boolean, pc: number[], az: number | null, inv: boolean) => {
+    const { pr, motivo } = gerarProjeto(nn, ig, pc, az, inv);
+    if (!pr) { mostrar(`Não dá para dividir assim: ${motivo}. Escolha outra direção.`, true); return; }
+    hist.mudar(pr);
+    setSel(null);
+    mostrar(`Divisão gerada em ${nn} partes. Clique numa parte para ver os lados; arraste quinas e divisas para ajustar (Ctrl+Z volta).`);
+  };
+
+  function rodarComando(texto: string) {
+    if (!projeto || !res) return;
+    const s = executar(texto, projeto, res, sel);
+    if (s.desfazer) hist.desfazer();
+    if (s.refazer) hist.refazer();
+    const aceito = s.pr ? mudar(s.pr) : true;
+    if (aceito && s.sel !== undefined) setSel(s.sel);
+    if (s.ferramenta) setFerramenta(s.ferramenta);
+    if (s.focar) setFocar({ pt: s.focar, n: Date.now() });
+    if (aceito && s.msg) mostrar(paraPartes(s.msg), s.erro);
+  }
+
+  // atalhos do loteamento, só com o mouse na prancheta (a página tem outros campos)
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (!dentro.current) return;
+      const alvo = e.target as HTMLElement;
+      const digitando = alvo && (alvo.tagName === "INPUT" || alvo.tagName === "TEXTAREA" || alvo.tagName === "SELECT");
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !digitando) { e.preventDefault(); if (e.shiftKey) hist.refazer(); else hist.desfazer(); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y" && !digitando) { e.preventDefault(); hist.refazer(); }
+      else if (!digitando && (e.key === "/" || e.key === ":")) { e.preventDefault(); cmdRef.current?.focus(); }
+      else if (!digitando && e.key === "Delete" && res && projeto) {
+        const s = executar("excluir", projeto, res, sel);
+        if (s.pr) { mudar(s.pr); setSel(null); mostrar(s.msg); } else if (s.msg) mostrar(s.msg, s.erro);
+      }
+    };
+    addEventListener("keydown", h);
+    return () => removeEventListener("keydown", h);
+  }, [hist, res, projeto, sel, mudar, mostrar]);
+
+  // ---------------- herdeiros, locação, aplicar ----------------
+  const nomesPartes = Array.from({ length: nPartes }, (_, i) => (linhas[i]?.nome ?? "").trim() || `PARTE ${i + 1}`);
+  const medidas = useMemo(() => (rd?.ok ? medidasDasPartes(ent, rd, nomesPartes) : []), [ent, rd, nomesPartes.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
   const [formato, setFormato] = useState<Exclude<FormatoLocacao, "dxf">>("penzd");
   const baixarLocacao = () => {
-    const pontos = pontosLocacaoDivisao(ent, r, vertices);
+    if (!rd?.ok) return;
+    const pontos = pontosLocacaoDivisao(ent, rd, vertices);
     if (!pontos.length) return;
     const f = FORMATOS.find((x) => x.id === formato)!;
-    const nome = (servico.denominacao ?? "IMOVEL").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").toUpperCase();
+    const nome = (servico.denominacao ?? "IMOVEL").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").toUpperCase();
     const blob = new Blob([arquivoLocacao(pontos, formato)], { type: "text/plain;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `LOCACAO_DIVISAO_${nome || "IMOVEL"}_SIRGAS2000_UTM${servico.fuso_utm ?? 24}S.${f.ext}`;
+    a.download = `LOCACAO_DIVISAO_${nome || "IMOVEL"}_SIRGAS2000_UTM${fuso}S.${f.ext}`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
 
-  // a divisão aplicada ainda é a da prévia?
-  const igualAplicada = aplicadaAntes && r.ok && glebas.length === r.partes.length && r.partes.every((p, k) =>
-    p.anel.length === glebas[k].anel.length && p.anel.every((q, j) => {
-      const e = q.vertice !== undefined ? Number(ent.base[q.vertice].e) : q.e;
-      const nn = q.vertice !== undefined ? Number(ent.base[q.vertice].n) : q.n;
-      return Math.hypot(e - glebas[k].anel[j][0], nn - glebas[k].anel[j][1]) < 0.002;
-    }));
+  // a divisão aplicada ainda é a da prancheta?
+  const igualAplicada = aplicadaAntes && !!rd?.ok && glebas.length === rd.partes.length && rd.partes.every((p, k) =>
+    p.anel.length === glebas[k].anel.length && p.anel.every((q, j) => Math.hypot(q.e - glebas[k].anel[j][0], q.n - glebas[k].anel[j][1]) < 0.002));
 
-  const mudarN = (v: number) => {
-    const novo = Math.max(2, Math.min(30, Math.round(v) || 2));
-    setN(novo);
-    setLinhas((ls) => Array.from({ length: Math.max(novo, ls.length) }, (_, k) => ls[k] ?? infoDe(undefined, k)));
-    setPct([]);
-  };
   const editarLinha = (k: number, patch: Partial<InfoParte>) => {
-    const ls = linhas.map((l, i) => (i === k ? { ...l, ...patch } : l));
+    const ls = Array.from({ length: Math.max(linhas.length, k + 1) }, (_, i) => linhas[i] ?? infoDe(undefined, i)).map((l, i) => (i === k ? { ...l, ...patch } : l));
     setLinhas(ls);
     // aplicada: herdeiro, nome e denominação vão direto para a gleba (a geometria não muda)
     if (aplicadaAntes && glebas[k]) {
@@ -106,123 +238,32 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas }
     }
   };
   const aplicar = () => {
-    if (!r.ok) return;
-    const res = aplicarDivisao(vertices, r, linhas.slice(0, n), fracoes, servico.id, glebas);
-    onAplicar({ ...res, divisao: { azimute: azManual, inverter, iguais } });
+    if (!rd?.ok || !projeto) return;
+    const infos = Array.from({ length: nPartes }, (_, i) => linhas[i] ?? infoDe(undefined, i));
+    const fr = fracoesRd ?? Array(nPartes).fill(1);
+    const r = aplicarDivisao(vertices, rd, infos, fr, servico.id, glebas);
+    onAplicar({ ...r, divisao: { azimute: azManual, inverter, iguais, projeto } as ParametrosDivisao });
   };
 
-  // ---------------- prévia ----------------
-  const svgRef = useRef<SVGSVGElement>(null);
-  // arrasto no mapa: gira as divisas ou move a vista; sem mexer, é clique (seleciona a parte)
-  const arrasto = useRef<{ x: number; y: number; moveu: boolean; a0: number; az0: number; c0: [number, number]; escala: number } | null>(null);
-  const [zoom, setZoom] = useState(1);
-  const [foco, setFoco] = useState<[number, number] | null>(null);
-  const [modo, setModo] = useState<"girar" | "mover">("girar");
-  const [sel, setSel] = useState<number | null>(null);
-  const [todasMedidas, setTodasMedidas] = useState(false);
-  const vista = useMemo(() => {
-    const xs = ent.anel.map((p) => p[0]), ys = ent.anel.map((p) => p[1]);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-    const lado = Math.max(x1 - x0, y1 - y0) || 1;
-    const pad = lado * 0.08;
-    return { x0: x0 - pad, y1: y1 + pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad, lado, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
-  }, [ent.anel]);
-  const X = (e: number) => e - vista.x0, Y = (nn: number) => vista.y1 - nn;
-  // a janela visível: o desenho inteiro dividido pelo zoom, em volta do foco
-  const [fx, fy] = foco ?? [vista.w / 2, vista.h / 2];
-  const vw = vista.w / zoom, vh = vista.h / zoom;
-  const k = vista.lado / 600 / zoom; // unidades por "pixel" de referência: texto e traço não crescem com o zoom
-  const centro = (pts: { e: number; n: number }[]) => {
-    // centroide da área (cai fora só em parte muito côncava)
-    let a = 0, cx = 0, cy = 0;
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i], q = pts[(i + 1) % pts.length];
-      const c = p.e * q.n - q.e * p.n;
-      a += c; cx += (p.e + q.e) * c; cy += (p.n + q.n) * c;
+  // ---------------- tela ----------------
+  const selLotes = res ? lotesDaSelecao(res, sel) : [];
+  const parteSel = selLotes.length === 1 ? lotesOrdem.indexOf(selLotes[0]) : -1;
+  const lsel = parteSel >= 0 ? lotesOrdem[parteSel] : null;
+  const alvoArea = (k: number) => (rd?.ok ? (fracoes.length === nPartes ? fracoes[k] / fracoes.reduce((s, f) => s + f, 0) : 1 / nPartes) * rd.partes.reduce((s, p) => s + p.areaM2, 0) : 0);
+  const nomeLado = (l: Lote["lados"][number]) => {
+    if (l.tipo === "lote") {
+      const k = lotesOrdem.findIndex((x) => x.id === l.ref);
+      return `divisa com ${k >= 0 ? nomesPartes[k] : l.nome}`;
     }
-    return Math.abs(a) < 1e-9 ? pts[0] : { e: cx / (3 * a), n: cy / (3 * a) };
+    return l.nome || (l.tipo === "via" ? "estrada" : "divisa");
   };
-  const paraSvg = (clientX: number, clientY: number): [number, number] => {
-    const svg = svgRef.current, m = svg?.getScreenCTM();
-    if (!svg || !m) return [0, 0];
-    const pt = svg.createSVGPoint();
-    pt.x = clientX; pt.y = clientY;
-    const q = pt.matrixTransform(m.inverse());
-    return [q.x, q.y];
-  };
-  const anguloEm = (clientX: number, clientY: number) => {
-    const [px, py] = paraSvg(clientX, clientY);
-    return (Math.atan2(px - X(vista.cx), -(py - Y(vista.cy))) * 180) / Math.PI;
-  };
-  const ampliar = (fator: number, em?: [number, number]) => {
-    const z = Math.min(60, Math.max(1, zoom * fator));
-    const f = z / zoom;
-    if (f === 1) return;
-    // o ponto sob o cursor (ou o centro) fica parado
-    const [ax, ay] = em ?? [fx, fy];
-    setZoom(z);
-    setFoco(z === 1 ? null : [ax + (fx - ax) / f, ay + (fy - ay) / f]);
-  };
-  // roda do mouse amplia em volta do cursor (listener nativo: o do React é
-  // passivo e não impede a página de rolar junto)
-  const ampliarRef = useRef(ampliar);
-  ampliarRef.current = ampliar;
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const roda = (ev: WheelEvent) => {
-      ev.preventDefault();
-      const m = svg.getScreenCTM();
-      const pt = svg.createSVGPoint();
-      pt.x = ev.clientX; pt.y = ev.clientY;
-      const q = m ? pt.matrixTransform(m.inverse()) : null;
-      ampliarRef.current(ev.deltaY < 0 ? 1.25 : 1 / 1.25, q ? [q.x, q.y] : undefined);
-    };
-    svg.addEventListener("wheel", roda, { passive: false });
-    return () => svg.removeEventListener("wheel", roda);
-  }, []);
-  useEffect(() => { if (sel !== null && sel >= n) setSel(null); }, [n, sel]);
-  const parteNoPonto = (x: number, y: number): number | null => {
-    if (!r.ok) return null;
-    const e = x + vista.x0, nn = vista.y1 - y;
-    const i = r.partes.findIndex((p) => {
-      let dentro = false;
-      for (let a = 0, b = p.anel.length - 1; a < p.anel.length; b = a++) {
-        const A = p.anel[a], B = p.anel[b];
-        if ((A.n > nn) !== (B.n > nn) && e < ((B.e - A.e) * (nn - A.n)) / (B.n - A.n) + A.e) dentro = !dentro;
-      }
-      return dentro;
-    });
-    return i >= 0 ? i : null;
-  };
-  // lados de cada parte com a medida e o confrontante, na ordem do contorno
-  const chaveNomes = nomesPartes.join("|");
-  const ladosPartes = useMemo(() => !r.ok ? [] : r.partes.map((_, i) => ladosDaParte(r, i, ent.anel.length).map((l) => ({
-    ...l,
-    confrontante: l.aresta !== null
-      ? (ent.confrontantes[l.aresta] ?? "")
-      : `divisa com ${(l.vizinha !== null ? chaveNomes.split("|")[l.vizinha] : null) ?? "a parte vizinha"}`,
-    estrada: l.aresta !== null && !!ent.estrada?.[l.aresta],
-  }))), [r, ent, chaveNomes]);
-  /** Medida escrita ao longo do lado, por fora da parte; lado curto na tela leva só o número (ver a tabela). */
-  const rotuloLado = (l: { de: { e: number; n: number }; ate: { e: number; n: number }; comprimentoM: number }, j: number, c: { e: number; n: number }, cor: string) => {
-    const x1 = X(l.de.e), y1 = Y(l.de.n), x2 = X(l.ate.e), y2 = Y(l.ate.n);
-    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-    const L = Math.hypot(x2 - x1, y2 - y1) || 1;
-    let nx = -(y2 - y1) / L, ny = (x2 - x1) / L;
-    if (nx * (mx - X(c.e)) + ny * (my - Y(c.n)) < 0) { nx = -nx; ny = -ny; }
-    let ang = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
-    if (ang > 90) ang -= 180; else if (ang < -90) ang += 180;
-    const tx = mx - nx * 8 * k, ty = my - ny * 8 * k; // por dentro: a parte vizinha escreve do outro lado
-    return L / k > 64 ? (
-      <text key={j} x={tx} y={ty} transform={`rotate(${ang} ${tx} ${ty})`} fontSize={10.5 * k} textAnchor="middle" dominantBaseline="middle"
-        fill={cor} stroke="#fff" strokeWidth={3 * k} paintOrder="stroke" fontWeight={600}>{fmtM2(l.comprimentoM)} m</text>
-    ) : (
-      <g key={j}>
-        <circle cx={tx} cy={ty} r={6 * k} fill="#fff" stroke={cor} strokeWidth={1.2 * k} />
-        <text x={tx} y={ty} fontSize={7.5 * k} textAnchor="middle" dominantBaseline="central" fill={cor} fontWeight={700}>{j + 1}</text>
-      </g>
-    );
+  const contexto = contextoDe(sel);
+  const sugestoesCmd = COMANDOS_DIVISAO.filter((c) => c.contexto.includes(contexto)).slice(0, 7);
+  const selecionarParte = (k: number) => {
+    const l = lotesOrdem[k];
+    if (!l) return;
+    // só seleciona: o "ir" do loteamento aproxima no tamanho de lote urbano, perto demais para uma parte rural
+    setSel({ tipo: "lotes", chaves: [chaveDoLote(l)] });
   };
 
   return (
@@ -230,236 +271,206 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas }
       <header>
         <h3>Divisão em partes iguais</h3>
         <span className="desc">
-          partilha ou herança: o imóvel é cortado por divisas retas em partes de mesma área (ou na fração de cada um) —
-          sai o GEO do imóvel inteiro e, depois, um GEO para cada parte
+          partilha ou herança: o motor corta o imóvel em partes de mesma área (ou na fração de cada um) e você ajusta na prancheta,
+          com o mesmo manuseio do loteamento — sai o GEO do imóvel inteiro e, depois, um GEO para cada parte
         </span>
       </header>
 
-      <div className="dv">
-        <div className="dv-mapa">
-          <div className="dv-zoom">
-            <button type="button" onClick={() => ampliar(1.5)} title="Ampliar" aria-label="Ampliar">+</button>
-            <button type="button" onClick={() => ampliar(1 / 1.5)} disabled={zoom <= 1} title="Diminuir" aria-label="Diminuir">−</button>
-            <button type="button" onClick={() => { setZoom(1); setFoco(null); }} disabled={zoom <= 1} title="Ver o imóvel inteiro">Inteiro</button>
-            <span className="dv-zoom-sep" />
-            <button type="button" className={modo === "girar" ? "ativa" : ""} onClick={() => setModo("girar")} title="Arrastar gira as divisas">Girar divisas</button>
-            <button type="button" className={modo === "mover" ? "ativa" : ""} onClick={() => setModo("mover")} title="Arrastar move o mapa">Mover mapa</button>
-            <label className="dv-zoom-check"><input type="checkbox" checked={todasMedidas} onChange={(e) => setTodasMedidas(e.target.checked)} /> Medidas de todas as partes</label>
+      <div className="dv-gerar">
+        <label className="dv-campo">Quantas partes
+          <div className="dv-contador">
+            <button type="button" onClick={() => { const v = Math.max(2, nPartes - 1); setN(v); setPct([]); regerar(v, iguais, [], azManual, inverter); }} disabled={nPartes <= 2} aria-label="Menos uma parte">−</button>
+            <input type="number" min={2} max={30} value={n} onChange={(e) => setN(Math.max(2, Math.min(30, Math.round(Number(e.target.value)) || 2)))}
+              onBlur={() => { setPct([]); regerar(n, iguais, [], azManual, inverter); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+            <button type="button" onClick={() => { const v = Math.min(30, nPartes + 1); setN(v); setPct([]); regerar(v, iguais, [], azManual, inverter); }} disabled={nPartes >= 30} aria-label="Mais uma parte">+</button>
           </div>
-          <svg ref={svgRef} viewBox={`${fx - vw / 2} ${fy - vh / 2} ${vw} ${vh}`} preserveAspectRatio="xMidYMid meet"
-            className={modo === "mover" ? "dv-mover" : ""}
-            onPointerDown={(ev) => {
-              (ev.currentTarget as SVGSVGElement).setPointerCapture(ev.pointerId);
-              const m = svgRef.current?.getScreenCTM();
-              arrasto.current = { x: ev.clientX, y: ev.clientY, moveu: false, a0: anguloEm(ev.clientX, ev.clientY), az0: az, c0: [fx, fy], escala: m ? 1 / m.a : 1 };
-            }}
-            onPointerMove={(ev) => {
-              const g = arrasto.current;
-              if (!g) return;
-              // até 4 px é clique, não arrasto (antes um clique já arredondava o azimute)
-              if (!g.moveu && Math.hypot(ev.clientX - g.x, ev.clientY - g.y) < 4) return;
-              g.moveu = true;
-              if (modo === "mover") {
-                setFoco([g.c0[0] - (ev.clientX - g.x) * g.escala, g.c0[1] - (ev.clientY - g.y) * g.escala]);
-              } else {
-                const d = anguloEm(ev.clientX, ev.clientY) - g.a0;
-                setAzManual(Math.round((((g.az0 + d) % 180) + 180) % 180));
-              }
-            }}
-            onPointerUp={(ev) => {
-              const g = arrasto.current;
-              arrasto.current = null;
-              if (g && !g.moveu) {
-                const i = parteNoPonto(...paraSvg(ev.clientX, ev.clientY));
-                setSel(i === sel ? null : i);
-              }
-            }}>
-            {/* imóvel */}
-            <polygon points={ent.anel.map((p) => `${X(p[0])},${Y(p[1])}`).join(" ")} fill="#F3F6F4" stroke="#0033D9" strokeWidth={3 * k} />
-            {r.ok && r.partes.map((p, i) => (
-              <polygon key={i} points={p.anel.map((q) => `${X(q.e)},${Y(q.n)}`).join(" ")}
-                fill={CORES_PARTE[i % CORES_PARTE.length]} fillOpacity={sel === null ? 0.22 : sel === i ? 0.4 : 0.1} stroke="#0033D9" strokeWidth={2.4 * k} />
+        </label>
+        <div className="dv-campo">
+          <span>Área de cada parte</span>
+          <div className="dv-opcoes">
+            <label><input type="radio" checked={iguais} onChange={() => { setIguais(true); regerar(n, true, pct, azManual, inverter); }} /> Partes iguais</label>
+            <label><input type="radio" checked={!iguais} onChange={() => setIguais(false)} /> Frações diferentes (na tabela)</label>
+          </div>
+        </div>
+        <div className="dv-campo">
+          <span>Direção das divisas</span>
+          <div className="dv-sugestoes">
+            {sugestoes.map((s, i) => (
+              <button type="button" key={i} className={Math.abs(s.azimute - (azManual ?? sugestoes[0]?.azimute ?? -1)) < 0.05 ? "ativa" : ""}
+                onClick={() => { const az = i === 0 ? null : s.azimute; setAzManual(az); regerar(n, iguais, pct, az, inverter); }}
+                title={`${s.divisas.length} divisa(s), ${fmtM(s.divisas.reduce((a, d) => a + d.comprimentoM, 0))} m de cerca nova`}>
+                {i === 0 ? "Recomendada" : `Opção ${i + 1}`} · {fmtM(s.azimute)}°
+                {temEstrada && <small>{s.partes.every((p) => p.frenteEstradaM >= 5) ? "todas com frente" : "sem frente p/ alguma"}</small>}
+              </button>
             ))}
-            {/* estrada */}
-            {ent.anel.map((p, i) => {
-              if (!ent.estrada?.[i]) return null;
-              const q = ent.anel[(i + 1) % ent.anel.length];
-              return <line key={`e${i}`} x1={X(p[0])} y1={Y(p[1])} x2={X(q[0])} y2={Y(q[1])} stroke="#D90D0D" strokeWidth={2.4 * k} />;
-            })}
-            {/* divisas novas */}
-            {r.ok && r.divisas.map((d, i) => {
-              const mx = (d.a.e + d.b.e) / 2, my = (d.a.n + d.b.n) / 2;
-              return (
-                <g key={`d${i}`}>
-                  <line x1={X(d.a.e)} y1={Y(d.a.n)} x2={X(d.b.e)} y2={Y(d.b.n)} stroke="#0E3B2B" strokeWidth={2.2 * k} strokeDasharray={`${9 * k} ${5 * k}`} />
-                  {!todasMedidas && sel === null && <text x={X(mx)} y={Y(my) - 6 * k} fontSize={11 * k} textAnchor="middle" fill="#0E3B2B" stroke="#fff" strokeWidth={3 * k} paintOrder="stroke">{fmtM(d.comprimentoM)} m</text>}
-                </g>
-              );
-            })}
-            {r.ok && r.novos.map((p, i) => (
-              <circle key={`n${i}`} cx={X(p.e)} cy={Y(p.n)} r={5 * k} fill="#fff" stroke="#E07A1F" strokeWidth={2.4 * k} />
+            <span className="dv-giro">
+              <input type="number" min={0} max={179.9} step={0.5} value={Math.round((azManual ?? sugestoes[0]?.azimute ?? 0) * 10) / 10}
+                onChange={(e) => setAzManual(Number(e.target.value))} onBlur={() => regerar(n, iguais, pct, azManual, inverter)}
+                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} aria-label="Azimute das divisas" />°
+            </span>
+          </div>
+          <label className="dv-check"><input type="checkbox" checked={inverter} onChange={(e) => { setInverter(e.target.checked); regerar(n, iguais, pct, azManual, e.target.checked); }} /> Começar pelo outro lado</label>
+        </div>
+        <button type="button" onClick={() => regerar(n, iguais, pct, azManual, inverter)} title="Descarta os ajustes da prancheta e divide de novo (Ctrl+Z volta)">Gerar de novo</button>
+      </div>
+
+      {!projeto || !res ? (
+        <div className="dv-alerta">{msg?.t ?? "Não foi possível dividir este imóvel com divisas retas. Confira o perímetro ou escolha outra direção."}</div>
+      ) : (
+        <div className={`lot-area-trabalho dv-prancheta${verAvisos ? " com-avisos" : ""}`}
+          onPointerEnter={() => { dentro.current = true; }} onPointerLeave={() => { dentro.current = false; }}>
+          <nav className="lot-ferramentas" aria-label="Ferramentas">
+            {([
+              ["selecionar", "Selecionar e arrastar (S) — clique numa parte; arraste as quinas e as divisas dela", "M5 3l14 9-6 1.5L10 20z"],
+              ["lote", "Desenhar parte (L) — clique as quinas, Enter fecha; duplo clique na área livre rosa vira parte", "M4 4h16v16H4zM4 12h16M12 4v16"],
+              ["cortar", "Cortar partes com uma linha (C)", "M6 6a2 2 0 1 0 0 .01M6 18a2 2 0 1 0 0 .01M8 7l12 10M8 17l12-10"],
+              ["medir", "Medir (M)", "M3 17 17 3l4 4L7 21zM7 13l2 2M10 10l2 2M13 7l2 2"],
+            ] as [Ferramenta, string, string][]).map(([f, t, d]) => (
+              <button type="button" key={f} title={t} className={ferramenta === f ? "ativo" : ""} onClick={() => setFerramenta(f)}>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"><path d={d} /></svg>
+              </button>
             ))}
-            {/* parte selecionada: contorno em destaque e os vértices */}
-            {r.ok && sel !== null && r.partes[sel] && (
-              <g pointerEvents="none">
-                <polygon points={r.partes[sel].anel.map((q) => `${X(q.e)},${Y(q.n)}`).join(" ")} fill="none" stroke={CORES_PARTE[sel % CORES_PARTE.length]} strokeWidth={4 * k} />
-                {r.partes[sel].anel.map((q, j) => <circle key={j} cx={X(q.e)} cy={Y(q.n)} r={2.6 * k} fill="#12201A" />)}
-              </g>
-            )}
-            {/* a medida de cada lado: da parte clicada, ou de todas */}
-            {r.ok && r.partes.map((p, i) => (todasMedidas || sel === i) && (
-              <g key={`m${i}`} pointerEvents="none">
-                {(ladosPartes[i] ?? []).map((l, j) => rotuloLado(l, j, centro(p.anel), sel === i ? "#0E3B2B" : "#33413A"))}
-              </g>
-            ))}
-            {/* rótulos das partes */}
-            {r.ok && r.partes.map((p, i) => {
-              const c = centro(p.anel);
-              const l = linhas[i] ?? infoDe(undefined, i);
-              return (
-                <g key={`l${i}`} fontSize={13 * k} textAnchor="middle" fill="#12201A" stroke="#fff" strokeWidth={3.5 * k} paintOrder="stroke">
-                  <text x={X(c.e)} y={Y(c.n) - 8 * k} fontWeight={700}>{l.nome || `PARTE ${i + 1}`}</text>
-                  <text x={X(c.e)} y={Y(c.n) + 9 * k}>{fmt(p.areaM2 / 10000)} ha</text>
-                  <text x={X(c.e)} y={Y(c.n) + 24 * k} fontSize={10.5 * k} fill="#33413A">{fmtM2(p.areaM2)} m²</text>
-                  {l.herdeiro && <text x={X(c.e)} y={Y(c.n) + 39 * k} fontSize={11 * k} fill="#5B6B63">{l.herdeiro}</text>}
-                </g>
-              );
-            })}
-            {/* norte */}
-            <g transform={`translate(${fx + vw / 2 - 26 * k} ${fy - vh / 2 + 30 * k})`} pointerEvents="none">
-              <path d={`M0 ${-16 * k} L${7 * k} ${8 * k} L0 ${3 * k} L${-7 * k} ${8 * k} Z`} fill="#12201A" />
-              <text y={22 * k} fontSize={11 * k} textAnchor="middle" fontWeight={700}>N</text>
-            </g>
-          </svg>
-          <p className="dv-dica">
-            Clique numa parte para ver a medida de cada lado · roda do mouse ou + / − para ampliar ·
-            {modo === "girar" ? " arraste para girar as divisas" : " arraste para mover o mapa"} · tracejado = divisa nova, círculo laranja = marco a implantar
-          </p>
-          {r.ok && sel !== null && r.partes[sel] && (
-            <div className="dv-detalhe">
-              <div className="dv-detalhe-tit">
-                <span className="dv-cor" style={{ background: CORES_PARTE[sel % CORES_PARTE.length] }} />
-                <b>{nomesPartes[sel]}</b>
-                {linhas[sel]?.herdeiro && <span className="sub">{linhas[sel].herdeiro}</span>}
-                <button type="button" className="dv-fechar" onClick={() => setSel(null)} aria-label="Fechar">×</button>
+            <span className="sep" />
+            <button type="button" title="Desfazer (Ctrl+Z)" disabled={!hist.h.passado.length} onClick={hist.desfazer}>↶</button>
+            <button type="button" title="Refazer (Ctrl+Y)" disabled={!hist.h.futuro.length} onClick={hist.refazer}>↷</button>
+            <span className="sep" />
+            <button type="button" title="Imagem de satélite" className={vista.satelite ? "ativo" : ""} onClick={() => setVista({ ...vista, satelite: !vista.satelite })}>🛰</button>
+            <button type="button" title="Medidas dos lados" className={vista.medidas ? "ativo" : ""} onClick={() => setVista({ ...vista, medidas: !vista.medidas })}>↔</button>
+            <button type="button" title="Colorir pelo tamanho da parte" className={vista.cores === "area" ? "ativo" : ""} onClick={() => setVista({ ...vista, cores: vista.cores === "area" ? "situacao" : "area" })}>▦</button>
+            <span className="sep" />
+            <button type="button" title={verAvisos ? "Esconder os avisos" : "Mostrar os avisos das partes"} className={`lot-btn-avisos${verAvisos ? " ativo" : ""}`} onClick={() => setVerAvisos(!verAvisos)}>
+              ⚠{res.lotes.some((l) => l.problemas.length) && <i>{res.lotes.filter((l) => l.problemas.length).length}</i>}
+            </button>
+          </nav>
+
+          {verAvisos && <Avisos res={res} params={projeto.params} sel={sel} onSel={setSel} onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onFechar={() => setVerAvisos(false)} />}
+
+          <div className="lot-centro">
+            <Editor projeto={projeto} res={resVista ?? res} fuso={fuso} sel={sel} onSel={setSel} ferramenta={ferramenta} onFerramenta={setFerramenta}
+              onMudar={mudar} onFimArraste={fimArraste} vista={vista} focar={focar} onMsg={(m) => mostrar(paraPartes(m))} />
+            <form className="lot-comando" onSubmit={(e) => { e.preventDefault(); rodarComando(cmd); setCmd(""); }}>
+              <div className="lot-cmd-linha">
+                <span className="lot-cmd-prompt">Comando{lsel ? ` · ${nomesPartes[parteSel]}` : selLotes.length > 1 ? ` · ${selLotes.length} partes` : ""}:</span>
+                <input ref={cmdRef} value={cmd} onChange={(e) => setCmd(e.target.value)} placeholder="ex.: area 33619 · unir · dividir 2 · cortar"
+                  onKeyDown={(e) => { if (e.key === "Escape") { setCmd(""); (e.target as HTMLInputElement).blur(); } }} />
+                <button type="submit" className="principal">Executar</button>
               </div>
-              <div className="dv-detalhe-totais">
-                <div><span>Área total</span><b className="mono">{fmtM2(r.partes[sel].areaM2)} m²</b><small className="mono">{fmt(r.partes[sel].areaM2 / 10000)} ha</small></div>
-                <div><span>Perímetro</span><b className="mono">{fmtM2(r.partes[sel].perimetroM)} m</b><small>{ladosPartes[sel]?.length ?? 0} lados</small></div>
-                {temEstrada && <div><span>Frente p/ estrada</span><b className="mono">{fmtM2(r.partes[sel].frenteEstradaM)} m</b></div>}
+              <div className="lot-cmd-sugestoes">
+                {msg && <span className={`lot-cmd-msg${msg.erro ? " erro" : ""}`}>{msg.t}</span>}
+                {!msg && sugestoesCmd.map((c) => (
+                  <button type="button" key={c.cmd} title={paraPartes(c.desc)}
+                    onClick={() => { if (/\d/.test(c.exemplo)) { setCmd(c.exemplo.replace(/\d+.*$/, "")); cmdRef.current?.focus(); } else rodarComando(c.exemplo); }}>{c.exemplo}</button>
+                ))}
+                {msg && <button type="button" className="fantasma" onClick={() => setMsg(null)}>×</button>}
               </div>
-              <table>
-                <thead><tr><th>Lado</th><th>Medida</th><th>Confronta com</th></tr></thead>
-                <tbody>
-                  {(ladosPartes[sel] ?? []).map((l, j) => (
-                    <tr key={j} className={l.estrada ? "dv-m-estrada" : l.vizinha !== null ? "dv-m-divisa" : ""}>
-                      <td className="mono">{j + 1}</td>
-                      <td className="mono">{fmtM2(l.comprimentoM)} m</td>
-                      <td>{l.confrontante}{l.estrada && " (estrada)"}</td>
-                    </tr>
+            </form>
+          </div>
+
+          <aside className="lot-painel dv-painel">
+            {lsel ? (
+              <>
+                <header>
+                  <span className="dv-cor" style={{ background: CORES_PARTE[parteSel % CORES_PARTE.length] }} />
+                  <h3>{nomesPartes[parteSel]}</h3>
+                  <button type="button" className="fantasma" onClick={() => setSel(null)} aria-label="Fechar">×</button>
+                </header>
+                {linhas[parteSel]?.herdeiro && <div className="sub">{linhas[parteSel].herdeiro}</div>}
+                <div className="dv-detalhe-totais">
+                  <div><span>Área total</span><b className="mono">{fmtM2(rd?.ok ? rd.partes[parteSel].areaM2 : lsel.area)} m²</b><small className="mono">{fmt((rd?.ok ? rd.partes[parteSel].areaM2 : lsel.area) / 10000)} ha</small></div>
+                  <div><span>Perímetro</span><b className="mono">{fmtM2(lsel.lados.reduce((s, l) => s + l.comp, 0))} m</b><small>{lsel.lados.length} lados</small></div>
+                  {rd?.ok && <div><span>Diferença p/ a cota</span><b className="mono">{(rd.partes[parteSel].areaM2 - alvoArea(parteSel) >= 0 ? "+" : "") + fmtM2(rd.partes[parteSel].areaM2 - alvoArea(parteSel))} m²</b></div>}
+                </div>
+                <table className="dv-lados">
+                  <thead><tr><th>Lado</th><th>Medida</th><th>Confronta com</th></tr></thead>
+                  <tbody>
+                    {lsel.lados.map((l, j) => (
+                      <tr key={j} className={l.tipo === "via" ? "dv-m-estrada" : l.tipo === "lote" ? "dv-m-divisa" : ""}>
+                        <td className="mono">{j + 1}</td>
+                        <td className="mono">{fmtM2(l.comp)} m</td>
+                        <td>{nomeLado(l)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <form className="dv-area-alvo" onSubmit={(e) => { e.preventDefault(); const v = Number(areaAlvo.replace(/\./g, "").replace(",", ".")); if (v > 0) rodarComando(`area ${v}`); }}>
+                  <label>Deixar com área de
+                    <input value={areaAlvo} onChange={(e) => setAreaAlvo(e.target.value)} placeholder={fmtM2(alvoArea(parteSel))} className="mono" />m²
+                  </label>
+                  <button type="submit">Aplicar</button>
+                  {rd?.ok && <button type="button" className="fantasma" onClick={() => rodarComando(`area ${alvoArea(parteSel).toFixed(2)}`)} title="A divisa desliza até a parte ficar com a cota dela">Acertar a cota</button>}
+                </form>
+                <div className="acoes-linha">
+                  <button type="button" onClick={() => rodarComando("dividir 2")}>Dividir em 2</button>
+                  <button type="button" onClick={() => rodarComando("unir")}>Unir</button>
+                </div>
+                <p className="lot-dica">Arraste as quinas (quadrados) e as divisas (barras verdes) da parte selecionada; a quina no perímetro corre por ele e a vizinha se ajusta.</p>
+              </>
+            ) : (
+              <>
+                <header><h3>Partes</h3></header>
+                <p className="lot-dica">Clique numa parte (no desenho ou aqui) para ver a medida de cada lado e a área total. Roda do mouse aproxima; arrastar o fundo move o desenho.</p>
+                <ul className="dv-lista">
+                  {lotesOrdem.map((l, k) => (
+                    <li key={l.id} onClick={() => selecionarParte(k)}>
+                      <span className="dv-cor" style={{ background: CORES_PARTE[k % CORES_PARTE.length] }} />
+                      <b>{nomesPartes[k]}</b>
+                      <span className="mono">{fmtM2(rd?.ok ? rd.partes[k].areaM2 : l.area)} m²</span>
+                      <small className="mono">{fmt((rd?.ok ? rd.partes[k].areaM2 : l.area) / 10000)} ha</small>
+                    </li>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                </ul>
+                {rd?.ok && <div className="sub">{rd.divisas.length} divisa(s) · {fmtM(rd.divisas.reduce((s, d) => s + d.comprimentoM, 0))} m de cerca · {rd.novos.length} marcos novos · maior diferença entre as partes e a cota: {rd.erroAreaM2 < 0.05 ? "< 0,1" : fmtM2(rd.erroAreaM2)} m²</div>}
+              </>
+            )}
+            {rd && !rd.ok && <div className="dv-alerta">{rd.motivo}</div>}
+          </aside>
         </div>
+      )}
 
-        <div className="dv-controles">
-          <label className="dv-campo">Quantas partes
-            <div className="dv-contador">
-              <button type="button" onClick={() => mudarN(n - 1)} disabled={n <= 2} aria-label="Menos uma parte">−</button>
-              <input type="number" min={2} max={30} value={n} onChange={(e) => mudarN(Number(e.target.value))} />
-              <button type="button" onClick={() => mudarN(n + 1)} disabled={n >= 30} aria-label="Mais uma parte">+</button>
-            </div>
-          </label>
-
-          <div className="dv-campo">
-            <span>Área de cada parte</span>
-            <div className="dv-opcoes">
-              <label><input type="radio" checked={iguais} onChange={() => setIguais(true)} /> Partes iguais</label>
-              <label><input type="radio" checked={!iguais} onChange={() => setIguais(false)} /> Frações diferentes (meação, quinhões desiguais)</label>
-            </div>
-          </div>
-
-          <div className="dv-campo">
-            <span>Direção das divisas</span>
-            <div className="dv-sugestoes">
-              {sugestoes.map((s, i) => (
-                <button type="button" key={i} className={Math.abs(s.azimute - az) < 0.05 ? "ativa" : ""}
-                  onClick={() => setAzManual(i === 0 ? null : s.azimute)}
-                  title={`${s.divisas.length} divisa(s), ${fmtM(s.divisas.reduce((a, d) => a + d.comprimentoM, 0))} m de cerca nova`}>
-                  {i === 0 ? "Recomendada" : `Opção ${i + 1}`} · {fmtM(s.azimute)}°
-                  {temEstrada && <small>{s.partes.every((p) => p.frenteEstradaM >= 5) ? "todas com frente" : "sem frente p/ alguma"}</small>}
-                </button>
-              ))}
-            </div>
-            <div className="dv-giro">
-              <input type="range" min={0} max={179.9} step={0.5} value={az} onChange={(e) => setAzManual(Number(e.target.value))} aria-label="Azimute das divisas" />
-              <input type="number" min={0} max={179.9} step={0.1} value={Math.round(az * 10) / 10} onChange={(e) => setAzManual(Number(e.target.value))} />
-              <span>°</span>
-            </div>
-            <label className="dv-check"><input type="checkbox" checked={inverter} onChange={(e) => setInverter(e.target.checked)} /> Começar a numeração pelo outro lado</label>
-          </div>
-
-          {r.ok ? (
-            <div className="dv-resumo">
-              <div><b>{r.divisas.length}</b> divisa{r.divisas.length > 1 ? "s" : ""} nova{r.divisas.length > 1 ? "s" : ""} · <b>{fmtM(r.divisas.reduce((s, d) => s + d.comprimentoM, 0))} m</b> de cerca</div>
-              <div><b>{r.novos.length}</b> marcos a implantar no perímetro</div>
-              <div>Diferença de área entre o pedido e cada parte: <b>{r.erroAreaM2 < 0.05 ? "menos de 0,1 m²" : `até ${fmtM(r.erroAreaM2)} m²`}</b>, já medida nas coordenadas arredondadas que o SIGEF vai usar</div>
-              {temEstrada && r.partes.some((p) => p.frenteEstradaM < 5) && (
-                <div className="dv-alerta">Nesta direção há parte sem frente para a estrada. Escolha a recomendada ou gire as divisas.</div>
-              )}
-            </div>
-          ) : (
-            <div className="dv-alerta">Não dá para dividir nesta direção: {r.motivo}. Gire as divisas ou escolha uma sugestão.</div>
-          )}
+      {res && (
+        <div className="tabela-scroll">
+          <table className="dv-tabela">
+            <thead>
+              <tr><th></th><th>Parte</th><th>Herdeiro / quem recebe</th><th>CPF</th><th>Denominação do GEO da parte</th><th>Fração</th><th>Área (ha)</th><th>Área (m²)</th><th>Perímetro (m)</th>{temEstrada && <th>Frente p/ estrada</th>}</tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: nPartes }, (_, i) => {
+                const l = linhas[i] ?? infoDe(undefined, i);
+                const p = rd?.ok ? rd.partes[i] : null;
+                return (
+                  <tr key={i} className={parteSel === i ? "dv-linha-sel" : ""}>
+                    <td><button type="button" className="dv-cor dv-cor-btn" style={{ background: CORES_PARTE[i % CORES_PARTE.length] }} onClick={() => selecionarParte(i)} title="Mostrar na prancheta" /></td>
+                    <td><input value={l.nome} onChange={(e) => editarLinha(i, { nome: e.target.value })} placeholder={`PARTE ${i + 1}`} /></td>
+                    <td><input value={l.herdeiro} onChange={(e) => editarLinha(i, { herdeiro: e.target.value.toUpperCase() })} placeholder={servico.detentor_nome ?? "nome completo"} /></td>
+                    <td><input value={l.cpf} onChange={(e) => editarLinha(i, { cpf: e.target.value })} placeholder="000.000.000-00" className="mono" /></td>
+                    <td><input value={l.denominacao} onChange={(e) => editarLinha(i, { denominacao: e.target.value.toUpperCase() })}
+                      placeholder={denominacaoDaParte(servico, { nome: l.nome || `PARTE ${i + 1}`, denominacao: null }).toUpperCase()} /></td>
+                    <td>
+                      {iguais ? <span className="mono">1/{nPartes}</span> : (
+                        <span className="dv-pct">
+                          <input type="number" min={0.01} step={0.01} value={Math.round((fracoes[i] ?? 0) * 100) / 100}
+                            onChange={(e) => setPct(Array.from({ length: n }, (_, j) => (j === i ? Number(e.target.value) : fracoes[j])))}
+                            onBlur={() => regerar(n, false, pct, azManual, inverter)} />%
+                        </span>
+                      )}
+                    </td>
+                    <td className="mono">{p ? fmt(p.areaM2 / 10000) : "—"}</td>
+                    <td className="mono">{p ? fmtM2(p.areaM2) : "—"}</td>
+                    <td className="mono">{p ? fmtM2(p.perimetroM) : "—"}</td>
+                    {temEstrada && <td className={`mono${p && p.frenteEstradaM < 5 ? " dv-sem" : ""}`}>{p ? `${fmtM(p.frenteEstradaM)} m` : "—"}</td>}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-      </div>
+      )}
 
-      <div className="tabela-scroll">
-        <table className="dv-tabela">
-          <thead>
-            <tr><th></th><th>Parte</th><th>Herdeiro / quem recebe</th><th>CPF</th><th>Denominação do GEO da parte</th><th>Fração</th><th>Área (ha)</th><th>Área (m²)</th><th>Perímetro (m)</th>{temEstrada && <th>Frente p/ estrada</th>}</tr>
-          </thead>
-          <tbody>
-            {Array.from({ length: n }, (_, i) => {
-              const l = linhas[i] ?? infoDe(undefined, i);
-              const p = r.ok ? r.partes[i] : null;
-              return (
-                <tr key={i}>
-                  <td><span className="dv-cor" style={{ background: CORES_PARTE[i % CORES_PARTE.length] }} /></td>
-                  <td><input value={l.nome} onChange={(e) => editarLinha(i, { nome: e.target.value })} placeholder={`PARTE ${i + 1}`} /></td>
-                  <td><input value={l.herdeiro} onChange={(e) => editarLinha(i, { herdeiro: e.target.value.toUpperCase() })} placeholder={servico.detentor_nome ?? "nome completo"} /></td>
-                  <td><input value={l.cpf} onChange={(e) => editarLinha(i, { cpf: e.target.value })} placeholder="000.000.000-00" className="mono" /></td>
-                  <td><input value={l.denominacao} onChange={(e) => editarLinha(i, { denominacao: e.target.value.toUpperCase() })}
-                    placeholder={denominacaoDaParte(servico, { nome: l.nome || `PARTE ${i + 1}`, denominacao: null }).toUpperCase()} /></td>
-                  <td>
-                    {iguais ? <span className="mono">1/{n}</span> : (
-                      <span className="dv-pct">
-                        <input type="number" min={0.01} step={0.01} value={Math.round((fracoes[i] ?? 0) * 100) / 100}
-                          onChange={(e) => setPct(Array.from({ length: n }, (_, j) => (j === i ? Number(e.target.value) : fracoes[j])))} />%
-                      </span>
-                    )}
-                  </td>
-                  <td className="mono">{p ? fmt(p.areaM2 / 10000) : "—"}</td>
-                  <td className="mono">{p ? fmtM2(p.areaM2) : "—"}</td>
-                  <td className="mono">{p ? fmtM2(p.perimetroM) : "—"}</td>
-                  {temEstrada && <td className={`mono${p && p.frenteEstradaM < 5 ? " dv-sem" : ""}`}>{p ? `${fmtM(p.frenteEstradaM)} m` : "—"}</td>}
-                </tr>
-              );
-            })}
-          </tbody>
-          {!iguais && (
-            <tfoot><tr><td colSpan={5} style={{ textAlign: "right" }}>soma das frações</td><td className={`mono${Math.abs(somaPct - 100) > 0.01 ? " dv-sem" : ""}`}>{fmt(somaPct, 2)}%</td><td colSpan={4} className="sub">{Math.abs(somaPct - 100) > 0.01 ? "as frações são proporcionais: a soma não precisa dar 100" : ""}</td></tr></tfoot>
-          )}
-        </table>
-      </div>
-
-      {r.ok && medidas.length > 0 && (
+      {rd?.ok && medidas.length > 0 && (
         <div className="dv-medidas">
           <h4>Metragem de cada parte</h4>
           <div className="dv-medidas-grade">
-            {r.partes.map((p, i) => (
+            {rd.partes.map((p, i) => (
               <div key={i} className="dv-medida">
                 <div className="dv-medida-tit">
                   <span className="dv-cor" style={{ background: CORES_PARTE[i % CORES_PARTE.length] }} />
@@ -483,27 +494,27 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas }
         </div>
       )}
 
-      {r.ok && r.novos.length > 0 && (
+      {rd?.ok && rd.novos.length > 0 && (
         <div className="acoes-linha dv-locacao">
-          <button type="button" onClick={baixarLocacao}>Baixar arquivo de locação ({r.novos.length} marcos)</button>
+          <button type="button" onClick={baixarLocacao}>Baixar arquivo de locação ({rd.novos.length} marcos)</button>
           <select value={formato} onChange={(e) => setFormato(e.target.value as Exclude<FormatoLocacao, "dxf">)} aria-label="Formato do arquivo de locação">
             {FORMATOS_LOCACAO.map((f) => <option key={f.id} value={f.id}>{f.nome} — {f.serve}</option>)}
           </select>
           <span className="sub">
-            Os pontos novos das divisas em UTM SIRGAS 2000 fuso {servico.fuso_utm ?? 24}S, para importar na coletora e implantar os marcos.
+            Os pontos novos das divisas em UTM SIRGAS 2000 fuso {fuso}S, para importar na coletora e implantar os marcos.
             {comCodigo && igualAplicada ? " Saem com o código do marco." : " Saem como DIV-01, DIV-02… (com os códigos alocados, saem com o código do marco)."}
           </span>
         </div>
       )}
 
       <div className="acoes-linha dv-acoes">
-        <button type="button" className="principal" disabled={!r.ok || igualAplicada} onClick={aplicar}>
-          {igualAplicada ? "Divisão aplicada" : aplicadaAntes ? "Aplicar a nova divisão" : `Aplicar a divisão em ${n} partes`}
+        <button type="button" className="principal" disabled={!rd?.ok || igualAplicada} onClick={aplicar}>
+          {igualAplicada ? "Divisão aplicada" : aplicadaAntes ? "Aplicar a nova divisão" : `Aplicar a divisão em ${nPartes} partes`}
         </button>
         <span className="sub">
           {igualAplicada
             ? "As partes já estão no serviço. Herdeiro, nome e denominação podem ser mudados aqui a qualquer momento."
-            : <>Grava os {r.ok ? r.novos.length : "—"} pontos novos como marcos <b>M</b> no perímetro (método PA1 até a implantação) e as {n} partes como glebas.
+            : <>Grava os {rd?.ok ? rd.novos.length : "—"} pontos novos como marcos <b>M</b> no perímetro (método PA1 até a implantação) e as {nPartes} partes como glebas.
               {comCodigo && " Os códigos do imóvel serão realocados na próxima geração, por causa dos marcos novos."}
               {aplicadaAntes && " A divisão anterior é substituída."}</>}
         </span>

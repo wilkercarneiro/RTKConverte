@@ -2503,7 +2503,9 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     l.problemas.push(...foraDasFaixas({ ...l, rasa: profundidadeDe(l.pol, segs) }, p, !fr.length, l.esquina || esquinaDe(segs), l.ponta ? 0 : frentePrincipal(segs), !!l.ponta));
     // forma: no máximo 4 quinas (o lote de ponta pode ter 3)
     const nq = quinas(l.pol.ext);
-    if (nq > 4) l.problemas.push(`${nq} quinas — o máximo é 4`);
+    // (divisão de imóvel rural desliga a regra: quinasMax 0 — a parte segue o perímetro)
+    const qMax = p.quinasMax ?? 4;
+    if (qMax > 0 && nq > qMax) l.problemas.push(`${nq} quinas — o máximo é ${qMax}`);
     // fora das medidas por decisão do operador (ajuste) ou por ter absorvido
     // o retalho da gleba: é aviso — o lote fica marcado para ele acertar
     const nivelLote: Problema["nivel"] = l.ajustado || l.retalho || l.manual ? "aviso" : "erro";

@@ -74,6 +74,8 @@ export interface ParametrosDivisao {
   azimute?: number | null;
   inverter?: boolean;
   iguais?: boolean;
+  /** rascunho da prancheta (projeto de loteamento com as partes como lotes desenhados) */
+  projeto?: unknown;
 }
 
 export interface Servico {

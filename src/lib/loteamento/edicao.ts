@@ -412,11 +412,11 @@ export function moverQuina(pr0: Projeto, res: Resultado, q: Quadra, de: Pt, para
  */
 export function moverDivisa(pr0: Projeto, res: Resultado, q: Quadra, a: Pt, b: Pt, desloc: number, livre = false, dono = -1): Edicao {
   const { pr, i, aneis, destinos } = contornos(pr0, res, q);
-  const novos = normalizar(deslizar(aneis, q, a, b, desloc, livre));
+  const novos = normalizar(deslizar(aneis, q, a, b, desloc, livre, !!pr0.params.bordaFixa));
   return aplicarArraste(pr, res, q, i, aneis, novos, destinos, dono, `Divisa deslocada ${fmt(Math.abs(desloc))} m — os lotes dos dois lados se ajustaram.`);
 }
 
-function deslizar(aneis: Pt[][], q: Quadra, a: Pt, b: Pt, desloc: number, livre: boolean): Pt[][] {
+function deslizar(aneis: Pt[][], q: Quadra, a: Pt, b: Pt, desloc: number, livre: boolean, contorno = false): Pt[][] {
   const u = unit(sub(b, a));
   const n = esquerda(u);
   const A2 = soma(a, mult(n, desloc)), B2 = soma(b, mult(n, desloc));
@@ -449,6 +449,19 @@ function deslizar(aneis: Pt[][], q: Quadra, a: Pt, b: Pt, desloc: number, livre:
     }
     if (naBorda(q, e)) {
       const ex = q.pol.ext;
+      // Divisão de imóvel (contorno fixo): a ponta na borda corre pelo CONTORNO
+      // — a divisa deslocada cortando os lados de verdade, passando para o lado
+      // seguinte depois do vértice. Pela reta do lado prolongada ela sairia do
+      // imóvel quando o lado acaba antes (num perímetro rural, toda hora).
+      let naBordaMelhor: Pt | null = null, dmB = Infinity;
+      for (let k = 0; contorno && k < ex.length; k++) {
+        const x = ex[k], y = ex[(k + 1) % ex.length];
+        const r = intersecaoRetas(A2, u, x, sub(y, x));
+        if (!r || r.u < -1e-9 || r.u > 1 + 1e-9) continue;
+        const d = dist(r.pt, alvo);
+        if (d < dmB && d < Math.abs(desloc) * 4 + 5) { dmB = d; naBordaMelhor = r.pt; }
+      }
+      if (naBordaMelhor) return naBordaMelhor;
       guias.push(...ex.map((x, k) => [x, ex[(k + 1) % ex.length]] as [Pt, Pt]).filter(([x, y]) => distSegmento(e, x, y).d < 0.05 || dist(e, x) < 0.05 || dist(e, y) < 0.05));
     }
     const l0 = linhaPorDentro(aneis, e, [a, b]);
@@ -690,7 +703,17 @@ export function acertarMedida(pr0: Projeto, res: Resultado, q: Quadra, l: Lote, 
   const n = esquerda(u);
   const dentro = dot(sub(lerp(lado.a, lado.b, 0.5), centroDe(anel)), n) < 0;
   const sinal = dentro ? -1 : 1;
-  const aplicar = (s: number) => normalizar(deslizar(aneis, q, lado.a, lado.b, sinal * s, false));
+  const contorno = !!pr0.params.bordaFixa;
+  const aplicar = (s: number): Pt[][] => {
+    const nv = normalizar(deslizar(aneis, q, lado.a, lado.b, sinal * s, false, contorno));
+    if (!contorno) return nv;
+    // divisão de imóvel: a divisa passa por cima de vértices do contorno, e só
+    // o desenho ASSENTADO (cada vértice com o lote do seu lado) mede o que vai
+    // ficar — medir o anel cru errava dezenas de m². Volta na ordem de antes;
+    // lote engolido vira anel vazio (o passo é recusado como inválido).
+    const ass = assentar(aneis, nv, destinos, q, k);
+    return aneis.map((_, m) => (ass.mapa[m] >= 0 ? ass.aneis[ass.mapa[m]] : []));
+  };
   const atual = medir(anel);
   if (Math.abs(atual - alvo) < 0.005) return { pr: pr0, erro: true, msg: `O lote já tem ${fmt(alvo)} ${campo === "area" ? "m²" : "m"}.` };
   // anda em passos de meio metro para o lado certo até passar do valor (sem
@@ -701,7 +724,8 @@ export function acertarMedida(pr0: Projeto, res: Resultado, q: Quadra, l: Lote, 
   let lo = 0, mLo = atual, hi = NaN;
   for (let s2 = 0.5; s2 <= 80; s2 += 0.5) {
     const an = aplicar(sentido * s2);
-    if (!valido(an)) break;
+    // (na divisão o passo que cai exatamente num vértice do contorno pode sair torto: pula e segue)
+    if (!valido(an)) { if (contorno) continue; break; }
     const m = medir(an[k]);
     if ((m - alvo) * (mLo - alvo) <= 0) { hi = s2; break; }
     lo = s2; mLo = m;

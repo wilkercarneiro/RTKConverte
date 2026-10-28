@@ -1738,7 +1738,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
           <>
             {ehDivisao && (
               <DivisaoEditor servico={servico} vertices={vertices} glebas={glebas}
-                onAplicar={aplicarDivisaoNaTela} onGlebas={setGlebas} />
+                onAplicar={aplicarDivisaoNaTela} onGlebas={setGlebas}
+                onRascunho={(d) => setServico((x) => ({ ...x, divisao: d }))} />
             )}
             {!ehDivisao && (
               <details className="bloco dv-recolhido">
