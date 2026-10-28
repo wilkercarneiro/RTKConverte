@@ -971,6 +971,21 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .dv-sem { color: var(--perigo); font-weight: 700; }
 .dv-acoes { margin-top: 14px; }
 .dv-acoes .sub { flex: 1 1 320px; }
+.dv-medidas { margin-top: 18px; }
+.dv-medidas h4 { margin: 0 0 10px; font-size: 14px; }
+.dv-medidas-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.dv-medida { border: 1px solid var(--linha); border-radius: 8px; padding: 10px 12px; }
+.dv-medida-tit { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.dv-medida-tit .mono { margin-left: auto; font-size: 12px; }
+.dv-medida table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+.dv-medida td { padding: 3px 0; border-top: 1px solid var(--linha); }
+.dv-medida td.mono { text-align: right; white-space: nowrap; padding-left: 8px; }
+.dv-m-estrada td:first-child { color: #B42318; }
+.dv-m-divisa td:first-child { font-style: italic; }
+.dv-m-total td { font-weight: 700; }
+.dv-locacao { margin-top: 14px; flex-wrap: wrap; }
+.dv-locacao select { max-width: 100%; height: 34px; }
+.dv-locacao .sub { flex: 1 1 320px; }
 .dv-recolhido > summary { cursor: pointer; list-style: revert; padding: 2px 0; }
 .dv-recolhido[open] > summary { margin-bottom: 12px; }
 .dv-recolhido .bloco { border: 0; padding: 0; box-shadow: none; }

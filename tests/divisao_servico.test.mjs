@@ -147,3 +147,56 @@ test("partilha · GEO individual: herdeiro como proprietário, códigos do imóv
   assert.equal(denominacaoEsperada(glebas[1]), "SÍTIO BOA VISTA");
 });
 const denominacaoEsperada = (g) => servicoDaParte({ ...servico, created_at: "x" }, g).denominacao;
+
+test("partilha · BA/rodovia pelo nome do confrontante conta como estrada (frente)", async () => {
+  const { ehEstrada } = await import("../src/lib/trechos.ts");
+  const c = (descritivo, extra = {}) => ({ descritivo, apelido_txt: null, tipo_limite: "LA1", eh_via: false, ...extra });
+  for (const d of ["BA", "BA-120", "BA 093", "RODOVIA BA", "RODOVIA ESTADUAL BA-084", "BR-116", "ESTRADA VICINAL", "SE-200"]) {
+    assert.ok(ehEstrada(c(d)), d);
+  }
+  for (const d of ["FAZENDA BARRA\JOSE BATISTA\CPF:000.000.000-00", "(MATR.1/CNS.2) FAZENDA BA", "JOAO DA SILVA", "SE", "RIACHO SECO"]) {
+    assert.ok(!ehEstrada(c(d)), d);
+  }
+  assert.ok(ehEstrada(c("QUALQUER", { eh_via: true })), "marcado como via");
+  assert.ok(!ehEstrada(c("BA-120", { tipo_limite: "LN1" })), "rio vence");
+  assert.ok(!ehEstrada(c("LINHA FERREA", { tipo_limite: "LA3", eh_via: true })), "ferrovia não dá acesso");
+  // o lado que começa num M "BA-120" sem a caixa marcada vira estrada na entrada do motor
+  const vs = vertices.map((v) => (v.descritivo === "ESTRADA VICINAL" ? { ...v, descritivo: "BA-120", tipo_limite: "LA1", eh_via: false } : v));
+  // (antes da correção só a caixa "faixa de domínio" contava: aqui daria zero lados)
+  const antes = entradaDoServico(vertices, [1, 1]).estrada;
+  const depois = entradaDoServico(vs, [1, 1]).estrada;
+  assert.ok(depois.some(Boolean));
+  assert.deepEqual(depois, antes, "os mesmos lados que com LA3 marcado");
+});
+
+test("partilha · metragem de cada parte fecha o perímetro e a locação traz todos os marcos novos", async () => {
+  const { medidasDasPartes, pontosLocacaoDivisao } = await import("../src/lib/divisao_servico.ts");
+  const { arquivoLocacao } = await import("../src/lib/loteamento/saidas.ts");
+  const fr = [1, 1, 1];
+  const ent = entradaDoServico(vertices, fr, false, publicadorUtm(24, proj4));
+  const r = sugerirDivisoes(ent)[0];
+  const med = medidasDasPartes(ent, r, ["Q1", "Q2", "Q3"]);
+  assert.equal(med.length, 3);
+  med.forEach((m, k) => {
+    const soma = m.reduce((s, t) => s + t.comprimentoM, 0);
+    assert.ok(Math.abs(soma - r.partes[k].perimetroM) < 1e-6, `parte ${k + 1}: ${soma} × ${r.partes[k].perimetroM}`);
+    assert.ok(m.some((t) => t.divisa), "toda parte tem divisa com outra");
+  });
+  // a parte do meio confronta com as duas vizinhas
+  assert.deepEqual(med[1].filter((t) => t.divisa).map((t) => t.confrontante).sort(), ["Q1", "Q3"]);
+
+  const pts = pontosLocacaoDivisao(ent, r, vertices);
+  assert.equal(pts.length, r.novos.length);
+  assert.deepEqual(pts.map((p) => p.nome), pts.map((_, i) => `DIV-${String(i + 1).padStart(2, "0")}`));
+  pts.forEach((p) => assert.ok(Math.abs(p.h - 360) < 1e-9, "cota interpolada"));
+  const txt = arquivoLocacao(pts, "penzd").trim().split(/\r?\n/);
+  assert.equal(txt.length, pts.length, "TXT P,E,N,Z,D sem cabeçalho, uma linha por marco");
+  assert.match(txt[0], /^DIV-01,\d+\.\d{3},\d+\.\d{3},360\.000,DIVISA\d$/);
+
+  // aplicada e com código alocado, o nome é o código do marco
+  const ap = aplicarDivisao(vertices, r, HERDEIROS, fr, SID);
+  const comCod = ap.vertices.map((v, i) => (v.rotulo_txt === ROTULO_DIVISAO ? { ...v, codigo: `DSBN-M-${9000 + i}`, codigo_provisorio: false } : v));
+  const r2 = sugerirDivisoes(entradaDoServico(comCod, fr, false, publicadorUtm(24, proj4)))[0];
+  const pts2 = pontosLocacaoDivisao(entradaDoServico(comCod, fr, false, publicadorUtm(24, proj4)), r2, comCod);
+  assert.ok(pts2.every((p) => /^DSBN-M-9\d{3}$/.test(p.nome)), pts2.map((p) => p.nome).join(","));
+});

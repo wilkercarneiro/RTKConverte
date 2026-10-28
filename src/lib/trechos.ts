@@ -43,6 +43,24 @@ export const SEM_CONFRONTACAO: Confrontacao = {
 const RE_VIA =
   /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|LINHA\s+F[ÉE]RREA|FERROVIA|FERROVI[ÁA]RI[AO]|LEITO\s+FERROVI[ÁA]RIO|RIO|RIACHO|C[ÓO]RREGO|LAGOA?|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
 
+// Estrada que dá ACESSO (divisão em partes, frente de cada herdeiro): o mesmo
+// rótulo de via, sem rio/ferrovia, e aceitando "BA"/"BR" sem número — no campo
+// o confrontante sai escrito só "BA" ou "RODOVIA BA".
+const RE_ESTRADA =
+  /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|RUA|AVENIDA|TRAVESSA|VIA\s+DE\s+ACESSO|(?:BR|BA)(?:[-\s]?\d{2,3})?|(?:AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
+
+/** O trecho é estrada/rodovia (dá acesso): marcado como via, LA3 ou pelo rótulo. Rio nunca é. */
+export function ehEstrada(c: Pick<Confrontacao, "descritivo" | "apelido_txt" | "tipo_limite" | "eh_via">): boolean {
+  if (ehRioPorLimite(c.tipo_limite)) return false;
+  const rotulo = (c.descritivo || c.apelido_txt || "").split("\\")[0].trim();
+  // linha férrea é faixa de domínio (LA3), mas ninguém entra na terra por ela
+  if (/F[ÉE]RRE[AO]|FERROVI/i.test(rotulo)) return false;
+  if (c.eh_via || ehViaPorLimite(c.tipo_limite)) return true;
+  // "(MATR...) FAZENDA ..." ou descritivo com CPF é imóvel, não estrada
+  if (!rotulo || /^\([^)]*\)/.test(rotulo) || /CPF\s*:/i.test(c.descritivo ?? "")) return false;
+  return RE_ESTRADA.test(rotulo);
+}
+
 /** LA3 = limite artificial de faixa de domínio: é sempre via. */
 export const ehViaPorLimite = (tipoLimite?: string | null): boolean =>
   /^LA3\b/i.test((tipoLimite ?? "").trim());

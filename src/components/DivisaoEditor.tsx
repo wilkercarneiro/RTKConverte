@@ -10,11 +10,15 @@ import { useMemo, useRef, useState } from "react";
 import proj4 from "proj4";
 import type { Gleba, ParametrosDivisao, Servico, Vertice } from "../lib/types";
 import { dividir, sugerirDivisoes, type ResultadoDivisao } from "../lib/divisao";
-import { ROTULO_DIVISAO, aplicarDivisao, denominacaoDaParte, entradaDoServico, publicadorUtm, type InfoParte } from "../lib/divisao_servico";
+import { ROTULO_DIVISAO, aplicarDivisao, denominacaoDaParte, entradaDoServico, medidasDasPartes, pontosLocacaoDivisao, publicadorUtm, type InfoParte } from "../lib/divisao_servico";
+import { FORMATOS, arquivoLocacao, type FormatoLocacao } from "../lib/loteamento/saidas";
 
 const CORES_PARTE = ["#2E86AB", "#E07A1F", "#3BA55C", "#A23B72", "#C9A227", "#5B5FC7", "#D1495B", "#1B998B", "#8D6A9F", "#6C8EAD"];
 const fmt = (v: number, c = 4) => v.toLocaleString("pt-BR", { minimumFractionDigits: c, maximumFractionDigits: c });
 const fmtM = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+const fmtM2 = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// a divisão só tem pontos: o DXF de linhas do loteamento não se aplica
+const FORMATOS_LOCACAO = FORMATOS.filter((f) => f.id !== "dxf");
 
 interface Props {
   servico: Servico;
@@ -57,6 +61,21 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas }
   const r: ResultadoDivisao = useMemo(() => dividir(ent, az), [ent, az]);
   const temEstrada = !!ent.estrada?.some(Boolean);
   const comCodigo = vertices.some((v) => v.codigo && !v.codigo_provisorio);
+  const nomesPartes = linhas.slice(0, n).map((l, i) => l.nome.trim() || `PARTE ${i + 1}`);
+  const medidas = useMemo(() => medidasDasPartes(ent, r, nomesPartes), [ent, r, nomesPartes.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [formato, setFormato] = useState<Exclude<FormatoLocacao, "dxf">>("penzd");
+  const baixarLocacao = () => {
+    const pontos = pontosLocacaoDivisao(ent, r, vertices);
+    if (!pontos.length) return;
+    const f = FORMATOS.find((x) => x.id === formato)!;
+    const nome = (servico.denominacao ?? "IMOVEL").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").toUpperCase();
+    const blob = new Blob([arquivoLocacao(pontos, formato)], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `LOCACAO_DIVISAO_${nome || "IMOVEL"}_SIRGAS2000_UTM${servico.fuso_utm ?? 24}S.${f.ext}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
 
   // a divisão aplicada ainda é a da prévia?
   const igualAplicada = aplicadaAntes && r.ok && glebas.length === r.partes.length && r.partes.every((p, k) =>
@@ -241,7 +260,7 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas }
       <div className="tabela-scroll">
         <table className="dv-tabela">
           <thead>
-            <tr><th></th><th>Parte</th><th>Herdeiro / quem recebe</th><th>CPF</th><th>Denominação do GEO da parte</th><th>Fração</th><th>Área (ha)</th>{temEstrada && <th>Frente p/ estrada</th>}</tr>
+            <tr><th></th><th>Parte</th><th>Herdeiro / quem recebe</th><th>CPF</th><th>Denominação do GEO da parte</th><th>Fração</th><th>Área (ha)</th><th>Área (m²)</th><th>Perímetro (m)</th>{temEstrada && <th>Frente p/ estrada</th>}</tr>
           </thead>
           <tbody>
             {Array.from({ length: n }, (_, i) => {
@@ -264,16 +283,59 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas }
                     )}
                   </td>
                   <td className="mono">{p ? fmt(p.areaM2 / 10000) : "—"}</td>
+                  <td className="mono">{p ? fmtM2(p.areaM2) : "—"}</td>
+                  <td className="mono">{p ? fmtM2(p.perimetroM) : "—"}</td>
                   {temEstrada && <td className={`mono${p && p.frenteEstradaM < 5 ? " dv-sem" : ""}`}>{p ? `${fmtM(p.frenteEstradaM)} m` : "—"}</td>}
                 </tr>
               );
             })}
           </tbody>
           {!iguais && (
-            <tfoot><tr><td colSpan={5} style={{ textAlign: "right" }}>soma das frações</td><td className={`mono${Math.abs(somaPct - 100) > 0.01 ? " dv-sem" : ""}`}>{fmt(somaPct, 2)}%</td><td colSpan={2} className="sub">{Math.abs(somaPct - 100) > 0.01 ? "as frações são proporcionais: a soma não precisa dar 100" : ""}</td></tr></tfoot>
+            <tfoot><tr><td colSpan={5} style={{ textAlign: "right" }}>soma das frações</td><td className={`mono${Math.abs(somaPct - 100) > 0.01 ? " dv-sem" : ""}`}>{fmt(somaPct, 2)}%</td><td colSpan={4} className="sub">{Math.abs(somaPct - 100) > 0.01 ? "as frações são proporcionais: a soma não precisa dar 100" : ""}</td></tr></tfoot>
           )}
         </table>
       </div>
+
+      {r.ok && medidas.length > 0 && (
+        <div className="dv-medidas">
+          <h4>Metragem de cada parte</h4>
+          <div className="dv-medidas-grade">
+            {r.partes.map((p, i) => (
+              <div key={i} className="dv-medida">
+                <div className="dv-medida-tit">
+                  <span className="dv-cor" style={{ background: CORES_PARTE[i % CORES_PARTE.length] }} />
+                  <b>{nomesPartes[i]}</b>
+                  <span className="mono">{fmtM2(p.areaM2)} m² · {fmt(p.areaM2 / 10000)} ha</span>
+                </div>
+                <table>
+                  <tbody>
+                    {medidas[i].map((m, j) => (
+                      <tr key={j} className={m.estrada ? "dv-m-estrada" : m.divisa ? "dv-m-divisa" : ""}>
+                        <td>{m.divisa ? `divisa com ${m.confrontante}` : m.confrontante}{m.estrada && " (estrada)"}</td>
+                        <td className="mono">{fmtM2(m.comprimentoM)} m</td>
+                      </tr>
+                    ))}
+                    <tr className="dv-m-total"><td>perímetro</td><td className="mono">{fmtM2(p.perimetroM)} m</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {r.ok && r.novos.length > 0 && (
+        <div className="acoes-linha dv-locacao">
+          <button type="button" onClick={baixarLocacao}>Baixar arquivo de locação ({r.novos.length} marcos)</button>
+          <select value={formato} onChange={(e) => setFormato(e.target.value as Exclude<FormatoLocacao, "dxf">)} aria-label="Formato do arquivo de locação">
+            {FORMATOS_LOCACAO.map((f) => <option key={f.id} value={f.id}>{f.nome} — {f.serve}</option>)}
+          </select>
+          <span className="sub">
+            Os pontos novos das divisas em UTM SIRGAS 2000 fuso {servico.fuso_utm ?? 24}S, para importar na coletora e implantar os marcos.
+            {comCodigo && igualAplicada ? " Saem com o código do marco." : " Saem como DIV-01, DIV-02… (com os códigos alocados, saem com o código do marco)."}
+          </span>
+        </div>
+      )}
 
       <div className="acoes-linha dv-acoes">
         <button type="button" className="principal" disabled={!r.ok || igualAplicada} onClick={aplicar}>

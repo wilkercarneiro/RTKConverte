@@ -11,8 +11,9 @@
 // individuais — um serviço completo por parte, com a confrontação certa nas
 // divisas internas.
 import type { Gleba, Servico, Vertice } from "./types.ts";
-import { SEM_CONFRONTACAO, ehRioPorLimite, type Confrontacao } from "./trechos.ts";
-import type { EntradaDivisao, ResultadoDivisao } from "./divisao.ts";
+import { SEM_CONFRONTACAO, ehEstrada, type Confrontacao } from "./trechos.ts";
+import { ladosDaParte, type EntradaDivisao, type ResultadoDivisao } from "./divisao.ts";
+import type { PontoLocacao } from "./loteamento/saidas.ts";
 import { calcularVertices, type Proj4 } from "../../supabase/functions/_shared/geo.ts";
 
 /**
@@ -72,7 +73,7 @@ const conf = (v: Vertice): Confrontacao => ({
 export function entradaDoServico(
   vertices: Vertice[], fracoes: number[], inverter = false,
   publicar?: (p: [number, number]) => [number, number],
-): EntradaDivisao & { base: Vertice[] } {
+): EntradaDivisao & { base: Vertice[]; confrontantes: string[] } {
   const lista = semDivisaoAnterior(vertices);
   const confs = confrontacoes(lista);
   const comXY = lista.map((v, i) => ({ v, c: confs[i] })).filter(({ v }) => temXY(v));
@@ -80,12 +81,85 @@ export function entradaDoServico(
     base: comXY.map(({ v }) => v),
     // com o publicador, o motor trabalha no plano dos documentos
     anel: comXY.map(({ v }) => (publicar ?? ((q: [number, number]) => q))([Number(v.e), Number(v.n)])),
-    // estrada dá acesso; rio (LN1) é faixa de domínio mas não é caminho
-    estrada: comXY.map(({ c }) => !!c.eh_via && !ehRioPorLimite(c.tipo_limite)),
+    // estrada dá acesso (marcada, LA3 ou pelo nome: "BA-262", "RODOVIA BA",
+    // "ESTRADA VICINAL"); rio (LN1) é faixa de domínio mas não é caminho
+    estrada: comXY.map(({ c }) => ehEstrada(c)),
+    confrontantes: comXY.map(({ c }) => rotuloDoConfrontante(c)),
     fracoes,
     inverter,
     publicar,
   };
+}
+
+/** Nome curto do confrontante: o apelido, ou o descritivo sem a etiqueta "(MATR...)" e sem o CPF. */
+function rotuloDoConfrontante(c: Confrontacao): string {
+  const apelido = (c.apelido_txt ?? "").trim();
+  if (apelido) return apelido;
+  const d = (c.descritivo ?? "").split("\\")[0].replace(/^\([^)]*\)\s*/, "").trim();
+  return d || "sem confrontante";
+}
+
+/** Um trecho do contorno de uma parte: lados seguidos com o mesmo confrontante. */
+export interface MedidaTrecho {
+  confrontante: string;
+  comprimentoM: number;
+  estrada: boolean;
+  /** divisa nova com outra parte (a cerca da partilha) */
+  divisa: boolean;
+}
+
+/**
+ * A metragem de cada parte, trecho a trecho: quanto ela mede em cada
+ * confrontante (estrada, vizinho, a parte do lado), na ordem do contorno.
+ */
+export function medidasDasPartes(
+  ent: Pick<EntradaDivisao, "anel" | "estrada"> & { confrontantes: string[] },
+  r: ResultadoDivisao, nomes: string[],
+): MedidaTrecho[][] {
+  if (!r.ok) return [];
+  return r.partes.map((_, k) => {
+    const out: MedidaTrecho[] = [];
+    for (const l of ladosDaParte(r, k, ent.anel.length)) {
+      const m: MedidaTrecho = l.aresta !== null
+        ? { confrontante: ent.confrontantes[l.aresta] ?? "", comprimentoM: l.comprimentoM, estrada: !!ent.estrada?.[l.aresta], divisa: false }
+        : { confrontante: l.vizinha !== null ? (nomes[l.vizinha] || `PARTE ${l.vizinha + 1}`) : "divisa", comprimentoM: l.comprimentoM, estrada: false, divisa: true };
+      const ult = out[out.length - 1];
+      if (ult && ult.confrontante === m.confrontante && ult.divisa === m.divisa) ult.comprimentoM += m.comprimentoM;
+      else out.push(m);
+    }
+    // o anel dá a volta: último e primeiro no mesmo confrontante são um trecho só
+    if (out.length > 1 && out[0].confrontante === out[out.length - 1].confrontante && out[0].divisa === out[out.length - 1].divisa) {
+      out[0].comprimentoM += out.pop()!.comprimentoM;
+    }
+    return out;
+  });
+}
+
+/**
+ * Os marcos novos da divisão para a coletora (arquivo de locação): UTM do
+ * serviço, cota interpolada no lado do perímetro. Com a divisão aplicada e os
+ * códigos alocados, o nome é o código do marco (o mesmo da planta); antes
+ * disso, DIV-01, DIV-02… na ordem do perímetro.
+ */
+export function pontosLocacaoDivisao(
+  ent: Pick<EntradaDivisao, "anel"> & { base: Vertice[] }, r: ResultadoDivisao, vertices: Vertice[],
+): PontoLocacao[] {
+  if (!r.ok) return [];
+  const aplicados = vertices.filter((v) => v.rotulo_txt === ROTULO_DIVISAO && temXY(v));
+  return r.novos.map((p, i) => {
+    const x = p.novo!;
+    const a = ent.base[x.aresta], b = ent.base[(x.aresta + 1) % ent.base.length];
+    const salvo = aplicados.find((v) => Math.hypot(Number(v.e) - p.e, Number(v.n) - p.n) < 0.002);
+    const codigo = salvo?.codigo && !salvo.codigo_provisorio ? salvo.codigo : null;
+    return {
+      nome: codigo ?? `DIV-${String(i + 1).padStart(2, "0")}`,
+      e: p.e, n: p.n,
+      h: salvo?.h ?? Math.round((Number(a.h) + (Number(b.h) - Number(a.h)) * x.t) * 1000) / 1000,
+      codigo: `DIVISA${x.divisa + 1}`,
+      p: [p.e, p.n],
+      tipo: "perimetro",
+    };
+  });
 }
 
 /**

@@ -357,6 +357,32 @@ function arestaComum(a: PontoParte, b: PontoParte, nV: number): number | null {
   return A.find((x) => B.includes(x)) ?? null;
 }
 
+/** Um lado do contorno de uma parte, para a tabela de medidas. */
+export interface LadoParte {
+  de: PontoParte;
+  ate: PontoParte;
+  comprimentoM: number;
+  /** lado sobre o perímetro do imóvel: a aresta (do vértice i ao i+1) */
+  aresta: number | null;
+  /** lado de divisa nova: a parte do outro lado */
+  vizinha: number | null;
+}
+
+/** Os lados da parte k, na ordem do anel: perímetro do imóvel ou divisa com a parte vizinha. */
+export function ladosDaParte(r: ResultadoDivisao, k: number, nVertices: number): LadoParte[] {
+  const anel = r.partes[k]?.anel ?? [];
+  return anel.map((a, j) => {
+    const b = anel[(j + 1) % anel.length];
+    const aresta = arestaComum(a, b, nVertices);
+    // parte k fica entre a divisa k−1 e a divisa k
+    const divisa = aresta === null && a.novo && b.novo && a.novo.divisa === b.novo.divisa ? a.novo.divisa : null;
+    return {
+      de: a, ate: b, comprimentoM: dist([a.e, a.n], [b.e, b.n]), aresta,
+      vizinha: divisa === null ? null : divisa === k ? k + 1 : k - 1,
+    };
+  });
+}
+
 /** Começa o anel da parte num ponto que não seja o meio de uma corrente. */
 function rotacionarNoSalto<T>(pts: T[], todos: T[]): T[] {
   if (pts.length < 3) return pts;
