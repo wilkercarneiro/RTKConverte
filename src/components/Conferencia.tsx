@@ -48,7 +48,7 @@ function etapaDoAlvo(id: string): Etapa {
   if (id.startsWith("campo-") || id === "bloco-dados") return "dados";
   if (id === "bloco-confrontantes") return "confrontantes";
   if (id === "bloco-vertices") return "confrontantes";   // os vértices moram na mesma etapa dos confrontantes
-  if (id === "bloco-glebas") return "glebas";
+  if (id === "bloco-glebas" || id === "bloco-divisao") return "glebas";
   return "documentos";
 }
 
@@ -131,6 +131,9 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // a regra histórica (posse → A3, matrícula → A1). Não é gravada no serviço.
   const [folhaPlanta, setFolhaPlanta] = useState<"A1" | "A3" | null>(null);
   const folhaEfetiva: "A1" | "A3" = folhaPlanta ?? (servico.tipo_imovel === "posse" ? "A3" : "A1");
+  // Metragem dos lados na planta: escolha antes de gerar, como a folha. Sem
+  // escolha, sai na divisão (é o que o cliente da partilha confere) e não nos demais.
+  const [metragemPlanta, setMetragemPlanta] = useState<boolean | null>(null);
   const [sigefB64, setSigefB64] = useState<string | null>(null);
   const [sigefNome, setSigefNome] = useState<string | null>(null);
   const [ufSugerida, setUfSugerida] = useState(false);
@@ -337,6 +340,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const temGlebas = !!servico.tem_glebas;
   // partilha: as glebas nasceram do motor de divisão em partes iguais
   const ehDivisao = !!servico.divisao;
+  const comMetragem = metragemPlanta ?? ehDivisao;
   // "temos o PDF" inclui o que ficou guardado: reabrir o serviço não pode
   // esconder a planta e as peças só porque o arquivo não está na memória
   const temSigef = !!sigefB64 || !!salvo.sigef;
@@ -865,6 +869,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         const g = await chamarFuncao<Gerado>("gerar-documentos", {
           servico_id: servico.id,
           folha: folhaEfetiva,
+          metragem: comMetragem,
           // opcional: se o PDF do SIGEF já foi enviado, as plantas exibem a área
           // e o perímetro certificados no lugar dos calculados. O desenho não muda.
           pdf_base64: await garantirSigef() ?? undefined,
@@ -898,6 +903,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
       const r = await chamarFuncao<{ planta_pdf: string; avisos?: string[] }>("gerar-planta", {
         servico_id: servico.id, pdf_base64: pdf,
         folha: folhaEfetiva,
+        metragem: comMetragem,
       });
       setPlantaUrl(r.planta_pdf);
       for (const a of r.avisos ?? []) avisar("alerta", a);
@@ -976,6 +982,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
       const r = await chamarFuncao<Gerado>("gerar-documentos", {
         servico_id: servico.id,
         folha: folhaEfetiva,
+        metragem: comMetragem,
         // opcional: com o PDF do SIGEF já enviado, as plantas saem com a área e o
         // perímetro certificados. Sem ele, com os do cálculo, como sempre.
         pdf_base64: await garantirSigef() ?? undefined,
@@ -1061,8 +1068,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         tom: "pendente",
         titulo: "Divida o imóvel em glebas",
         detalhe: "cada gleba vira um anel próprio na planta e nos documentos; sem a divisão, a sequência do TXT cruzaria o imóvel",
-        rotuloBotao: "Ir para as glebas",
-        onClick: () => irParaCampo("bloco-glebas"),
+        rotuloBotao: ehDivisao ? "Ir para a divisão" : "Ir para as glebas",
+        onClick: () => irParaCampo(ehDivisao ? "bloco-divisao" : "bloco-glebas"),
       };
     }
     if (!docsProntos) {
@@ -1771,9 +1778,12 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   onAplicar={aplicarDivisaoNaTela} onGlebas={setGlebas} />
               </details>
             )}
-            <section className={`bloco${ehDivisao ? " dv-glebas-manual" : ""}`} id="bloco-glebas">
+            {/* Na divisão a prancheta de cima já cria, ajusta e salva as partes
+                como glebas: o editor manual aqui embaixo só repetia o mesmo. */}
+            {!ehDivisao && (
+            <section className="bloco" id="bloco-glebas">
               <header>
-                <h3>{ehDivisao ? "Partes como glebas (ajuste manual)" : "Glebas"}</h3>
+                <h3>Glebas</h3>
                 <span className="desc">
                   {glebas.length} gleba(s) — divida ANTES de confrontar: cada gleba é um anel próprio na planta dos confrontantes e no documento completo
                   {verticesFora.length > 0 && glebasOrdens.length > 0 && <> · <b>{verticesFora.length} vértice(s) fora de gleba</b> ({verticesFora.slice(0, 12).map((v) => v.num_txt).join(", ")}{verticesFora.length > 12 ? "…" : ""})</>}
@@ -1789,7 +1799,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 areaTotalHa={glebasOrdens.length ? 0 : (Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0)}
                 onChange={setGlebas}
               />
-              {!ehDivisao && glebas.filter((g) => g.anel.length >= 3).length > 0 && (
+              {glebas.filter((g) => g.anel.length >= 3).length > 0 && (
                 <div className="rodape-bloco">
                   <BotaoPerigo
                     titulo="Separar cada gleba em um serviço próprio"
@@ -1804,6 +1814,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 </div>
               )}
             </section>
+            )}
             {navEtapa}
           </>
         )}
@@ -2208,6 +2219,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     </select>
                     <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
                   </label>
+                  <label className="opcao-metragem" title="Escreve o comprimento de cada lado (de cada parte, na divisão) ao longo dele na planta">
+                    <input type="checkbox" checked={comMetragem} onChange={(e) => setMetragemPlanta(e.target.checked)} /> com metragem
+                  </label>
                   <span className="sub" style={{ flex: "1 1 280px" }}>
                     {salvo.satelite
                       ? "imagem de satélite pronta — buscada pelas coordenadas"
@@ -2373,6 +2387,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 <option value="A3">Planta A3 (sem quadro analítico)</option>
               </select>
             )}
+            <label className="opcao-metragem" title="Escreve o comprimento de cada lado (de cada parte, na divisão) ao longo dele na planta">
+                <input type="checkbox" checked={comMetragem} onChange={(e) => setMetragemPlanta(e.target.checked)} /> com metragem
+              </label>
             <button disabled={ocupado} onClick={apenasSalvar}>Salvar rascunho</button>
             {/* Com pendência, o botão não finge que vai gerar: diz quantas faltam
                 e leva à primeira. Sem a permissão, fica travado com o motivo. */}

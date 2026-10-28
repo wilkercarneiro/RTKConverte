@@ -112,7 +112,8 @@ Deno.serve(async (req) => {
     // `pdf_base64`: a prévia do SIGEF, OPCIONAL. Ela não desenha nada — só
     // fornece a área e o perímetro certificados para as plantas exibirem no
     // lugar dos calculados. Sem ela, tudo sai como sempre saiu.
-    const { servico_id, folha: folhaPedida, pdf_base64 } = await req.json();
+    // metragem: comprimento de cada lado escrito na planta (escolha do operador ao gerar)
+    const { servico_id, folha: folhaPedida, pdf_base64, metragem } = await req.json();
     // A imagem de satélite não vem mais da tela: o servidor usa a guardada em
     // entrada/ ou busca no Mapbox pelo anel do imóvel (e de cada gleba).
     const tokenMapbox = Deno.env.get("MAPBOX_TOKEN");
@@ -604,7 +605,7 @@ Deno.serve(async (req) => {
           }
           : undefined,
       });
-      plantaBuf = await gerarPlantaPdf(dadosPlanta, undefined, { editavel: true });
+      plantaBuf = await gerarPlantaPdf({ ...dadosPlanta, metragem: metragem === true }, undefined, { editavel: true });
     } catch (e) {
       avisosGeracao.push(`Memorial e planilha gerados, mas a planta falhou: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -703,7 +704,7 @@ Deno.serve(async (req) => {
               ? { matricula: servico.conf_exibir_matricula !== false, denominacao: servico.conf_exibir_denominacao !== false, trt: servico.conf_exibir_trt !== false }
               : undefined,
           });
-          const pdfU = await gerarPlantaPdf(dadosPlantaU, undefined, { editavel: true });
+          const pdfU = await gerarPlantaPdf({ ...dadosPlantaU, metragem: metragem === true }, undefined, { editavel: true });
           const path = `${pastaU}/planta-A3.pdf`;
           const up = await supa.storage.from("gerados").upload(path, pdfU, { upsert: true, contentType: "application/pdf" });
           if (up.error) throw up.error;

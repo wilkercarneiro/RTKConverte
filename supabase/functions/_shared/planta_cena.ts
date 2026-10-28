@@ -94,6 +94,7 @@ export const CAMADAS: Record<string, string> = {
   marco: "Divisões das confrontações (verde)",
   tique: "Tiques dos vértices",
   "codigo-vertice": "Códigos dos vértices",
+  metragem: "Metragem dos lados",
   "rotulo-confrontante": "Nomes dos confrontantes",
   "rotulo-numero": "Números dos confrontantes",
   "rotulo-via": "Nomes das vias e rios",

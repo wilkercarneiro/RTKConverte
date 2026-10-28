@@ -154,6 +154,11 @@ export interface DadosPlanta {
    * bloco de identificação e o quadro analítico por parte. Ausente = um anel só.
    */
   partes?: ParteDaPlanta[];
+  /**
+   * Escreve o comprimento de cada lado ao longo dele, do lado de dentro do anel
+   * (de cada gleba, quando há glebas). Opcional na hora de gerar; ausente = não sai.
+   */
+  metragem?: boolean;
   matricula: string;
   cns: string;
   sncr: string;
@@ -1519,6 +1524,67 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     ocupado.push(cp.ret);
     obj(c, `cod:${ci}`, "codigo-vertice", cp.codigo);
     texto(c, cp.codigo, cp.lx, cp.ly, VERT_TAM, { cor: PRETO });
+  }
+
+  // ------------------- metragem dos lados (opcional) -------------------
+  // Depois de tudo: a medida é o rótulo que cede. Divisa compartilhada por
+  // duas glebas sai uma vez só; lado curto demais para o texto fica sem.
+  if (d.metragem) {
+    const MET_TAM = 9;
+    const aneisM: VerticePlanta[][] = glebas.length ? glebas.map((g) => g.vertices) : aneis.map((a) => a.vs);
+    const feitos = new Set<string>();
+    const chavePt = (v: VerticePlanta) => `${v.e.toFixed(2)},${v.n.toFixed(2)}`;
+    for (const [ai, vm] of aneisM.entries()) {
+      const nm = vm.length;
+      let giro = 0;
+      for (let k = 0; k < nm; k++) {
+        const u = vm[k], w = vm[(k + 1) % nm];
+        giro += X(u.e) * Y(w.n) - X(w.e) * Y(u.n);
+      }
+      const sg = giro >= 0 ? 1 : -1;
+      for (let i = 0; i < nm; i++) {
+        const a = vm[i], b = vm[(i + 1) % nm];
+        const chave = [chavePt(a), chavePt(b)].sort().join("|");
+        if (feitos.has(chave)) continue;
+        feitos.add(chave);
+        const metros = Math.hypot(b.e - a.e, b.n - a.n);
+        const rot = `${a.distFmt || metros.toFixed(2).replace(".", ",")} m`;
+        const p = { x: X(a.e), y: Y(a.n) }, q = { x: X(b.e), y: Y(b.n) };
+        const dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy);
+        const w = f.widthOfTextAtSize(rot, MET_TAM);
+        if (len < w + 8) continue;
+        // texto sempre de pé: o ângulo fica em (-90°, 90°]
+        let ang = Math.atan2(dy, dx) * 180 / Math.PI;
+        if (ang > 90) ang -= 180;
+        if (ang <= -90) ang += 180;
+        const ar = ang * Math.PI / 180;
+        const ux = Math.cos(ar), uy = Math.sin(ar);   // ao longo do texto
+        const vx = -uy, vy = ux;                        // "para cima" do texto
+        const nx = sg * -dy / len, ny = sg * dx / len;  // para dentro do anel
+        // no meio e dentro primeiro; depois desliza pelo lado (o meio de um lado
+        // longo costuma ser onde mora o nome da estrada) e só então vai para fora
+        let feito = false;
+        const folgaT = Math.min(0.4, (len - w) / (2 * len));
+        const posicoes = [0.5, 0.5 - folgaT * 0.5, 0.5 + folgaT * 0.5, 0.5 - folgaT, 0.5 + folgaT];
+        busca: for (const lado of [1, -1]) {
+          const ix = nx * lado, iy = ny * lado;
+          // o texto cresce para "cima": se isso aponta para fora do lado escolhido, desce a altura dele
+          const desce = vx * ix + vy * iy < 0 ? MET_TAM : 0;
+          for (const t of posicoes) {
+            const mx = p.x + dx * t, my = p.y + dy * t;
+            const ox = mx - ux * w / 2 + ix * (3 + desce), oy = my - uy * w / 2 + iy * (3 + desce);
+            const ret = inflar(retTextoRot(ox, oy, w, MET_TAM, ang), 0.5);
+            if (ocupado.some((o) => retCruzaRet(ret, o))) continue;
+            ocupado.push(ret);
+            obj(c, `metragem:${ai}:${i}`, "metragem", `Lado ${a.codigo} – ${b.codigo}`);
+            texto(c, rot, ox, oy, MET_TAM, { rot: ang });
+            feito = true;
+            break busca;
+          }
+        }
+        if (!feito) rotulosOcultos++;
+      }
+    }
   }
 
   // ------------------- bússola (rosa dos ventos moderna) -------------------

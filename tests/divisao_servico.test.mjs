@@ -200,3 +200,26 @@ test("partilha · metragem de cada parte fecha o perímetro e a locação traz t
   const pts2 = pontosLocacaoDivisao(entradaDoServico(comCod, fr, false, publicadorUtm(24, proj4)), r2, comCod);
   assert.ok(pts2.every((p) => /^DSBN-M-9\d{3}$/.test(p.nome)), pts2.map((p) => p.nome).join(","));
 });
+
+test("partilha · planta com metragem: cada lado das partes sai medido, sem repetir a divisa; sem a opção, nada", async () => {
+  const { vertices: vs, glebas } = dividirServico();
+  const calc = calcularComo(vs);
+  const base = { fusoUtm: 24, prefixo: "DSBN" };
+  const unidades = glebas.map((g) => ({ nome: g.nome, calc: calcularGleba(g, glebas, calc, servico, base, proj4).calc }));
+  const dp = dadosDasPartes(unidades, servico, glebas);
+  const gerar = async (metragem) => lerCena(await gerarPlantaPdf(
+    dadosPlantaDe(dp.geometria, { partes: dp.partes, glebas: dp.glebas, folha: "A1", metragem }), undefined, { editavel: true }));
+  const medidas = (cena) => Object.entries(cena.objetos).filter(([, o]) => o.cat === "metragem");
+
+  assert.equal(medidas(await gerar(false)).length, 0);
+  const com = await gerar(true);
+  const m = medidas(com);
+  // lados distintos: soma dos lados das glebas menos as divisas internas (cada uma conta 2×)
+  const chave = (v) => `${v.e.toFixed(2)},${v.n.toFixed(2)}`;
+  const lados = new Set(dp.glebas.flatMap((g) => g.vertices.map((v, i) => [chave(v), chave(g.vertices[(i + 1) % g.vertices.length])].sort().join("|"))));
+  assert.ok(m.length > 0 && m.length <= lados.size, `${m.length} medidas para ${lados.size} lados`);
+  // a maioria cabe (lado curto ou vizinho de rótulo cede)
+  assert.ok(m.length >= lados.size * 0.6, `só ${m.length} de ${lados.size} lados medidos`);
+  const textos = com.itens.filter((i) => i.k === "texto").map((i) => i.t);
+  assert.ok(textos.some((t) => /^\d{1,3}(\.\d{3})*,\d{2} m$/.test(t)), "texto no formato 123,45 m");
+});

@@ -1027,3 +1027,6 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
   .ep-painel { width: 240px; }
   .ep-ferr span { display: none; }
 }
+
+/* "com metragem" ao lado da folha, antes de gerar */
+.opcao-metragem { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--texto-2); white-space: nowrap; cursor: pointer; }

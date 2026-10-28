@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
   try {
     // `folha` (A1/A3) é escolha do operador na tela; ausente = regra histórica
     // (posse → A3, matrícula → A1)
-    const { servico_id, pdf_base64, folha } = await req.json();
+    const { servico_id, pdf_base64, folha, metragem } = await req.json();
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
     const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
     if (recusa) return json({ erro: recusa.erro }, recusa.status);
@@ -304,7 +304,7 @@ Deno.serve(async (req) => {
       partes: partesPlanta,
     });
 
-    const pdfBytes = await gerarPlantaPdf(dados, undefined, { editavel: true });
+    const pdfBytes = await gerarPlantaPdf({ ...dados, metragem: metragem === true }, undefined, { editavel: true });
 
     // O PDF saiu: agora o serviço pode assumir o perímetro do SIGEF.
     if (persistirReconciliados.length > 0) {
