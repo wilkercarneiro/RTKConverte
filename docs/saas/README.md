@@ -68,7 +68,9 @@ No primeiro acesso, o cliente cria a própria senha antes de ver o sistema.
 - Histórico (`atividades`): serviço criado/excluído, cliente criado/excluído, documento gerado, mudanças na equipe. A empresa vê em Equipe → Histórico; o superadmin, na aba Histórico da empresa.
 - Testes: `tests/rls/equipe.sql` (rodado pelo `npm run test:rls`).
 
-### Publicar a equipe (pendente de aval)
+### Publicar a equipe
+
+> **Publicado em 2026-10-28, 15h36–15h45** (aval: "Pode publicar"). Backups `backup-banco-20261028-equipe/` e `backup-funcoes-20261028-equipe/`. Atenção: o `0fd03f6` (divisão na planta A1) foi junto, e a `gerar-planta` precisou de `_shared/sigef_glebas.ts` e do `planta_dados.ts` novo — sem eles ficou ~4 min com BOOT_ERROR. Sempre comparar o fecho de imports com a VPS (md5) antes de reiniciar.
 
 1. Backup do banco.
 2. `0025_equipe.sql` numa transação; reiniciar o REST (`docker service update --force sb_rtkconverte_rest`).
