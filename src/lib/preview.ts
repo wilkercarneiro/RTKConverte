@@ -53,10 +53,13 @@ export function calcularPreviewLocal(
     }
     const vs = [...vertices].sort((a, b) => a.ordem - b.ordem);
     const calc = calcularVertices(
+      // marco novo da divisão nasce só com E/N (lat_gms vazio): calcula pelo
+      // UTM, como o servidor faz com todo vértice que não foi digitado à mão
       vs.map((v) => ({
         numTxt: v.num_txt,
-        latGms: parseGmsPlanilha(v.lat_gms),
-        lonGms: parseGmsPlanilha(v.lon_gms),
+        ...(v.lat_gms?.trim() && v.lon_gms?.trim()
+          ? { latGms: parseGmsPlanilha(v.lat_gms), lonGms: parseGmsPlanilha(v.lon_gms) }
+          : { e: Number(v.e), n: Number(v.n) }),
         h: Number(v.h), sigmaPos: Number(v.sigma_pos), sigmaH: Number(v.sigma_h),
         inserido: v.inserido_manual,
       })),
