@@ -509,14 +509,17 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, 
 
       <div className="acoes-linha dv-acoes">
         <button type="button" className="principal" disabled={!rd?.ok || igualAplicada} onClick={aplicar}>
-          {igualAplicada ? "Divisão aplicada" : aplicadaAntes ? "Aplicar a nova divisão" : `Aplicar a divisão em ${nPartes} partes`}
+          {igualAplicada ? "Divisão salva ✓" : aplicadaAntes ? "Salvar a nova divisão" : `Salvar a divisão em ${nPartes} partes`}
         </button>
         <span className="sub">
-          {igualAplicada
-            ? "As partes já estão no serviço. Herdeiro, nome e denominação podem ser mudados aqui a qualquer momento."
-            : <>Grava os {rd?.ok ? rd.novos.length : "—"} pontos novos como marcos <b>M</b> no perímetro (método PA1 até a implantação) e as {nPartes} partes como glebas.
+          {rd && !rd.ok
+            ? <b className="dv-sem">Ainda não dá para salvar: {rd.motivo}.</b>
+            : igualAplicada
+            ? "As partes estão salvas no serviço: em Documentos saem a planta A1 com as divisões, a planta A3 e o memorial de cada parte, e o GEO de cada uma. Herdeiro, nome e denominação podem ser mudados aqui a qualquer momento."
+            : <>Salva os {rd?.ok ? rd.novos.length : "—"} pontos novos como marcos <b>M</b> no perímetro (método PA1 até a implantação) e as {nPartes} partes como glebas — só depois de salva a divisão entra na planta A1, na A3 e no memorial de cada parte.
+              {" "}Os ajustes da prancheta ficam guardados como rascunho mesmo sem salvar.
               {comCodigo && " Os códigos do imóvel serão realocados na próxima geração, por causa dos marcos novos."}
-              {aplicadaAntes && " A divisão anterior é substituída."}</>}
+              {aplicadaAntes && " A divisão salva antes é substituída."}</>}
         </span>
       </div>
     </section>

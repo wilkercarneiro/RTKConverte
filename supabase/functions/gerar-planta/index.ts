@@ -13,12 +13,15 @@ import { montarServico } from "../_shared/servico.ts";
 import type { ServicoInput } from "../_shared/servico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
-import type { Folha, TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
+import type { Folha, GlebaPlanta, ParteDaPlanta, TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
 import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef, trechosPlantaDoSigef } from "../_shared/reconciliacao.ts";
 import type { VerticeReconciliado } from "../_shared/reconciliacao.ts";
 import {
-  bytesDeBase64, carregarLogoPlanta, dataHojeBR, geometriaDoCalculo, montarDadosPlanta,
+  bytesDeBase64, carregarLogoPlanta, dadosDasPartes, dataHojeBR, geometriaDoCalculo, montarDadosPlanta, unidadesDasGlebas,
 } from "../_shared/planta_dados.ts";
+import type { GlebaRow } from "../_shared/planta_dados.ts";
+import { numerosDoSigefPorAnel, numerosTotaisDoSigef } from "../_shared/sigef_glebas.ts";
+import type { NumerosSigef } from "../_shared/sigef_glebas.ts";
 import { anelLonLatDeEN, garantirImagemSatelite } from "../_shared/satelite.ts";
 import type { LonLat } from "../_shared/satelite.ts";
 import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
@@ -92,6 +95,10 @@ Deno.serve(async (req) => {
     let latMedia = -12;
     // anel em [lon, lat] para a imagem de satélite (buscada pelo servidor)
     let anelSat: LonLat[] = [];
+    // com glebas: um anel por gleba para a imagem, e as glebas/partes da folha
+    let aneisSat: LonLat[][] | null = null;
+    let glebasPlanta: GlebaPlanta[] | undefined;
+    let partesPlanta: ParteDaPlanta[] | undefined;
 
     const avisos: string[] = [];
     const ehPecas = servico.tipo === "pecas";
@@ -203,19 +210,40 @@ Deno.serve(async (req) => {
           exibirPlanta: v.exibir_planta !== false,
         })),
       };
-      const g = geometriaDoCalculo(montarServico(input, proj4));
+      const calc = montarServico(input, proj4);
+
+      // GLEBAS (e a divisão em partes, que grava as partes como glebas): a A1
+      // do SIGEF desenha cada gleba como na planta dos documentos — as divisas
+      // internas, o quadro por gleba e a identificação de cada herdeiro. Até
+      // 28/10/2026 esta função ignorava as glebas e a partilha saía como um
+      // imóvel inteiro, sem as divisões.
+      const glebaRows = servico.tem_glebas
+        ? ((await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")).data ?? []) as GlebaRow[]
+        : [];
+      const { unidades, avisos: avisosGlebas } = unidadesDasGlebas(
+        glebaRows, vertRows, input, calc, servico, { fusoUtm: fuso, prefixo: cred.prefixo_vertice, estiloCodigo: "oficial" }, proj4,
+      );
+      avisos.push(...avisosGlebas);
+      const dp = unidades.length ? dadosDasPartes(unidades, servico, glebaRows) : null;
+      glebasPlanta = dp?.glebas;
+      partesPlanta = dp?.partes;
+
+      const g = dp ? dp.geometria : geometriaDoCalculo(calc);
       latMedia = g.latMediaDeg;
       vertices = g.vertices;
       trechosPlanta = g.trechos;
       areaFmt = g.areaFmt;
       anelSat = anelLonLatDeEN(g.vertices, fuso, proj4);
+      if (dp) {
+        aneisSat = glebaRows.filter((x) => (x.anel?.length ?? 0) >= 3).map((x) => anelLonLatDeEN(x.anel!.map(([e, n]) => ({ e, n })), fuso, proj4));
+      }
       perimetroFmt = g.perimetroFmt;
 
       // Do PDF do SIGEF, quando vem, só a área e o perímetro certificados (e o
       // TRT, se o sistema não tiver) substituem os calculados na folha. Um PDF
       // que não é lido não derruba a planta: ela sai com os números do cálculo,
       // avisada — o mesmo tratamento de gerar-documentos.
-      if (pdf_base64) {
+      if (pdf_base64 && !dp) {
         try {
           const sigef = await lerSigef(pdf_base64);
           areaFmt = sigef.cabecalho.areaHa;
@@ -225,6 +253,33 @@ Deno.serve(async (req) => {
           if (e instanceof RecusaSigef) return json({ erro: e.message }, 422);
           avisos.push(`PDF do SIGEF não foi lido (${e instanceof Error ? e.message : String(e)}): a planta saiu com a área e o perímetro calculados.`);
         }
+      } else if (pdf_base64 && dp) {
+        // Com glebas a regra é a de gerar-documentos: cada memorial do PDF casa
+        // com a sua gleba PELA GEOMETRIA, e a folha só fala SIGEF se TODAS
+        // casarem — misturar número certificado e calculado não fecha a conta.
+        // Na partilha o PDF é do imóvel inteiro (as partes ainda não foram
+        // certificadas): a folha sai com os números calculados de cada parte.
+        try {
+          const proxy = await getDocumentProxy(bytesDeBase64(pdf_base64));
+          const { text } = await extractText(proxy, { mergePages: true });
+          const blocos = parseSigefBlocos(text as string);
+          const nums: (NumerosSigef | null)[] = numerosDoSigefPorAnel(
+            blocos, unidades.map((u) => u.calc.ring.map((v) => [v.eProj, v.nProj] as [number, number])), fuso, proj4,
+          );
+          if (blocos[0] && !trtSistema) trt = blocos[0].cabecalho.documentoRt.split(" ")[0] || trt;
+          if (nums.every((n) => n !== null)) {
+            const tot = numerosTotaisDoSigef(blocos);
+            areaFmt = tot.areaFmt;
+            perimetroFmt = tot.perimetroFmt ?? perimetroFmt;
+            glebasPlanta = glebasPlanta?.map((gl, i) => ({ ...gl, areaFmt: nums[i]!.areaFmt, tarefasFmt: nums[i]!.tarefasFmt, perimetroFmt: nums[i]!.perimetroFmt }));
+          } else if (servico.divisao) {
+            avisos.push("O PDF do SIGEF é do imóvel inteiro e as partes ainda não estão certificadas: a planta saiu com a área e o perímetro calculados de cada parte e do total.");
+          } else {
+            avisos.push("Nem todas as glebas casaram com um memorial do PDF do SIGEF: a planta saiu inteira com a área e o perímetro CALCULADOS.");
+          }
+        } catch (e) {
+          avisos.push(`PDF do SIGEF não foi lido (${e instanceof Error ? e.message : String(e)}): a planta saiu com a área e o perímetro calculados.`);
+        }
       }
     }
 
@@ -232,7 +287,7 @@ Deno.serve(async (req) => {
     const folhaSaida: Folha = folha === "A1" || folha === "A3" ? folha : (posse ? "A3" : "A1");
     // A imagem de satélite é do servidor: a guardada em entrada/, ou a que o
     // Mapbox devolve agora pelo anel do imóvel. Sem ela a planta sai, avisada.
-    const sat = await garantirImagemSatelite(supa.storage, servico_id, "satelite", [anelSat], Deno.env.get("MAPBOX_TOKEN"), "Planta");
+    const sat = await garantirImagemSatelite(supa.storage, servico_id, "satelite", aneisSat ?? [anelSat], Deno.env.get("MAPBOX_TOKEN"), "Planta");
     if (sat.aviso) avisos.push(sat.aviso);
     const dados = montarDadosPlanta({
       servico, rt, cred,
@@ -243,6 +298,8 @@ Deno.serve(async (req) => {
       dataStr: dataHojeBR(),
       logo: await carregarLogoPlanta(supa, esc),
       satelite: sat.imagem,
+      glebas: glebasPlanta,
+      partes: partesPlanta,
     });
 
     const pdfBytes = await gerarPlantaPdf(dados, undefined, { editavel: true });

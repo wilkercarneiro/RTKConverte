@@ -21,7 +21,7 @@ import {
 import type { SituacaoImovel } from "../lib/modalidades";
 import { areaHaDoAnel, GlebasEditor } from "./GlebasEditor";
 import { DivisaoEditor } from "./DivisaoEditor";
-import { servicoDaParte, verticesDaParte } from "../lib/divisao_servico";
+import { ROTULO_DIVISAO, servicoDaParte, verticesDaParte } from "../lib/divisao_servico";
 import { glebasCobremTodos, ordensDasGlebas, partesDasGlebas, verticesForaDasGlebas } from "../lib/glebas";
 import type { Gleba } from "../lib/types";
 import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux";
@@ -701,7 +701,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     setVertices(r.vertices);
     setGlebas(r.glebas);
     setServico((s) => ({ ...s, tem_glebas: true, divisao: r.divisao ?? {} }));
-    avisar("ok", `Imóvel dividido em ${r.glebas.length} partes. Confira os confrontantes do perímetro e gere os documentos.`);
+    avisar("ok", `Divisão salva em ${r.glebas.length} partes. Confira os confrontantes do perímetro e gere os documentos de novo: a planta A1 sai com as divisões, e cada parte com a sua A3 e o seu memorial.`);
   }
   /** Serviço completo que vira partilha: liga as glebas e abre a etapa Divisão. */
   function comecarDivisao() {
@@ -1791,6 +1791,13 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         {/* ================= Etapa · Documentos ================= */}
         {etapa === "documentos" && (
           <>
+            {/* partilha sem a divisão salva: as plantas sairiam do imóvel inteiro */}
+            {ehDivisao && !(vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO) && glebas.filter((g) => g.anel.length >= 3).length >= 2) && (
+              <div className="dv-alerta">
+                A divisão ainda não foi salva: a planta A1 e os documentos sairiam do imóvel inteiro, sem as partes.{" "}
+                <button type="button" className="fantasma" onClick={() => setEtapa("glebas")}>Ir para a Divisão e salvar</button>
+              </div>
+            )}
             {/* ---- Conferência de área: para aqui. No lugar do SIGEF e das peças, o
                 que ela tem é o documento do imóvel, a folha da planta e o Memorial
                 Tabular. Fica ANTES da imagem de satélite: tudo aqui decide o que a

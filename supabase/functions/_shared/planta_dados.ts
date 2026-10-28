@@ -9,8 +9,8 @@
 // "mesmo padrão" seja o mesmo código, e não duas cópias que divergem com o tempo.
 import { areaAssinadaM2, calcularPerimetroM, calcularSegmentos, fmtBR, fmtGmsPlanilha } from "./geo.ts";
 import type { EstiloCodigo, Proj4 } from "./geo.ts";
-import { montarServico } from "./servico.ts";
-import type { ServicoCalculado, VerticeMontado, VerticeServico } from "./servico.ts";
+import { montarPartes, montarServico } from "./servico.ts";
+import type { ServicoCalculado, ServicoInput, VerticeMontado, VerticeServico } from "./servico.ts";
 import type { DadosPlanta, Folha, GlebaPlanta, ParteDaPlanta, TrechoPlanta, VerticePlanta } from "./planta.ts";
 import type { DadosSigef } from "./sigef_pdf.ts";
 import type { LinhaVertice } from "./ods.ts";
@@ -363,6 +363,50 @@ export function verticesForaDasGlebas(rows: GlebaRow[], vertRows: VertRowMin[]):
 export function glebasCobremVertices(rows: GlebaRow[], vertRows: VertRowMin[]): boolean {
   if (!glebasValidas(rows).length) return false;
   return verticesForaDasGlebas(rows, vertRows).length === 0;
+}
+
+/**
+ * As glebas são anéis DISJUNTOS (nenhum vértice em duas)? Então são PARTES —
+ * anéis separados, cada um calculado como o anel que é. A mesma regra de
+ * gerar-documentos (que tem a sua cópia).
+ */
+export function partesDasGlebas(rows: GlebaRow[], vertRows: VertRowMin[]): { nome: string; ordens: number[] }[] | null {
+  const partes = ordensDasGlebas(rows, vertRows).filter((g) => g.ordens.length >= 3);
+  if (partes.length < 2) return null;
+  const usados = new Set<number>();
+  for (const pt of partes) for (const o of pt.ordens) { if (usados.has(o)) return null; usados.add(o); }
+  return partes;
+}
+
+/**
+ * As unidades que a planta desenha num serviço com glebas (inclusive a divisão
+ * em partes, que grava cada parte como gleba): as partes, se as glebas não
+ * dividem vértice, ou cada gleba recortada do anel calculado. Vazio = serviço
+ * de um perímetro só. Os códigos já estão alocados (`input` traz codigoManual).
+ */
+export function unidadesDasGlebas(
+  rows: GlebaRow[],
+  vertRows: VertRowMin[],
+  input: ServicoInput,
+  calc: ServicoCalculado,
+  servico: ServicoRow,
+  base: { fusoUtm: number; prefixo: string; estiloCodigo?: EstiloCodigo },
+  proj4: Proj4,
+): { unidades: { nome: string; calc: ServicoCalculado }[]; avisos: string[] } {
+  const avisos: string[] = [];
+  const partesOrdens = partesDasGlebas(rows, vertRows);
+  if (partesOrdens) return { unidades: montarPartes(input, partesOrdens, proj4).partes, avisos };
+  const unidades: { nome: string; calc: ServicoCalculado }[] = [];
+  for (const g of rows.filter((x) => (x.anel?.length ?? 0) >= 3)) {
+    try {
+      const u = calcularGleba(g, rows, calc, servico, base, proj4);
+      unidades.push({ nome: u.nome, calc: u.calc });
+      if (u.semCodigo > 0) avisos.push(`${u.nome}: ${u.semCodigo} ponto(s) do contorno não são vértices do levantamento e ficaram fora da planta.`);
+    } catch (e) {
+      avisos.push(`${(g.nome ?? "").trim() || "Gleba"}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { unidades, avisos };
 }
 
 /**

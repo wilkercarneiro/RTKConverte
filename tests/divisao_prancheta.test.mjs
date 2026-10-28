@@ -11,7 +11,11 @@ import { anelBruto, aneisDosLotes, limparAvisos, perimetroDaDivisao, projetoDaDi
 import { calcular } from "../src/lib/loteamento/calculo.ts";
 import { alcasDoLote, moverDivisa } from "../src/lib/loteamento/edicao.ts";
 import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
-import { ANEL } from "./fixtures/salgada_velha.mjs";
+import { montarServico } from "../supabase/functions/_shared/servico.ts";
+import { dadosDasPartes, unidadesDasGlebas } from "../supabase/functions/_shared/planta_dados.ts";
+import { gerarPlantaPdf } from "../supabase/functions/_shared/planta.ts";
+import { lerCena } from "../supabase/functions/_shared/planta_cena.ts";
+import { ANEL, dadosPlantaDe } from "./fixtures/salgada_velha.mjs";
 
 const proj4 = (f, t, c) => proj4lib(f, t, c);
 const SID = "00000000-0000-0000-0000-00000000000b";
@@ -110,4 +114,37 @@ test("prancheta · vértice no meio do imóvel não vira gleba: a volta recusa c
   const rd = resultadoDosLotes(ent, an);
   assert.equal(rd.ok, false);
   assert.match(rd.motivo, /dentro do imóvel/);
+});
+
+test("prancheta · divisão salva: a planta A1 do SIGEF (gerar-planta) desenha as partes, não o imóvel inteiro", async () => {
+  const { ent, per, pr, res } = prancheta(3);
+  const q = res.quadras[0];
+  const div = alcasDoLote(res.lotes[0], q).filter((a) => a.tipo !== "quina" && !a.naBorda);
+  const ed = moverDivisa(pr, res, q, div[0].a, div[0].b, 12, false, 0);
+  const rd = resultadoDosLotes(ent, aneisDosLotes(limparAvisos(calcular(ed.pr, per), true)));
+  const infos = ["A", "B", "C"].map((x) => ({ nome: `QUINHÃO ${x}`, herdeiro: `HERDEIRO ${x}`, cpf: "", denominacao: "" }));
+  const ap = aplicarDivisao(vertices, rd, infos, [1, 1, 1], SID);
+  // como o banco fica depois de "Gerar documentos": todo vértice com código
+  const entrada = (vs, contadores) => ({
+    fusoUtm: 24, verticeInicialOrdem: 0, prefixo: "DSBN", contadores,
+    vertices: vs.map((v) => ({
+      ordem: v.ordem, numTxt: v.num_txt, e: v.e, n: v.n, latGmsStr: null, lonGmsStr: null, h: v.h,
+      sigmaPos: v.sigma_pos, sigmaH: v.sigma_h, tipo: v.tipo, metodo: v.metodo, codigoManual: v.codigo, inserido: false,
+      descritivo: v.descritivo || "", tipoLimite: v.tipo_limite, ehVia: v.eh_via, cns: null, matricula: null, numerado: false, exibirPlanta: true,
+    })),
+  });
+  const codigoDe = new Map(montarServico(entrada(ap.vertices, { M: 5000, P: 20000, V: 0 }), proj4).ring.map((v) => [v.conf.ordem, v.codigo]));
+  const banco = ap.vertices.map((v) => ({ ...v, codigo: v.codigo ?? codigoDe.get(v.ordem) }));
+  // o caminho de gerar-planta: contadores zerados, códigos manuais
+  const input = entrada(banco, { M: 0, P: 0, V: 0 });
+  const calc = montarServico(input, proj4);
+  const servico = { id: SID, tipo: "geo", tem_glebas: true, divisao: {}, denominacao: "FAZENDA SALGADA VELHA", detentor_nome: "ESPÓLIO", fuso_utm: 24 };
+  const { unidades, avisos } = unidadesDasGlebas(ap.glebas, banco, input, calc, servico, { fusoUtm: 24, prefixo: "DSBN", estiloCodigo: "oficial" }, proj4);
+  assert.deepEqual(avisos, []);
+  assert.equal(unidades.length, 3, "uma unidade por parte salva");
+  const dp = dadosDasPartes(unidades, servico, ap.glebas);
+  assert.equal(dp.partes.length, 3);
+  const pdf = await gerarPlantaPdf(dadosPlantaDe(dp.geometria, { partes: dp.partes, glebas: dp.glebas, folha: "A1" }), undefined, { editavel: true });
+  const textos = (await lerCena(pdf)).itens.filter((i) => i.k === "texto").map((i) => i.t).join("\n");
+  for (const h of ["HERDEIRO A", "HERDEIRO B", "HERDEIRO C"]) assert.ok(textos.includes(h), `${h} na planta`);
 });
