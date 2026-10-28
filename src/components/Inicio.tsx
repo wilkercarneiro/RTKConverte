@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { SERVICOS, chaveDoServico, rotuloCurto } from "../lib/modalidades";
+import { servicoLiberado } from "../lib/recursos";
 import type { ChaveServico } from "../lib/modalidades";
 import { indexarDocumentos, progressoDe } from "../lib/progresso";
 import type { DocsDoServico } from "../lib/progresso";
@@ -60,8 +61,9 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome }: Props) {
   const retomar = emAndamento[0] ?? null;
   const recentes = servicos.slice(0, 5);
 
-  const principais = SERVICOS.filter((s) => s.principal);
-  const secundarios = SERVICOS.filter((s) => !s.principal);
+  // só o que o plano da empresa libera (ver lib/recursos.ts)
+  const principais = SERVICOS.filter((s) => s.principal && servicoLiberado(s.chave));
+  const secundarios = SERVICOS.filter((s) => !s.principal && servicoLiberado(s.chave));
   const quem = primeiroNome(nome);
 
   return (

@@ -11,6 +11,7 @@ import { cenaParaPdf, lerCena, type Cena } from "../../../supabase/functions/_sh
 import { textoWinAnsi } from "../../../supabase/functions/_shared/texto.ts";
 import { supabase } from "../../lib/supabase";
 import { EditorPlanta } from "./EditorPlanta";
+import { temRecurso } from "../../lib/recursos";
 
 export interface PedidoPlanta {
   /** URL assinada do PDF, ou os bytes (planta feita no navegador) */
@@ -181,10 +182,12 @@ export function VisualizadorPlanta({ pedido, onFechar }: { pedido: PedidoPlanta;
         </div>
         <span className="vp-espaco" />
         {salvo && <span className="vp-ok">{salvo}</span>}
-        <button type="button" className="principal" disabled={!cena || lendo || !!ocupado} onClick={() => setModo("editar")}
-          title={cena ? "Mover, editar e recolorir tudo o que está na folha — menos o traçado do terreno" : "Esta planta foi gerada antes do editor: gere de novo para editar"}>
-          Editar planta
-        </button>
+        {temRecurso("planta.editor") && (
+          <button type="button" className="principal" disabled={!cena || lendo || !!ocupado} onClick={() => setModo("editar")}
+            title={cena ? "Mover, editar e recolorir tudo o que está na folha — menos o traçado do terreno" : "Esta planta foi gerada antes do editor: gere de novo para editar"}>
+            Editar planta
+          </button>
+        )}
         {editada && pedido.servicoId && (
           <button type="button" disabled={!!ocupado || !!salvo} onClick={salvarNoHistorico} title="Guarda a planta editada no histórico do serviço">
             Salvar no histórico

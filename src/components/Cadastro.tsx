@@ -29,7 +29,7 @@ export function Cadastro() {
       email: email.trim(),
       password: senha,
       options: {
-        emailRedirectTo: location.origin,
+        emailRedirectTo: `${location.origin}/app/`,
         data: {
           ...(novoEscritorio ? { escritorio_nome: escritorio.trim() } : {}),
           termos_versao: VERSAO_TERMOS,

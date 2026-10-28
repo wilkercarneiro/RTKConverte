@@ -20,8 +20,10 @@ const ABAS: { t: Rota["t"]; rotulo: string }[] = [
   { t: "ajuda", rotulo: "Ajuda" },
 ];
 
-export function AppShell({ rota, ir, children, usuario }: {
+export function AppShell({ rota, ir, children, usuario, superadmin }: {
   rota: Rota; ir: (r: Rota) => void; children: ReactNode;
+  /** mostra o atalho para o painel do SaaS */
+  superadmin?: boolean;
   /** nome exibido no rodapé da barra (ex.: e-mail ou nome do RT) */
   usuario?: { nome: string; papel?: string };
 }) {
@@ -53,6 +55,11 @@ export function AppShell({ rota, ir, children, usuario }: {
             </button>
           ))}
         </nav>
+        {superadmin && (
+          <button className="guia-marca" onClick={() => ir({ t: "admin", aba: "visao" })}>
+            Painel SaaS
+          </button>
+        )}
         <button className={rota.t === "marca" ? "guia-marca ativo" : "guia-marca"} onClick={() => ir({ t: "marca" })}>
           Guia da marca
         </button>

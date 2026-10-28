@@ -14,6 +14,8 @@ import {
   adicionarMembro, listarMembros, pastaDoEscritorio, removerMembro, salvarConfigEmpresa,
 } from "../lib/escritorio";
 import type { EstadoEscritorio, Membro } from "../lib/escritorio";
+import { temRecurso } from "../lib/recursos";
+import { TrocarSenhaCartao } from "./TrocarSenha";
 
 /** Chaves gravadas em config_empresa (key/value). `desenhista` é lida pela planta;
  *  `rt_padrao` e `credenciado_padrao` pré-preenchem serviços novos. */
@@ -148,7 +150,9 @@ export function Configuracoes({ escritorio = { estado: "legado" } }: { escritori
         {erro && <div className="erro">{erro}</div>}
       </section>
 
-      {escritorio.estado === "ok" && <Equipe souDono={escritorio.escritorio.papel === "dono"} />}
+      {escritorio.estado === "ok" && temRecurso("empresa.equipe") && <Equipe souDono={escritorio.escritorio.papel === "dono"} />}
+
+      <TrocarSenhaCartao />
 
       <Cadastros />
 

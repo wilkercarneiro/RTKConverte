@@ -35,6 +35,7 @@ import { aneisLonLat, lonLatDoVertice } from "../lib/sigef";
 import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
+import { temRecurso } from "../lib/recursos";
 import { Avisos, BotaoPerigo, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 
 /** Etapas do serviço: uma por vez, como abas dentro do cabeçalho. */
@@ -256,7 +257,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // Fundo de satélite do mapa de vértices: a imagem limpa (entrada/mapa.jpg)
   // e a georreferência (mapa.json) que posiciona cada ponto sobre ela.
   const [mapaSat, setMapaSat] = useState<FundoSatelite | null>(null);
-  const [fundoMapa, setFundoMapa] = useState<"mapa" | "satelite" | "esquema">("mapa");
+  const [fundoMapa, setFundoMapa] = useState<"mapa" | "satelite" | "esquema">(temRecurso("sigef.mapa") ? "mapa" : "esquema");
   async function carregarMapaSat() {
     const dl = await supabase.storage.from("gerados").download(`${inicial.servico.id}/entrada/mapa.json`);
     if (dl.error || !dl.data) { setMapaSat(null); return; }
@@ -1668,8 +1669,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               </div>{/* coluna-esq */}
               <div className="mapa">
                 <div className="mapa-fundo-toggle" role="group" aria-label="Fundo do mapa">
-                  <button type="button" className={fundoMapa === "mapa" ? "ativo" : ""} onClick={() => setFundoMapa("mapa")}
-                    title="Mapa interativo (Esri World Imagery + AWS Terrain Tiles) com as parcelas certificadas e a sobreposição">Mapa</button>
+                  {temRecurso("sigef.mapa") && (
+                    <button type="button" className={fundoMapa === "mapa" ? "ativo" : ""} onClick={() => setFundoMapa("mapa")}
+                      title="Mapa interativo (Esri World Imagery + AWS Terrain Tiles) com as parcelas certificadas e a sobreposição">Mapa</button>
+                  )}
                   <button type="button" className={fundoMapa === "satelite" ? "ativo" : ""} onClick={() => setFundoMapa("satelite")}
                     disabled={!mapaSat} title={!mapaSat ? (buscandoSat ? "buscando a imagem de satélite…" : "imagem de satélite ainda não disponível") : undefined}>
                     Satélite
@@ -1681,7 +1684,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                       title="Busca de novo a imagem de fundo pelas coordenadas atuais">atualizar</button>
                   )}
                 </div>
-                {fundoMapa === "mapa" ? (
+                {fundoMapa === "mapa" && temRecurso("sigef.mapa") ? (
                   <PainelSigef modo="sobreposicao" aneis={aneisSigef} pontos={pontosSigef} uf={servico.uf} altura={440} />
                 ) : (
                   <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={aneisMapa ?? undefined}
@@ -2016,9 +2019,11 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     <input className="mono" style={{ width: 90 }} value={afastamento} onChange={(e) => setAfastamento(e.target.value)} />
                     <small className="sub">{usarCertificados ? "recuo onde ainda sobrar conflito" : "recuo aplicado à divisa"}</small>
                   </label>
-                  <button className="principal" disabled={corrigindo || sobreCsvs.length === 0} onClick={corrigirSobreposicao}>
+                  <button className="principal" disabled={corrigindo || sobreCsvs.length === 0 || !temRecurso("sigef.sobreposicao")} onClick={corrigirSobreposicao}
+                    title={temRecurso("sigef.sobreposicao") ? undefined : "A correção de sobreposição não está no plano da sua empresa"}>
                     {corrigindo ? "Corrigindo e regerando…" : "Corrigir sobreposição e regerar planilha"}
                   </button>
+                  {!temRecurso("sigef.sobreposicao") && <small className="sub">Não incluída no plano da sua empresa. Fale com o suporte para liberar.</small>}
                 </div>
                 {sobreCsvs.length > 0 && (
                   <div className="chips-arquivos">

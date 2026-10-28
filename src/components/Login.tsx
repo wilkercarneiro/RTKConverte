@@ -28,7 +28,7 @@ export function Login({ onOk, cadastroAberto = false }: { onOk: () => void; cada
     setErro(null);
     if (!email.trim()) { setAviso("Digite o e-mail acima e clique de novo em \"Esqueci a senha\"."); return; }
     setCarregando(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: location.origin });
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${location.origin}/app/` });
     setCarregando(false);
     if (error) setErro(error.message);
     else setAviso(`Enviamos um link de redefinição para ${email.trim()}.`);

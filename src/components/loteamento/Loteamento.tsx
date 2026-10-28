@@ -26,6 +26,7 @@ import type { OpcoesVista } from "./Editor";
 import { Painel } from "./Painel";
 import { Avisos } from "./Avisos";
 import { Entregas } from "./Entregas";
+import { temRecurso } from "../../lib/recursos";
 import "./loteamento.css";
 
 // a maquete 3D (three.js) só é baixada por quem a abre
@@ -336,7 +337,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
             <button title="Imagem de satélite" className={vista.satelite ? "ativo" : ""} onClick={() => setVista({ ...vista, satelite: !vista.satelite })}>🛰</button>
             <button title="Medidas dos lados" className={vista.medidas ? "ativo" : ""} onClick={() => setVista({ ...vista, medidas: !vista.medidas })}>↔</button>
             <button title="Colorir pelo tamanho do lote" className={vista.cores === "area" ? "ativo" : ""} onClick={() => setVista({ ...vista, cores: vista.cores === "area" ? "situacao" : "area" })}>▦</button>
-            <button title="Maquete 3D: o loteamento no relevo real, com casas, árvores e voo de drone" className="lot-btn-3d" onClick={() => setVer3d(true)}>3D</button>
+            {temRecurso("loteamento.maquete3d") && <button title="Maquete 3D: o loteamento no relevo real, com casas, árvores e voo de drone" className="lot-btn-3d" onClick={() => setVer3d(true)}>3D</button>}
             <button title={projeto.terreno ? "Colorir pelo relevo (cota)" : "Relevo ainda não lido (gere pelas Perguntas)"} disabled={!projeto.terreno}
               className={vista.cores === "relevo" ? "ativo" : ""} onClick={() => setVista({ ...vista, cores: vista.cores === "relevo" ? "situacao" : "relevo" })}>⛰</button>
             <span className="sep" />
@@ -383,7 +384,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
 
       {etapa === "entregas" && res && (
         <div className="conferencia-corpo fade">
-          <Entregas servico={servico} projeto={projeto} res={res} perimetro={perimetro} onExportou={marcarExportado} onAbrir3D={() => setVer3d(true)} />
+          <Entregas servico={servico} projeto={projeto} res={res} perimetro={perimetro} onExportou={marcarExportado} onAbrir3D={temRecurso("loteamento.maquete3d") ? () => setVer3d(true) : undefined} />
           <div><button onClick={() => setEtapa("projeto")}>← Voltar ao projeto</button></div>
         </div>
       )}

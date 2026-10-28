@@ -1,6 +1,4 @@
--- PROPOSTA DE MIGRAÇÃO — AINDA NÃO APLICADA EM PRODUÇÃO.
--- Para aplicar: revisar, copiar para supabase/migrations/0020_escritorios.sql e
--- seguir docs/multiescritorio/README.md (ordem: banco → edge functions → frontend).
+-- Base do SaaS (multiempresa). Aplicar junto com a 0024_saas.sql: ver docs/saas/README.md.
 --
 -- Vários escritórios no mesmo banco (multiempresa).
 --

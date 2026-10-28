@@ -27,12 +27,19 @@ import type { EstadoEscritorio } from "./lib/escritorio";
 import { definicaoDe } from "./lib/modalidades";
 import type { ChaveServico } from "./lib/modalidades";
 import { useRota } from "./lib/rota";
+import { carregarConta } from "./lib/conta";
+import type { Conta } from "./lib/conta";
+import { servicoLiberado } from "./lib/recursos";
+import { TrocarSenhaObrigatoria } from "./components/TrocarSenha";
 import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
 
 // só no `npm run dev`: fica num pedaço à parte que o build nunca carrega
 const LaboratorioPlanta = lazy(() => import("./components/planta/LaboratorioPlanta").then((m) => ({ default: m.LaboratorioPlanta })));
 const LaboratorioDivisao = lazy(() => import("./components/LaboratorioDivisao").then((m) => ({ default: m.LaboratorioDivisao })));
 const LaboratorioCar = lazy(() => import("./components/car/Laboratorio").then((m) => ({ default: m.LaboratorioCar })));
+const LaboratorioAdmin = lazy(() => import("./components/admin/LaboratorioAdmin").then((m) => ({ default: m.LaboratorioAdmin })));
+// painel do superadmin: só quem administra o SaaS baixa este pedaço
+const PainelAdmin = lazy(() => import("./components/admin/PainelAdmin").then((m) => ({ default: m.PainelAdmin })));
 
 export default function App() {
   const [logado, setLogado] = useState<boolean | null>(null);
@@ -45,6 +52,8 @@ export default function App() {
   const [erroServico, setErroServico] = useState<string | null>(null);
   // escritório do usuário (null = carregando). Ver lib/escritorio.ts.
   const [escritorio, setEscritorio] = useState<EstadoEscritorio | null>(null);
+  // superadmin, senha provisória e recursos do plano (null = carregando). Ver lib/conta.ts.
+  const [conta, setConta] = useState<Conta | null>(null);
 
   useEffect(() => {
     if (!configOk) return;
@@ -54,9 +63,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!logado) { setEscritorio(null); return; }
+    if (!logado) { setEscritorio(null); setConta(null); return; }
     let cancelado = false;
-    carregarEscritorio().then((e) => { if (!cancelado) setEscritorio(e); });
+    // a conta antes do escritório: os recursos do plano precisam estar lidos
+    // antes da primeira tela (temRecurso é síncrono)
+    Promise.all([carregarConta(), carregarEscritorio()]).then(([c, e]) => {
+      if (!cancelado) { setConta(c); setEscritorio(e); }
+    });
     return () => { cancelado = true; };
   }, [logado, usuario]);
 
@@ -98,6 +111,7 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/planta")) return <Suspense fallback={null}><LaboratorioPlanta /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/divisao")) return <Suspense fallback={null}><LaboratorioDivisao /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/car")) return <Suspense fallback={null}><LaboratorioCar /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/admin")) return <Suspense fallback={null}><LaboratorioAdmin /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vértice", href: "#/" }} />;
@@ -119,8 +133,24 @@ export default function App() {
     if (rota.t === "cadastro" && CADASTRO_ABERTO) return <Cadastro />;
     return <Login onOk={() => setLogado(true)} cadastroAberto={CADASTRO_ABERTO} />;
   }
-  if (escritorio === null) return <div className="centro">Carregando...</div>;
+  if (escritorio === null || conta === null) return <div className="centro">Carregando...</div>;
+  if (conta.trocarSenha) {
+    return <TrocarSenhaObrigatoria email={usuario} onOk={() => setConta({ ...conta, trocarSenha: false })} />;
+  }
+  const temEscritorio = escritorio.estado !== "sem-escritorio";
+  const empresaBloqueada = escritorio.estado === "ok" && !!escritorio.escritorio.status && escritorio.escritorio.status !== "ativo";
+  // painel do SaaS: pela rota, ou direto quando o superadmin não trabalha numa empresa
+  if (conta.superadmin && (rota.t === "admin" || !temEscritorio || empresaBloqueada)) {
+    const aba = rota.t === "admin" ? rota.aba : "visao";
+    return (
+      <Suspense fallback={<div className="centro">Carregando...</div>}>
+        <PainelAdmin aba={aba as never} id={rota.t === "admin" ? rota.id : undefined} ir={ir} email={usuario}
+          temEscritorio={temEscritorio && !empresaBloqueada} />
+      </Suspense>
+    );
+  }
   if (escritorio.estado === "sem-escritorio") return <SemEscritorio email={usuario} />;
+  if (empresaBloqueada && escritorio.estado === "ok") return <EmpresaBloqueada nome={escritorio.escritorio.nome} status={escritorio.escritorio.status!} />;
 
   /** Serviço criado a partir de um cliente: vincula e pré-preenche o detentor. */
   async function vincularCliente(parse: ResultadoParse, clienteId?: string): Promise<ResultadoParse> {
@@ -166,11 +196,24 @@ export default function App() {
   const papel = escritorio.estado === "ok"
     ? `${escritorio.escritorio.papel === "dono" ? "Dono" : "Operador"} · ${escritorio.escritorio.nome}`
     : "Operador";
-  const casca = { rota, ir, usuario: usuario ? { nome: usuario, papel } : undefined };
+  const casca = { rota, ir, usuario: usuario ? { nome: usuario, papel } : undefined, superadmin: conta.superadmin };
 
   switch (rota.t) {
     case "novo": {
       const def = definicaoDe(rota.chave as ChaveServico);
+      if (!servicoLiberado(def.chave)) {
+        return (
+          <AppShell {...casca}>
+            <div className="centro">
+              <div>
+                <h2>{def.titulo} não está no seu plano</h2>
+                <p className="sub">Fale com o suporte do Vértice para incluir este serviço no plano da sua empresa.</p>
+                <button className="principal" onClick={() => ir({ t: "inicio" })}>Voltar ao início</button>
+              </div>
+            </div>
+          </AppShell>
+        );
+      }
       if (def.campos.tipo === "pecas") {
         return (
           <AppShell {...casca}>
@@ -269,6 +312,21 @@ export default function App() {
         </AppShell>
       );
   }
+}
+
+/** Empresa suspensa ou cancelada no painel do SaaS: os dados ficam guardados. */
+function EmpresaBloqueada({ nome, status }: { nome: string; status: string }) {
+  return (
+    <div className="centro">
+      <div className="login-box" style={{ textAlign: "left" }}>
+        <Logo size={28} />
+        <h2 style={{ marginTop: 14 }}>Acesso {status === "cancelado" ? "encerrado" : "suspenso"}</h2>
+        <p>O acesso da <b>{nome}</b> ao Vértice está {status === "cancelado" ? "encerrado" : "suspenso"} no momento. Os seus dados continuam guardados.</p>
+        <p>Fale com o suporte do Vértice para reativar.</p>
+        <button onClick={() => supabase.auth.signOut()}>Sair</button>
+      </div>
+    </div>
+  );
 }
 
 /** Conta confirmada, mas fora de qualquer escritório: espera o dono adicioná-la. */

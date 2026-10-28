@@ -12,6 +12,7 @@ import type { VerticeSigef } from "../../supabase/functions/_shared/certificados
 import { Icone, ICONE } from "./Icone";
 import { PlantaCertificada } from "./PlantaCertificada";
 import { PainelSigef } from "./PainelSigef";
+import { temRecurso } from "../lib/recursos";
 import { guardarParcelasSigef } from "../lib/sigef";
 import { loteamentoDisponivel } from "../lib/loteamento/persistencia";
 import type { LonLat } from "../lib/sigef";
@@ -250,7 +251,7 @@ export function Upload({ definicao, onParsed, onVoltar }: {
             </section>
           ))}
 
-          {grupos.length > 0 && (
+          {grupos.length > 0 && temRecurso("sigef.mapa") && (
             <section className="cert-grupo">
               <header>
                 <span className="nome">Mapa das parcelas</span>

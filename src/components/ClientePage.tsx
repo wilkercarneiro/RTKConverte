@@ -6,6 +6,7 @@ import { HistoricoDocs } from "./HistoricoDocs";
 import { useAutosave, useAvisos } from "../lib/ux";
 import { Avisos, BotaoPerigo, Secao, StatusSalvamento } from "./ui";
 import { SERVICOS, chaveDoServico, rotuloCurto } from "../lib/modalidades";
+import { servicoLiberado } from "../lib/recursos";
 import type { ChaveServico } from "../lib/modalidades";
 import type { Cliente, Servico } from "../lib/types";
 import { Icone } from "./Icone";
@@ -85,7 +86,7 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
         {/* Um botão por modalidade, direto de SERVICOS: acrescentar uma
             modalidade não exige mais tocar nesta tela. */}
         <div className="acoes">
-          {SERVICOS.map((d) => (
+          {SERVICOS.filter((d) => servicoLiberado(d.chave)).map((d) => (
             <button key={d.chave} onClick={() => onNovoServico(d.chave)} title={d.resumo}
               style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
               <Icone d={d.icone} size={16} /> {d.titulo}

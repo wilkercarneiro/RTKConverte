@@ -15,6 +15,9 @@ export interface Escritorio {
   papel: "dono" | "membro";
   /** true = escritório que já existia: logo/modelos na raiz de `templates` */
   modelos_compartilhados: boolean;
+  /** situação da empresa no SaaS (0024); ausente antes dela */
+  status?: "ativo" | "suspenso" | "cancelado";
+  plano?: string | null;
 }
 
 export type EstadoEscritorio =

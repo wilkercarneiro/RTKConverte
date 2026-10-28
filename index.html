@@ -2,16 +2,743 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      /* Links antigos do sistema (#/rota) e e-mails de acesso/redefinição de
+       * senha (#access_token, type=recovery, error_description) caíam na raiz:
+       * leva para o sistema, que agora mora em /app/. Depois liga as cenas
+       * (só com JS, sem "reduzir movimento" e em tela com altura suficiente). */
+      (function () {
+        var h = location.hash || "";
+        if (h.indexOf("#/") === 0 || /access_token|type=recovery|error_description/.test(h)) {
+          location.replace("/app/" + h);
+          return;
+        }
+        var d = document.documentElement;
+        d.classList.add("js");
+        try {
+          if (!matchMedia("(prefers-reduced-motion: reduce)").matches && innerHeight >= 480) d.classList.add("cenas");
+        } catch (e) {}
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Vértice — georreferenciamento do levantamento à certificação</title>
+    <meta name="description" content="Sistema web para escritórios de georreferenciamento: do TXT do receptor GNSS saem memorial descritivo, planilha SIGEF, planta A1/A3 com malha UTM e as peças técnicas. Loteamento, maquete 3D, divisão em partes iguais e CAR." />
     <meta name="theme-color" content="#0E3B2B" />
-    <title>Vértice — Memorial INCRA + Planilha SIGEF</title>
+    <meta name="robots" content="index, follow" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:site_name" content="Vértice" />
+    <meta property="og:title" content="Vértice — do levantamento à certificação" />
+    <meta property="og:description" content="Do TXT do levantamento ao memorial, planilha SIGEF, planta e peças técnicas. Loteamento com maquete 3D, divisão em partes iguais, CAR e sobreposição com o SIGEF." />
+    <meta property="og:image" content="/site/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/site/site.css" />
+    <script type="application/ld+json">
+      {"@context":"https://schema.org","@type":"SoftwareApplication","name":"Vértice","applicationCategory":"BusinessApplication","operatingSystem":"Web","inLanguage":"pt-BR","description":"Sistema web de georreferenciamento: memorial descritivo, planilha SIGEF, planta com malha UTM, peças técnicas, loteamento com maquete 3D, divisão em partes iguais e CAR."}
+    </script>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <a class="pular" href="#conteudo">Pular para o conteúdo</a>
+
+    <!-- ── símbolos reutilizados ─────────────────────────────────────────── -->
+    <svg width="0" height="0" class="sr" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="marca" viewBox="0 0 28 28">
+          <path d="M4 22 14 5l10 17" fill="none" stroke="#7BD3A6" stroke-width="2.6" stroke-linejoin="round" />
+          <circle cx="14" cy="5" r="3" fill="#7BD3A6" />
+          <circle cx="4" cy="22" r="2.4" fill="currentColor" />
+          <circle cx="24" cy="22" r="2.4" fill="currentColor" />
+        </symbol>
+        <path id="blobA" d="M100 0C100 46 66 92 12 96C-44 100-96 66-100 16C-104-34-68-86-8-96C46-104 100-52 100 0Z" />
+        <path id="blobB" d="M96 8C92 58 52 98-4 94C-58 90-102 52-96 2C-90-50-48-96 6-92C60-88 100-44 96 8Z" />
+        <pattern id="hachura" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="8" height="8" fill="rgba(194,69,61,.14)" />
+          <line x1="0" y1="0" x2="0" y2="8" stroke="#C2453D" stroke-width="2.4" />
+        </pattern>
+        <pattern id="hachuraRL" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+          <rect width="7" height="7" fill="rgba(123,211,166,.22)" />
+          <line x1="0" y1="0" x2="0" y2="7" stroke="#7BD3A6" stroke-width="2" />
+        </pattern>
+        <pattern id="pontos" width="10" height="10" patternUnits="userSpaceOnUse">
+          <circle cx="5" cy="5" r="1.3" fill="rgba(255,214,120,.75)" />
+        </pattern>
+        <filter id="satelite" x="0" y="0" width="100%" height="100%">
+          <feTurbulence type="fractalNoise" baseFrequency=".011 .016" numOctaves="4" seed="11" />
+          <feColorMatrix type="matrix" values="0 0 0 0 .13  0 0 0 0 .24  0 0 0 0 .14  1.4 .6 0 0 -.55" />
+          <feComposite in2="SourceGraphic" operator="in" />
+        </filter>
+      </defs>
+    </svg>
+
+    <!-- ── topo ──────────────────────────────────────────────────────────── -->
+    <header class="topo" data-topo>
+      <div class="w topo-in">
+        <a class="logo" href="#inicio" aria-label="Vértice — início">
+          <svg viewBox="0 0 28 28" aria-hidden="true"><use href="#marca" /></svg>
+          <span>Vértice</span>
+        </a>
+        <nav class="nav" aria-label="Seções">
+          <a href="#como" data-cap="como">Como funciona</a>
+          <a href="#servicos" data-cap="servicos">Serviços</a>
+          <a href="#loteamento" data-cap="loteamento">Loteamento</a>
+          <a href="#sigef" data-cap="sigef">SIGEF</a>
+          <a href="#documentos" data-cap="documentos">Documentos</a>
+          <a href="#duvidas" data-cap="duvidas">Dúvidas</a>
+        </nav>
+        <a class="bt bt-p bt-topo" href="#contato">Agendar demonstração</a>
+        <button class="menu-bt" type="button" aria-expanded="false" aria-controls="menu-cel" data-menu>
+          <span class="sr">Abrir menu</span><i></i><i></i>
+        </button>
+      </div>
+      <div class="rolagem" aria-hidden="true"></div>
+      <nav class="menu-cel" id="menu-cel" aria-label="Seções" hidden>
+        <a href="#como">Como funciona</a>
+        <a href="#servicos">Serviços</a>
+        <a href="#loteamento">Loteamento e maquete 3D</a>
+        <a href="#sigef">SIGEF e sobreposição</a>
+        <a href="#car">CAR</a>
+        <a href="#documentos">Documentos</a>
+        <a href="#duvidas">Dúvidas</a>
+        <a class="bt bt-p" href="#contato">Agendar uma demonstração</a>
+      </nav>
+    </header>
+
+    <main id="conteudo">
+      <!-- ── 1. hero ────────────────────────────────────────────────────── -->
+      <section class="s dk hero" id="inicio" aria-labelledby="t-hero" data-saida>
+        <div class="w hero-in">
+          <div class="hero-txt">
+            <p class="kicker">SIRGAS 2000 · UTM 18S–25S · padrão SIGEF</p>
+            <h1 id="t-hero" class="hero-t">
+              <span class="ln"><span style="--i:0">Do</span> <span style="--i:1">levantamento</span></span>
+              <span class="ln"><span style="--i:2">à</span> <span class="real" style="--i:3">certificação.</span></span>
+            </h1>
+            <p class="lead">O Vértice transforma o TXT do seu receptor GNSS em memorial descritivo, planilha SIGEF, planta com malha UTM e todas as peças técnicas. Conferido, padronizado e com a cara do seu escritório.</p>
+            <div class="acoes">
+              <a class="bt bt-p bt-g" href="#contato">Agendar uma demonstração</a>
+              <a class="bt bt-l" href="#como">Ver como funciona</a>
+            </div>
+            <p class="hero-nota">Sistema web: roda no navegador, sem instalar nada.</p>
+          </div>
+
+          <figure class="hero-vis" data-mira aria-label="Ilustração: poligonal de um imóvel sendo traçada sobre curvas de nível e malha UTM, com os vértices numerados">
+            <svg class="hero-svg" viewBox="0 0 640 560" role="img" aria-hidden="true">
+              <g class="malha">
+                <path d="M80 20V540M160 20V540M240 20V540M320 20V540M400 20V540M480 20V540M560 20V540M20 80H620M20 160H620M20 240H620M20 320H620M20 400H620M20 480H620" />
+              </g>
+              <g class="malha-rot" aria-hidden="true">
+                <text x="80" y="14">712.200</text><text x="240" y="14">712.600</text><text x="400" y="14">713.000</text><text x="560" y="14">713.400</text>
+                <text x="626" y="83">8.251.800</text><text x="626" y="243">8.251.400</text><text x="626" y="403">8.251.000</text>
+              </g>
+              <g class="curvas" transform="translate(470 150)">
+                <use href="#blobA" class="cn" style="--k:.22" /><use href="#blobA" class="cn" style="--k:.46" /><use href="#blobA" class="cn" style="--k:.72" />
+                <use href="#blobA" class="cn" style="--k:1" /><use href="#blobA" class="cn" style="--k:1.3" /><use href="#blobA" class="cn" style="--k:1.62" />
+                <use href="#blobA" class="cn" style="--k:1.98" /><use href="#blobA" class="cn" style="--k:2.4" />
+              </g>
+              <g class="curvas" transform="translate(150 450)">
+                <use href="#blobB" class="cn" style="--k:.3" /><use href="#blobB" class="cn" style="--k:.62" /><use href="#blobB" class="cn" style="--k:.96" />
+                <use href="#blobB" class="cn" style="--k:1.32" /><use href="#blobB" class="cn" style="--k:1.7" /><use href="#blobB" class="cn" style="--k:2.12" />
+              </g>
+              <g class="cota-rot"><text x="452" y="146">835</text><text x="468" y="62">820</text><text x="144" y="446">790</text></g>
+              <path class="poli-f" d="M212 138 372 104 500 176 528 330 430 448 262 430 150 318Z" />
+              <path class="poli" pathLength="1" d="M212 138 372 104 500 176 528 330 430 448 262 430 150 318Z" />
+              <g class="lados">
+                <text transform="translate(440 132) rotate(29)">148,62 m</text>
+                <text transform="translate(338 452) rotate(6)">169,02 m</text>
+              </g>
+              <g class="vs">
+                <g style="--i:0"><circle cx="212" cy="138" r="5.5" /><text x="200" y="124" text-anchor="end">VRTX-M-0001</text></g>
+                <g style="--i:1"><circle cx="372" cy="104" r="5.5" /><text x="372" y="88" text-anchor="middle">VRTX-M-0002</text></g>
+                <g style="--i:2"><circle cx="500" cy="176" r="5.5" /><text x="514" y="172">VRTX-P-0003</text></g>
+                <g style="--i:3"><circle cx="528" cy="330" r="5.5" /><text x="542" y="334">VRTX-M-0004</text></g>
+                <g style="--i:4"><circle cx="430" cy="448" r="5.5" /><text x="444" y="470">VRTX-V-0005</text></g>
+                <g style="--i:5"><circle cx="262" cy="430" r="5.5" /><text x="250" y="456" text-anchor="end">VRTX-M-0006</text></g>
+                <g style="--i:6"><circle cx="150" cy="318" r="5.5" /><text x="136" y="322" text-anchor="end">VRTX-M-0007</text></g>
+              </g>
+              <g class="mira" data-mira-alvo>
+                <circle r="16" /><path d="M-26 0H-10M10 0H26M0-26V-10M0 10V26" />
+              </g>
+            </svg>
+            <figcaption class="leitura" aria-hidden="true">
+              <span class="leitura-k">Vértice</span>
+              <b data-leitura="cod">VRTX-M-0001</b>
+              <span>E <b data-leitura="e">712.530,218</b></span>
+              <span>N <b data-leitura="n">8.251.655,442</b></span>
+              <span class="leitura-f">Fuso 23S · SIRGAS 2000</span>
+            </figcaption>
+            <div class="selo-area" aria-hidden="true">
+              <span>Área</span><b>48,7215 ha</b>
+              <span>Perímetro</span><b>2.912,40 m</b>
+            </div>
+          </figure>
+        </div>
+
+        <div class="faixa" aria-label="O que sai do Vértice">
+          <div class="faixa-trilho">
+            <ul>
+              <li>Memorial descritivo</li><li>Planilha SIGEF (ODS)</li><li>Planta A1 e A3 em PDF</li><li>Quadro analítico</li><li>Cartas de anuência</li><li>Declarações e requerimento</li><li>Loteamento</li><li>Maquete 3D</li><li>KML · DXF · GLB</li><li>Shapefile para o SICAR</li>
+            </ul>
+            <ul aria-hidden="true">
+              <li>Memorial descritivo</li><li>Planilha SIGEF (ODS)</li><li>Planta A1 e A3 em PDF</li><li>Quadro analítico</li><li>Cartas de anuência</li><li>Declarações e requerimento</li><li>Loteamento</li><li>Maquete 3D</li><li>KML · DXF · GLB</li><li>Shapefile para o SICAR</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 2. a dor ───────────────────────────────────────────────────── -->
+      <section class="s cena dor" id="dor" aria-labelledby="t-dor" data-cena data-estagios="3" data-entrada="cortina" style="--n:3; --antes: var(--floresta)">
+        <div class="palco">
+          <div class="w palco-in">
+            <div class="palco-txt">
+              <p class="kicker">O jeito de sempre</p>
+              <h2 id="t-dor" class="t2">O campo leva um dia. O escritório leva a semana.</h2>
+              <ol class="passos">
+                <li data-e="0"><b>Horas de planilha</b><span>Coordenada por coordenada, azimute por azimute, em arquivo que muda de versão a cada conferência.</span></li>
+                <li data-e="1"><b>Memorial digitado à mão</b><span>Cada descrição de divisa copiada, colada e revisada. Um grau trocado e o documento volta.</span></li>
+                <li data-e="2"><b>Retrabalho no SIGEF</b><span>A sobreposição com o vizinho certificado só aparece depois de protocolar. E começa tudo de novo.</span></li>
+              </ol>
+              <div class="marcador" aria-hidden="true"><i data-e="0"></i><i data-e="1"></i><i data-e="2"></i></div>
+            </div>
+
+            <div class="vis mesa" aria-hidden="true">
+              <div class="folha f-plan" data-e="0">
+                <div class="folha-bar"><i></i><i></i><i></i><span>levantamento_final_v7_AGORAVAI.xlsx</span></div>
+                <div class="plan">
+                  <span class="h">Ponto</span><span class="h">E (m)</span><span class="h">N (m)</span><span class="h">Azimute</span><span class="h">Dist. (m)</span>
+                  <span style="--i:1">M-0001</span><span style="--i:1">712.530,21</span><span style="--i:1">8.251.655,44</span><span style="--i:1">77°58'12"</span><span style="--i:1">163,57</span>
+                  <span style="--i:2">M-0002</span><span style="--i:2">712.690,18</span><span style="--i:2">8.251.689,61</span><span style="--i:2">119°21'40"</span><span style="--i:2">148,62</span>
+                  <span style="--i:3">P-0003</span><span style="--i:3">712.819,77</span><span style="--i:3">8.251.616,83</span><span class="erro" style="--i:3">#REF!</span><span style="--i:3">156,57</span>
+                  <span style="--i:4">M-0004</span><span style="--i:4">712.847,90</span><span style="--i:4">8.251.462,80</span><span style="--i:4">219°48'21"</span><span style="--i:4">153,40</span>
+                  <span style="--i:5">V-0005</span><span style="--i:5">712.749,12</span><span style="--i:5">8.251.344,95</span><span style="--i:5">263°53'15"</span><span style="--i:5">169,02</span>
+                  <span style="--i:6">M-0006</span><span style="--i:6">712.581,04</span><span style="--i:6">8.251.362,93</span><span style="--i:6">313°41'08"</span><span style="--i:6">160,40</span>
+                  <span style="--i:7">M-0007</span><span style="--i:7">712.469,85</span><span style="--i:7">8.251.474,59</span><span style="--i:7">18°40'55"</span><span style="--i:7">191,37</span>
+                </div>
+                <div class="relogio"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path class="ponteiro" d="M12 12V6" /></svg><b data-anima="0,3.8,0,.32,horas">3h48</b><span>nesta planilha</span></div>
+              </div>
+
+              <div class="folha f-memo" data-e="1">
+                <p class="memo-t">MEMORIAL DESCRITIVO</p>
+                <p class="memo-s">Imóvel: Sítio Boa Esperança · Matrícula 12.345</p>
+                <span class="lin" style="--i:0;--w:96%"></span><span class="lin" style="--i:1;--w:88%"></span><span class="lin" style="--i:2;--w:92%"></span>
+                <p class="memo-x">…deste, segue confrontando com Sítio São José, com azimute de <s>127°14'08"</s> <ins>127°41'08"</ins> e distância de 84,31 m, até o vértice VRTX-M-0004…<i class="caret"></i></p>
+                <span class="lin" style="--i:3;--w:94%"></span><span class="lin" style="--i:4;--w:70%"></span><span class="lin" style="--i:5;--w:90%"></span><span class="lin" style="--i:6;--w:56%"></span>
+                <span class="etq">digitado à mão · 3ª revisão</span>
+              </div>
+
+              <div class="folha f-dev" data-e="2">
+                <svg viewBox="0 0 300 190">
+                  <path class="viz" d="M150 20 280 14 290 170 160 176 172 98Z" />
+                  <path class="nos" d="M20 30 160 24 196 100 166 172 30 164Z" />
+                  <path class="sob" d="M160 24 196 100 166 172 160 176 172 98 150 20Z" fill="url(#hachura)" />
+                  <text x="214" y="96">certificado</text><text x="40" y="100">seu imóvel</text>
+                </svg>
+                <p class="dev-t">Pendência na análise</p>
+                <p class="dev-s">Sobreposição com imóvel já certificado. Ajustar divisa e reenviar.</p>
+                <span class="carimbo">Refazer</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 3. como funciona ───────────────────────────────────────────── -->
+      <section class="s dk cena como" id="como" aria-labelledby="t-como" data-cena data-estagios="3" data-entrada="circulo" style="--n:3; --antes: var(--papel)">
+        <div class="palco">
+          <div class="w palco-in">
+            <div class="palco-txt">
+              <p class="kicker">Como funciona</p>
+              <h2 id="t-como" class="t2">Três passos. Do arquivo bruto ao processo pronto.</h2>
+              <ol class="passos passos-num">
+                <li data-e="0"><b><em>01</em> Envie o TXT</b><span>O arquivo exportado do receptor GNSS/RTK, do jeito que sai do campo. O Vértice lê os pontos, detecta o fuso UTM e monta a poligonal.</span></li>
+                <li data-e="1"><b><em>02</em> Confira</b><span>O imóvel no mapa, com vértices, área e perímetro calculados no padrão do SIGEF e o confrontante de cada trecho. Ajuste antes de gerar.</span></li>
+                <li data-e="2"><b><em>03</em> Baixe os documentos</b><span>Memorial, planilha ODS, planta em PDF e as peças técnicas, com o logo e os modelos do seu escritório.</span></li>
+              </ol>
+              <div class="marcador" aria-hidden="true"><i data-e="0"></i><i data-e="1"></i><i data-e="2"></i></div>
+            </div>
+
+            <div class="vis fluxo" aria-hidden="true">
+              <div class="fluxo-in">
+                <div class="arq" data-e="0">
+                  <div class="arq-bar"><span>levantamento_sitio.txt</span></div>
+                  <pre><code><span style="--i:0">M-0001,712530.218,8251655.442,812.31</span>
+<span style="--i:1">M-0002,712690.184,8251689.607,815.02</span>
+<span style="--i:2">P-0003,712819.771,8251616.830,821.77</span>
+<span style="--i:3">M-0004,712847.904,8251462.801,818.40</span>
+<span style="--i:4">V-0005,712749.120,8251344.953,806.13</span>
+<span style="--i:5">M-0006,712581.036,8251362.927,801.88</span>
+<span style="--i:6">M-0007,712469.852,8251474.590,804.25</span></code></pre>
+                </div>
+
+                <div class="mapa" data-e="1">
+                  <svg viewBox="0 0 400 320">
+                    <path class="m-malha" d="M50 0V320M130 0V320M210 0V320M290 0V320M370 0V320M0 40H400M0 120H400M0 200H400M0 280H400" />
+                    <path class="m-poli-f" d="M106 64 206 42 286 88 304 186 242 262 136 250 66 180Z" />
+                    <path class="m-poli" pathLength="1" d="M106 64 206 42 286 88 304 186 242 262 136 250 66 180Z" />
+                    <g class="m-pts">
+                      <circle style="--i:0" cx="106" cy="64" r="5" /><circle style="--i:1" cx="206" cy="42" r="5" /><circle style="--i:2" cx="286" cy="88" r="5" />
+                      <circle style="--i:3" cx="304" cy="186" r="5" /><circle style="--i:4" cx="242" cy="262" r="5" /><circle style="--i:5" cx="136" cy="250" r="5" /><circle style="--i:6" cx="66" cy="180" r="5" />
+                    </g>
+                    <g class="m-conf">
+                      <text x="150" y="38" transform="rotate(-12 150 38)">Sítio São José</text>
+                      <text x="318" y="140" transform="rotate(80 318 140)">Estrada municipal</text>
+                      <text x="150" y="276" transform="rotate(6 150 276)">Córrego do Brejo</text>
+                    </g>
+                  </svg>
+                  <span class="fuso">Fuso 23S detectado</span>
+                  <div class="m-leit">
+                    <span>Área</span><b data-anima="0,48.7215,.4,.62,ha">48,7215 ha</b>
+                    <span>Perímetro</span><b data-anima="0,2912.4,.4,.62,m">2.912,40 m</b>
+                  </div>
+                </div>
+
+                <div class="docs" data-e="2">
+                  <div class="doc" style="--i:0"><span class="doc-tipo">PDF</span><b>Planta A1</b><i class="doc-mini planta"></i></div>
+                  <div class="doc" style="--i:1"><span class="doc-tipo">DOC</span><b>Memorial descritivo</b><i class="doc-mini texto"></i></div>
+                  <div class="doc" style="--i:2"><span class="doc-tipo">ODS</span><b>Planilha SIGEF</b><i class="doc-mini tabela"></i></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 4. serviços ───────────────────────────────────────────────── -->
+      <section class="s servicos" id="servicos" aria-labelledby="t-serv" data-entrada="persiana" style="--antes: var(--floresta)">
+        <div class="w">
+          <header class="cab rv">
+            <p class="kicker">Os serviços</p>
+            <h2 id="t-serv" class="t2">Um sistema para cada tipo de trabalho do escritório.</h2>
+            <p class="lead">Do georreferenciamento comum à partilha entre herdeiros, do loteamento ao CAR. Escolha a modalidade e o Vértice monta o que ela pede.</p>
+          </header>
+
+          <ol class="mods">
+            <li class="mod rv">
+              <span class="mod-n">01</span>
+              <div class="mod-tx"><h3>Serviço completo</h3><p>Matrícula ou posse. Memorial, planilha SIGEF, planta e as peças técnicas a partir do TXT do levantamento.</p></div>
+              <svg class="mod-v v-completo" viewBox="0 0 140 90" aria-hidden="true"><path class="d" pathLength="1" d="M20 30 62 16 96 34 92 72 40 76Z" /><g class="pt"><circle cx="20" cy="30" r="3" /><circle cx="62" cy="16" r="3" /><circle cx="96" cy="34" r="3" /><circle cx="92" cy="72" r="3" /><circle cx="40" cy="76" r="3" /></g><rect class="pg" x="104" y="22" width="26" height="34" rx="3" /><path class="pg-l" d="M109 31h16M109 37h16M109 43h10" /></svg>
+            </li>
+            <li class="mod rv">
+              <span class="mod-n">02</span>
+              <div class="mod-tx"><h3>Conferência de área</h3><p>Prévia de área e perímetro para o cliente decidir, sem consumir a numeração oficial dos vértices.</p></div>
+              <svg class="mod-v v-confere" viewBox="0 0 140 90" aria-hidden="true"><path class="d tracejado" d="M22 24 80 14 112 44 96 76 34 70Z" /><rect class="selo" x="44" y="36" width="52" height="20" rx="10" /><text x="70" y="50" text-anchor="middle">prévia</text></svg>
+            </li>
+            <li class="mod rv">
+              <span class="mod-n">03</span>
+              <div class="mod-tx"><h3>Serviço com glebas</h3><p>Divida o imóvel pela seleção na planta. Cada gleba ganha sua aba, com o confrontante interno já preenchido.</p></div>
+              <svg class="mod-v v-glebas" viewBox="0 0 140 90" aria-hidden="true"><path class="g1" d="M18 22 70 12 64 78 26 72Z" /><path class="g2" d="M70 12 120 26 112 70 64 78Z" /><path class="d corte" pathLength="1" d="M70 12 64 78" /><path class="d" d="M18 22 70 12 120 26 112 70 64 78 26 72Z" /></svg>
+            </li>
+            <li class="mod rv">
+              <span class="mod-n">04</span>
+              <div class="mod-tx"><h3>Divisão em partes iguais</h3><p>Partilha e herança: partes de mesma área ou fração, divisas retas e frente para a estrada a todos. GEO do total, um GEO por herdeiro e o arquivo de locação dos marcos.</p></div>
+              <svg class="mod-v v-partes" viewBox="0 0 140 90" aria-hidden="true"><rect class="estrada" x="6" y="74" width="128" height="8" rx="2" /><path class="p" style="--i:0" d="M14 70 14 18 44 14 44 70Z" /><path class="p" style="--i:1" d="M44 70 44 14 74 12 74 70Z" /><path class="p" style="--i:2" d="M74 70 74 12 104 14 104 70Z" /><path class="p" style="--i:3" d="M104 70 104 14 128 20 126 70Z" /><path class="d" d="M14 70 14 18 74 12 128 20 126 70Z" /></svg>
+            </li>
+            <li class="mod rv">
+              <span class="mod-n">05</span>
+              <div class="mod-tx"><h3>Loteamento</h3><p>Três propostas automáticas, prancheta editável e as regras da Lei 6.766. Planta, memoriais, quadro de lotes, KML, DXF e locação.</p><a class="mod-link" href="#loteamento">Ver o loteamento</a></div>
+              <svg class="mod-v v-lote" viewBox="0 0 140 90" aria-hidden="true"><rect class="rua" x="10" y="42" width="120" height="6" /><rect class="rua" x="67" y="8" width="6" height="76" /><g class="lts"><rect style="--i:0" x="12" y="10" width="16" height="30" /><rect style="--i:1" x="30" y="10" width="16" height="30" /><rect style="--i:2" x="48" y="10" width="16" height="30" /><rect style="--i:3" x="76" y="10" width="16" height="30" /><rect style="--i:4" x="94" y="10" width="16" height="30" /><rect style="--i:5" x="112" y="10" width="16" height="30" /><rect style="--i:6" x="12" y="50" width="16" height="32" /><rect style="--i:7" x="30" y="50" width="16" height="32" /><rect style="--i:8" x="48" y="50" width="16" height="32" /><rect style="--i:9" x="76" y="50" width="16" height="32" /><rect style="--i:10" x="94" y="50" width="16" height="32" /><rect style="--i:11" x="112" y="50" width="16" height="32" /></g></svg>
+            </li>
+            <li class="mod rv">
+              <span class="mod-n">06</span>
+              <div class="mod-tx"><h3>Maquete 3D</h3><p>O loteamento no terreno real, com satélite, ruas, casas, sol e sombra por hora. Voo de drone, vídeo MP4 e exportação GLB.</p></div>
+              <svg class="mod-v v-3d" viewBox="0 0 140 90" aria-hidden="true"><path class="chao" d="M70 82 128 52 70 22 12 52Z" /><g class="cx" style="--i:0"><path class="t" d="M44 50 56 44 68 50 56 56Z" /><path class="e" d="M44 50 56 56 56 64 44 58Z" /><path class="r" d="M56 56 68 50 68 58 56 64Z" /></g><g class="cx" style="--i:1"><path class="t" d="M72 36 84 30 96 36 84 42Z" /><path class="e" d="M72 36 84 42 84 52 72 46Z" /><path class="r" d="M84 42 96 36 96 46 84 52Z" /></g><g class="cx" style="--i:2"><path class="t" d="M74 58 86 52 98 58 86 64Z" /><path class="e" d="M74 58 86 64 86 70 74 64Z" /><path class="r" d="M86 64 98 58 98 64 86 70Z" /></g><circle class="sol" cx="118" cy="16" r="6" /></svg>
+            </li>
+            <li class="mod rv">
+              <span class="mod-n">07</span>
+              <div class="mod-tx"><h3>CAR</h3><p>KML da área vira reserva legal, APP de rios e área produtiva, em shapefiles SIRGAS 2000 prontos para o SICAR.</p><a class="mod-link" href="#car">Ver o CAR</a></div>
+              <svg class="mod-v v-car" viewBox="0 0 140 90" aria-hidden="true"><path class="d" d="M12 16 112 10 130 50 112 80 18 76Z" /><path class="app" d="M10 52C40 40 60 66 90 50S120 34 132 40" /><path class="rio" pathLength="1" d="M10 52C40 40 60 66 90 50S120 34 132 40" /><path class="rl" d="M16 20 64 16 60 40 20 44Z" fill="url(#hachuraRL)" /></svg>
+            </li>
+            <li class="mod rv">
+              <span class="mod-n">08</span>
+              <div class="mod-tx"><h3>Peças a partir do PDF do SIGEF</h3><p>Imóvel já certificado? Envie o PDF do SIGEF e o Vértice monta as peças e a planta pelo sistema.</p></div>
+              <svg class="mod-v v-pdf" viewBox="0 0 140 90" aria-hidden="true"><rect class="pg" x="12" y="14" width="40" height="54" rx="4" /><text x="32" y="46" text-anchor="middle">PDF</text><path class="seta" pathLength="1" d="M58 42H80" /><g class="pilha"><rect style="--i:2" x="90" y="22" width="34" height="46" rx="3" /><rect style="--i:1" x="96" y="18" width="34" height="46" rx="3" /><rect style="--i:0" x="102" y="14" width="34" height="46" rx="3" /></g></svg>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- ── 5. loteamento + maquete 3D ─────────────────────────────────── -->
+      <section class="s dk noite cena lote" id="loteamento" aria-labelledby="t-lote" data-cena data-estagios="4" data-entrada="dissolve" style="--n:4; --antes: var(--papel)">
+        <div class="palco">
+          <div class="w palco-in">
+            <div class="palco-txt">
+              <p class="kicker">Loteamento + maquete 3D</p>
+              <h2 id="t-lote" class="t2">Da gleba ao loteamento. E dele, à maquete.</h2>
+              <ol class="passos">
+                <li data-e="0"><b>Responda sobre o terreno</b><span>Acesso, lote mínimo, largura das ruas. O motor desenha três propostas automáticas seguindo as regras da Lei 6.766.</span></li>
+                <li data-e="1"><b>Ajuste na prancheta</b><span>Uma prancheta editável no estilo CAD: arraste divisas, mude ruas, acerte a frente de cada lote.</span></li>
+                <li data-e="2"><b>Veja em 3D, no terreno real</b><span>Maquete no navegador sobre a imagem de satélite: ruas, casas, sol e sombras conforme a hora, voo de drone.</span></li>
+                <li data-e="3"><b>Entregue tudo de uma vez</b><span>Planta em PDF, memoriais dos lotes, quadro de lotes, KML, DXF, locação para a coletora GNSS, vídeo MP4 e GLB.</span></li>
+              </ol>
+              <div class="marcador" aria-hidden="true"><i data-e="0"></i><i data-e="1"></i><i data-e="2"></i><i data-e="3"></i></div>
+            </div>
+
+            <div class="vis maquete" aria-hidden="true">
+              <div class="propostas" data-e="0">
+                <span class="prop" style="--i:0"><svg viewBox="0 0 40 40"><path d="M4 6 36 4 37 30 30 37 5 36Z" /><path class="r" d="M4 20H37M20 4V37" /></svg>A</span>
+                <span class="prop sel" style="--i:1"><svg viewBox="0 0 40 40"><path d="M4 6 36 4 37 30 30 37 5 36Z" /><path class="r" d="M4 20H37M20 4V37" /></svg>B</span>
+                <span class="prop" style="--i:2"><svg viewBox="0 0 40 40"><path d="M4 6 36 4 37 30 30 37 5 36Z" /><path class="r" d="M4 14H37M4 27H37" /></svg>C</span>
+              </div>
+              <div class="cena3d">
+                <div class="sol" data-sol data-e="2"></div>
+                <div class="tab" data-e="2">
+                  <svg class="tab-svg" viewBox="0 0 400 400">
+                    <defs><clipPath id="gleba"><path d="M30 40 370 24 384 300 300 380 40 370Z" /></clipPath></defs>
+                    <rect class="terreno" x="0" y="0" width="400" height="400" filter="url(#satelite)" />
+                    <path class="gleba-f" d="M30 40 370 24 384 300 300 380 40 370Z" />
+                    <g clip-path="url(#gleba)">
+                      <g class="ruas" data-e="0">
+                        <rect x="0" y="194" width="400" height="12" /><rect x="194" y="0" width="12" height="400" />
+                        <path class="eixo" d="M0 200H400M200 0V400" />
+                      </g>
+                      <g class="lotes" data-e="1">
+                        <rect style="--i:0" x="36" y="34" width="36" height="76" /><rect style="--i:1" x="76" y="34" width="36" height="76" /><rect style="--i:2" x="116" y="34" width="36" height="76" /><rect style="--i:3" x="156" y="34" width="34" height="76" />
+                        <rect style="--i:4" x="36" y="114" width="36" height="76" /><rect style="--i:5" x="76" y="114" width="36" height="76" /><rect style="--i:6" x="116" y="114" width="36" height="76" /><rect style="--i:7" x="156" y="114" width="34" height="76" />
+                        <rect style="--i:8" x="210" y="34" width="38" height="76" /><rect style="--i:9" x="252" y="34" width="38" height="76" /><rect style="--i:10" x="294" y="34" width="38" height="76" /><rect style="--i:11" x="336" y="34" width="48" height="76" />
+                        <rect style="--i:12" x="210" y="114" width="38" height="76" /><rect style="--i:13" x="252" y="114" width="38" height="76" /><rect style="--i:14" x="294" y="114" width="38" height="76" /><rect style="--i:15" x="336" y="114" width="48" height="76" />
+                        <rect style="--i:16" x="36" y="210" width="36" height="78" /><rect style="--i:17" x="76" y="210" width="36" height="78" /><rect style="--i:18" x="116" y="210" width="36" height="78" /><rect style="--i:19" x="156" y="210" width="34" height="78" />
+                        <rect style="--i:20" x="36" y="292" width="36" height="84" /><rect style="--i:21" x="76" y="292" width="36" height="84" /><rect style="--i:22" x="116" y="292" width="36" height="84" /><rect style="--i:23" x="156" y="292" width="34" height="84" />
+                        <rect style="--i:24" x="210" y="210" width="38" height="78" /><rect style="--i:25" x="252" y="210" width="38" height="78" /><rect style="--i:26" x="294" y="210" width="38" height="78" /><rect style="--i:27" x="336" y="210" width="48" height="78" />
+                        <rect style="--i:28" x="210" y="292" width="38" height="84" /><rect style="--i:29" x="252" y="292" width="38" height="84" /><rect style="--i:30" x="294" y="292" width="38" height="84" /><rect style="--i:31" x="336" y="292" width="48" height="84" />
+                      </g>
+                    </g>
+                    <path class="gleba" data-e="0" pathLength="1" d="M30 40 370 24 384 300 300 380 40 370Z" />
+                    <g class="arrasto" data-e="1"><path d="M252 26V194" /><circle cx="252" cy="110" r="7" /></g>
+                  </svg>
+                  <div class="casas">
+                    <div class="casa" style="left:11.25%;top:15.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:21.25%;top:15.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:31.25%;top:15.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:41.25%;top:15.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:54.5%;top:35.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:65%;top:35.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:75.5%;top:35.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:86%;top:35.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:54.5%;top:60%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:65%;top:60%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:75.5%;top:60%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:11.25%;top:80.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:21.25%;top:80.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                    <div class="casa" style="left:31.25%;top:80.75%"><i class="c-s"></i><i class="c-f"></i><i class="c-l"></i><i class="c-t"></i></div>
+                  </div>
+                </div>
+                <span class="hora" data-e="2">Sol às <b data-anima="7,17,.5,.75,hora">17:00</b></span>
+              </div>
+              <ul class="saidas" data-e="3">
+                <li style="--i:0">Planta PDF</li><li style="--i:1">Memoriais dos lotes</li><li style="--i:2">Quadro de lotes</li><li style="--i:3">KML</li><li style="--i:4">DXF</li><li style="--i:5">Locação GNSS</li><li style="--i:6">Vídeo MP4</li><li style="--i:7">GLB</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 6. SIGEF e sobreposição ────────────────────────────────────── -->
+      <section class="s cena sigef" id="sigef" aria-labelledby="t-sigef" data-cena data-estagios="3" data-entrada="diagonal" style="--n:3; --antes: var(--noite)">
+        <div class="palco">
+          <div class="w palco-in">
+            <div class="palco-txt">
+              <p class="kicker">SIGEF e sobreposição</p>
+              <h2 id="t-sigef" class="t2">Veja os vizinhos certificados antes de protocolar.</h2>
+              <ol class="passos">
+                <li data-e="0"><b>O mapa com a base do SIGEF</b><span>O mapa interativo mostra as parcelas já certificadas em volta do seu imóvel.</span></li>
+                <li data-e="1"><b>A sobreposição aparece</b><span>Se o levantamento entra na parcela do vizinho, você vê onde, antes de enviar.</span></li>
+                <li data-e="2"><b>Corrija com os vértices certificados</b><span>Os vértices certificados do vizinho entram na sua divisa. A sobreposição some e a confrontação fica certa.</span></li>
+              </ol>
+              <div class="marcador" aria-hidden="true"><i data-e="0"></i><i data-e="1"></i><i data-e="2"></i></div>
+            </div>
+
+            <div class="vis mapa-sigef" aria-hidden="true">
+              <svg viewBox="0 0 600 480">
+                <rect class="sat" width="600" height="480" filter="url(#satelite)" />
+                <rect class="sat-v" width="600" height="480" />
+                <g class="parcelas" data-e="0">
+                  <path style="--i:0" d="M150 18 318 26 322 104 170 130 140 62Z" />
+                  <path style="--i:1" d="M18 110 170 130 140 260 190 380 34 400Z" />
+                  <path style="--i:2" d="M190 380 344 376 470 400 462 472 178 470Z" />
+                  <path style="--i:3" d="M318 26 492 16 500 86 322 104Z" />
+                  <path style="--i:4" d="M528 300 590 280 590 470 462 472 470 400Z" />
+                  <path class="certif" style="--i:5" d="M322 104 500 86 528 300 470 400 344 376 340 246Z" />
+                  <text class="rot-viz" x="440" y="236">Parcela certificada</text>
+                </g>
+                <g class="nosso" data-e="2">
+                  <path class="nos-f" d="M170 130 330 110 372 250 350 370 190 380 140 260Z" />
+                  <path class="nos-l" d="M170 130 330 110 372 250 350 370 190 380 140 260Z" />
+                  <path class="nos-ok" pathLength="1" d="M170 130 322 104 340 246 344 376 190 380 140 260Z" />
+                </g>
+                <g class="sobrepos" data-e="1">
+                  <path d="M330 110 372 250 350 370 344 376 340 246 322 104Z" fill="url(#hachura)" />
+                  <text x="384" y="260">Sobreposição</text>
+                </g>
+                <g class="vmov" data-e="2">
+                  <circle class="vc" cx="322" cy="104" r="6" /><circle class="vc" cx="340" cy="246" r="6" /><circle class="vc" cx="344" cy="376" r="6" />
+                  <circle class="vm" cx="330" cy="110" r="5.5" style="--dx:-8px;--dy:-6px" />
+                  <circle class="vm" cx="372" cy="250" r="5.5" style="--dx:-32px;--dy:-4px" />
+                  <circle class="vm" cx="350" cy="370" r="5.5" style="--dx:-6px;--dy:6px" />
+                </g>
+                <g class="vfix"><circle cx="170" cy="130" r="5" /><circle cx="190" cy="380" r="5" /><circle cx="140" cy="260" r="5" /></g>
+                <text class="rot-nos" x="196" y="262">Seu levantamento</text>
+              </svg>
+              <span class="ok-selo" data-e="2"><svg viewBox="0 0 20 20"><path d="M4 10.5 8 14.5 16 6" /></svg>Sem sobreposição</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 7. CAR ─────────────────────────────────────────────────────── -->
+      <section class="s dk car" id="car" aria-labelledby="t-car" data-entrada="lateral" style="--antes: var(--papel)">
+        <div class="w car-in">
+          <div class="car-txt rv">
+            <p class="kicker">CAR</p>
+            <h2 id="t-car" class="t2">Do KML ao shapefile do SICAR.</h2>
+            <p class="lead">Envie o KML da área. O Vértice separa reserva legal, APP de rios e área produtiva e gera os shapefiles em SIRGAS 2000, prontos para o SICAR.</p>
+            <ul class="camadas">
+              <li style="--d:1.0s"><i class="sw sw-rio"></i>Rios e nascentes do traçado</li>
+              <li style="--d:1.9s"><i class="sw sw-app"></i>APP de rios</li>
+              <li style="--d:2.8s"><i class="sw sw-rl"></i>Reserva legal</li>
+              <li style="--d:3.6s"><i class="sw sw-pr"></i>Área produtiva</li>
+            </ul>
+          </div>
+          <figure class="car-vis rv" aria-label="Ilustração: imóvel com rio, faixa de APP, reserva legal e área produtiva, gerando arquivos shapefile">
+            <svg viewBox="0 0 600 440" aria-hidden="true">
+              <defs><clipPath id="imovelCar"><path d="M60 70 420 40 560 160 530 380 250 410 80 330Z" /></clipPath></defs>
+              <path class="c-imovel-f" d="M60 70 420 40 560 160 530 380 250 410 80 330Z" />
+              <g clip-path="url(#imovelCar)">
+                <rect class="c-prod" x="0" y="0" width="600" height="440" fill="url(#pontos)" />
+                <path class="c-app" d="M20 262C150 200 230 310 330 244S470 150 590 196" />
+                <path class="c-rl" d="M70 78 300 58 286 196 84 222Z" fill="url(#hachuraRL)" />
+              </g>
+              <path class="c-rio" pathLength="1" d="M20 262C150 200 230 310 330 244S470 150 590 196" />
+              <path class="c-imovel" pathLength="1" d="M60 70 420 40 560 160 530 380 250 410 80 330Z" />
+              <text class="c-rot" x="122" y="148">Reserva legal</text>
+              <text class="c-rot" x="400" y="232">APP</text>
+              <text class="c-rot" x="300" y="350">Área produtiva</text>
+            </svg>
+            <figcaption class="arqs">
+              <span style="--i:0">reserva_legal.shp</span><span style="--i:1">app_rios.shp</span><span style="--i:2">area_produtiva.shp</span><span style="--i:3">.dbf · .shx · .prj</span>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- ── 8. documentos ──────────────────────────────────────────────── -->
+      <section class="s documentos" id="documentos" aria-labelledby="t-doc" data-entrada="canto" style="--antes: var(--verde-esc)">
+        <div class="cena doc-cena" data-cena data-estagios="4" style="--n:4">
+          <div class="palco">
+            <div class="w palco-in">
+              <div class="palco-txt">
+                <p class="kicker">Documentos que saem prontos</p>
+                <h2 id="t-doc" class="t2">A planta se monta sozinha. Você só confere.</h2>
+                <ol class="passos">
+                  <li data-e="0"><b>Moldura e malha UTM</b><span>Planta A1 ou A3 em PDF, com a malha de coordenadas e o norte.</span></li>
+                  <li data-e="1"><b>Poligonal e confrontantes</b><span>Vértices com o código, medidas dos lados e o confrontante de cada trecho.</span></li>
+                  <li data-e="2"><b>Quadro, carimbo e situação</b><span>Quadro analítico, carimbo com o logo do escritório e planta de situação com imagem de satélite automática.</span></li>
+                  <li data-e="3"><b>Edite antes de baixar</b><span>Mova, troque texto e cor, apague, acrescente texto ou linha. O traçado do terreno fica travado.</span></li>
+                </ol>
+                <div class="marcador" aria-hidden="true"><i data-e="0"></i><i data-e="1"></i><i data-e="2"></i><i data-e="3"></i></div>
+              </div>
+
+              <div class="vis planta" aria-hidden="true">
+                <svg viewBox="0 0 841 594">
+                  <rect class="pl-papel" width="841" height="594" rx="6" />
+                  <g data-e="0">
+                    <path class="pl-mold" pathLength="1" d="M14 14H827V580H14Z M24 24H817V570H24Z" />
+                    <path class="pl-col" pathLength="1" d="M600 24V570" />
+                    <path class="pl-malha" d="M104 24V570M184 24V570M264 24V570M344 24V570M424 24V570M504 24V570M24 104H600M24 184H600M24 264H600M24 344H600M24 424H600M24 504H600" />
+                    <g class="pl-mrot"><text x="104" y="36">712.400</text><text x="264" y="36">712.600</text><text x="424" y="36">712.800</text><text x="30" y="100">8.251.800</text><text x="30" y="260">8.251.600</text><text x="30" y="420">8.251.400</text></g>
+                    <g class="pl-norte" transform="translate(560 70)"><path d="M0-26 9 8 0 2-9 8Z" /><text y="22" text-anchor="middle">N</text></g>
+                  </g>
+                  <g data-e="1">
+                    <path class="pl-poli-f" d="M160 130 340 96 470 168 494 330 400 456 228 440 120 320Z" />
+                    <path class="pl-poli" pathLength="1" d="M160 130 340 96 470 168 494 330 400 456 228 440 120 320Z" />
+                    <g class="pl-vs"><circle cx="160" cy="130" r="5" /><circle cx="340" cy="96" r="5" /><circle cx="470" cy="168" r="5" /><circle cx="494" cy="330" r="5" /><circle cx="400" cy="456" r="5" /><circle cx="228" cy="440" r="5" /><circle cx="120" cy="320" r="5" /></g>
+                    <g class="pl-rot">
+                      <text x="150" y="118" text-anchor="end">M-0001</text><text x="340" y="84" text-anchor="middle">M-0002</text><text x="482" y="162">P-0003</text><text x="506" y="334">M-0004</text><text x="410" y="476">V-0005</text><text x="220" y="462" text-anchor="end">M-0006</text><text x="108" y="324" text-anchor="end">M-0007</text>
+                    </g>
+                    <g class="pl-conf"><text x="232" y="98" transform="rotate(-11 232 98)">SÍTIO SÃO JOSÉ</text><text x="500" y="230" transform="rotate(78 500 230)">ESTRADA MUNICIPAL</text><text x="270" y="474" transform="rotate(5 270 474)">CÓRREGO DO BREJO</text><text x="104" y="230" transform="rotate(-62 104 230)">FAZENDA SANTA LUZIA</text></g>
+                    <text class="pl-area" x="300" y="290" text-anchor="middle">48,7215 ha</text>
+                  </g>
+                  <g data-e="2">
+                    <text class="pl-tit" x="612" y="46">QUADRO ANALÍTICO</text>
+                    <g class="pl-quadro">
+                      <rect x="612" y="54" width="204" height="14" class="pl-qh" />
+                      <rect style="--i:0" x="612" y="70" width="204" height="10" /><rect style="--i:1" x="612" y="82" width="204" height="10" /><rect style="--i:2" x="612" y="94" width="204" height="10" /><rect style="--i:3" x="612" y="106" width="204" height="10" />
+                      <rect style="--i:4" x="612" y="118" width="204" height="10" /><rect style="--i:5" x="612" y="130" width="204" height="10" /><rect style="--i:6" x="612" y="142" width="204" height="10" /><rect style="--i:7" x="612" y="154" width="204" height="10" />
+                    </g>
+                    <text class="pl-tit" x="612" y="196">PLANTA DE SITUAÇÃO</text>
+                    <g class="pl-sit">
+                      <rect class="pl-sat" x="612" y="204" width="204" height="150" filter="url(#satelite)" />
+                      <path d="M690 252 728 244 756 262 758 300 732 318 698 312 680 284Z" />
+                    </g>
+                    <g class="pl-carimbo">
+                      <rect x="612" y="378" width="204" height="182" />
+                      <path d="M612 420H816M612 460H816M612 500H816M714 460V560" />
+                      <svg x="622" y="386" width="26" height="26" viewBox="0 0 28 28"><use href="#marca" style="color:#12201A" /></svg>
+                      <text x="656" y="404">SEU ESCRITÓRIO</text>
+                      <text class="pl-cs" x="622" y="442">Imóvel: Sítio Boa Esperança</text>
+                      <text class="pl-cs" x="622" y="482">Resp. técnico · CREA</text>
+                      <text class="pl-cs" x="622" y="526">Escala 1:2.500</text><text class="pl-cs" x="724" y="526">Folha A1</text>
+                    </g>
+                  </g>
+                  <g data-e="3" class="pl-editor">
+                    <g class="pl-barra"><rect x="190" y="530" width="300" height="34" rx="17" /><text x="210" y="552">Editor de planta</text><circle cx="356" cy="547" r="7" class="cor1" /><circle cx="376" cy="547" r="7" class="cor2" /><path d="M398 540h16M406 540v16M428 540l14 14M442 540l-14 14" /><path class="cad" d="M460 548v-4a6 6 0 0 1 12 0v4M457 548h18v10h-18Z" /></g>
+                    <g class="pl-sel"><rect x="214" y="80" width="140" height="26" rx="3" /><path class="cursor" d="M352 110l0 22 6-6 5 10 4-2-5-10 8 0Z" /></g>
+                    <g class="pl-trava"><rect x="268" y="300" width="130" height="24" rx="12" /><text x="284" y="316">traçado travado</text></g>
+                  </g>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="w pecas">
+          <div class="pecas-txt rv">
+            <p class="kicker">As peças técnicas</p>
+            <h2 class="t2 t2-m">Matrícula ou posse. As peças saem junto com a planta.</h2>
+            <p class="lead">Na matrícula, o Vértice gera as 7 peças técnicas. Na posse, gera 4 peças e a planta em A3. Tudo com os modelos do seu escritório.</p>
+          </div>
+          <ul class="baralho rv" aria-label="As 7 peças técnicas">
+            <li style="--i:0"><span>01</span>Memorial descritivo</li>
+            <li style="--i:1"><span>02</span>Memorial tabular</li>
+            <li style="--i:2"><span>03</span>Cartas de anuência, uma por confrontante</li>
+            <li style="--i:3"><span>04</span>Declaração do técnico</li>
+            <li style="--i:4"><span>05</span>Declaração do proprietário</li>
+            <li style="--i:5"><span>06</span>Requerimento</li>
+            <li style="--i:6"><span>07</span>Declaração de faixa de domínio</li>
+          </ul>
+          <ul class="dia rv">
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M18.5 14.8c1.6.8 2.7 2.4 3 5.2" /></svg><b>Cadastro de clientes</b><span>Proprietários, imóveis e confrontantes reaproveitados de um serviço para o outro.</span></li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2" /></svg><b>Histórico de versões</b><span>Cada documento gerado fica guardado com as suas versões.</span></li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M8 21h8M12 18v3" /></svg><b>Equipe no mesmo escritório</b><span>Vários operadores, cada um com o seu acesso.</span></li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20 12 4l8 16" /><circle cx="12" cy="4" r="2" /></svg><b>Logo e modelos do escritório</b><span>Os documentos saem com a identidade de quem assina.</span></li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ── 9. para quem é ─────────────────────────────────────────────── -->
+      <section class="s dk quem" id="para-quem" aria-labelledby="t-quem" data-entrada="persiana" style="--antes: var(--papel)">
+        <svg class="quem-marca" viewBox="0 0 28 28" aria-hidden="true"><use href="#marca" /></svg>
+        <div class="w">
+          <p class="kicker rv">Para quem é</p>
+          <h2 id="t-quem" class="sr">Para quem é o Vértice</h2>
+          <ul class="quem-lista" data-progresso>
+            <li style="--i:0;--dir:-1"><b>Escritórios de georreferenciamento</b><span>equipe inteira no mesmo sistema</span></li>
+            <li style="--i:1;--dir:1"><b>Agrimensores</b><span>do campo ao memorial no mesmo dia</span></li>
+            <li style="--i:2;--dir:-1"><b>Engenheiros cartógrafos e agrônomos credenciados no INCRA</b><span>peças no padrão da certificação</span></li>
+            <li style="--i:3;--dir:1"><b>Topógrafos</b><span>levantamento GNSS/RTK virando documento</span></li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ── 10. segurança ──────────────────────────────────────────────── -->
+      <section class="s seg" id="seguranca" aria-labelledby="t-seg" data-entrada="diagonal" style="--antes: var(--floresta)">
+        <div class="w seg-in">
+          <figure class="seg-vis rv" aria-hidden="true">
+            <svg viewBox="0 0 360 360">
+              <g class="favos">
+                <path style="--i:1" d="M90 40 150 40 180 92 150 144 90 144 60 92Z" />
+                <path style="--i:2" d="M210 40 270 40 300 92 270 144 210 144 180 92Z" />
+                <path style="--i:3" d="M30 144 90 144 120 196 90 248 30 248 0 196Z" />
+                <path style="--i:4" d="M270 144 330 144 360 196 330 248 270 248 240 196Z" />
+                <path style="--i:5" d="M90 248 150 248 180 300 150 352 90 352 60 300Z" />
+                <path style="--i:6" d="M210 248 270 248 300 300 270 352 210 352 180 300Z" />
+                <path class="meu" style="--i:0" d="M150 144 210 144 240 196 210 248 150 248 120 196Z" />
+              </g>
+              <g class="cadeado" transform="translate(180 196)"><rect x="-14" y="-6" width="28" height="22" rx="4" /><path d="M-8-6v-6a8 8 0 0 1 16 0v6" /></g>
+            </svg>
+          </figure>
+          <div class="seg-txt">
+            <header class="cab rv">
+              <p class="kicker">Segurança e dados</p>
+              <h2 id="t-seg" class="t2">Os dados do seu escritório ficam com o seu escritório.</h2>
+            </header>
+            <ul class="seg-lista">
+              <li class="rv"><b>Cada escritório isolado</b><span>Clientes, levantamentos e documentos de um escritório não aparecem para nenhum outro. A separação é feita no banco de dados, em cada consulta.</span></li>
+              <li class="rv"><b>Acesso só de quem você autoriza</b><span>As contas são criadas pela nossa equipe e cada pessoa troca a senha no primeiro acesso.</span></li>
+              <li class="rv"><b>Histórico de versões</b><span>Cada documento gerado fica registrado com as suas versões: dá para saber o que mudou e quando.</span>
+                <span class="versoes" aria-hidden="true"><i>v1</i><i>v2</i><i>v3</i></span></li>
+              <li class="rv"><b>Acesso por pessoa</b><span>Cada operador entra com o próprio usuário, dentro do escritório.</span></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 11. dúvidas ────────────────────────────────────────────────── -->
+      <section class="s faq" id="duvidas" aria-labelledby="t-faq" data-entrada="dissolve" style="--antes: var(--papel)">
+        <div class="w faq-in">
+          <header class="cab rv">
+            <p class="kicker">Dúvidas</p>
+            <h2 id="t-faq" class="t2">Perguntas que todo escritório faz.</h2>
+            <p class="lead">Não achou a sua? Pergunte na demonstração.</p>
+            <a class="bt bt-p" href="#contato">Agendar uma demonstração</a>
+          </header>
+          <div class="faq-lista">
+            <details class="rv"><summary>Quanto custa?</summary><div class="faq-r"><p>O valor é definido em reunião, conforme o tamanho da equipe e os serviços que o escritório usa. Agende uma demonstração e montamos a proposta com você.</p></div></details>
+            <details class="rv"><summary>Preciso instalar alguma coisa?</summary><div class="faq-r"><p>Não. O Vértice é um sistema web: funciona no navegador, no computador do escritório ou de onde você estiver.</p></div></details>
+            <details class="rv"><summary>Que arquivo eu envio?</summary><div class="faq-r"><p>O TXT do levantamento exportado do receptor GNSS/RTK, com os pontos e as coordenadas. Para imóvel já certificado, o PDF do SIGEF. Para o CAR, o KML da área.</p></div></details>
+            <details class="rv"><summary>Atende o Brasil inteiro?</summary><div class="faq-r"><p>Sim. O motor trabalha em SIRGAS 2000, UTM fusos 18S a 25S, e detecta o fuso a partir das coordenadas.</p></div></details>
+            <details class="rv"><summary>Serve para posse, não só para matrícula?</summary><div class="faq-r"><p>Serve. Na posse, o Vértice gera 4 peças e a planta em A3. Na matrícula, as 7 peças técnicas.</p></div></details>
+            <details class="rv"><summary>A conferência de área gasta numeração de vértice?</summary><div class="faq-r"><p>Não. A conferência de área é uma prévia de área e perímetro e não consome a numeração oficial.</p></div></details>
+            <details class="rv"><summary>Os documentos saem com o meu logo e os meus modelos?</summary><div class="faq-r"><p>Saem. Cada escritório usa o próprio logo e os próprios modelos, e a planta pode ser ajustada no editor antes de baixar.</p></div></details>
+            <details class="rv"><summary>Minha equipe pode usar junto?</summary><div class="faq-r"><p>Pode. O escritório tem vários operadores, cada um com o seu acesso, todos vendo os mesmos clientes e serviços.</p></div></details>
+            <details class="rv"><summary>Como recebo o acesso?</summary><div class="faq-r"><p>Depois da demonstração, fazemos o cadastro do seu escritório e enviamos o acesso para você.</p></div></details>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 12. contato ────────────────────────────────────────────────── -->
+      <section class="s dk contato" id="contato" aria-labelledby="t-contato" data-entrada="circulo" style="--antes: var(--branco)">
+        <svg class="contato-curvas" viewBox="0 0 600 600" aria-hidden="true">
+          <g class="curvas" transform="translate(300 300)">
+            <use href="#blobB" class="cn" style="--k:.5" /><use href="#blobB" class="cn" style="--k:.9" /><use href="#blobB" class="cn" style="--k:1.3" />
+            <use href="#blobB" class="cn" style="--k:1.7" /><use href="#blobB" class="cn" style="--k:2.1" /><use href="#blobB" class="cn" style="--k:2.5" /><use href="#blobB" class="cn" style="--k:2.9" />
+          </g>
+        </svg>
+        <div class="w contato-in">
+          <div class="contato-txt rv">
+            <p class="kicker">Agende uma demonstração</p>
+            <h2 id="t-contato" class="t2">Veja o Vértice com um levantamento seu.</h2>
+            <p class="lead">Numa reunião rápida mostramos o sistema funcionando, entendemos a rotina do escritório e definimos juntos o formato. O acesso é liberado depois do cadastro.</p>
+            <ol class="etapas">
+              <li><span>1</span>Você deixa o contato aqui.</li>
+              <li><span>2</span>Chamamos no WhatsApp para marcar o horário.</li>
+              <li><span>3</span>Demonstração ao vivo, com as suas dúvidas.</li>
+            </ol>
+          </div>
+
+          <form class="form rv" data-form novalidate>
+            <div class="campo"><label for="f-nome">Nome <abbr title="obrigatório">*</abbr></label><input id="f-nome" name="nome" autocomplete="name" required minlength="2" maxlength="120" /></div>
+            <div class="campo"><label for="f-empresa">Empresa ou escritório</label><input id="f-empresa" name="empresa" autocomplete="organization" maxlength="160" /></div>
+            <div class="campo"><label for="f-tel">WhatsApp ou telefone <abbr title="obrigatório">*</abbr></label><input id="f-tel" name="telefone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(00) 00000-0000" required maxlength="30" /></div>
+            <div class="campo"><label for="f-email">E-mail</label><input id="f-email" name="email" type="email" autocomplete="email" maxlength="160" /></div>
+            <div class="campo campo-l"><label for="f-cidade">Cidade/UF</label><input id="f-cidade" name="cidade_uf" autocomplete="address-level2" placeholder="Ex.: Goiânia/GO" maxlength="80" /></div>
+            <div class="campo campo-l"><label for="f-msg">Mensagem</label><textarea id="f-msg" name="mensagem" rows="3" maxlength="2000" placeholder="Conte um pouco do escritório: quantas pessoas, que serviços mais faz."></textarea></div>
+            <div class="form-acoes">
+              <button class="bt bt-p bt-g" type="submit"><span class="bt-tx">Agendar uma demonstração</span><i class="giro" aria-hidden="true"></i></button>
+              <a class="bt bt-wa" href="#" target="_blank" rel="noopener" data-wa hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5a9.5 9.5 0 0 0-8.2 14.3L2.5 21.5l4.8-1.3A9.5 9.5 0 1 0 12 2.5Z" /><path d="M8.6 7.8c.2-.4.5-.4.8-.4h.6c.2 0 .4.1.5.4l.8 1.9c.1.3 0 .5-.1.7l-.6.7c-.1.2-.1.4 0 .6.7 1.2 1.6 2.1 2.9 2.8.2.1.4.1.6-.1l.7-.8c.2-.2.4-.2.7-.1l1.8.9c.3.1.4.3.4.6 0 .9-.6 2-1.8 2.1-1.3.2-3.4-.3-5.6-2.5S8 9.8 8.2 8.6c0-.3.2-.6.4-.8Z" /></svg>
+                Chamar no WhatsApp</a>
+            </div>
+            <p class="form-st" role="status" aria-live="polite" data-st></p>
+            <p class="form-priv">Usamos estes dados só para marcar a reunião. Veja a <a href="/app/#/privacidade">Política de Privacidade</a>.</p>
+          </form>
+        </div>
+
+        <footer class="rod">
+          <div class="w rod-in">
+            <a class="logo" href="#inicio" aria-label="Vértice — voltar ao início"><svg viewBox="0 0 28 28" aria-hidden="true"><use href="#marca" /></svg><span>Vértice</span></a>
+            <p>Georreferenciamento do levantamento à certificação.</p>
+            <nav aria-label="Documentos legais"><a href="/app/#/termos">Termos de uso</a><a href="/app/#/privacidade">Privacidade</a></nav>
+            <p class="rod-c">© <span data-ano>2026</span> Vértice</p>
+          </div>
+        </footer>
+      </section>
+    </main>
+
+    <script type="module" src="/src/site/site.ts"></script>
   </body>
 </html>

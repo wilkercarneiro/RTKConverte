@@ -1,6 +1,6 @@
 # Vários escritórios (multiempresa) — como aplicar
 
-Status: **pronto para aplicar, ainda NÃO aplicado em produção.** A migração está em
+Status: **movida para `supabase/migrations/0020_escritorios.sql`** (base do SaaS, ver `docs/saas/README.md`). Ainda NÃO aplicada em produção. Antes estava em
 `docs/multiescritorio/0020_escritorios.sql` (fora de `supabase/migrations/` de
 propósito, até o dono revisar e aplicar).
 
