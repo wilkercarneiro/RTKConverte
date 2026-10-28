@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import proj4lib from "proj4";
 import { sugerirDivisoes } from "../src/lib/divisao.ts";
 import { aplicarDivisao, entradaDoServico, medidasDasPartes, publicadorUtm, ROTULO_DIVISAO } from "../src/lib/divisao_servico.ts";
-import { anelBruto, aneisDosLotes, limparAvisos, perimetroDaDivisao, projetoDaDivisao, resultadoDosLotes } from "../src/lib/divisao_prancheta.ts";
+import { anelBruto, aneisDosLotes, comRegrasDaDivisao, limparAvisos, perimetroDaDivisao, projetoDaDivisao, resultadoDosLotes } from "../src/lib/divisao_prancheta.ts";
 import { calcular } from "../src/lib/loteamento/calculo.ts";
 import { alcasDoLote, moverDivisa } from "../src/lib/loteamento/edicao.ts";
 import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
@@ -114,6 +114,28 @@ test("prancheta · vértice no meio do imóvel não vira gleba: a volta recusa c
   const rd = resultadoDosLotes(ent, an);
   assert.equal(rd.ok, false);
   assert.match(rd.motivo, /dentro do imóvel/);
+});
+
+test("prancheta · triângulo com estrada nos lados: o bico agudo não vira arco e a parte do canto salva", () => {
+  // o caso do vídeo de 28/10: imóvel triangular, estrada nos lados, 9 partes;
+  // o loteamento arredondava a quina (raio de esquina) e a parte 1 não salvava
+  const tri = [[503000, 8672000], [503800, 8672000], [503800, 8672460]].map(([e, n], ordem) => ({
+    id: `t${ordem}`, servico_id: SID, ordem, num_txt: ordem + 1, rotulo_txt: null, e, n, h: 300, sigma_pos: 0.01, sigma_h: 0.01,
+    tipo: "M", codigo: null, metodo: "PG6", inserido_manual: false, lat_gms: "", lon_gms: "",
+    descritivo: "ESTRADA VICINAL", tipo_limite: "LA3", eh_via: true, cns: null, matricula: null, apelido_txt: null, numerado: false, exibir_planta: true,
+  }));
+  const ent = entradaDoServico(tri, Array(9).fill(1), false, publicadorUtm(24, proj4));
+  const r = sugerirDivisoes(ent)[0];
+  assert.ok(r, "o motor divide o triângulo");
+  const per = perimetroDaDivisao(ent);
+  const pr = projetoDaDivisao(ent, r.partes.map((p) => anelBruto(ent, p)), "TRIANGULO");
+  // rascunho guardado antes da correção: as regras de esquina do loteamento
+  const antigo = { ...pr, params: { ...pr.params, esquina: "raio", esquinaValor: 6 } };
+  const rdAntigo = resultadoDosLotes(ent, aneisDosLotes(limparAvisos(calcular(antigo, per), true)));
+  assert.equal(rdAntigo.ok, false, "sem a correção o bico arredondado barra o salvar");
+  const rd = resultadoDosLotes(ent, aneisDosLotes(limparAvisos(calcular(comRegrasDaDivisao(antigo), per), true)));
+  assert.ok(rd.ok, rd.motivo);
+  assert.equal(rd.partes.length, 9);
 });
 
 test("prancheta · divisão salva: a planta A1 do SIGEF (gerar-planta) desenha as partes, não o imóvel inteiro", async () => {

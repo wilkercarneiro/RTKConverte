@@ -32,7 +32,16 @@ export const PARAMS_DIVISAO: Partial<Parametros> = {
   frenteMin: 0, frenteMax: 1e7, profundidadeMin: 0, profundidadeMax: 1e7,
   areaMin: 0, areaMax: 1e12, quinasMax: 0, quadraCompMax: 1e9, bordaFixa: true,
   pctVerdeMin: 0, pctInstitucionalMin: 0, pctPublicasMin: 0,
+  // sem curva de esquina: com estrada nos dois lados de uma quina, o loteamento
+  // arredondava o bico do imóvel e os pontos do arco caíam dentro dele — a
+  // parte do canto não salvava ("vértice dentro do imóvel")
+  esquina: "nenhuma", esquinaValor: 0,
 };
+
+/** O projeto (guardado ou novo) com as regras da partilha — rascunho antigo vem com as do loteamento. */
+export function comRegrasDaDivisao(p: Projeto): Projeto {
+  return { ...p, params: { ...p.params, ...PARAMS_DIVISAO } };
+}
 
 /** O perímetro do serviço como o loteamento quer (as mesmas coordenadas brutas das glebas). */
 export function perimetroDaDivisao(ent: Ent): Perimetro {

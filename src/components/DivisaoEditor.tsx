@@ -14,7 +14,7 @@ import proj4 from "proj4";
 import type { Gleba, ParametrosDivisao, Servico, Vertice } from "../lib/types";
 import { dividir, sugerirDivisoes } from "../lib/divisao";
 import { ROTULO_DIVISAO, aplicarDivisao, denominacaoDaParte, entradaDoServico, medidasDasPartes, pontosLocacaoDivisao, publicadorUtm, type InfoParte } from "../lib/divisao_servico";
-import { aneisDasGlebas, aneisDosLotes, anelBruto, limparAvisos, perimetroDaDivisao, projetoDaDivisao, projetoServe, resultadoDosLotes } from "../lib/divisao_prancheta";
+import { aneisDasGlebas, aneisDosLotes, anelBruto, comRegrasDaDivisao, limparAvisos, perimetroDaDivisao, projetoDaDivisao, projetoServe, resultadoDosLotes } from "../lib/divisao_prancheta";
 import { FORMATOS, arquivoLocacao, type FormatoLocacao } from "../lib/loteamento/saidas";
 import { calcular } from "../lib/loteamento/calculo";
 import type { Lote, Resultado } from "../lib/loteamento/calculo";
@@ -107,7 +107,7 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, 
   };
   const hist = useHistorico(() => {
     const salvo = (servico.divisao as (ParametrosDivisao & { projeto?: Projeto }) | null | undefined)?.projeto;
-    if (projetoServe(salvo, ent)) return salvo;
+    if (projetoServe(salvo, ent)) return comRegrasDaDivisao(salvo);
     if (aplicadaAntes) return projetoDaDivisao(ent, aneisDasGlebas(glebas), nomeProjeto);
     return gerarProjeto(n, iguais, pct, azManual, inverter).pr;
   });
