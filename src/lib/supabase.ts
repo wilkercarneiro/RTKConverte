@@ -18,6 +18,13 @@ export async function chamarFuncao<T>(nome: string, body: unknown): Promise<T> {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, apikey: anon ?? "", "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  }).catch((e: unknown) => {
+    // O servidor mata a função que passa do limite de CPU/memória e responde
+    // sem cabeçalho CORS: o navegador só enxerga "Failed to fetch".
+    if (e instanceof TypeError) {
+      throw new Error("O servidor interrompeu o processamento antes de terminar (limite de recursos ou conexão caída). Tente de novo em instantes; se repetir, avise o suporte.");
+    }
+    throw e;
   });
   const { data: sess } = await supabase.auth.getSession();
   let token = sess.session?.access_token;
