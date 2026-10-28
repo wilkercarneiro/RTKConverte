@@ -133,7 +133,7 @@ function Cabeca({ empresa, children }: { empresa: string; children?: React.React
       <div>
         <span className="eq-olho">Empresa</span>
         <h1>Equipe</h1>
-        <p>Quem acessa os dados da {empresa}, e o que cada pessoa pode fazer.</p>
+        <p>Quem acessa os dados da empresa ({empresa}) e o que cada pessoa pode fazer.</p>
       </div>
       {children && <div className="eq-acoes">{children}</div>}
     </header>
