@@ -8,7 +8,7 @@
 //   reserva  — desenha um polígono de reserva (o que sair do imóvel é cortado)
 //   rio      — traça a linha do rio; a APP é a faixa dos dois lados
 // Duplo clique numa aresta do item selecionado insere vértice; num vértice, apaga.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PointerEvent as RPointerEvent, WheelEvent as RWheelEvent } from "react";
 import { caixa, dentroPol, dist, distPolilinha, distSegmento } from "../../lib/loteamento/geom.ts";
 import type { Anel, Poligono, Pt } from "../../lib/loteamento/geom.ts";
@@ -32,6 +32,8 @@ interface Props {
   onLado: (lado: number) => void;
   satelite: boolean;
   onMsg: (m: string) => void;
+  /** controle que flutua sobre o desenho (ex.: o giro das divisas) */
+  sobreposto?: ReactNode;
 }
 
 interface Vista { cx: number; cy: number; s: number }
@@ -53,7 +55,7 @@ function pathPol(p: Poligono): string {
 }
 const pathLinha = (l: Pt[]) => "M" + l.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join("L");
 
-export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, onMudar, onFimArraste, onLado, satelite, onMsg }: Props) {
+export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, onMudar, onFimArraste, onLado, satelite, onMsg, sobreposto }: Props) {
   const caixaRef = useRef<HTMLDivElement>(null);
   const [tam, setTam] = useState({ w: 900, h: 600 });
   const [v, setV] = useState<Vista | null>(null);
@@ -356,6 +358,7 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
         {selPts.map((q, k) => { const t = tela(q); return <circle key={k} cx={t[0]} cy={t[1]} r={5} className="car-alca" />; })}
         {desenho.map((q, k) => { const t = tela(q); return <circle key={`d${k}`} cx={t[0]} cy={t[1]} r={k === 0 ? 6 : 4} className="car-alca desenho" />; })}
       </svg>
+      {sobreposto}
       <div className="car-escala">
         {ferramenta === "reserva" && "Clique para marcar os pontos da reserva · clique no 1º ponto, Enter ou duplo clique fecha · Backspace volta · Shift solta o encaixe"}
         {ferramenta === "rio" && "Clique ao longo do rio · Enter ou duplo clique termina · Backspace volta · Esc cancela"}

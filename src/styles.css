@@ -1103,3 +1103,19 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .ct-chip i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 .ct-alerta { color: var(--perigo); font-weight: 600; }
 .ct-aviso { color: var(--alerta-escuro); font-weight: 600; }
+
+/* Giro à mão dentro do mapa (divisão, CAR): régua flutuando no alto, ao centro */
+.giro-mapa {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 5;
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px;
+  background: rgb(255 255 255 / 95%); border: 1px solid var(--borda); border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); font-size: 12.5px; color: var(--texto-2); white-space: nowrap;
+  max-width: calc(100% - 140px); cursor: default; touch-action: auto; user-select: none;
+}
+.giro-mapa b { font-weight: 600; color: var(--texto); }
+.giro-mapa-icone { color: var(--primaria); font-size: 15px; line-height: 1; }
+.giro-mapa input[type="range"] { width: clamp(120px, 22vw, 260px); height: auto; padding: 0; border: 0; accent-color: var(--primaria); background: transparent; }
+.giro-mapa-valor { display: inline-flex; align-items: center; gap: 2px; font-weight: 600; color: var(--texto); }
+.giro-mapa-valor input { width: 76px; height: 28px; padding: 0 6px; font: 600 12.5px var(--mono); text-align: right; }
+.giro-mapa button { height: 28px; padding: 0 10px; font-size: 12.5px; border-radius: 999px; }
+@media (max-width: 760px) { .giro-mapa b { display: none; } .giro-mapa { max-width: calc(100% - 100px); } }

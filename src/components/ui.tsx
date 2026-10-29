@@ -103,6 +103,50 @@ export function Dica({ children, lado = "cima" }: { children: ReactNode; lado?: 
   );
 }
 
+/**
+ * Giro à mão DENTRO do mapa: a régua flutua sobre o desenho, perto do que ela
+ * mexe, em vez de morar num painel longe dele. Os eventos de ponteiro e roda
+ * param aqui (listener nativo: a prancheta escuta no próprio elemento, antes
+ * do React), senão arrastar a régua também arrastaria o mapa.
+ */
+export function GiroMapa({ rotulo = "Giro", valor, min, max, passo = 0.5, onGiro, onFim, children }: {
+  rotulo?: string;
+  valor: number;
+  min: number;
+  max: number;
+  passo?: number;
+  onGiro: (v: number) => void;
+  /** soltou a régua (para fechar o desfazer do arraste) */
+  onFim?: () => void;
+  /** botões ao lado (ex.: começar pelo outro lado) */
+  children?: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const parar = (e: Event) => e.stopPropagation();
+    const tipos = ["pointerdown", "pointermove", "pointerup", "mousedown", "wheel", "dblclick", "click"];
+    for (const t of tipos) el.addEventListener(t, parar);
+    return () => { for (const t of tipos) el.removeEventListener(t, parar); };
+  }, []);
+  const arred = (v: number) => Math.round(v / passo) * passo;
+  return (
+    <div ref={ref} className="giro-mapa" role="group" aria-label={rotulo}>
+      <span className="giro-mapa-icone" aria-hidden="true">⟳</span>
+      <b>{rotulo}</b>
+      <input type="range" min={min} max={max} step={passo} value={arred(valor)}
+        onChange={(e) => onGiro(Number(e.target.value))} onPointerUp={onFim} onKeyUp={onFim} aria-label={rotulo} />
+      <span className="giro-mapa-valor">
+        <input type="number" min={min} max={max} step={passo} value={Math.round(valor * 10) / 10}
+          onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) onGiro(Math.max(min, Math.min(max, v))); }}
+          onBlur={onFim} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} aria-label={`${rotulo} em graus`} />°
+      </span>
+      {children}
+    </div>
+  );
+}
+
 /** Rótulo de campo com o "?" ao lado — `<label><Rotulo dica="…">CNS</Rotulo><input/></label>`. */
 export function Rotulo({ children, dica, obrigatorio }: { children: ReactNode; dica?: ReactNode; obrigatorio?: boolean }) {
   return (

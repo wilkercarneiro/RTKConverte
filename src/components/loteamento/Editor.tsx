@@ -6,7 +6,7 @@
 // `acoes.ts`; durante um arraste a mudança é "transiente" (recalcula a cada
 // movimento, mas só entra no desfazer quando o botão é solto).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as RPointerEvent, WheelEvent as RWheelEvent } from "react";
+import type { PointerEvent as RPointerEvent, ReactNode, WheelEvent as RWheelEvent } from "react";
 import proj4mod from "proj4";
 import { GEO_DEF, utmDef } from "../../../supabase/functions/_shared/geo.ts";
 import { caixa, centroide, dentroPol, dist, distSegmento, dot, esquerda, sub, unit } from "../../lib/loteamento/geom.ts";
@@ -44,6 +44,8 @@ interface Props {
   /** pedido externo de foco (comando "ir") */
   focar: { pt: Pt; n: number } | null;
   onMsg: (m: string) => void;
+  /** controle que flutua sobre o desenho (ex.: o giro das divisas) */
+  sobreposto?: ReactNode;
 }
 
 interface Vista { cx: number; cy: number; s: number }
@@ -78,7 +80,7 @@ function corPorArea(a: number, min: number, max: number): string {
   return `hsl(${h} 85% ${l}%)`;
 }
 
-export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerramenta, onMudar, onFimArraste, vista, focar, onMsg }: Props) {
+export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerramenta, onMudar, onFimArraste, vista, focar, onMsg, sobreposto }: Props) {
   // divisão de imóvel: o contorno não recua (ver Parametros.bordaFixa)
   const bordaFixa = !!projeto.params.bordaFixa;
   const caixaRef = useRef<HTMLDivElement>(null);
@@ -774,6 +776,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         })()}
         {snap && ferramenta !== "selecionar" && (() => { const q = tela(snap); return <rect x={q[0] - 6} y={q[1] - 6} width={12} height={12} fill="none" stroke="#E11D48" strokeWidth={2} />; })()}
       </svg>
+      {sobreposto}
 
       <div className="lot-escala">
         {(() => {

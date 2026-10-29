@@ -14,7 +14,7 @@ import type { ProjetoCar, ResultadoCar } from "../../lib/car/motor.ts";
 import { CAMADAS, baixar, gerarKmlCar, nomeArquivo, zipCompleto, zipDaCamada } from "../../lib/car/saidas.ts";
 import type { CamadaCar } from "../../lib/car/saidas.ts";
 import { carregarProjetoCar, marcarCarExportado, salvarProjetoCar } from "../../lib/car/persistencia.ts";
-import { Dica, StatusSalvamento } from "../ui";
+import { Dica, GiroMapa, StatusSalvamento } from "../ui";
 import { CarEditor, COR } from "./CarEditor";
 import type { FerramentaCar, SelecaoCar } from "./CarEditor";
 import "./car.css";
@@ -196,7 +196,17 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
 
         <div className="car-centro">
           <CarEditor projeto={projeto} res={res} ferramenta={ferramenta} onFerramenta={setFerramenta} sel={sel} onSel={setSel}
-            onMudar={mudar} onFimArraste={fimArraste} onLado={(l) => porLado(l)} satelite={satelite} onMsg={(t) => mostrar(t)} />
+            onMudar={mudar} onFimArraste={fimArraste} onLado={(l) => porLado(l)} satelite={satelite} onMsg={(t) => mostrar(t)}
+            sobreposto={projeto.reserva.lado !== null && projeto.reserva.poligonos.length > 0 && (
+              // o giro da divisa da reserva mexe no desenho: a régua fica nele
+              <GiroMapa rotulo="Giro da reserva" valor={projeto.reserva.giro} min={-60} max={60} passo={1} onFim={fimArraste}
+                onGiro={(giro) => {
+                  try {
+                    const poligonos = reservaPorLado(projeto, projeto.reserva.lado!, giro);
+                    mudar({ ...projeto, reserva: { ...projeto.reserva, poligonos, giro } }, true);
+                  } catch { /* giro sem solução: fica o anterior */ }
+                }} />
+            )} />
           {msg && (
             <div className={`car-msg${msg.erro ? " erro" : ""}`} role="status">
               <span>{msg.t}</span>
@@ -238,20 +248,6 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
               <button className={ferramenta === "lado" ? "ativo" : ""} onClick={() => setFerramenta("lado")}>⊟ Encostar num lado</button>
               <button className={ferramenta === "reserva" ? "ativo" : ""} onClick={() => setFerramenta("reserva")}>⬠ Desenhar à mão</button>
             </div>
-            {projeto.reserva.lado !== null && projeto.reserva.poligonos.length > 0 && (
-              <label className="car-campo">
-                <span>Giro da divisa: {projeto.reserva.giro}°</span>
-                <input type="range" min={-60} max={60} step={1} value={projeto.reserva.giro}
-                  onChange={(e) => {
-                    const giro = Number(e.target.value);
-                    try {
-                      const poligonos = reservaPorLado(projeto, projeto.reserva.lado!, giro);
-                      mudar({ ...projeto, reserva: { ...projeto.reserva, poligonos, giro } }, true);
-                    } catch { /* giro sem solução: fica o anterior */ }
-                  }}
-                  onPointerUp={fimArraste} onKeyUp={fimArraste} />
-              </label>
-            )}
             {projeto.reserva.poligonos.length > 0 && (
               <div className="car-botoes">
                 <button className="principal" onClick={ajustar} disabled={res.reservaOk && Math.abs(res.pctReserva - projeto.reserva.pct) < 0.01}>

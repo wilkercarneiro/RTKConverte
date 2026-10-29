@@ -23,7 +23,7 @@ import { COMANDOS, chaveDoLote, contextoDe, executar, lotesDaSelecao, type Ferra
 import type { Pt } from "../lib/loteamento/geom";
 import { Editor, type OpcoesVista } from "./loteamento/Editor";
 import { Avisos } from "./loteamento/Avisos";
-import { Dica } from "./ui";
+import { Dica, GiroMapa } from "./ui";
 import { ContornoEditor } from "./ContornoEditor";
 import { areasFechadas, ligacoesIniciais, type Ligacao } from "../lib/contorno";
 import { areaHaDoAnel, ordensDasGlebas } from "../lib/glebas";
@@ -482,7 +482,7 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
           </div>
         </div>
         <div className="dv-campo dv-direcao">
-          <span>Direção das divisas<Dica>As opções são as direções que o motor recomenda (passe o mouse em cada uma para ver quantos metros de cerca nova). Para girar à mão, arraste o controle ou digite o grau: a divisão é refeita na hora. "Começar pelo outro lado" inverte de onde sai a primeira parte.</Dica></span>
+          <span>Direção das divisas<Dica>As opções são as direções que o motor recomenda (passe o mouse em cada uma para ver quantos metros de cerca nova). Para girar à mão, use a régua "Giro das divisas" dentro do mapa: a divisão é refeita na hora. "Outro lado", ao lado dela, inverte de onde sai a primeira parte.</Dica></span>
           <div className="dv-sugestoes">
             {sugestoes.map((s, i) => (
               <button type="button" key={i} className={Math.abs(s.azimute - (azManual ?? sugestoes[0]?.azimute ?? -1)) < 0.05 ? "ativa" : ""}
@@ -492,18 +492,6 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
                 {temEstrada && <small>{s.partes.every((p) => p.frenteEstradaM >= 5) ? "todas com frente" : "sem frente p/ alguma"}</small>}
               </button>
             ))}
-          </div>
-          <div className="dv-giro">
-            <input type="range" min={0} max={179.5} step={0.5} value={Math.round((azManual ?? sugestoes[0]?.azimute ?? 0) * 2) / 2}
-              onChange={(e) => girar(Number(e.target.value))} aria-label="Girar as divisas" />
-            <input type="number" min={0} max={179.9} step={0.5} value={Math.round((azManual ?? sugestoes[0]?.azimute ?? 0) * 10) / 10}
-              onChange={(e) => setAzManual(Number(e.target.value))} onBlur={() => regerar(n, iguais, pct, azManual, inverter)}
-              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} aria-label="Azimute das divisas" />
-            <span>°</span>
-            <button type="button" className={`dv-inverter${inverter ? " ativa" : ""}`} aria-pressed={inverter}
-              onClick={() => { setInverter(!inverter); regerar(n, iguais, pct, azManual, !inverter); }}>
-              ⇄ Começar pelo outro lado
-            </button>
           </div>
         </div>
         <div className="dv-campo dv-botoes">
@@ -548,7 +536,15 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
 
           <div className="lot-centro">
             <Editor projeto={projeto} res={resVista ?? res} fuso={fuso} sel={sel} onSel={setSel} ferramenta={ferramenta} onFerramenta={setFerramenta}
-              onMudar={mudar} onFimArraste={fimArraste} vista={vista} focar={focar} onMsg={(m) => mostrar(paraPartes(m))} />
+              onMudar={mudar} onFimArraste={fimArraste} vista={vista} focar={focar} onMsg={(m) => mostrar(paraPartes(m))}
+              sobreposto={
+                <GiroMapa rotulo="Giro das divisas" valor={azManual ?? sugestoes[0]?.azimute ?? 0} min={0} max={179.5} onGiro={girar}>
+                  <button type="button" className={`dv-inverter${inverter ? " ativa" : ""}`} aria-pressed={inverter}
+                    onClick={() => { setInverter(!inverter); regerar(n, iguais, pct, azManual, !inverter); }}>
+                    ⇄ Outro lado
+                  </button>
+                </GiroMapa>
+              } />
             <form className="lot-comando" onSubmit={(e) => { e.preventDefault(); rodarComando(cmd); setCmd(""); }}>
               <div className="lot-cmd-linha">
                 <span className="lot-cmd-prompt">Comando{lsel ? ` · ${nomesPartes[parteSel]}` : selLotes.length > 1 ? ` · ${selLotes.length} partes` : ""}:</span>
