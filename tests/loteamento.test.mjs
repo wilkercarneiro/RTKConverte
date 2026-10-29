@@ -672,7 +672,21 @@ test("maquete 3D: roteiro do voo de drone (tomadas no projeto, câmera sempre ac
   };
   for (const abertura of [true, false]) {
     const r = roteiroDoVoo(mundo, abertura);
-    assert.ok(r.duracao > 35 && r.duracao < 75, `duração ${r.duracao} s`);
+    assert.ok(r.duracao > 35 && r.duracao < 90, `duração ${r.duracao} s`);
+    // o drone desce até ~5 m sobre a rua: nunca atravessa uma casa (planta + 1,5 m de folga, até o telhado)
+    const casas = c.casas.filter((k) => k.volumes);
+    for (let t = 0; t <= r.duracao; t += 0.2) {
+      const { pos, fov, tilt } = camNoTempo(r, t);
+      assert.ok(fov >= 30 && fov <= 60 && tilt >= 0 && tilt <= 1, `lente fora em t=${t.toFixed(1)}`);
+      const p = [pos[0] + c.centro[0], -pos[2] + c.centro[1]];
+      for (const k of casas) {
+        const d = [p[0] - k.c[0], p[1] - k.c[1]];
+        const a = d[0] * k.u[0] + d[1] * k.u[1], b = -d[0] * k.u[1] + d[1] * k.u[0];
+        const topo = (k.piso - ref) + Math.max(...k.volumes.map((v) => v.y1));
+        if (Math.abs(a) < k.larg / 2 + 1.5 && Math.abs(b) < k.prof / 2 + 1.5) assert.ok(pos[1] > topo + 1, `câmera dentro da casa do lote ${k.lote} em t=${t.toFixed(1)}`);
+      }
+    }
+    assert.deepEqual(r.legendas.map((l) => l.capitulo), r.legendas.map((_, i) => String(i + 1).padStart(2, "0")));
     for (let i = 1; i < r.chaves.length; i++) assert.ok(r.chaves[i].t > r.chaves[i - 1].t, "tempos fora de ordem");
     assert.equal(!!r.transformacao, abertura);
     // ao longo de todo o voo a câmera fica acima do terreno (morro no caminho não "corta")
@@ -685,6 +699,7 @@ test("maquete 3D: roteiro do voo de drone (tomadas no projeto, câmera sempre ac
     // a primeira legenda traz o número real de lotes; a rua de entrada aparece
     assert.match(r.legendas[0].titulo, new RegExp(`^${r0.lotes.length} lotes`));
     assert.ok(r.legendas.some((l) => /^Ruas de/.test(l.titulo)));
+    assert.ok(r.legendas.some((l) => l.titulo === "Casas simuladas"), "sem a tomada da casa modelo");
     for (const l of r.legendas) assert.ok(l.t1 > l.t0 && l.t1 <= r.duracao + 1);
   }
 });

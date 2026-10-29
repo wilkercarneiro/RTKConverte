@@ -214,6 +214,7 @@ html.m3d-aberta body > * { max-width: 100vw; overflow: hidden; }
   background: linear-gradient(90deg, rgba(8, 10, 14, 0.66) 0%, rgba(8, 10, 14, 0.4) 60%, rgba(8, 10, 14, 0) 100%);
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7); transition: opacity 0.25s, transform 0.25s;
 }
+.m3d-legenda-cinema em { font-style: normal; font-size: clamp(11px, 1vw, 15px); font-weight: 700; letter-spacing: 0.18em; color: var(--m3d-ouro); }
 .m3d-legenda-cinema b { font-size: clamp(22px, 3.2vw, 44px); font-weight: 750; letter-spacing: -0.01em; }
 .m3d-legenda-cinema span { font-size: clamp(13px, 1.5vw, 21px); color: rgba(255, 255, 255, 0.9); max-width: 60vw; }
 .m3d-cartela-abertura { position: absolute; left: 6vw; bottom: calc(10.5vh + 6vh); z-index: 5; pointer-events: none; display: grid; gap: 10px; animation: m3d-cartela 1s ease-out; text-shadow: 0 3px 18px rgba(0, 0, 0, 0.6); }

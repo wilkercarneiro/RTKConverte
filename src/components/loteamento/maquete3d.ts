@@ -10,12 +10,10 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import type { Legenda, Roteiro } from "../../lib/loteamento/cinema3d.ts";
 import { camNoTempo, legendaNoTempo, roteiroDoVoo } from "../../lib/loteamento/cinema3d.ts";
+import { Pos } from "./pos3d.ts";
+import { Ceu } from "./ceu3d.ts";
 import type { Cena, Casa } from "../../lib/loteamento/cena3d.ts";
 import { cotaFinal, loteNoPonto, PLATIBANDA } from "../../lib/loteamento/cena3d.ts";
 import type { Resultado } from "../../lib/loteamento/calculo.ts";
@@ -59,7 +57,13 @@ interface Uniforms {
 // Shaders: altura pela cota real
 // ---------------------------------------------------------------------------
 
-type Tipo = "terreno" | "parede" | "objeto" | "instancia";
+type Tipo = "terreno" | "parede" | "objeto" | "instancia" | "entorno";
+
+/**
+ * O céu procedural (Sky) é muito mais forte que o HDRI normalizado: o ambiente
+ * foi calibrado com ele (0,09). Com o HDRI, o mesmo papel pede este fator.
+ */
+const AMBIENTE_HDRI = 5;
 
 const DECL = `
 uniform float uExag; uniform float uRef; uniform float uBase; uniform float uMistura; uniform float uCresce;
@@ -81,6 +85,12 @@ function patchVertice(src: string, tipo: Tipo): string {
     s = s.replace("#include <begin_vertex>", `
       vec3 transformed = vec3(position);
       transformed.y = aBaixo > 0.5 ? uBase : (mix(aNat, aFin, uMistura) - uRef) * uExag;`);
+  } else if (tipo === "entorno") {
+    // entorno da paisagem: da borda do relevo (aBaixo = 0) ao plano distante (aBaixo = 1)
+    s = s.replace("#include <begin_vertex>", `
+      vec3 transformed = vec3(position);
+      float yBorda = (mix(aNat, aFin, uMistura) - uRef) * uExag;
+      transformed.y = mix(yBorda, (aBase - uRef) * uExag, aBaixo);`);
   } else if (tipo === "objeto") {
     // a fundação (y < 0) acompanha o exagero até o chão; o resto cresce
     s = s.replace("#include <begin_vertex>", `
@@ -216,6 +226,65 @@ function texturaVidro(): THREE.CanvasTexture {
   return t;
 }
 
+// ---------------------------------------------------------------------------
+// Copas das árvores
+// ---------------------------------------------------------------------------
+
+/** Ruído repetível pela posição (vértices repetidos de faces vizinhas andam juntos: sem fresta). */
+function ruido3(x: number, y: number, z: number): number {
+  const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+/**
+ * Copa folhosa: cinco "cachos" (esferas irregulares) num raio ~1. Normal
+ * macia (meio do lobo, meio do conjunto) e sombra própria no vértice.
+ */
+function copaEmCachos(): THREE.BufferGeometry {
+  const lobos: [number, number, number, number][] = [
+    [0, 0.05, 0, 0.82], [0.5, -0.12, 0.18, 0.6], [-0.48, -0.08, -0.2, 0.62], [0.08, 0.32, -0.42, 0.55], [-0.14, -0.22, 0.5, 0.56],
+  ];
+  const partes = lobos.map(([cx, cy, cz, r]) => {
+    const g = new THREE.IcosahedronGeometry(r, 1);
+    const p = g.getAttribute("position") as THREE.BufferAttribute;
+    const n = new Float32Array(p.count * 3), c = new Float32Array(p.count * 3);
+    const v = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i);
+      v.multiplyScalar(1 + (ruido3(v.x + cx, v.y + cy, v.z + cz) - 0.5) * 0.28);
+      p.setXYZ(i, v.x + cx, v.y + cy, v.z + cz);
+      a.copy(v).normalize();
+      b.set(v.x + cx, v.y + cy + 0.25, v.z + cz).normalize();
+      a.multiplyScalar(0.55).addScaledVector(b, 0.45).normalize();
+      n.set([a.x, a.y, a.z], i * 3);
+      const k = 0.58 + 0.42 * THREE.MathUtils.smoothstep(v.y + cy, -0.9, 0.9);
+      c.set([k, k, k], i * 3);
+    }
+    g.setAttribute("normal", new THREE.BufferAttribute(n, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(c, 3));
+    return g;
+  });
+  const g = mergeGeometries(partes)!;
+  partes.forEach((x) => x.dispose());
+  return g;
+}
+
+/** Conífera: dois cones (andar de baixo mais largo), base escurecida. */
+function copaConica(): THREE.BufferGeometry {
+  const partes = [[1, 1.5, -0.35], [0.72, 1.3, 0.45]].map(([r, h, y]) => {
+    const g = new THREE.ConeGeometry(r, h, 9, 1).translate(0, y, 0).toNonIndexed();
+    g.computeVertexNormals();
+    const p = g.getAttribute("position") as THREE.BufferAttribute;
+    const c = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) { const k = 0.6 + 0.4 * THREE.MathUtils.smoothstep(p.getY(i), -1.1, 1.1); c.set([k, k, k], i * 3); }
+    g.setAttribute("color", new THREE.BufferAttribute(c, 3));
+    return g;
+  });
+  const g = mergeGeometries(partes)!;
+  partes.forEach((x) => x.dispose());
+  return g;
+}
+
 /** Camadas do solo na lateral do bloco (como o corte de uma maquete física). */
 function texturaSolo(): THREE.CanvasTexture {
   const c = document.createElement("canvas");
@@ -290,9 +359,28 @@ export class Maquete {
   private matLampada: THREE.MeshStandardMaterial | null = null;
   private matPoca: THREE.MeshBasicMaterial | null = null;
   private ultimoRumo = NaN;
-  /** brilho (bloom) no crepúsculo: janelas e postes "acendem" de verdade */
-  private composer!: EffectComposer;
-  private bloom!: UnrealBloomPass;
+  /** pós-processamento: sombra de contato, brilho, saída e a lente do cinema */
+  private pos!: Pos;
+  /** céu HDRI (chega depois, pela rede); até lá o céu procedural dá o reflexo */
+  private ceu: Ceu | null = null;
+  private ceuEnv: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial> | null = null;
+  /** paisagem: céu no fundo, entorno de satélite e névoa (senão, a maquete no estúdio) */
+  private paisagem = false;
+  private paisagemUsuario = false;
+  private estudio: THREE.Object3D[] = [];
+  private entorno: THREE.Mesh | null = null;
+  private nevoa = new THREE.Fog(0x9fb4c8, 1e8, 2e8);
+  /** tilt-shift do usuário (fora do cinema) */
+  private tiltUsuario = 0;
+  /** textura de detalhe do chão: máscara de materiais + asfalto, calçada e grama (chegam depois) */
+  private detalhe = {
+    tMat: { value: null as THREE.Texture | null }, tAsf: { value: null as THREE.Texture | null },
+    tCal: { value: null as THREE.Texture | null }, tGra: { value: null as THREE.Texture | null }, uDetOn: { value: 0 },
+  };
+  private detalheModo = true;
+  /** índices da grade no contorno do relevo, em volta (para emendar o entorno) */
+  private bordaDoRelevo: number[] = [];
+  private ultimaElev = 30;
   /** sombra refeita só quando algo muda (sol, exagero, transição) — mexer a câmera não precisa */
   private sombraSuja = true;
   /** carros andando pelas ruas (só no voo e na apresentação) */
@@ -384,12 +472,17 @@ export class Maquete {
     this.scene.add(this.grupoCasas, this.grupoArvores, this.grupoPostes);
 
     this.rotulosQuadra = res.quadras.map((q) => ({ texto: q.nome, p: q.centro ?? centroide(q.pol.ext) }));
-    // pós-processamento só para o brilho do crepúsculo (de dia desenha direto, mais leve)
-    this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(caixa.clientWidth, caixa.clientHeight), 0, 0.6, 0.92);
-    this.composer.addPass(this.bloom);
-    this.composer.addPass(new OutputPass());
+    // a névoa existe sempre (no estúdio fica longe demais para aparecer): ligar/desligar recompilaria os shaders
+    this.scene.fog = this.nevoa;
+    this.pos = new Pos(this.renderer, this.scene, this.camera, caixa.clientWidth, caixa.clientHeight);
+    this.pos.setSize(caixa.clientWidth, caixa.clientHeight);
+    void Ceu.carregar(this.raio * 30).then((c) => {
+      if (!c || this.destruida) { c?.dispose(); return; }
+      this.ceu = c;
+      this.ceuEnv = new THREE.Mesh(new THREE.SphereGeometry(1000, 48, 24), c.material(3));
+      this.setPaisagem(this.paisagem);
+      this.setHora(this.hora);
+    });
     this.camera.position.copy(this.posGeral());
     this.controls.target.set(0, this.alturaMundo(this.centro) * 0.6, 0);
     this.controls.update();
@@ -516,17 +609,31 @@ export class Maquete {
     this.hemi.groundColor.setHex(0x6b5a45).lerp(new THREE.Color(0x223055), azul);
     this.renderer.toneMappingExposure = lerp(0.9 + 0.05 * f, 1.15, azul);
     this.ambienteAlvo = lerp(0.09, 0.04, azul);
-    this.scene.environmentIntensity = this.ambienteAlvo;
+    this.scene.environmentIntensity = this.ambienteAlvo * (this.ceuEnv ? AMBIENTE_HDRI : 1);
     // janelas e postes acendem com o sol abaixo de ~10°; o brilho (bloom) vem junto
     const noite = Math.max(0, Math.min(1, (10 - elG) / 10));
     if (this.matParede) this.matParede.emissiveIntensity = 4.5 * noite;
     if (this.matVidro) this.matVidro.emissiveIntensity = 1.6 * noite;
     if (this.matLampada) this.matLampada.emissiveIntensity = 0.3 + 8 * Math.max(0, Math.min(1, (12 - elG) / 10));
     if (this.matPoca) this.matPoca.opacity = 0.75 * Math.max(0, Math.min(1, (8 - elG) / 8));
-    if (this.bloom) { this.bloom.strength = 1.2 * noite; this.bloom.radius = 0.55 + 0.25 * noite; }
+    // brilho só ao anoitecer (janelas e postes): de dia o céu HDR da paisagem passa do limiar
+    // e o bloom espalhava uma névoa clara pela imagem inteira
+    if (this.pos) {
+      const b = this.pos.bloom;
+      b.strength = 1.2 * noite;
+      b.radius = 0.55 + 0.25 * noite;
+      // só o que é luz: janelas (4,5×) e lâmpadas (8×); parede ao sol baixo e céu ficam abaixo
+      b.threshold = 2.2;
+    }
+    if (this.ceu && this.ceuEnv) {
+      const hz = this.ceu.setSol(d, elG, [this.ceu.fundo.material, this.ceuEnv.material]);
+      // névoa da paisagem na cor do horizonte (um pouco mais clara: o ar entre a câmera e o chão)
+      this.nevoa.color.copy(hz).multiplyScalar(0.92);
+    }
     this.sombraSuja = true;
     // a sombra do bloco na mesa só com sol alto (rasante ela vira uma mancha "flutuando" no fundo)
-    if (this.mesa) this.mesa.visible = elG > 14;
+    this.ultimaElev = elG;
+    if (this.mesa) this.mesa.visible = !this.paisagem && elG > 14;
     this.pintarFundo(Math.max(0, Math.min(1, (16 - elG) / 16)), azul);
     // reflexo do céu (PMREM) com folga: refazer a cada movimento do controle pesa
     clearTimeout(this.envTimer);
@@ -557,17 +664,22 @@ export class Maquete {
     if (this.destruida) return;
     this.ultimoAmbiente = performance.now();
     const cenaCeu = new THREE.Scene();
-    const s2 = new Sky();
-    s2.scale.setScalar(1000);
-    Object.entries(this.sky.material.uniforms).forEach(([k, v]) => { (s2.material.uniforms as Record<string, { value: unknown }>)[k].value = (v as { value: unknown }).value; });
-    cenaCeu.add(s2);
+    // céu HDRI (sol limitado: quem ilumina direto é a luz do sol); sem ele, o céu procedural
+    let s2: Sky | null = null;
+    if (this.ceuEnv) cenaCeu.add(this.ceuEnv);
+    else {
+      s2 = new Sky();
+      s2.scale.setScalar(1000);
+      Object.entries(this.sky.material.uniforms).forEach(([k, v]) => { (s2!.material.uniforms as Record<string, { value: unknown }>)[k].value = (v as { value: unknown }).value; });
+      cenaCeu.add(s2);
+    }
     const rt = this.pmrem.fromScene(cenaCeu, 0, 0.1, 2000);
     this.envRT?.dispose();
     this.envRT = rt;
     this.scene.environment = rt.texture;
-    this.scene.environmentIntensity = this.ambienteAlvo;
-    s2.geometry.dispose();
-    (s2.material as THREE.Material).dispose();
+    this.scene.environmentIntensity = this.ambienteAlvo * (this.ceuEnv ? AMBIENTE_HDRI : 1);
+    if (this.ceuEnv) cenaCeu.remove(this.ceuEnv);
+    if (s2) { s2.geometry.dispose(); (s2.material as THREE.Material).dispose(); }
     this.sujo = Math.max(this.sujo, 2);
   }
 
@@ -614,9 +726,25 @@ export class Maquete {
     const mat = elevar(new THREE.MeshStandardMaterial({ map: this.texProjeto, roughness: 0.93, metalness: 0 }), "terreno", this.U, (sh) => {
       sh.uniforms.tAntes = { value: this.texAntes };
       sh.uniforms.uMisturaCor = this.U.uMisturaCor;
-      sh.fragmentShader = "uniform sampler2D tAntes; uniform float uMisturaCor;\n" + sh.fragmentShader.replace("#include <map_fragment>", `
+      Object.assign(sh.uniforms, this.detalhe);
+      sh.vertexShader = "varying vec2 vMundo;\n" + sh.vertexShader.replace("#include <fog_vertex>", "#include <fog_vertex>\n vMundo = position.xz;");
+      // detalhe de perto: asfalto, calçada e grama pela máscara de materiais (some com a distância)
+      sh.fragmentShader = `uniform sampler2D tAntes; uniform float uMisturaCor;
+        uniform sampler2D tMat; uniform sampler2D tAsf; uniform sampler2D tCal; uniform sampler2D tGra; uniform float uDetOn;
+        varying vec2 vMundo;\n` + sh.fragmentShader.replace("#include <map_fragment>", `
         #include <map_fragment>
-        diffuseColor.rgb = mix(texture2D(tAntes, vMapUv).rgb, diffuseColor.rgb, uMisturaCor);`);
+        diffuseColor.rgb = mix(texture2D(tAntes, vMapUv).rgb, diffuseColor.rgb, uMisturaCor);
+        if (uDetOn > 0.5) {
+          vec3 mm = texture2D(tMat, vMapUv).rgb * uMisturaCor;
+          float perto = 1.0 - smoothstep(70.0, 320.0, length(vViewPosition));
+          if (perto > 0.0 && mm.r + mm.g + mm.b > 0.01) {
+            float a = texture2D(tAsf, vMundo / 4.0).r * 2.0 - 1.0;
+            float c = texture2D(tCal, vMundo / 2.4).r * 2.0 - 1.0;
+            float g = texture2D(tGra, vMundo / 2.2).r * 2.0 - 1.0;
+            float d = mm.r * a * 0.42 + mm.g * c * 0.3 + mm.b * g * 0.38;
+            diffuseColor.rgb *= 1.0 + d * perto;
+          }
+        }`);
     });
     this.chao = new THREE.Mesh(geo, mat);
     // o terreno só recebe sombra: projetando, ele sombreava a si mesmo (acne
@@ -671,6 +799,8 @@ export class Maquete {
     const bloco = new THREE.Mesh(geoP, solo);
     bloco.receiveShadow = true;
     this.scene.add(bloco);
+    this.estudio.push(bloco);
+    this.bordaDoRelevo = lados.flatMap((lado, i) => (i ? lado.slice(1) : lado));
 
     const W = (nx - 1) * passo, H = (ny - 1) * passo;
     const [cx, cz] = this.xz([g.x0 + W / 2, g.y0 + H / 2]);
@@ -682,13 +812,139 @@ export class Maquete {
     base.receiveShadow = true;
     base.castShadow = true;
     this.scene.add(base);
+    this.estudio.push(base);
     // a mesa: invisível, só recebe a sombra do bloco (a maquete não flutua)
     this.mesa = new THREE.Mesh(new THREE.CircleGeometry(this.raio * 6, 64), new THREE.ShadowMaterial({ color: 0x000000, opacity: 0.42 }));
     this.mesa.rotation.x = -Math.PI / 2;
     this.mesa.position.y = this.U.uBase.value - 2.5;
     this.mesa.receiveShadow = true;
     this.scene.add(this.mesa);
+    this.estudio.push(this.mesa);
   }
+
+  // -------------------------------------------------------------------------
+  // Paisagem: céu, entorno de satélite emendado na borda do relevo, névoa
+  // -------------------------------------------------------------------------
+
+  /**
+   * Entorno: anéis da borda da grade até ~9× o raio, a altura indo da borda
+   * do relevo até a cota média da borda. `canvas` é o satélite do quadro `q`
+   * (coordenadas do plano, y para cima).
+   */
+  setEntorno(canvas: HTMLCanvasElement, q: { x0: number; y0: number; W: number; H: number }): void {
+    if (this.destruida || !this.bordaDoRelevo.length) return;
+    const g = this.cena.grade;
+    let borda = this.bordaDoRelevo;
+    if (borda[0] === borda[borda.length - 1]) borda = borda.slice(0, -1);
+    const cotaMedia = borda.reduce((s, k) => s + g.natural[k], 0) / borda.length;
+    // centro da grade no mundo
+    const cx0 = this.xz([g.x0 + ((g.nx - 1) * g.passo) / 2, g.y0 + ((g.ny - 1) * g.passo) / 2]);
+    const longe = this.raio * 9;
+    const aneis = [0, 0.04, 0.12, 0.3, 0.6, 1];
+    const n = borda.length, m = aneis.length;
+    const pos = new Float32Array(n * m * 3), uv = new Float32Array(n * m * 2);
+    const nat = new Float32Array(n * m), fin = new Float32Array(n * m), baixo = new Float32Array(n * m), base = new Float32Array(n * m);
+    borda.forEach((k, i) => {
+      const gx = g.x0 + (k % g.nx) * g.passo, gy = g.y0 + Math.floor(k / g.nx) * g.passo;
+      const [x, z] = this.xz([gx, gy]);
+      const dx = x - cx0[0], dz = z - cx0[1], L = Math.hypot(dx, dz) || 1;
+      aneis.forEach((t, a) => {
+        const v = a * n + i;
+        // do ponto da borda até o círculo distante, na mesma direção
+        const s = 1 + (longe / L - 1) * t * t;
+        const X = cx0[0] + dx * s, Z = cx0[1] + dz * s;
+        pos[v * 3] = X; pos[v * 3 + 2] = Z;
+        const px = X + this.centro[0], py = -Z + this.centro[1];
+        uv[v * 2] = (px - q.x0) / q.W; uv[v * 2 + 1] = (py - q.y0) / q.H;
+        nat[v] = g.natural[k]; fin[v] = g.final[k];
+        // a altura desce junto com a distância (os anéis vão em t²): sem degrau na borda
+        baixo[v] = THREE.MathUtils.smoothstep(t, 0, 0.6);
+        base[v] = cotaMedia;
+      });
+    });
+    const idx: number[] = [];
+    for (let a = 0; a + 1 < m; a++) for (let i = 0; i < n; i++) {
+      const p = a * n + i, q2 = a * n + ((i + 1) % n), r = p + n, s = q2 + n;
+      idx.push(p, r, q2, q2, r, s);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(n * m * 3).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+    geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute("aNat", new THREE.BufferAttribute(nat, 1));
+    geo.setAttribute("aFin", new THREE.BufferAttribute(fin, 1));
+    geo.setAttribute("aBaixo", new THREE.BufferAttribute(baixo, 1));
+    geo.setAttribute("aBase", new THREE.BufferAttribute(base, 1));
+    geo.setIndex(idx);
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    const mat = elevar(new THREE.MeshStandardMaterial({ map: tex, roughness: 1, side: THREE.DoubleSide }), "entorno", this.U);
+    if (this.entorno) { this.scene.remove(this.entorno); this.entorno.geometry.dispose(); (this.entorno.material as THREE.MeshStandardMaterial).map?.dispose(); (this.entorno.material as THREE.Material).dispose(); }
+    this.entorno = new THREE.Mesh(geo, mat);
+    this.entorno.receiveShadow = true;
+    this.entorno.frustumCulled = false;
+    this.entorno.visible = this.paisagem;
+    this.scene.add(this.entorno);
+    this.sujo = 3;
+  }
+
+  /** Paisagem (céu, entorno, névoa) ou estúdio (a maquete na mesa). */
+  setPaisagem(v: boolean, doUsuario = true): void {
+    if (doUsuario) this.paisagemUsuario = v;
+    this.paisagem = v;
+    for (const o of this.estudio) o.visible = !v;
+    if (this.mesa && !v) this.mesa.visible = this.ultimaElev > 14;
+    if (this.entorno) this.entorno.visible = v;
+    const fundo = this.ceu?.fundo;
+    if (fundo) {
+      if (v && !fundo.parent) this.scene.add(fundo);
+      if (!v && fundo.parent) this.scene.remove(fundo);
+    }
+    this.scene.background = v && fundo ? null : this.fundo.tex;
+    // névoa: começa a ~4 raios e fecha no fim do entorno (no estúdio, longe demais para aparecer)
+    this.nevoa.near = v ? this.raio * 3.2 : 1e8;
+    this.nevoa.far = v ? this.raio * 9.5 : 2e8;
+    this.sombraSuja = true;
+    this.sujo = 3;
+  }
+
+  get emPaisagem(): boolean { return this.paisagem; }
+
+  /** Máscara de materiais (R pista, G calçada, B grama), do mesmo quadro do projeto. */
+  setMateriais(canvas: HTMLCanvasElement): void {
+    const t = new THREE.CanvasTexture(canvas);
+    t.colorSpace = THREE.NoColorSpace;
+    this.detalhe.tMat.value?.dispose();
+    this.detalhe.tMat.value = t;
+    if (!this.detalhe.tAsf.value) {
+      const ld = new THREE.TextureLoader();
+      const um = (u: string) => ld.loadAsync(u).then((tx) => {
+        tx.wrapS = tx.wrapT = THREE.RepeatWrapping;
+        tx.colorSpace = THREE.NoColorSpace;
+        tx.anisotropy = 8;
+        return tx;
+      });
+      void Promise.all([um("/maquete/det-asfalto.jpg"), um("/maquete/det-calcada.jpg"), um("/maquete/det-grama.jpg")]).then(([a, c, gr]) => {
+        if (this.destruida) { a.dispose(); c.dispose(); gr.dispose(); return; }
+        this.detalhe.tAsf.value = a; this.detalhe.tCal.value = c; this.detalhe.tGra.value = gr;
+        this.detalhe.uDetOn.value = this.detalheModo ? 1 : 0;
+        this.sujo = 3;
+      }).catch(() => { /* sem as texturas: fica o desenho do projeto */ });
+    }
+    this.sujo = 3;
+  }
+
+  /** Detalhe só no modo Projeto (nos modos de análise as cores são dados). */
+  setDetalhe(v: boolean): void {
+    this.detalheModo = v;
+    this.detalhe.uDetOn.value = v && this.detalhe.tAsf.value ? 1 : 0;
+    this.sujo = 3;
+  }
+
+  /** Tilt-shift (efeito maquete) fora do cinema, 0..1. */
+  setTilt(v: number): void { this.tiltUsuario = v; this.sujo = 3; }
 
   // -------------------------------------------------------------------------
   // Casas (uma geometria só, paredes com janelas e telhado)
@@ -886,13 +1142,14 @@ export class Maquete {
     if (!arv.length) return;
     const tronco = new THREE.CylinderGeometry(0.12, 0.2, 1, 6);
     tronco.translate(0, 0.5, 0);
-    const redonda = new THREE.IcosahedronGeometry(1, 1);
-    const conica = new THREE.ConeGeometry(1, 2.2, 7);
+    const redonda = copaEmCachos();
+    const conica = copaConica();
     const redondas = arv.filter((a) => a.tipo !== 1), conicas = arv.filter((a) => a.tipo === 1);
+    // cor do vértice = sombra própria da copa (mais escura embaixo); a cor da instância dá a espécie
     const mats = {
       tronco: elevar(new THREE.MeshStandardMaterial({ roughness: 1 }), "instancia", this.U),
-      copa: elevar(new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }), "instancia", this.U),
-      cone: elevar(new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }), "instancia", this.U),
+      copa: elevar(new THREE.MeshStandardMaterial({ roughness: 0.85, vertexColors: true }), "instancia", this.U),
+      cone: elevar(new THREE.MeshStandardMaterial({ roughness: 0.85, vertexColors: true }), "instancia", this.U),
     };
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), cor = new THREE.Color();
     const instancias = (geo: THREE.BufferGeometry, lista: typeof arv, mat: THREE.Material, f: (a: (typeof arv)[number], i: number) => [number, number, number, number, number]) => {
@@ -1225,6 +1482,10 @@ export class Maquete {
     if (!this.cinema) return;
     this.cinema = null;
     this.movimento = false;
+    this.camera.fov = 42;
+    this.camera.updateProjectionMatrix();
+    // gravando: a cartela final ainda passa por cima da paisagem (volta quando o vídeo fecha)
+    if (!this.gravador) this.setPaisagem(this.paisagemUsuario, false);
     this.ev.onLegenda?.(null, 0);
     this.ev.onCartela?.(null);
     this.ev.onCinema?.(false);
@@ -1262,6 +1523,8 @@ export class Maquete {
       chao: (p) => (cotaFinal(this.cena.grade, p) - this.U.uRef.value) * this.U.uExag.value,
     }, abertura);
     if (abertura) { this.U.uMistura.value = 0; this.U.uMisturaCor.value = 0; this.U.uCresce.value = 0; this.sombraSuja = true; }
+    // o filme é sempre na paisagem (céu, vizinhança, névoa); no fim volta o que o usuário escolheu
+    this.setPaisagem(true, false);
     this.cinema = { r, t0: performance.now(), timelapse, ultimaHora: 0, legenda: { l: null, alfa: 0 }, fase: null };
     this.movimento = true;
     this.ev.onCinema?.(true);
@@ -1278,9 +1541,13 @@ export class Maquete {
       // tempo do roteiro com arranque e frenagem suaves (contínuo: sem salto em 1,2 s)
       const a = Math.min(1.2, r.duracao / 4), D = r.duracao, v = D / (D - a);
       const ease = ts < a ? (v * ts * ts) / (2 * a) : ts > D - a ? D - (v * (D - ts) ** 2) / (2 * a) : v * (ts - a / 2);
-      const { pos, alvo } = camNoTempo(r, ease);
+      const { pos, alvo, fov, tilt } = camNoTempo(r, ease);
       this.camera.position.set(pos[0], pos[1], pos[2]);
       this.controls.target.set(alvo[0], alvo[1], alvo[2]);
+      // lente da tomada (no celular em pé, um pouco mais aberta)
+      const f = fov * (this.camera.aspect < 0.8 ? 1.25 : 1);
+      if (Math.abs(this.camera.fov - f) > 0.01) { this.camera.fov = f; this.camera.updateProjectionMatrix(); }
+      this.pos.setLente(tilt, 0.5, 0.28);
       if (r.transformacao) this.transicao(Math.max(0, Math.min(1, (ts - r.transformacao[0]) / (r.transformacao[1] - r.transformacao[0]))));
       if (timelapse && this.cinema) {
         const f = Math.max(0, Math.min(1, (ts - r.voo[0]) / (r.voo[1] - r.voo[0])));
@@ -1377,6 +1644,7 @@ export class Maquete {
       const soltar = () => {
         this.gravador = null; this.comp = null;
         stream.getTracks().forEach((t) => t.stop()); this.stream = null;
+        if (!this.cinema) this.setPaisagem(this.paisagemUsuario, false);
         for (const c of [this.cortina, this.cortinaPasso]) if (c) c.visible = true;
         this.sujo = 3;
       };
@@ -1427,6 +1695,9 @@ export class Maquete {
       ctx.fillRect(x, y - 78 * k, larg, 124 * k);
       ctx.fillStyle = "#ffc533";
       ctx.fillRect(x, y - 58 * k, 5 * k, 82 * k);
+      // capítulo acima do título
+      ctx.font = `700 ${Math.round(18 * k)}px Inter, system-ui, sans-serif`;
+      ctx.fillText(lg.l.capitulo, x + 22 * k, y - 74 * k);
       ctx.fillStyle = "#fff";
       ctx.font = `700 ${Math.round(46 * k)}px Inter, system-ui, sans-serif`;
       ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 12 * k;
@@ -1480,14 +1751,14 @@ export class Maquete {
     const pr = this.renderer.getPixelRatio();
     this.renderer.setPixelRatio(Math.min(4, this.prMax * 2));
     this.renderer.setSize(this.caixa.clientWidth, this.caixa.clientHeight, false);
-    this.composer.setPixelRatio(this.renderer.getPixelRatio());
-    this.composer.setSize(this.caixa.clientWidth, this.caixa.clientHeight);
+    this.pos.setPixelRatio(this.renderer.getPixelRatio(), this.caixa.clientWidth, this.caixa.clientHeight);
+    this.pos.setSize(this.caixa.clientWidth, this.caixa.clientHeight);
     this.desenhar();
     const blob = await new Promise<Blob | null>((ok) => this.renderer.domElement.toBlob(ok, "image/png"));
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(this.caixa.clientWidth, this.caixa.clientHeight, false);
-    this.composer.setPixelRatio(pr);
-    this.composer.setSize(this.caixa.clientWidth, this.caixa.clientHeight);
+    this.pos.setPixelRatio(pr, this.caixa.clientWidth, this.caixa.clientHeight);
+    this.pos.setSize(this.caixa.clientWidth, this.caixa.clientHeight);
     this.sujo = 3;
     return blob;
   }
@@ -1549,7 +1820,9 @@ export class Maquete {
       if (im.material === this.matPoca) continue;
       const corMat = (im.material as THREE.MeshStandardMaterial).color;
       const base = im.geometry.getAttribute("aBase") as THREE.InstancedBufferAttribute;
-      const molde = im.geometry.index ? im.geometry.toNonIndexed() : im.geometry.clone();
+      // a copa em cachos (≈1.200 vértices) multiplicada por milhares de árvores pesaria demais no GLB: vai a esfera simples
+      const molde = im.geometry.getAttribute("position").count > 300 ? new THREE.IcosahedronGeometry(1, 1)
+        : im.geometry.index ? im.geometry.toNonIndexed() : im.geometry.clone();
       for (const a of Object.keys(molde.attributes)) if (a !== "position" && a !== "normal") molde.deleteAttribute(a);
       for (let i = 0; i < im.count; i++) {
         im.getMatrixAt(i, m4);
@@ -1584,15 +1857,17 @@ export class Maquete {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
-    this.composer.setSize(w, h);
+    this.pos.setSize(w, h);
     this.sujo = 3;
   }
 
   /** Desenha o quadro: com brilho no crepúsculo (pós-processamento), direto de dia. */
   private desenhar(): void {
     if (this.sombraSuja) { this.renderer.shadowMap.needsUpdate = true; this.sombraSuja = false; }
-    if (this.bloom.strength > 0.02) this.composer.render();
-    else this.renderer.render(this.scene, this.camera);
+    // o céu acompanha a câmera (fica sempre no infinito)
+    if (this.ceu?.fundo.parent) this.ceu.fundo.position.copy(this.camera.position);
+    if (!this.cinema) this.pos.setLente(this.tiltUsuario, 0.5, this.paisagem ? 0.18 : 0.12);
+    this.pos.render();
   }
 
   /** Resolução adaptativa: em movimento, se o quadro passa de ~24 ms, baixa; parado, volta a nitidez total. */
@@ -1605,13 +1880,18 @@ export class Maquete {
       if (this.emaQuadro > 24 && this.prAtual > 1) {
         this.prAtual = Math.max(1, this.prAtual - 0.25);
         this.renderer.setPixelRatio(this.prAtual);
-        this.composer.setPixelRatio(this.prAtual);
+        this.pos.setPixelRatio(this.prAtual, this.caixa.clientWidth, this.caixa.clientHeight);
+        this.emaQuadro = 16;
+      } else if (this.emaQuadro > 42 && this.prAtual <= 1 && !this.pos.aoDesligada) {
+        // placa sem fôlego mesmo na resolução mínima: sai a sombra de contato
+        this.pos.aoDesligada = true;
+        this.pos.setAO(false);
         this.emaQuadro = 16;
       }
     } else if (this.prAtual < this.prMax && agora - this.ultimoDesenho > 350) {
       this.prAtual = this.prMax;
       this.renderer.setPixelRatio(this.prMax);
-      this.composer.setPixelRatio(this.prMax);
+      this.pos.setPixelRatio(this.prMax, this.caixa.clientWidth, this.caixa.clientHeight);
       this.sujo = 2;
     }
   }
@@ -1803,7 +2083,11 @@ export class Maquete {
       for (const mm of mats) { for (const v of Object.values(mm)) if (v instanceof THREE.Texture) v.dispose(); mm.dispose(); }
     });
     this.sol.dispose();
-    this.composer.dispose();
+    this.pos.dispose();
+    this.ceu?.dispose();
+    this.ceuEnv?.geometry.dispose();
+    this.ceuEnv?.material.dispose();
+    for (const t of Object.values(this.detalhe)) if (t.value instanceof THREE.Texture) t.value.dispose();
     this.sky.geometry.dispose();
     (this.sky.material as THREE.Material).dispose();
     this.texAntes.dispose();

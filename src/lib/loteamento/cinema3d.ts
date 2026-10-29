@@ -18,6 +18,11 @@ export interface Chave {
   t: number;
   pos: V3;
   alvo: V3;
+  /** lente: abertura vertical (graus) e tilt-shift 0..1 */
+  fov?: number;
+  tilt?: number;
+  /** folga mínima sobre o chão (m); sobre a rua o drone desce mais (não há casa) */
+  folga?: number;
 }
 
 export interface Legenda {
@@ -25,6 +30,8 @@ export interface Legenda {
   t1: number;
   titulo: string;
   texto: string;
+  /** capítulo do filme ("01", "02"…) */
+  capitulo: string;
 }
 
 export interface Roteiro {
@@ -64,23 +71,26 @@ export function roteiroDoVoo(m: MundoRoteiro, abertura: boolean): Roteiro {
   const chaves: Chave[] = [];
   const legendas: Legenda[] = [];
   let t = 0;
-  const por = (pos: V3, alvo: V3, segundos: number) => { t += segundos; chaves.push({ t, pos, alvo }); };
+  /** lente da próxima chave (vale até mudar) */
+  let lente: { fov: number; tilt: number; folga?: number } = { fov: 38, tilt: 0.45 };
+  const por = (pos: V3, alvo: V3, segundos: number) => { t += segundos; chaves.push({ t, pos, alvo, ...lente }); };
   /** trecho com a velocidade de um drone (m/s), com folga mínima */
   const voar = (pos: V3, alvo: V3, vel: number, min = 2.5) => {
     const ult = chaves[chaves.length - 1];
     por(pos, alvo, Math.max(min, ult ? passo(ult.pos, pos) / vel : 0));
   };
-  const legenda = (titulo: string, texto: string, dur: number) => legendas.push({ t0: t + 0.6, t1: t + 0.6 + dur, titulo, texto });
+  const legenda = (titulo: string, texto: string, dur: number) =>
+    legendas.push({ t0: t + 0.6, t1: t + 0.6 + dur, titulo, texto, capitulo: String(legendas.length + 1).padStart(2, "0") });
 
   // --- 1. abertura: alto, o terreno de hoje vira o projeto
   let transformacao: [number, number] | undefined;
   if (abertura) {
-    chaves.push({ t: 0, pos: orbita(-2.55, R * 2.5, 0.66), alvo: C });
+    chaves.push({ t: 0, pos: orbita(-2.55, R * 2.5, 0.66), alvo: C, ...lente });
     por(orbita(-2.05, R * 2.2, 0.6), C, 6);
     transformacao = [1.2, 8.2];
     por(orbita(-1.55, R * 1.85, 0.52), C, 4.5);
   } else {
-    chaves.push({ t: 0, pos: orbita(-1.9, R * 2.1, 0.58), alvo: C });
+    chaves.push({ t: 0, pos: orbita(-1.9, R * 2.1, 0.58), alvo: C, ...lente });
     por(orbita(-1.5, R * 1.8, 0.5), C, 3);
   }
   const inicioVoo = t;
@@ -103,11 +113,35 @@ export function roteiroDoVoo(m: MundoRoteiro, abertura: boolean): Roteiro {
       const { pt, dir } = pontoNaPolilinha(eixo, Math.max(0, Math.min(L, s)));
       return W([pt[0] + dir[0] * frente, pt[1] + dir[1] * frente], h);
     };
+    // descida: lente mais aberta, sem desfoque (é a tomada "de dentro")
+    lente = { fov: 46, tilt: 0.1, folga: 6 };
     voar(P(s0 - 45, 42), P(s0 + 50, 2), 60, 3.4);
     const extras = [cena.arvores.length ? "calçadas arborizadas" : "calçadas", cena.postes.length ? "iluminação pública" : ""].filter(Boolean).join(" e ");
     legenda(`Ruas de ${fmt(rua.largura, rua.largura % 1 ? 1 : 0)} m`, `pista de ${fmt(cena.larguraPista, cena.larguraPista % 1 ? 1 : 0)} m, ${extras}`, 6.5);
-    voar(P(s0 + (s1 - s0) * 0.35, 10), P(s0 + (s1 - s0) * 0.35 + 45, 2.5), 24, 3.6);
-    voar(P(s1, 12), P(s1 + 40, 3), 24, 3.6);
+    lente = { fov: 48, tilt: 0, folga: 4.5 };
+    voar(P(s0 + (s1 - s0) * 0.35, 8), P(s0 + (s1 - s0) * 0.35 + 45, 2.5), 22, 3.6);
+    // casa modelo: um sobrado de frente para esta rua, mais adiante; o drone passa rente à fachada
+    const casa = casaNaRua(cena, eixo, rua.largura, s0 + (s1 - s0) * 0.35 + 50, Math.min(L - 22, s0 + 320));
+    if (casa) {
+      const { s, lado } = casa;
+      const k = casa.casa;
+      const alvoCasa = W(k.c, 3.6);
+      const fora = (sd: number, h: number): V3 => {
+        const { pt, dir } = pontoNaPolilinha(eixo, Math.max(0, Math.min(L, sd)));
+        // do outro lado da pista, para enquadrar a fachada inteira
+        const o = -lado * rua.largura * 0.18;
+        return W([pt[0] - dir[1] * o, pt[1] + dir[0] * o], h);
+      };
+      lente = { fov: 40, tilt: 0.15, folga: 4.5 };
+      voar(fora(s - 30, 8.5), alvoCasa, 16, 3.4);
+      legenda("Casas simuladas", `padrão contemporâneo · ${k.andares > 1 ? "sobrado" : "térrea"} com recuo frontal de 4 m · ocupação ilustrativa`, 6);
+      por(fora(s + 9, 7), alvoCasa, 5.5);
+      lente = { fov: 42, tilt: 0.35, folga: 8 };
+      voar(P(s + 30, 22), P(s + 90, 0), 22, 3.4);
+    } else {
+      voar(P(s1, 12), P(s1 + 40, 3), 24, 3.6);
+    }
+    lente = { fov: 38, tilt: 0.45 };
   }
 
   // --- 3. a maior área verde: órbita baixa com as árvores
@@ -123,6 +157,7 @@ export function roteiroDoVoo(m: MundoRoteiro, abertura: boolean): Roteiro {
     const a0 = Math.atan2(ult[0] - cx, ult[2] - cz);
     const pt = (a: number, d: number, h: number): V3 => { const p: Pt = [c[0] + Math.sin(a) * d, c[1] - Math.cos(a) * d]; return W(p, h); };
     const alvo = W(c, 2);
+    lente = { fov: 38, tilt: 0.5 };
     voar(pt(a0, rg + 38, 30), alvo, 50, 3);
     legenda("Área verde", `${fmt(verde.area, 0)} m²${arvs ? ` · ${arvs} árvores` : ""} · praça e passeio para os moradores`, 6.5);
     por(pt(a0 + 0.9, rg + 30, 22), alvo, 3.2);
@@ -143,7 +178,7 @@ export function roteiroDoVoo(m: MundoRoteiro, abertura: boolean): Roteiro {
     por(pt(ang + 1.2, 58, 30), alvo, 3.6);
   }
 
-  // --- 5. o miolo: rasante sobre a quadra mais central
+  // --- 5. o miolo: vista zenital girando devagar sobre a quadra mais central (efeito maquete)
   const qd = [...res.quadras].filter((x) => x.lotes.length >= 4)
     .sort((a, b) => dist(a.centro, cena.centro) - dist(b.centro, cena.centro))[0];
   if (qd) {
@@ -152,33 +187,41 @@ export function roteiroDoVoo(m: MundoRoteiro, abertura: boolean): Roteiro {
     const [qx, qz] = m.xz(c);
     const ang = Math.atan2(ult[0] - qx, ult[2] - qz);
     const pt = (a: number, d: number, h: number): V3 => W([c[0] + Math.sin(a) * d, c[1] - Math.cos(a) * d], h);
-    voar(pt(ang, 85, 40), W(c, 0), 55, 3);
+    const alto = Math.max(95, Math.sqrt(qd.lotes.reduce((s2, l) => s2 + l.area, 0)) * 1.25);
+    lente = { fov: 36, tilt: 0.9 };
+    // a câmera chega quase na vertical (3 m de desvio: o "para cima" da tela gira com ele)
+    voar(pt(ang, 3, alto), W(c, 0), 45, 3.2);
     const frentes = qd.lotes.map((l) => l.frente).sort((a, b) => a - b);
     legenda(`Quadra ${qd.nome}`, `${qd.lotes.length} lotes · frente de ${fmt(frentes[Math.floor(frentes.length / 2)], 0)} m · casas simuladas com recuo de 4 m`, 6);
-    por(pt(ang + 1.0, 70, 32), W(c, 0), 3.8);
+    por(pt(ang + 0.35, 2.5, alto * 0.92), W(c, 0), 3.4);
+    por(pt(ang + 0.7, 2.5, alto * 0.86), W(c, 0), 3.4);
   }
 
   // --- 6. sobe para a vista geral e respira
   const ult = chaves[chaves.length - 1].pos;
   const azF = Math.atan2(ult[0], ult[2]) + 0.6;
+  lente = { fov: 36, tilt: 0.55 };
   voar(orbita(azF, R * 1.9, 0.62), C, 60, 4.5);
   const fimVoo = t;
-  // respiro final: a câmera quase parada enquanto as luzes acendem
+  // respiro final: a câmera quase parada enquanto as luzes acendem (lente de volta à normal)
+  lente = { fov: 42, tilt: 0.4 };
   por(orbita(azF + 0.3, R * 2.0, 0.64), C, 6);
 
   // folga: 9 m sobre o chão em todo o caminho (as casas têm até ~7 m; a curva entre
   // as chaves afunda, então mede-se a curva, não só as chaves)
   const chaoMundo = (x: number, z: number) => m.chao([x + cena.centro[0], -z + cena.centro[1]]);
-  for (const k of chaves) k.pos[1] = Math.max(k.pos[1], chaoMundo(k.pos[0], k.pos[2]) + 9);
+  for (const k of chaves) k.pos[1] = Math.max(k.pos[1], chaoMundo(k.pos[0], k.pos[2]) + (k.folga ?? 9));
   const rot: Roteiro = { chaves, legendas, duracao: t, transformacao, voo: [inicioVoo, fimVoo] };
   for (let volta = 0; volta < 6; volta++) {
     let mexeu = false;
     for (let i = 0; i + 1 < chaves.length; i++) {
       let falta = 0;
+      // entre duas chaves baixas (sobre a rua) vale a folga delas; senão os 9 m
+      const fol = Math.max(chaves[i].folga ?? 9, chaves[i + 1].folga ?? 9);
       for (let s = 1; s < 24; s++) {
         const tt = chaves[i].t + ((chaves[i + 1].t - chaves[i].t) * s) / 24;
         const p = camNoTempo(rot, tt).pos;
-        falta = Math.max(falta, chaoMundo(p[0], p[2]) + 9 - p[1]);
+        falta = Math.max(falta, chaoMundo(p[0], p[2]) + fol - p[1]);
       }
       if (falta > 0.05) { chaves[i].pos[1] += falta + 0.5; chaves[i + 1].pos[1] += falta + 0.5; mexeu = true; }
     }
@@ -187,11 +230,12 @@ export function roteiroDoVoo(m: MundoRoteiro, abertura: boolean): Roteiro {
   return rot;
 }
 
-/** Posição e alvo da câmera no tempo `t` (Catmull-Rom entre as chaves, com o tempo de cada trecho). */
-export function camNoTempo(r: Roteiro, t: number): { pos: V3; alvo: V3 } {
+/** Posição, alvo e lente da câmera no tempo `t` (Catmull-Rom entre as chaves, com o tempo de cada trecho). */
+export function camNoTempo(r: Roteiro, t: number): { pos: V3; alvo: V3; fov: number; tilt: number } {
   const ks = r.chaves;
-  if (t <= ks[0].t) return { pos: [...ks[0].pos], alvo: [...ks[0].alvo] };
-  if (t >= ks[ks.length - 1].t) { const k = ks[ks.length - 1]; return { pos: [...k.pos], alvo: [...k.alvo] }; }
+  const lenteDe = (k: Chave) => ({ fov: k.fov ?? 38, tilt: k.tilt ?? 0 });
+  if (t <= ks[0].t) return { pos: [...ks[0].pos], alvo: [...ks[0].alvo], ...lenteDe(ks[0]) };
+  if (t >= ks[ks.length - 1].t) { const k = ks[ks.length - 1]; return { pos: [...k.pos], alvo: [...k.alvo], ...lenteDe(k) }; }
   let i = 0;
   while (i < ks.length - 2 && t > ks[i + 1].t) i++;
   const f = (t - ks[i].t) / (ks[i + 1].t - ks[i].t);
@@ -204,7 +248,42 @@ export function camNoTempo(r: Roteiro, t: number): { pos: V3; alvo: V3 } {
     }
     return out;
   };
-  return { pos: cr((k) => k.pos), alvo: cr((k) => k.alvo) };
+  // lente: troca suave (smoothstep) entre as chaves
+  const a = lenteDe(ks[i]), b = lenteDe(ks[i + 1]), e = f * f * (3 - 2 * f);
+  return { pos: cr((k) => k.pos), alvo: cr((k) => k.alvo), fov: a.fov + (b.fov - a.fov) * e, tilt: a.tilt + (b.tilt - a.tilt) * e };
+}
+
+type CasaDaCena = Cena["casas"][number];
+
+/**
+ * Sobrado (de preferência) com a fachada para o eixo da rua, entre `sMin` e
+ * `sMax` (m ao longo do eixo). `lado`: de que lado do eixo a casa fica.
+ */
+export function casaNaRua(cena: Cena, eixo: Pt[], largura: number, sMin: number, sMax: number): { casa: CasaDaCena; s: number; lado: number } | null {
+  if (sMax <= sMin) return null;
+  const L = comprimento(eixo);
+  const amostras: { s: number; p: Pt; d: Pt }[] = [];
+  for (let s = 0; s <= L; s += 2) { const { pt, dir } = pontoNaPolilinha(eixo, s); amostras.push({ s, p: pt, d: dir }); }
+  let melhor: { casa: CasaDaCena; s: number; lado: number; nota: number } | null = null;
+  const meio = (sMin + sMax) / 2;
+  for (const k of cena.casas) {
+    if (k.lote < 0) continue;
+    // fachada = c − esquerda(u)·prof/2
+    const fr: Pt = [k.c[0] + k.u[1] * k.prof / 2, k.c[1] - k.u[0] * k.prof / 2];
+    let a = amostras[0], dm = Infinity;
+    for (const x of amostras) { const d = dist(x.p, fr); if (d < dm) { dm = d; a = x; } }
+    if (a.s < sMin || a.s > sMax || dm > largura / 2 + 7) continue;
+    // árvore da calçada na frente da fachada taparia a casa (a câmera passa baixo)
+    if (cena.arvores.some((x) => dist(x.p, fr) < Math.max(7, k.larg / 2 + 3))) continue;
+    // a fachada olha para o eixo: −esquerda(u) aponta para a rua
+    const olha: Pt = [k.u[1], -k.u[0]];
+    const para: Pt = [a.p[0] - k.c[0], a.p[1] - k.c[1]];
+    if (olha[0] * para[0] + olha[1] * para[1] <= 0) continue;
+    const lado = Math.sign(a.d[0] * (k.c[1] - a.p[1]) - a.d[1] * (k.c[0] - a.p[0])) || 1;
+    const nota = Math.abs(a.s - meio) + (k.andares > 1 ? 0 : 60);
+    if (!melhor || nota < melhor.nota) melhor = { casa: k, s: a.s, lado, nota };
+  }
+  return melhor && { casa: melhor.casa, s: melhor.s, lado: melhor.lado };
 }
 
 /** Legenda no ar em `t`, com a opacidade (entra e sai em 0,5 s). */

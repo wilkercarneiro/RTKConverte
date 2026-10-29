@@ -208,6 +208,31 @@ export interface DadosPintura {
   destaque?: number;
 }
 
+/**
+ * Máscara de materiais para a textura de detalhe da maquete: R = pista,
+ * G = calçada, B = grama (lotes e áreas verdes). Fora da gleba, preto.
+ */
+export function pintarMateriais(ctx: Ctx, q: Quadro, res: Resultado, cena: Cena): void {
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, q.largura, q.altura);
+  ctx.save();
+  caminho(ctx, q, [res.gleba]);
+  ctx.clip("evenodd");
+  ctx.fillStyle = "#0000ff";
+  caminho(ctx, q, [res.gleba]);
+  ctx.fill("evenodd");
+  // institucional: chão batido/piso, sem grama
+  ctx.fillStyle = "#000";
+  for (const a of res.areas) if (a.tipo === "institucional") { caminho(ctx, q, a.pols); ctx.fill("evenodd"); }
+  ctx.fillStyle = "#00ff00";
+  caminho(ctx, q, cena.ruas);
+  ctx.fill("evenodd");
+  ctx.fillStyle = "#ff0000";
+  caminho(ctx, q, cena.pista);
+  ctx.fill("evenodd");
+  ctx.restore();
+}
+
 /** Pinta o projeto dentro da gleba (o fundo/satélite já está no canvas). */
 export function pintarProjeto(ctx: Ctx, q: Quadro, d: DadosPintura): void {
   const { res, cena, modo } = d;

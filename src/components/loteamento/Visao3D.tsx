@@ -11,7 +11,7 @@ import { buscarTerreno, gradeDoPerimetro } from "../../lib/loteamento/terreno.ts
 import type { Cena } from "../../lib/loteamento/cena3d.ts";
 import { areaComTalude, cantosDaCena, montarCena } from "../../lib/loteamento/cena3d.ts";
 import type { ModoChao } from "../../lib/loteamento/textura3d.ts";
-import { desnivelDaGleba, intervaloCurvas, pintarCampo, pintarDivisa, pintarProjeto, pintarSatelite, quadroDaGrade } from "../../lib/loteamento/textura3d.ts";
+import { desnivelDaGleba, intervaloCurvas, pintarCampo, pintarDivisa, pintarMateriais, pintarProjeto, pintarSatelite, quadroDaGrade } from "../../lib/loteamento/textura3d.ts";
 import type { Quadro } from "../../lib/loteamento/textura3d.ts";
 import { paraUtm } from "../../lib/loteamento/plano.ts";
 import { Maquete } from "./maquete3d.ts";
@@ -112,7 +112,7 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
   const [cena, setCena] = useState<Cena | null>(null);
   const [pronto, setPronto] = useState(false);
   const [modo, setModo] = useState<ModoChao>("projeto");
-  const [camadas, setCamadas] = useState({ casas: true, arvores: true, meioFio: true, sombras: true });
+  const [camadas, setCamadas] = useState({ casas: true, arvores: true, meioFio: true, sombras: true, paisagem: false, maquete: false });
   const [exag, setExag] = useState(1);
   const [hora, setHora] = useState(9.5);
   const [depois, setDepois] = useState(true);
@@ -205,6 +205,23 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
         // laboratório: a maquete fica acessível no console para inspeção
         if (import.meta.env.DEV) (window as unknown as { __maquete?: Maquete }).__maquete = m;
         setExag(Math.round(m.U.uExag.value * 10) / 10);
+        // máscara de materiais (textura de detalhe de perto), em meia resolução
+        const qm = { ...q, largura: Math.round(q.largura / 2), altura: Math.round(q.altura / 2) };
+        const mat = Object.assign(document.createElement("canvas"), { width: qm.largura, height: qm.altura });
+        pintarMateriais(mat.getContext("2d")!, qm, res, c);
+        m.setMateriais(mat);
+        // entorno da paisagem: satélite de um quadrado ~19 raios de lado (não segura a abertura)
+        void (async () => {
+          const g = c.grade, cx = g.x0 + ((g.nx - 1) * g.passo) / 2, cy = g.y0 + ((g.ny - 1) * g.passo) / 2;
+          const S = Math.max(60, c.raio) * 9.6;
+          const qe: Quadro = { largura: 2048, altura: 2048, x0: cx - S, y0: cy - S, W: 2 * S, H: 2 * S };
+          const ce = Object.assign(document.createElement("canvas"), { width: qe.largura, height: qe.altura });
+          const cx2 = ce.getContext("2d")!;
+          cx2.fillStyle = "#7d8a64";
+          cx2.fillRect(0, 0, qe.largura, qe.altura);
+          if (!(await pintarSatelite(cx2, qe, res, fuso))) pintarCampo(cx2, qe, c.grade);
+          if (vivo) m.setEntorno(ce, qe);
+        })();
         setCena(c);
         marcar(3);
         setPronto(true);
@@ -232,12 +249,15 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
     if (!pronto || !telas.current || !cena || !maq.current) return;
     pintar(telas.current.projeto, telas.current.antes, telas.current.q, cena, modo);
     maq.current.atualizarChao();
+    maq.current.setDetalhe(modo === "projeto");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modo, pronto]);
   useEffect(() => { maq.current?.setExagero(exag); }, [exag]);
   useEffect(() => { maq.current?.setHora(hora); }, [hora]);
   useEffect(() => { maq.current?.setVisivel("casas", camadas.casas); maq.current?.setVisivel("arvores", camadas.arvores); maq.current?.setVisivel("meioFio", camadas.meioFio); }, [camadas.casas, camadas.arvores, camadas.meioFio]);
   useEffect(() => { maq.current?.setSombras(camadas.sombras); }, [camadas.sombras]);
+  useEffect(() => { if (pronto) maq.current?.setPaisagem(camadas.paisagem); }, [camadas.paisagem, pronto]);
+  useEffect(() => { maq.current?.setTilt(camadas.maquete ? 0.85 : 0); }, [camadas.maquete]);
   useEffect(() => { maq.current?.selecionar(sel); }, [sel]);
   // teclado: a maquete fica com as teclas (na captura, antes do editor que está por trás —
   // senão Esc limpava o desenho, Delete apagava o lote e Ctrl+Z desfazia o projeto)
@@ -386,8 +406,10 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
             {modo === "curvas" && <p>Curvas a cada {fmt(resumo.intervalo, resumo.intervalo < 1 ? 2 : 0)} m (mestras a cada {fmt(resumo.intervalo * 5, resumo.intervalo < 1 ? 2 : 0)} m), do terreno já com as ruas. Desnível na gleba: {fmt(resumo.desnivel, 1)} m.</p>}
           </div>
           <div className="m3d-camadas">
-            {([["casas", "Casas"], ["arvores", "Árvores"], ["meioFio", "Meio-fio"], ["sombras", "Sombras"]] as const).map(([k, r]) => (
-              <label key={k}><input type="checkbox" checked={camadas[k]} onChange={(e) => setCamadas({ ...camadas, [k]: e.target.checked })} />{r}</label>
+            {([["casas", "Casas", ""], ["arvores", "Árvores", ""], ["meioFio", "Meio-fio", ""], ["sombras", "Sombras", ""],
+              ["paisagem", "Paisagem", "Céu de verdade, a vizinhança por satélite até o horizonte e névoa de distância (o voo e a apresentação usam sempre)"],
+              ["maquete", "Efeito maquete", "Desfoca acima e abaixo do centro da tela, como foto de maquete (tilt-shift)"]] as const).map(([k, r, dica]) => (
+              <label key={k} title={dica || undefined}><input type="checkbox" checked={camadas[k]} onChange={(e) => setCamadas({ ...camadas, [k]: e.target.checked })} />{r}</label>
             ))}
           </div>
           <label className="m3d-faixa">
@@ -482,7 +504,7 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
       <div className={`m3d-faixas${apresentando || gravando ? " ativo" : ""}`} aria-hidden><i /><i /></div>
       {legenda.l && (apresentando || gravando) && (
         <div className="m3d-legenda-cinema" style={{ opacity: legenda.alfa, transform: `translateY(${(1 - legenda.alfa) * 10}px)` }}>
-          <b>{legenda.l.titulo}</b><span>{legenda.l.texto}</span>
+          <em>{legenda.l.capitulo}</em><b>{legenda.l.titulo}</b><span>{legenda.l.texto}</span>
         </div>
       )}
       {/* cartelas ao vivo: título na abertura, fecho com os números */}
