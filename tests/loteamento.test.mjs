@@ -599,6 +599,44 @@ test("maquete 3D: casas dentro dos lotes e fora da rua, árvores fora da pista, 
   }
 });
 
+test("maquete 3D: casas modernas dentro da planta, fachada para a rua, vidros nas faces", () => {
+  const c = montarCena(r0, pr0.params, terrenoSintetico(r0));
+  const casas = c.casas.filter((x) => x.lote >= 0);
+  // frente do lote como a cena escolhe: a principal, senão a rua mais longa
+  const frenteDe = (l) => {
+    const ps = l.lados.filter((x) => x.principal);
+    const cs = ps.length ? ps : l.lados.filter((x) => (x.tipo === "rua" || x.tipo === "via") && x.comp >= 3);
+    return cs.reduce((m, x) => (x.comp > m.comp ? x : m), cs[0]);
+  };
+  const aoSeg = (p, s) => {
+    const dx = s.b[0] - s.a[0], dy = s.b[1] - s.a[1];
+    const t = Math.max(0, Math.min(1, ((p[0] - s.a[0]) * dx + (p[1] - s.a[1]) * dy) / (dx * dx + dy * dy)));
+    return Math.hypot(s.a[0] + dx * t - p[0], s.a[1] + dy * t - p[1]);
+  };
+  let sobrados = 0, fachadaNaRua = 0;
+  for (const k of casas) {
+    assert.ok(k.volumes?.length >= 2, `casa sem volumes no lote ${r0.lotes[k.lote].id}`);
+    const hl = k.larg / 2 + 1e-6, hp = k.prof / 2 + 1e-6;
+    for (const v of k.volumes) {
+      assert.ok(v.a0 >= -hl && v.a1 <= hl && v.b0 >= -hp && v.b1 <= hp, "volume fora da planta");
+      assert.ok(v.a1 - v.a0 > 0.1 && v.b1 - v.b0 > 0.1 && v.y1 > v.y0, "volume degenerado");
+    }
+    for (const vd of k.vidros) {
+      const v = k.volumes[vd.vol];
+      const L = vd.face % 2 === 0 ? v.a1 - v.a0 : v.b1 - v.b0;
+      assert.ok(vd.s0 >= 0 && vd.s1 <= L + 1e-6 && vd.s1 > vd.s0 && vd.y1 > vd.y0 && vd.y1 <= v.y1, "vidro fora da face");
+    }
+    if (k.volumes.some((v) => v.y0 > 0 && v.platibanda)) sobrados++;
+    // fachada (b = −prof/2) mais perto da rua que o fundo
+    const V = [-k.u[1], k.u[0]];
+    const fr = [k.c[0] - V[0] * k.prof / 2, k.c[1] - V[1] * k.prof / 2], fu = [k.c[0] + V[0] * k.prof / 2, k.c[1] + V[1] * k.prof / 2];
+    const fl = frenteDe(r0.lotes[k.lote]);
+    if (aoSeg(fr, fl) < aoSeg(fu, fl)) fachadaNaRua++;
+  }
+  assert.ok(sobrados > 0 && sobrados < casas.length, `sobrados: ${sobrados} de ${casas.length}`);
+  assert.equal(fachadaNaRua, casas.length, `só ${fachadaNaRua} de ${casas.length} casas com a fachada para a rua`);
+});
+
 test("maquete 3D: greide das ruas mais suave que o terreno, corte e aterro, declividade dos lotes", () => {
   const c = montarCena(r0, pr0.params, terrenoSintetico(r0));
   const g = c.grade;

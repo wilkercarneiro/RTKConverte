@@ -17,7 +17,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import type { Legenda, Roteiro } from "../../lib/loteamento/cinema3d.ts";
 import { camNoTempo, legendaNoTempo, roteiroDoVoo } from "../../lib/loteamento/cinema3d.ts";
 import type { Cena, Casa } from "../../lib/loteamento/cena3d.ts";
-import { cotaFinal, loteNoPonto } from "../../lib/loteamento/cena3d.ts";
+import { cotaFinal, loteNoPonto, PLATIBANDA } from "../../lib/loteamento/cena3d.ts";
 import type { Resultado } from "../../lib/loteamento/calculo.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { centroide, comprimento, dist, esquerda, pontoNaPolilinha } from "../../lib/loteamento/geom.ts";
@@ -172,6 +172,50 @@ function texturaJanelas(): THREE.CanvasTexture {
   return t;
 }
 
+/** Ripado de madeira vertical (uv em metros: ~9 réguas por metro, veios e frestas escuras). */
+function texturaRipado(): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = 128; c.height = 128;
+  const x = c.getContext("2d")!;
+  const tons = ["#a8744a", "#9c6a42", "#b07b4f", "#94633d", "#a5724a"];
+  for (let i = 0; i < 9; i++) {
+    const x0 = Math.round((i * 128) / 9), x1 = Math.round(((i + 1) * 128) / 9);
+    x.fillStyle = tons[i % tons.length];
+    x.fillRect(x0, 0, x1 - x0, 128);
+    x.fillStyle = "rgba(60,35,18,0.18)";
+    for (let k = 0; k < 3; k++) x.fillRect(x0 + 2 + ((i * 5 + k * 4) % (x1 - x0 - 4)), 0, 1, 128);
+    x.fillStyle = "#3a2414";
+    x.fillRect(x1 - 2, 0, 2, 128);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+/** Caixilho do pano de vidro: montante a cada módulo (u) e quadro em cima e embaixo (v de 0 a 1). */
+function texturaVidro(): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = 64; c.height = 64;
+  const x = c.getContext("2d")!;
+  const g = x.createLinearGradient(0, 0, 64, 64);
+  g.addColorStop(0, "#ffffff");
+  g.addColorStop(0.5, "#d9dee2");
+  g.addColorStop(1, "#f2f4f5");
+  x.fillStyle = g;
+  x.fillRect(0, 0, 64, 64);
+  x.fillStyle = "#202326";
+  x.fillRect(0, 0, 3, 64);
+  x.fillRect(0, 0, 64, 3);
+  x.fillRect(0, 61, 64, 3);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
 /** Camadas do solo na lateral do bloco (como o corte de uma maquete física). */
 function texturaSolo(): THREE.CanvasTexture {
   const c = document.createElement("canvas");
@@ -242,6 +286,7 @@ export class Maquete {
   private cartela: Cartela = { nome: "", linha: "", rodape: "" };
   private fundo: { canvas: HTMLCanvasElement; tex: THREE.CanvasTexture };
   private matParede: THREE.MeshStandardMaterial | null = null;
+  private matVidro: THREE.MeshStandardMaterial | null = null;
   private matLampada: THREE.MeshStandardMaterial | null = null;
   private matPoca: THREE.MeshBasicMaterial | null = null;
   private ultimoRumo = NaN;
@@ -475,6 +520,7 @@ export class Maquete {
     // janelas e postes acendem com o sol abaixo de ~10°; o brilho (bloom) vem junto
     const noite = Math.max(0, Math.min(1, (10 - elG) / 10));
     if (this.matParede) this.matParede.emissiveIntensity = 4.5 * noite;
+    if (this.matVidro) this.matVidro.emissiveIntensity = 1.6 * noite;
     if (this.matLampada) this.matLampada.emissiveIntensity = 0.3 + 8 * Math.max(0, Math.min(1, (12 - elG) / 10));
     if (this.matPoca) this.matPoca.opacity = 0.75 * Math.max(0, Math.min(1, (8 - elG) / 8));
     if (this.bloom) { this.bloom.strength = 1.2 * noite; this.bloom.radius = 0.55 + 0.25 * noite; }
@@ -664,6 +710,11 @@ export class Maquete {
       }
     };
     const paredes = { P, N, C, UV, B, A }, telhados = { P: PT, N: NT, C: CT, B: BT, A: AT };
+    const vidros = { P: [] as number[], N: [] as number[], C: [] as number[], UV: [] as number[], B: [] as number[], A: [] as number[] };
+    const madeira = { P: [] as number[], N: [] as number[], C: [] as number[], UV: [] as number[], B: [] as number[], A: [] as number[] };
+    type Dst = typeof paredes | typeof telhados;
+    const LISO = [[0.1, 0.5], [0.1, 0.5], [0.1, 0.5], [0.1, 0.5]];
+    const COR_ACAB: Record<string, number> = { grafite: 0x3b3e43, concreto: 0xaaa79f, madeira: 0xffffff };
     for (const c of casas) {
       const V = esquerda(c.u);
       const atraso = Math.min(1, dist(c.c, this.centro) / this.raio) * 0.85 + ((c.lote * 0.6180339) % 1) * 0.15;
@@ -672,6 +723,63 @@ export class Maquete {
         const [x, z] = this.xz(p);
         return new THREE.Vector3(x, y, z);
       };
+      if (c.volumes) {
+        const o = W(0, 0, 0);
+        const D = (da: number, db: number, dy: number) => W(da, db, dy).sub(o);
+        // quadrilátero com a normal virada para `fora` (a ordem dos cantos não importa)
+        const quad = (dst: Dst, q: THREE.Vector3[], fora: THREE.Vector3, uvs: number[][] | null, k: THREE.Color) => {
+          const n = new THREE.Vector3().subVectors(q[1], q[0]).cross(new THREE.Vector3().subVectors(q[2], q[0]));
+          const vira = n.dot(fora) < 0;
+          const [q0, q1, q2, q3] = vira ? [q[0], q[3], q[2], q[1]] : q;
+          const u = uvs && (vira ? [uvs[0], uvs[3], uvs[2], uvs[1]] : uvs);
+          tri(dst, [q0, q1, q2], u && [u[0], u[1], u[2]], k, c.piso, atraso);
+          tri(dst, [q0, q2, q3], u && [u[0], u[2], u[3]], k, c.piso, atraso);
+        };
+        const fund = c.fundacao - c.piso;
+        const cBase = new THREE.Color(0xa8a196), cLaje = new THREE.Color(c.corTelhado);
+        const FORA: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+        const cantosDe = (v: { a0: number; a1: number; b0: number; b1: number }): [number, number][] =>
+          [[v.a0, v.b0], [v.a1, v.b0], [v.a1, v.b1], [v.a0, v.b1]];
+        for (const v of c.volumes) {
+          const k = new THREE.Color(v.acab === "parede" ? c.corParede : COR_ACAB[v.acab]);
+          const dst = v.acab === "madeira" ? madeira : paredes;
+          const cs = cantosDe(v);
+          // uv: madeira em metros (réguas verticais); o resto liso
+          const uvM = (L: number, y0: number, y1: number) => (v.acab === "madeira" ? [[0, y0], [L, y0], [L, y1], [0, y1]] : LISO);
+          for (let f = 0; f < 4; f++) {
+            const [a1, b1] = cs[f], [a2, b2] = cs[(f + 1) % 4];
+            const fora = D(FORA[f][0], FORA[f][1], 0);
+            const L = Math.hypot(a2 - a1, b2 - b1);
+            quad(dst, [W(a1, b1, v.y0), W(a2, b2, v.y0), W(a2, b2, v.y1), W(a1, b1, v.y1)], fora, uvM(L, v.y0, v.y1), k);
+            if (v.y0 === 0) quad(paredes, [W(a1, b1, fund), W(a2, b2, fund), W(a2, b2, 0), W(a1, b1, 0)], fora, LISO, cBase);
+          }
+          const cima = new THREE.Vector3(0, 1, 0), baixo = new THREE.Vector3(0, -1, 0);
+          const topo = (dy: number, e: number) => cs.map(([a, b]) => W(a + (a === v.a0 ? e : -e), b + (b === v.b0 ? e : -e), dy));
+          if (v.y0 > 0) quad(dst, topo(v.y0, 0), baixo, uvM(1, 0, 1), k);
+          if (!v.platibanda) { quad(dst, topo(v.y1, 0), cima, uvM(1, 0, 1), k); continue; }
+          // platibanda: borda de 18 cm, faces internas e a laje meio metro abaixo
+          const ext = topo(v.y1, 0), int = topo(v.y1, 0.18), yL = v.y1 - PLATIBANDA + 0.1, laje = topo(yL, 0.18);
+          for (let f = 0; f < 4; f++) {
+            const g = (f + 1) % 4;
+            quad(dst, [ext[f], ext[g], int[g], int[f]], cima, uvM(1, 0, 1), k);
+            quad(dst, [int[f], int[g], laje[g], laje[f]], D(-FORA[f][0], -FORA[f][1], 0), uvM(1, 0, 1), k);
+          }
+          quad(telhados, laje, cima, null, cLaje);
+        }
+        const branco = new THREE.Color(0xffffff);
+        for (const vd of c.vidros ?? []) {
+          const v = c.volumes[vd.vol];
+          const cs = cantosDe(v);
+          const [a1, b1] = cs[vd.face], [a2, b2] = cs[(vd.face + 1) % 4];
+          const L = Math.hypot(a2 - a1, b2 - b1), da = (a2 - a1) / L, db = (b2 - b1) / L;
+          const [fa, fb] = FORA[vd.face];
+          const P0 = (s: number, y: number) => W(a1 + da * s + fa * 0.03, b1 + db * s + fb * 0.03, y);
+          const m = (vd.s1 - vd.s0) / Math.max(1, Math.round((vd.s1 - vd.s0) / 1.25));
+          quad(vidros, [P0(vd.s0, vd.y0), P0(vd.s1, vd.y0), P0(vd.s1, vd.y1), P0(vd.s0, vd.y1)], D(fa, fb, 0),
+            [[0, 0], [(vd.s1 - vd.s0) / m, 0], [(vd.s1 - vd.s0) / m, 1], [0, 1]], branco);
+        }
+        continue;
+      }
       const hl = c.larg / 2, hp = c.prof / 2;
       const altura = c.andares * 2.9 + 0.35 + (c.telhado === "laje" ? 0.8 : 0);
       const fund = c.fundacao - c.piso;
@@ -748,6 +856,25 @@ export class Maquete {
     const casasP = new THREE.Mesh(mk(paredes), mP), casasT = new THREE.Mesh(mk(telhados), mT);
     for (const m of [casasP, casasT]) { m.castShadow = m.receiveShadow = true; m.customDepthMaterial = sombraDe("objeto", this.U); }
     this.grupoCasas.add(casasP, casasT);
+    if (madeira.P.length) {
+      const mM = elevar(new THREE.MeshStandardMaterial({ map: texturaRipado(), roughness: 0.72, side: THREE.DoubleSide }), "objeto", this.U);
+      const casasM = new THREE.Mesh(mk(madeira), mM);
+      casasM.castShadow = casasM.receiveShadow = true;
+      casasM.customDepthMaterial = sombraDe("objeto", this.U);
+      this.grupoCasas.add(casasM);
+    }
+    if (vidros.P.length) {
+      // vidro fumê refletindo o céu; à noite acende (interior iluminado, caixilho escuro)
+      const texVidro = texturaVidro();
+      this.matVidro = elevar(new THREE.MeshStandardMaterial({
+        // luz ambiente da cena é baixa (sombras marcadas): vidro metálico ficaria preto
+        color: 0x5d7688, map: texVidro, emissiveMap: texVidro, roughness: 0.14, metalness: 0.2,
+        emissive: 0xffcf94, emissiveIntensity: 0, side: THREE.DoubleSide,
+      }), "objeto", this.U);
+      const casasV = new THREE.Mesh(mk(vidros), this.matVidro);
+      casasV.receiveShadow = true;
+      this.grupoCasas.add(casasV);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -960,7 +1087,7 @@ export class Maquete {
       const ox = ray.origin.x - x, oz = ray.origin.z - z;
       const o = [ox * ux + oz * uz, ray.origin.y, ox * vx + oz * vz];
       const d = [ray.direction.x * ux + ray.direction.z * uz, ray.direction.y, ray.direction.x * vx + ray.direction.z * vz];
-      const y0 = (c.piso - ref) * ex, y1 = y0 + c.andares * 2.9 + 1.5;
+      const y0 = (c.piso - ref) * ex, y1 = y0 + (c.volumes ? Math.max(...c.volumes.map((v) => v.y1)) : c.andares * 2.9 + 1.5);
       const lo = [-c.larg / 2, y0, -c.prof / 2], hi = [c.larg / 2, y1, c.prof / 2];
       let t0 = 0, t1 = Infinity;
       for (let a = 0; a < 3 && t0 <= t1; a++) {

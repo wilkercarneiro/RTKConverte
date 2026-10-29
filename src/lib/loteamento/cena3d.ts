@@ -51,9 +51,27 @@ export interface Casa {
   piso: number;
   fundacao: number;
   andares: number;
-  telhado: "duas" | "quatro" | "laje";
+  telhado: "duas" | "quatro" | "laje" | "plano";
   corParede: number;
   corTelhado: number;
+  /** casa moderna: volumes e vidros no referencial da casa (a ao longo de u,
+   *  b ao longo de esquerda(u), b = −prof/2 é a fachada da rua; y acima do piso) */
+  volumes?: Volume[];
+  vidros?: Vidro[];
+}
+
+export type Acabamento = "parede" | "madeira" | "grafite" | "concreto";
+
+export interface Volume {
+  a0: number; a1: number; b0: number; b1: number; y0: number; y1: number;
+  acab: Acabamento;
+  /** laje impermeabilizada com platibanda no topo (senão topo liso) */
+  platibanda: boolean;
+}
+
+/** Pano de vidro numa face do volume: 0 frente (b0), 1 lado a1, 2 fundo (b1), 3 lado a0; s0..s1 em metros ao longo da face. */
+export interface Vidro {
+  vol: number; face: 0 | 1 | 2 | 3; s0: number; s1: number; y0: number; y1: number;
 }
 
 export interface Arvore {
@@ -388,8 +406,77 @@ export function montarCena(res: Resultado, params: Parametros, terreno: GradeTer
 // Simulação de ocupação: uma casa por lote, de frente para a rua
 // ---------------------------------------------------------------------------
 
-const PAREDES = [0xf4efe6, 0xeee4d3, 0xe9e2d6, 0xf2e8dc, 0xdfe3e6, 0xf6f1e9, 0xe8d5bd, 0xd9cbb4, 0xc9d3cf, 0xefd9c4];
-const TELHAS = [0x9c4a2f, 0xa65535, 0x8a3f28, 0xb36540, 0x5b5f66, 0x4a4e55, 0x7d3a26];
+// casa moderna: branco, off-white e cinzas claros; laje de brita cinza
+const PAREDES = [0xf4f3ef, 0xf1efe9, 0xeae7e0, 0xe2e1dc, 0xd6d7d4, 0xf6f4ee, 0xe6e2d8];
+const LAJES = [0x8f918d, 0x9a9b96, 0x84878a];
+export const PE_DIREITO = 3.1, PLATIBANDA = 0.6;
+
+/**
+ * Casa moderna dentro da planta larg × prof: térrea (corpo com laje + volume
+ * alto de destaque + garagem coberta em balanço) ou sobrado (térreo recuado e
+ * caixa superior em balanço sobre a frente). Tudo cabe na planta.
+ */
+export function comporModerna(larg: number, prof: number, andares: number, rnd: () => number): { volumes: Volume[]; vidros: Vidro[] } {
+  const hl = larg / 2, hp = prof / 2, H = PE_DIREITO, P = PLATIBANDA;
+  const volumes: Volume[] = [], vidros: Vidro[] = [];
+  const s = rnd() < 0.5 ? -1 : 1; // lado da garagem
+  const recuo = prof >= 8 ? Math.min(2.8, prof * 0.22) : 0;
+  const F = -hp + recuo; // linha da fachada
+  const destaque: Acabamento[] = ["madeira", "grafite", "concreto", "madeira"];
+  const acDestaque = destaque[Math.floor(rnd() * destaque.length)];
+  const vid = (vol: number, face: 0 | 1 | 2 | 3, s0: number, s1: number, y0: number, y1: number) => {
+    if (s1 - s0 >= 0.8) vidros.push({ vol, face, s0, s1, y0, y1 });
+  };
+  const faixa = (lo: number, hi: number) => (s > 0 ? [lo, hi] : [-hi, -lo]) as [number, number];
+  if (andares >= 2) {
+    // térreo recuado meio metro da caixa de cima
+    const t0 = Math.min(F + 0.6, hp - 4);
+    volumes.push({ a0: -hl, a1: hl, b0: t0, b1: hp, y0: 0, y1: H, acab: rnd() < 0.5 ? "concreto" : "parede", platibanda: false });
+    // caixa superior: largura cheia nas casas estreitas, deslocada nas largas
+    const w = larg >= 9 ? larg * (0.68 + 0.14 * rnd()) : larg;
+    const [ua0, ua1] = larg >= 9 ? faixa(hl - w, hl) : [-hl, hl];
+    const ub0 = Math.max(-hp + 0.15, F - 1.2), ub1 = Math.max(ub0 + 4, hp - 1.2 - rnd() * 1.5);
+    const acSup: Acabamento = acDestaque === "concreto" ? "parede" : rnd() < 0.55 ? "parede" : acDestaque;
+    volumes.push({ a0: ua0, a1: ua1, b0: ub0, b1: ub1, y0: H, y1: 2 * H + P, acab: acSup, platibanda: true });
+    // frente de cima: ripado numa ponta, faixa de vidro no resto
+    const wSup = ua1 - ua0, rip = acSup === "madeira" ? 0 : wSup * 0.34;
+    if (rip) {
+      const [r0, r1] = s > 0 ? [ua0, ua0 + rip] : [ua1 - rip, ua1];
+      // placa saliente 12 cm da fachada (nada de face coincidente)
+      volumes.push({ a0: r0, a1: r1, b0: ub0 - 0.12, b1: ub0, y0: H + 0.25, y1: 2 * H + P - 0.05, acab: "madeira", platibanda: false });
+    }
+    const v0 = s > 0 ? rip + 0.4 : 0.4, v1 = s > 0 ? wSup - 0.4 : wSup - rip - 0.4;
+    vid(1, 0, v0, v1, H + 0.9, H + 2.6);
+    vid(1, 2, 0.6, wSup - 0.6, H + 0.9, H + 2.4);
+    // térreo: vidro do social do lado oposto à garagem, porta-janela no fundo
+    vid(0, 0, s > 0 ? 0.5 : larg * 0.45, s > 0 ? larg * 0.55 : larg - 0.5, 0.1, 2.5);
+    vid(0, 2, larg * 0.25, larg * 0.75, 0.1, 2.4);
+  } else {
+    // volume alto de destaque (pé-direito duplo) do lado oposto à garagem
+    const w2 = Math.max(2.6, larg * (0.34 + 0.1 * rnd()));
+    const [d0, d1] = s > 0 ? [-hl, -hl + w2] : [hl - w2, hl];
+    const corpoB0 = Math.min(F + 0.5, hp - 4);
+    const db1 = Math.max(corpoB0 + 3, hp * (0.2 + 0.4 * rnd()));
+    // o corpo encosta no destaque por dentro (sem faces coincidentes)
+    const [c0, c1] = s > 0 ? [d1 - 0.3, hl] : [-hl, d0 + 0.3];
+    volumes.push({ a0: c0, a1: c1, b0: corpoB0, b1: hp, y0: 0, y1: H + P, acab: "parede", platibanda: true });
+    volumes.push({ a0: d0, a1: d1, b0: Math.max(-hp, F), b1: db1, y0: 0, y1: H + 1.3 + P, acab: acDestaque, platibanda: true });
+    // garagem: laje fina em balanço na frente do corpo
+    if (recuo > 0) {
+      const gw = Math.min(c1 - c0 - 0.3, Math.max(3, larg * 0.4));
+      const [g0, g1] = s > 0 ? [c1 - gw, c1] : [c0, c0 + gw];
+      volumes.push({ a0: g0, a1: g1, b0: Math.max(-hp, F - 0.2), b1: corpoB0, y0: H - 0.3, y1: H + 0.05, acab: "parede", platibanda: false });
+    }
+    const wc = c1 - c0, wd = d1 - d0;
+    // corpo: vidro na frente (fora da garagem) e no fundo
+    vid(0, 0, s > 0 ? 0.6 : wc * 0.5, s > 0 ? wc * 0.5 : wc - 0.6, 0.1, 2.5);
+    vid(0, 2, wc * 0.2, wc * 0.8, 0.1, 2.4);
+    // destaque: pano alto de vidro, ou rasgo horizontal no ripado
+    if (acDestaque === "madeira") vid(1, 0, wd * 0.2, wd * 0.8, 1.0, 2.4);
+    else vid(1, 0, 0.45, wd - 0.45, 0.1, H + 0.9);
+  }
+  return { volumes, vidros };
+}
 
 /** Frente do lote para orientar a casa: a frente escolhida, senão a rua mais longa. */
 function frenteDaCasa(l: Lote): { a: Pt; b: Pt } | null {
@@ -425,8 +512,8 @@ function montarCasas(res: Resultado, g: Grade3D): Casa[] {
     let ue = esquerda(eixo);
     if (dot(ue, u) < 0) ue = [-ue[0], -ue[1]];
     const quadros: [Pt, Pt][] = [[u, v], [ue, eixo]];
-    const andares = rnd() < 0.24 ? 2 : 1, telhado = rnd() < 0.6 ? "quatro" as const : "duas" as const;
-    const corParede = PAREDES[Math.floor(rnd() * PAREDES.length)], corTelhado = TELHAS[Math.floor(rnd() * TELHAS.length)];
+    const andares = rnd() < 0.35 ? 2 : 1;
+    const corParede = PAREDES[Math.floor(rnd() * PAREDES.length)], corTelhado = LAJES[Math.floor(rnd() * LAJES.length)];
     for (let tent = 0; tent < 7; tent++) {
       for (const [U, V] of quadros) {
         // anda pela profundidade (do recuo para dentro) e desliza pela testada
@@ -439,10 +526,13 @@ function montarCasas(res: Resultado, g: Grade3D): Casa[] {
             // recuo frontal medido da rua, em todos os cantos
             if (cantos.some((p) => dot(sub(p, fr.a), v) < recuo - 0.01) || !pts.every(cabe)) continue;
             const hs = cantos.map((p) => cotaFinal(g, p));
+            // u com esquerda(u) para dentro do lote: a fachada (b = −prof/2) dá para a rua
+            const uf: Pt = dot(esquerda(U), V) >= 0 ? U : [-U[0], -U[1]];
             out.push({
-              lote: idx, c, u: U, larg, prof: fundo,
+              lote: idx, c, u: uf, larg, prof: fundo,
               piso: Math.max(...hs) + 0.25, fundacao: Math.min(...hs) - 0.4,
-              andares, telhado, corParede, corTelhado,
+              andares, telhado: "plano", corParede, corTelhado,
+              ...comporModerna(larg, fundo, andares, rnd),
             });
             return;
           }
