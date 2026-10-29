@@ -365,8 +365,9 @@ export class Maquete {
   private ceu: Ceu | null = null;
   private ceuEnv: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial> | null = null;
   /** paisagem: céu no fundo, entorno de satélite e névoa (senão, a maquete no estúdio) */
-  private paisagem = false;
-  private paisagemUsuario = false;
+  // abre já na paisagem (céu, vizinhança, névoa): o estúdio é a opção
+  private paisagem = true;
+  private paisagemUsuario = true;
   private estudio: THREE.Object3D[] = [];
   private entorno: THREE.Mesh | null = null;
   private nevoa = new THREE.Fog(0x9fb4c8, 1e8, 2e8);

@@ -112,7 +112,7 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
   const [cena, setCena] = useState<Cena | null>(null);
   const [pronto, setPronto] = useState(false);
   const [modo, setModo] = useState<ModoChao>("projeto");
-  const [camadas, setCamadas] = useState({ casas: true, arvores: true, meioFio: true, sombras: true, paisagem: false, maquete: false });
+  const [camadas, setCamadas] = useState({ casas: true, arvores: true, meioFio: true, sombras: true, paisagem: true, maquete: false });
   const [exag, setExag] = useState(1);
   const [hora, setHora] = useState(9.5);
   const [depois, setDepois] = useState(true);

@@ -69,9 +69,9 @@ export class Pos {
     this.ao = new N8AOPass(scene, camera, w, h);
     const c = this.ao.configuration;
     // raio em metros (casa ~3 m de pé-direito); meia resolução com upsampling pela profundidade
-    c.aoRadius = 4.5;
-    c.distanceFalloff = 1.2;
-    c.intensity = 4;
+    c.aoRadius = 6;
+    c.distanceFalloff = 1.4;
+    c.intensity = 6;
     c.aoSamples = 12;
     c.denoiseSamples = 6;
     c.denoiseRadius = 10;
