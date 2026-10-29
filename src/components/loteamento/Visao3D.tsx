@@ -343,7 +343,7 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
             t?.setMudo(!somRef.current);
             const r = await maq.current!.gravarVoo(t ? { faixa: t.faixa, tocar: (d) => void t.tocar(d) } : undefined);
             baixar(r.blob, `APRESENTACAO_${base}.${r.ext}`);
-          })} title="Vídeo pronto para o cliente (~1 min, com trilha): o terreno de hoje virando o projeto, o voo pela rua de entrada, a área verde e o miolo, o dia virando noite e os números">
+          })} title="Vídeo pronto para o cliente (~2 min, com trilha): o terreno de hoje virando o projeto, o passeio por dentro das ruas parando na frente das casas, a área verde, o institucional, o dia virando noite e os números">
             <svg viewBox="0 0 24 24"><path d="M3 7h12v10H3zM15 10l6-3v10l-6-3z" /></svg>{ocupado === "video" ? "Gravando…" : "Vídeo de apresentação"}
           </button>
           <button disabled={!pronto || !!ocupado} onClick={() => acao("glb", async () => baixar(await maq.current!.exportarGlb(), `MAQUETE_${base}.glb`))} title="Modelo 3D (glTF/GLB) para SketchUp, Blender, Twinmotion, Lumion">

@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { perimetro } from "./fixtures/loteamento_gleba.mjs";
 import { projetoNovo } from "../src/lib/loteamento/modelo.ts";
-import { calcular, viarioDe } from "../src/lib/loteamento/calculo.ts";
+import { calcular, fmt, viarioDe } from "../src/lib/loteamento/calculo.ts";
 import { gerarPropostas } from "../src/lib/loteamento/auto.ts";
 import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
 import {
@@ -17,7 +17,7 @@ import {
 } from "../src/lib/loteamento/edicao.ts";
 import { alternarAcesso } from "../src/lib/loteamento/acoes.ts";
 import { cotaFinal, loteNoPonto, montarCena } from "../src/lib/loteamento/cena3d.ts";
-import { camNoTempo, roteiroDoVoo } from "../src/lib/loteamento/cinema3d.ts";
+import { camNoTempo, cruzamentos, percurso, roteiroDoVoo } from "../src/lib/loteamento/cinema3d.ts";
 import { pontoInterno } from "../src/lib/loteamento/auto.ts";
 import { criarPlano, paraPlano, paraUtm } from "../src/lib/loteamento/plano.ts";
 import { areaPol, areaPols, comprimento, dentroPol, diferenca, pontoNaPolilinha, quinas, uniao } from "../src/lib/loteamento/geom.ts";
@@ -672,7 +672,7 @@ test("maquete 3D: roteiro do voo de drone (tomadas no projeto, câmera sempre ac
   };
   for (const abertura of [true, false]) {
     const r = roteiroDoVoo(mundo, abertura);
-    assert.ok(r.duracao > 35 && r.duracao < 90, `duração ${r.duracao} s`);
+    assert.ok(r.duracao > 60 && r.duracao < 170, `duração ${r.duracao} s`);
     // o drone desce até ~5 m sobre a rua: nunca atravessa uma casa (planta + 1,5 m de folga, até o telhado)
     const casas = c.casas.filter((k) => k.volumes);
     for (let t = 0; t <= r.duracao; t += 0.2) {
@@ -684,6 +684,17 @@ test("maquete 3D: roteiro do voo de drone (tomadas no projeto, câmera sempre ac
         const a = d[0] * k.u[0] + d[1] * k.u[1], b = -d[0] * k.u[1] + d[1] * k.u[0];
         const topo = (k.piso - ref) + Math.max(...k.volumes.map((v) => v.y1));
         if (Math.abs(a) < k.larg / 2 + 1.5 && Math.abs(b) < k.prof / 2 + 1.5) assert.ok(pos[1] > topo + 1, `câmera dentro da casa do lote ${k.lote} em t=${t.toFixed(1)}`);
+      }
+    }
+    // nem dentro da copa de uma árvore (o passeio vai a 5 m, entre as árvores da calçada)
+    for (let t = 0; t <= r.duracao; t += 0.2) {
+      const { pos } = camNoTempo(r, t);
+      const p = [pos[0] + c.centro[0], -pos[2] + c.centro[1]];
+      for (const a of c.arvores) {
+        const dx = p[0] - a.p[0], dy = p[1] - a.p[1];
+        if (Math.abs(dx) > 12 || Math.abs(dy) > 12) continue;
+        const yc = a.z - ref + a.altura - a.copa * 0.85;
+        assert.ok(Math.hypot(dx, dy, pos[1] - yc) > a.copa * 0.95, `câmera dentro da copa de uma árvore em t=${t.toFixed(1)}`);
       }
     }
     assert.deepEqual(r.legendas.map((l) => l.capitulo), r.legendas.map((_, i) => String(i + 1).padStart(2, "0")));
@@ -699,9 +710,47 @@ test("maquete 3D: roteiro do voo de drone (tomadas no projeto, câmera sempre ac
     // a primeira legenda traz o número real de lotes; a rua de entrada aparece
     assert.match(r.legendas[0].titulo, new RegExp(`^${r0.lotes.length} lotes`));
     assert.ok(r.legendas.some((l) => /^Ruas de/.test(l.titulo)));
-    assert.ok(r.legendas.some((l) => l.titulo === "Casas simuladas"), "sem a tomada da casa modelo");
+    // paradas em frente às casas: a ficha do lote traz os números reais do lote
+    const fichas = r.legendas.filter((l) => /^Quadra .+ · Lote \d+$/.test(l.titulo));
+    assert.ok(fichas.length >= 2, `só ${fichas.length} parada(s) em casa`);
+    for (const f of fichas) {
+      const [, q, n] = f.titulo.match(/^Quadra (.+) · Lote (\d+)$/);
+      const l = r0.lotes.find((x) => x.quadra === q && x.numero === +n);
+      assert.ok(l && f.texto.startsWith(`${fmt(l.area, 0)} m²`), `ficha errada: ${f.titulo} ${f.texto}`);
+    }
+    // o passeio é DENTRO das ruas (baixo, sobre a caixa da rua) e para de verdade nas casas
+    const caixas = r0.ruas.flatMap((x) => x.pols);
+    let naRua = 0, parado = 0, ant = null;
+    for (let t = 0; t <= r.duracao; t += 0.1) {
+      const { pos } = camNoTempo(r, t);
+      const p = [pos[0] + c.centro[0], -pos[2] + c.centro[1]];
+      if (pos[1] - mundo.chao(p) < 8 && caixas.some((g) => dentroPol(p, g))) naRua += 0.1;
+      if (ant && Math.hypot(pos[0] - ant[0], pos[1] - ant[1], pos[2] - ant[2]) < 0.005) parado += 0.1;
+      ant = pos;
+    }
+    assert.ok(naRua > 30, `só ${naRua.toFixed(1)} s dentro das ruas`);
+    assert.ok(parado >= 2 * fichas.length, `parado só ${parado.toFixed(1)} s para ${fichas.length} casas`);
+    for (let i = 1; i < r.legendas.length; i++) assert.ok(r.legendas[i].t0 >= r.legendas[i - 1].t1, "legendas encavaladas");
     for (const l of r.legendas) assert.ok(l.t1 > l.t0 && l.t1 <= r.duracao + 1);
   }
+});
+
+test("maquete 3D: rota do drone vira nas esquinas (cruzamentos em T e em X)", () => {
+  const nos = cruzamentos(r0.ruas);
+  assert.ok(nos.length >= r0.ruas.length - 1, `só ${nos.length} cruzamentos`);
+  for (const n of nos) {
+    const pa = pontoNaPolilinha(r0.ruas[n.a].eixo, n.sa).pt, pb = pontoNaPolilinha(r0.ruas[n.b].eixo, n.sb).pt;
+    assert.ok(Math.hypot(pa[0] - pb[0], pa[1] - pb[1]) < r0.ruas[n.b].largura, "cruzamento fora dos eixos");
+  }
+  // de qualquer rua comprida, a rota segue e vira para outra
+  let viradas = 0;
+  r0.ruas.forEach((rua, i) => {
+    if (comprimento(rua.eixo) < 150) return;
+    const rt = percurso(r0.ruas, nos, { rua: i, s: 8, sentido: 1 }, 250, new Set());
+    if (rt.trechos.length > 1) viradas++;
+    for (let k = 1; k < rt.pts.length; k++) assert.ok(Math.hypot(rt.pts[k][0] - rt.pts[k - 1][0], rt.pts[k][1] - rt.pts[k - 1][1]) < 8, "rota com salto");
+  });
+  assert.ok(viradas >= 2, `só ${viradas} rota(s) viram de rua`);
 });
 
 test("geração: lotes com no máximo 4 quinas e quadras entre ruas fundo com fundo", () => {
