@@ -375,6 +375,8 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
   const selLotes = res ? lotesDaSelecao(res, sel) : [];
   const parteSel = selLotes.length === 1 ? lotesOrdem.indexOf(selLotes[0]) : -1;
   const lsel = parteSel >= 0 ? lotesOrdem[parteSel] : null;
+  // a área digitada é de uma parte: trocou de parte, o campo volta vazio
+  useEffect(() => setAreaAlvo(""), [parteSel]);
   const alvoArea = (k: number) => (rd?.ok ? (fracoes.length === nPartes ? fracoes[k] / fracoes.reduce((s, f) => s + f, 0) : 1 / nPartes) * rd.partes.reduce((s, p) => s + p.areaM2, 0) : 0);
   const nomeLado = (l: Lote["lados"][number]) => {
     if (l.tipo === "lote") {
@@ -465,46 +467,8 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
       )}
 
       {!(ehGleba && vistaGleba === "pontos") && (<>
-      <div className="dv-gerar">
-        <label className="dv-campo">{ehGleba ? "Quantas glebas" : "Quantas partes"}
-          <div className="dv-contador">
-            <button type="button" onClick={() => { const v = Math.max(2, nPartes - 1); setN(v); setPct([]); regerar(v, iguais, [], azManual, inverter); }} disabled={nPartes <= 2} aria-label="Menos uma parte">−</button>
-            <input type="number" min={2} max={30} value={n} onChange={(e) => setN(Math.max(2, Math.min(30, Math.round(Number(e.target.value)) || 2)))}
-              onBlur={() => { setPct([]); regerar(n, iguais, [], azManual, inverter); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
-            <button type="button" onClick={() => { const v = Math.min(30, nPartes + 1); setN(v); setPct([]); regerar(v, iguais, [], azManual, inverter); }} disabled={nPartes >= 30} aria-label="Mais uma parte">+</button>
-          </div>
-        </label>
-        <div className="dv-campo">
-          <span>Área de cada {ehGleba ? "gleba" : "parte"}</span>
-          <div className="dv-opcoes">
-            <label><input type="radio" checked={iguais} onChange={() => { setIguais(true); regerar(n, true, pct, azManual, inverter); }} /> {ehGleba ? "Glebas iguais" : "Partes iguais"}</label>
-            <label><input type="radio" checked={!iguais} onChange={() => setIguais(false)} /> Frações diferentes (na tabela)</label>
-          </div>
-        </div>
-        <div className="dv-campo dv-direcao">
-          <span>Direção das divisas<Dica>As opções são as direções que o motor recomenda (passe o mouse em cada uma para ver quantos metros de cerca nova). Para girar à mão, use a régua "Giro das divisas" dentro do mapa: a divisão é refeita na hora. "Outro lado", ao lado dela, inverte de onde sai a primeira parte.</Dica></span>
-          <div className="dv-sugestoes">
-            {sugestoes.map((s, i) => (
-              <button type="button" key={i} className={Math.abs(s.azimute - (azManual ?? sugestoes[0]?.azimute ?? -1)) < 0.05 ? "ativa" : ""}
-                onClick={() => { const az = i === 0 ? null : s.azimute; setAzManual(az); regerar(n, iguais, pct, az, inverter); }}
-                title={`${s.divisas.length} divisa(s), ${fmtM(s.divisas.reduce((a, d) => a + d.comprimentoM, 0))} m de cerca nova`}>
-                {i === 0 ? "Recomendada" : `Opção ${i + 1}`} · {fmtM(s.azimute)}°
-                {temEstrada && <small>{s.partes.every((p) => p.frenteEstradaM >= 5) ? "todas com frente" : "sem frente p/ alguma"}</small>}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="dv-campo dv-botoes">
-          <span>Ajustes<Dica>"Ajustar lotes" deixa todas as {ehGleba ? "glebas" : "partes"} do mesmo tamanho (ou na fração de cada uma) mantendo o desenho; se a forma não deixar, divide de novo na direção atual. "Gerar de novo" descarta os ajustes da prancheta. Ctrl+Z volta nos dois.</Dica></span>
-          <div className="dv-botoes-linha">
-            <button type="button" className="principal" onClick={ajustarLotes} disabled={!projeto || !res}>Ajustar lotes</button>
-            <button type="button" onClick={() => regerar(n, iguais, pct, azManual, inverter)}>Gerar de novo</button>
-          </div>
-        </div>
-      </div>
-
       {!projeto || !res ? (
-        <div className="dv-alerta">{msg?.t ?? "Não foi possível dividir este imóvel com divisas retas. Confira o perímetro ou escolha outra direção."}</div>
+        <div className="dv-alerta">{msg?.t ?? "Não foi possível dividir este imóvel com divisas retas. Confira o perímetro ou gire as divisas."}</div>
       ) : (
         <div className={`lot-area-trabalho dv-prancheta${verAvisos ? " com-avisos" : ""}`}
           onPointerEnter={() => { dentro.current = true; }} onPointerLeave={() => { dentro.current = false; }}>
@@ -563,132 +527,101 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
             </form>
           </div>
 
+          {/* Painel das partes: quantas partes e "Ajustar lotes" no topo; cada
+              parte é uma sanfona — a escolhida (no desenho ou aqui) abre com os
+              dados de quem recebe, a área e a metragem; as outras ficam
+              encolhidas embaixo, a um clique de distância. */}
           <aside className="lot-painel dv-painel">
-            {lsel ? (
-              <>
-                <header>
-                  <span className="dv-cor" style={{ background: CORES_PARTE[parteSel % CORES_PARTE.length] }} />
-                  <h3>{nomesPartes[parteSel]}</h3>
-                  <button type="button" className="fantasma" onClick={() => setSel(null)} aria-label="Fechar">×</button>
-                </header>
-                {linhas[parteSel]?.herdeiro && <div className="sub">{linhas[parteSel].herdeiro}</div>}
-                <div className="dv-detalhe-totais">
-                  <div><span>Área total</span><b className="mono">{fmtM2(rd?.ok ? rd.partes[parteSel].areaM2 : lsel.area)} m²</b><small className="mono">{fmt((rd?.ok ? rd.partes[parteSel].areaM2 : lsel.area) / 10000)} ha</small></div>
-                  <div><span>Perímetro</span><b className="mono">{fmtM2(lsel.lados.reduce((s, l) => s + l.comp, 0))} m</b><small>{lsel.lados.length} lados</small></div>
-                  {rd?.ok && <div><span>Diferença p/ a cota</span><b className="mono">{(rd.partes[parteSel].areaM2 - alvoArea(parteSel) >= 0 ? "+" : "") + fmtM2(rd.partes[parteSel].areaM2 - alvoArea(parteSel))} m²</b></div>}
-                </div>
-                <table className="dv-lados">
-                  <thead><tr><th>Lado</th><th>Medida</th><th>Confronta com</th></tr></thead>
-                  <tbody>
-                    {lsel.lados.map((l, j) => (
-                      <tr key={j} className={l.tipo === "via" ? "dv-m-estrada" : l.tipo === "lote" ? "dv-m-divisa" : ""}>
-                        <td className="mono">{j + 1}</td>
-                        <td className="mono">{fmtM2(l.comp)} m</td>
-                        <td>{nomeLado(l)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <form className="dv-area-alvo" onSubmit={(e) => { e.preventDefault(); const v = Number(areaAlvo.replace(/\./g, "").replace(",", ".")); if (v > 0) rodarComando(`area ${v}`); }}>
-                  <label>Deixar com área de
-                    <input value={areaAlvo} onChange={(e) => setAreaAlvo(e.target.value)} placeholder={fmtM2(alvoArea(parteSel))} className="mono" />m²
-                  </label>
-                  <button type="submit">Aplicar</button>
-                  {rd?.ok && <button type="button" className="fantasma" onClick={() => rodarComando(`area ${alvoArea(parteSel).toFixed(2)}`)} title="A divisa desliza até a parte ficar com a cota dela">Acertar a cota</button>}
-                </form>
-                <div className="acoes-linha">
-                  <button type="button" onClick={() => rodarComando("dividir 2")}>Dividir em 2</button>
-                  <button type="button" onClick={() => rodarComando("unir")}>Unir</button>
-                  <Dica>Arraste as quinas (quadrados) e as divisas (barras verdes) da parte selecionada; a quina no perímetro corre por ele e a vizinha se ajusta.</Dica>
-                </div>
-              </>
-            ) : (
-              <>
-                <header><h3>{ehGleba ? "Glebas" : "Partes"}<Dica lado="baixo">Clique numa {ehGleba ? "gleba" : "parte"} (no desenho ou aqui) para ver a medida de cada lado e a área total. Roda do mouse aproxima; arrastar o fundo move o desenho.</Dica></h3></header>
-                <ul className="dv-lista">
-                  {lotesOrdem.map((l, k) => (
-                    <li key={l.id} onClick={() => selecionarParte(k)}>
-                      <span className="dv-cor" style={{ background: CORES_PARTE[k % CORES_PARTE.length] }} />
-                      <b>{nomesPartes[k]}</b>
-                      <span className="mono">{fmtM2(rd?.ok ? rd.partes[k].areaM2 : l.area)} m²</span>
-                      <small className="mono">{fmt((rd?.ok ? rd.partes[k].areaM2 : l.area) / 10000)} ha</small>
-                    </li>
-                  ))}
-                </ul>
-                {rd?.ok && <div className="sub">{rd.divisas.length} divisa(s) · {fmtM(rd.divisas.reduce((s, d) => s + d.comprimentoM, 0))} m de cerca · {rd.novos.length} marcos novos · maior diferença entre as partes e a cota: {rd.erroAreaM2 < 0.05 ? "< 0,1" : fmtM2(rd.erroAreaM2)} m²</div>}
-              </>
-            )}
-            {rd && !rd.ok && <div className="dv-alerta">{rd.motivo}</div>}
-          </aside>
-        </div>
-      )}
+            <div className="dv-painel-topo">
+              <b>{ehGleba ? "Glebas" : "Partes"}</b>
+              <div className="dv-contador dv-contador-p">
+                <button type="button" onClick={() => { const v = Math.max(2, nPartes - 1); setN(v); setPct([]); regerar(v, iguais, [], azManual, inverter); }} disabled={nPartes <= 2} aria-label={ehGleba ? "Menos uma gleba" : "Menos uma parte"}>−</button>
+                <input type="number" min={2} max={30} value={n} aria-label={ehGleba ? "Quantas glebas" : "Quantas partes"}
+                  onChange={(e) => setN(Math.max(2, Math.min(30, Math.round(Number(e.target.value)) || 2)))}
+                  onBlur={() => { if (n !== nPartes) { setPct([]); regerar(n, iguais, [], azManual, inverter); } }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                <button type="button" onClick={() => { const v = Math.min(30, nPartes + 1); setN(v); setPct([]); regerar(v, iguais, [], azManual, inverter); }} disabled={nPartes >= 30} aria-label={ehGleba ? "Mais uma gleba" : "Mais uma parte"}>+</button>
+              </div>
+              <button type="button" className="fantasma dv-ajustar" onClick={ajustarLotes} title="Deixa todas do mesmo tamanho (Ctrl+Z volta)">⚖ Ajustar lotes</button>
+              <Dica lado="baixo">Clique numa {ehGleba ? "gleba" : "parte"} (no desenho ou aqui) para abrir os dados dela; as outras ficam encolhidas embaixo. "Ajustar lotes" deixa todas do mesmo tamanho mantendo o desenho — se a forma não deixar, divide de novo na direção do giro. Arraste quinas e divisas no desenho para ajustar à mão; roda do mouse aproxima.</Dica>
+            </div>
 
-      {res && (
-        <div className="tabela-scroll">
-          <table className="dv-tabela">
-            <thead>
-              <tr><th></th><th>{ehGleba ? "Gleba" : "Parte"}</th>{!ehGleba && <><th>Herdeiro / quem recebe</th><th>CPF</th><th>Denominação do GEO da parte</th></>}<th>Fração</th><th>Área (ha)</th><th>Área (m²)</th><th>Perímetro (m)</th>{temEstrada && <th>Frente p/ estrada</th>}</tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: nPartes }, (_, i) => {
-                const l = linhas[i] ?? infoDe(undefined, i);
-                const p = rd?.ok ? rd.partes[i] : null;
+            <div className="dv-sanfona">
+              {lotesOrdem.map((l, k) => {
+                const aberta = k === parteSel;
+                const info = linhas[k] ?? infoDe(undefined, k);
+                const area = rd?.ok ? rd.partes[k]?.areaM2 ?? l.area : l.area;
+                const p = rd?.ok ? rd.partes[k] : null;
                 return (
-                  <tr key={i} className={parteSel === i ? "dv-linha-sel" : ""}>
-                    <td><button type="button" className="dv-cor dv-cor-btn" style={{ background: CORES_PARTE[i % CORES_PARTE.length] }} onClick={() => selecionarParte(i)} title="Mostrar na prancheta" /></td>
-                    <td><input value={l.nome} onChange={(e) => editarLinha(i, { nome: e.target.value })} placeholder={`PARTE ${i + 1}`} /></td>
-                    {!ehGleba && <>
-                      <td><input value={l.herdeiro} onChange={(e) => editarLinha(i, { herdeiro: e.target.value.toUpperCase() })} placeholder={servico.detentor_nome ?? "nome completo"} /></td>
-                      <td><input value={l.cpf} onChange={(e) => editarLinha(i, { cpf: e.target.value })} placeholder="000.000.000-00" className="mono" /></td>
-                      <td><input value={l.denominacao} onChange={(e) => editarLinha(i, { denominacao: e.target.value.toUpperCase() })}
-                        placeholder={denominacaoDaParte(servico, { nome: l.nome || `PARTE ${i + 1}`, denominacao: null }).toUpperCase()} /></td>
-                    </>}
-                    <td>
-                      {iguais ? <span className="mono">1/{nPartes}</span> : (
-                        <span className="dv-pct">
-                          <input type="number" min={0.01} step={0.01} value={Math.round((fracoes[i] ?? 0) * 100) / 100}
-                            onChange={(e) => setPct(Array.from({ length: n }, (_, j) => (j === i ? Number(e.target.value) : fracoes[j])))}
-                            onBlur={() => regerar(n, false, pct, azManual, inverter)} />%
-                        </span>
-                      )}
-                    </td>
-                    <td className="mono">{p ? fmt(p.areaM2 / 10000) : "—"}</td>
-                    <td className="mono">{p ? fmtM2(p.areaM2) : "—"}</td>
-                    <td className="mono">{p ? fmtM2(p.perimetroM) : "—"}</td>
-                    {temEstrada && <td className={`mono${p && p.frenteEstradaM < 5 ? " dv-sem" : ""}`}>{p ? `${fmtM(p.frenteEstradaM)} m` : "—"}</td>}
-                  </tr>
+                  <div key={l.id} className={`dv-item${aberta ? " aberta" : ""}`}>
+                    <button type="button" className="dv-item-cabeca" aria-expanded={aberta}
+                      onClick={() => (aberta ? setSel(null) : selecionarParte(k))}>
+                      <span className="dv-cor" style={{ background: CORES_PARTE[k % CORES_PARTE.length] }} />
+                      <span className="dv-item-nome">
+                        <b>{nomesPartes[k]}</b>
+                        {!ehGleba && <small>{info.herdeiro || "sem herdeiro"}</small>}
+                      </span>
+                      <span className="dv-item-area mono">{fmtM2(area)} m²<small>{fmt(area / 10000)} ha</small></span>
+                      <span className="dv-item-seta" aria-hidden="true">▾</span>
+                    </button>
+                    {aberta && (
+                      <div className="dv-item-corpo">
+                        <div className="dv-campos">
+                          <label><span>Nome</span>
+                            <input value={info.nome} onChange={(e) => editarLinha(k, { nome: e.target.value })} placeholder={`PARTE ${k + 1}`} />
+                          </label>
+                          {!ehGleba && <>
+                            <label><span>Herdeiro / quem recebe</span>
+                              <input value={info.herdeiro} onChange={(e) => editarLinha(k, { herdeiro: e.target.value.toUpperCase() })} placeholder={servico.detentor_nome ?? "nome completo"} />
+                            </label>
+                            <label><span>CPF</span>
+                              <input value={info.cpf} onChange={(e) => editarLinha(k, { cpf: e.target.value })} placeholder="000.000.000-00" className="mono" />
+                            </label>
+                            <label><span className="rotulo-campo">Denominação do GEO<Dica>Nome do imóvel no GEO individual desta parte. Em branco sai o nome do imóvel com o da parte.</Dica></span>
+                              <input value={info.denominacao} onChange={(e) => editarLinha(k, { denominacao: e.target.value.toUpperCase() })}
+                                placeholder={denominacaoDaParte(servico, { nome: info.nome || `PARTE ${k + 1}`, denominacao: null }).toUpperCase()} />
+                            </label>
+                          </>}
+                        </div>
+                        <div className="dv-detalhe-totais">
+                          <div><span>Perímetro</span><b className="mono">{fmtM2(p?.perimetroM ?? l.lados.reduce((s, x) => s + x.comp, 0))} m</b></div>
+                          {rd?.ok && <div><span>Diferença p/ a cota</span><b className="mono">{(area - alvoArea(k) >= 0 ? "+" : "") + fmtM2(area - alvoArea(k))} m²</b></div>}
+                          {temEstrada && p && <div><span>Frente p/ estrada</span><b className={`mono${p.frenteEstradaM < 5 ? " dv-sem" : ""}`}>{fmtM(p.frenteEstradaM)} m</b></div>}
+                        </div>
+                        <table className="dv-lados">
+                          <tbody>
+                            {(medidas[k] ?? []).map((m, j) => (
+                              <tr key={j} className={m.estrada ? "dv-m-estrada" : m.divisa ? "dv-m-divisa" : ""}>
+                                <td>{m.divisa ? `divisa com ${m.confrontante}` : m.confrontante}{m.estrada && " (estrada)"}</td>
+                                <td className="mono">{fmtM2(m.comprimentoM)} m</td>
+                              </tr>
+                            ))}
+                            {!medidas[k] && l.lados.map((x, j) => (
+                              <tr key={j} className={x.tipo === "via" ? "dv-m-estrada" : x.tipo === "lote" ? "dv-m-divisa" : ""}>
+                                <td>{nomeLado(x)}</td><td className="mono">{fmtM2(x.comp)} m</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <form className="dv-area-alvo" onSubmit={(e) => { e.preventDefault(); const v = Number(areaAlvo.replace(/\./g, "").replace(",", ".")); if (v > 0) rodarComando(`area ${v}`); }}>
+                          <label>Área de
+                            <input value={areaAlvo} onChange={(e) => setAreaAlvo(e.target.value)} placeholder={fmtM2(alvoArea(k))} className="mono" />m²
+                          </label>
+                          <button type="submit">Aplicar</button>
+                        </form>
+                        <div className="acoes-linha">
+                          {rd?.ok && <button type="button" onClick={() => rodarComando(`area ${alvoArea(k).toFixed(2)}`)} title="A divisa desliza até a parte ficar com a cota dela">Acertar a cota</button>}
+                          <button type="button" onClick={() => rodarComando("dividir 2")}>Dividir em 2</button>
+                          <button type="button" onClick={() => rodarComando("unir")} title="Une com a parte vizinha">Unir</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {rd?.ok && medidas.length > 0 && (
-        <div className="dv-medidas">
-          <h4>Metragem de cada parte</h4>
-          <div className="dv-medidas-grade">
-            {rd.partes.map((p, i) => (
-              <div key={i} className="dv-medida">
-                <div className="dv-medida-tit">
-                  <span className="dv-cor" style={{ background: CORES_PARTE[i % CORES_PARTE.length] }} />
-                  <b>{nomesPartes[i]}</b>
-                  <span className="mono">{fmtM2(p.areaM2)} m² · {fmt(p.areaM2 / 10000)} ha</span>
-                </div>
-                <table>
-                  <tbody>
-                    {medidas[i].map((m, j) => (
-                      <tr key={j} className={m.estrada ? "dv-m-estrada" : m.divisa ? "dv-m-divisa" : ""}>
-                        <td>{m.divisa ? `divisa com ${m.confrontante}` : m.confrontante}{m.estrada && " (estrada)"}</td>
-                        <td className="mono">{fmtM2(m.comprimentoM)} m</td>
-                      </tr>
-                    ))}
-                    <tr className="dv-m-total"><td>perímetro</td><td className="mono">{fmtM2(p.perimetroM)} m</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            ))}
-          </div>
+            </div>
+            {rd?.ok && <div className="sub dv-resumo-pe">{rd.divisas.length} divisa(s) · {fmtM(rd.divisas.reduce((s, d) => s + d.comprimentoM, 0))} m de cerca · {rd.novos.length} marcos novos · maior diferença p/ a cota: {rd.erroAreaM2 < 0.05 ? "< 0,1" : fmtM2(rd.erroAreaM2)} m²</div>}
+            {rd && !rd.ok && <div className="dv-alerta">{rd.motivo}</div>}
+          </aside>
         </div>
       )}
 
