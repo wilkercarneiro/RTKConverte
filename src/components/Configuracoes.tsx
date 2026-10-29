@@ -264,7 +264,7 @@ function Modelos({ pasta }: { pasta: string }) {
       </header>
       {!pode && <p className="modo-leitura">Modo leitura. {SEM_PERMISSAO}</p>}
       <p className="sub modelos-nota">
-        Sem modelo próprio, o documento sai do modelo padrão do Vértice. Os campos do modelo seguem os mesmos marcadores do padrão — peça o pacote de modelos ao suporte para partir dele.
+        Sem modelo próprio, o documento sai do modelo padrão do Vertces. Os campos do modelo seguem os mesmos marcadores do padrão — peça o pacote de modelos ao suporte para partir dele.
       </p>
       <div className="tabela-wrap">
         {!existe ? <Esqueleto linhas={5} rotulo="Conferindo os modelos…" /> : (
@@ -274,7 +274,7 @@ function Modelos({ pasta }: { pasta: string }) {
               {MODELOS.map((m) => (
                 <tr key={m.arquivo}>
                   <td>{m.titulo}<div className="sub mono col-sec">{m.arquivo}</div></td>
-                  <td>{existe[m.arquivo] ? <span className="chip mod-completo">próprio</span> : <span className="sub">padrão do Vértice</span>}</td>
+                  <td>{existe[m.arquivo] ? <span className="chip mod-completo">próprio</span> : <span className="sub">padrão do Vertces</span>}</td>
                   {pode && (
                     <td className="acao">
                       <label className="botao-download botao-arquivo">

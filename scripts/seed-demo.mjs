@@ -6,7 +6,7 @@
 //   1. migração de escritórios aplicada (docs/multiescritorio) — sem ela a
 //      conta demo enxergaria os dados reais, e o script se recusa a rodar;
 //   2. uma conta criada pela tela "Criar conta → Novo escritório" com o nome
-//      "Vértice Demonstração" (e e-mail confirmado).
+//      "Vertces Demonstração" (e e-mail confirmado).
 //
 // Uso:
 //   SUPABASE_URL=… SUPABASE_ANON_KEY=… DEMO_EMAIL=… DEMO_PASSWORD=… node scripts/seed-demo.mjs
@@ -54,7 +54,7 @@ const clienteId = await garantir("clientes", { nome: "JOSÉ EXEMPLO DA SILVA" },
 });
 
 for (const [key, value] of Object.entries({
-  razao_social: "VÉRTICE DEMONSTRAÇÃO", desenhista: "ANA DEMONSTRAÇÃO", rt_padrao: rtId, credenciado_padrao: credId,
+  razao_social: "VERTCES DEMONSTRAÇÃO", desenhista: "ANA DEMONSTRAÇÃO", rt_padrao: rtId, credenciado_padrao: credId,
 })) {
   const tem = ok(await supa.from("config_empresa").select("key").eq("key", key).maybeSingle(), "config");
   ok(tem ? await supa.from("config_empresa").update({ value }).eq("key", key)

@@ -1,4 +1,4 @@
-# Vértice como SaaS
+# Vertces como SaaS
 
 Várias empresas no mesmo sistema, cada uma isolada, com plano e recursos
 liberados pelo painel do superadmin. Página pública em `/`; sistema em `/app/`.

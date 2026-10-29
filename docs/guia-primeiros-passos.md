@@ -1,4 +1,4 @@
-# Primeiros passos no Vértice
+# Primeiros passos no Vertces
 
 Do cadastro ao primeiro memorial, em uns 20 minutos. Tenha em mãos o **TXT exportado do receptor RTK** de um levantamento já feito e os dados do **responsável técnico** e do **credenciado** do escritório.
 
@@ -6,7 +6,7 @@ Do cadastro ao primeiro memorial, em uns 20 minutos. Tenha em mãos o **TXT expo
 
 1. Na tela de entrada, clique em **Criar conta**.
 2. Informe o nome do escritório, seu e-mail e uma senha (mínimo 8 caracteres) e aceite os termos.
-3. Abra o e-mail de confirmação e clique no link. Você volta ao Vértice já como **dono** do escritório.
+3. Abra o e-mail de confirmação e clique no link. Você volta ao Vertces já como **dono** do escritório.
 
 Para pôr colegas no mesmo escritório: cada um cria a conta **sem** marcar "novo escritório" (ou você cria pelo painel), e você adiciona o e-mail dele em **Configurações → Equipe**.
 
@@ -43,7 +43,7 @@ Já tem o imóvel certificado e só faltam as peças? Use **Peças a partir do P
 
 ## 5. Conferir antes de assinar
 
-O Vértice calcula, mas **quem assina é o responsável técnico**. Antes de protocolar, confira área, perímetro, códigos dos vértices, confrontantes e dados do proprietário. Todo documento gerado fica no **Histórico de documentos** do serviço, com versão.
+O Vertces calcula, mas **quem assina é o responsável técnico**. Antes de protocolar, confira área, perímetro, códigos dos vértices, confrontantes e dados do proprietário. Todo documento gerado fica no **Histórico de documentos** do serviço, com versão.
 
 ## Precisa de ajuda?
 

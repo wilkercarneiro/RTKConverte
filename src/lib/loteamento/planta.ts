@@ -91,7 +91,7 @@ export function escalaPara(res: Resultado, folha: Folha): number {
 export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Perimetro, c: DadosCarimbo, folha: Folha = "A1"): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   pdf.setTitle(T(`Planta do loteamento ${pr.nome}`));
-  pdf.setCreator("Vértice");
+  pdf.setCreator("Vertces");
   const fonte = await pdf.embedFont(StandardFonts.Helvetica);
   const negrito = await pdf.embedFont(StandardFonts.HelveticaBold);
   let logo: PDFImage | null = null;

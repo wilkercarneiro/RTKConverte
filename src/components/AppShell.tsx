@@ -52,7 +52,7 @@ function grupos(superadmin: boolean): { titulo: string; itens: Item[] }[] {
       ],
     },
   ];
-  if (superadmin) g.push({ titulo: "Vértice", itens: [{ t: "admin", rotulo: "Painel SaaS", icone: I.painel, destino: { t: "admin", aba: "visao" } }] });
+  if (superadmin) g.push({ titulo: "Vertces", itens: [{ t: "admin", rotulo: "Painel SaaS", icone: I.painel, destino: { t: "admin", aba: "visao" } }] });
   return g;
 }
 
@@ -95,7 +95,7 @@ export function AppShell({ rota, ir, children, usuario, superadmin }: {
     <>
       <button className="tr-marca" onClick={() => ir({ t: "inicio" })} title="Início">
         <Logo className="tr-logo" />
-        <span className="tr-rotulo tr-nome">Vértice</span>
+        <span className="tr-rotulo tr-nome">Vertces</span>
       </button>
       <nav className="tr-nav" aria-label="Navegação principal">
         {grupos(!!superadmin).map((g) => g.itens.length > 0 && (
@@ -136,7 +136,7 @@ export function AppShell({ rota, ir, children, usuario, superadmin }: {
 
       {/* celular: barra no topo + gaveta */}
       <header className="tr-topo">
-        <button className="tr-marca" onClick={() => ir({ t: "inicio" })}><Logo className="tr-logo" /><span className="tr-nome">Vértice</span></button>
+        <button className="tr-marca" onClick={() => ir({ t: "inicio" })}><Logo className="tr-logo" /><span className="tr-nome">Vertces</span></button>
         <button className="tr-menu" aria-label="Abrir menu" aria-expanded={gaveta} onClick={() => setGaveta(true)}><Ico d={I.menu} /></button>
       </header>
       {gaveta && (

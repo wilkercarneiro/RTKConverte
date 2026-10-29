@@ -1,4 +1,4 @@
-// Guia da marca Vértice: nome, símbolo, cores e tipografia — a página do
+// Guia da marca Vertces: nome, símbolo, cores e tipografia — a página do
 // protótipo, dentro do sistema, para quem for produzir material ou conferir
 // tokens sem abrir o arquivo de design.
 import { Logo } from "./Logo";
@@ -13,19 +13,19 @@ export function Marca() {
     <div className="pagina marca-guia fade">
       <div>
         <div className="sobretitulo">Identidade</div>
-        <h1 className="grande">Vértice</h1>
+        <h1 className="grande">Vertces</h1>
         <p className="lead">
-          Vértice é o ponto onde o perímetro muda de direção: o dado que o operador confere,
-          numera e certifica. É palavra do ofício, curta, sem tecnicismo de fornecedor e sem
-          descrever a ferramenta.
+          Vertces vem de vértice, o ponto onde o perímetro muda de direção: o dado que o operador
+          confere, numera e certifica. É palavra do ofício, curta, sem tecnicismo de fornecedor e
+          sem descrever a ferramenta. Endereço: vertces.com.br.
         </p>
       </div>
 
       <div className="grade-3">
         <div className="bloco nome-cartao">
           <div className="rotulo-secao">Escolhido</div>
-          <div className="nome-grande">Vértice</div>
-          <div className="sub">Ponto do perímetro. Sugere precisão e a unidade mínima do trabalho.</div>
+          <div className="nome-grande">Vertces</div>
+          <div className="sub">De vértice, o ponto do perímetro. Sugere precisão e a unidade mínima do trabalho.</div>
         </div>
         <div className="bloco nome-cartao alternativa">
           <div className="rotulo-secao">Alternativa</div>
@@ -43,7 +43,7 @@ export function Marca() {
         <div className="marca-simbolo">
           <div className="marca-lockup">
             <Logo size={44} />
-            <span>Vértice</span>
+            <span>Vertces</span>
           </div>
           <p>Símbolo: um vértice e seus dois vizinhos, o traço mínimo de uma poligonal. O ponto de destaque em verde-claro é o vértice ativo.</p>
           <p className="frase">Do levantamento à certificação.</p>

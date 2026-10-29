@@ -1,10 +1,10 @@
-# Termos de Uso do Vértice
+# Termos de Uso do Vertces
 
 > **MINUTA — PENDENTE DE REVISÃO JURÍDICA.** Redigida a partir do funcionamento atual do sistema; não foi revisada por advogado. Trechos entre colchetes dependem de decisão ou de dados do titular do negócio e não devem ser publicados em branco. Versão da minuta: 2026-10-08.
 
 ## 1. O serviço
 
-O Vértice, oferecido por **[RAZÃO SOCIAL]**, CNPJ **[CNPJ]** ("nós"), é um sistema on-line que, a partir do arquivo do levantamento informado pelo usuário, calcula e gera memorial descritivo, planilha no formato do SIGEF, planta e peças técnicas para georreferenciamento de imóveis rurais.
+O Vertces, oferecido por **[RAZÃO SOCIAL]**, CNPJ **[CNPJ]** ("nós"), é um sistema on-line que, a partir do arquivo do levantamento informado pelo usuário, calcula e gera memorial descritivo, planilha no formato do SIGEF, planta e peças técnicas para georreferenciamento de imóveis rurais.
 
 Ao criar uma conta ou usar o sistema, o escritório ("você") concorda com estes termos e com a [Política de Privacidade](#/privacidade).
 
@@ -16,7 +16,7 @@ Ao criar uma conta ou usar o sistema, o escritório ("você") concorda com estes
 
 ## 3. Responsabilidade técnica
 
-- **O Vértice é ferramenta de apoio. A responsabilidade técnica pelo levantamento, pelos documentos e pelo que é enviado ao SIGEF/INCRA e ao cartório é sempre do profissional habilitado (responsável técnico com ART/TRT).**
+- **O Vertces é ferramenta de apoio. A responsabilidade técnica pelo levantamento, pelos documentos e pelo que é enviado ao SIGEF/INCRA e ao cartório é sempre do profissional habilitado (responsável técnico com ART/TRT).**
 - Confira todos os documentos antes de assinar e protocolar. O sistema não substitui a conferência do profissional.
 - Os resultados dependem dos dados informados (arquivo do receptor, fuso, confrontações, cadastros). Dados errados geram documentos errados.
 - Não garantimos aceitação de documentos por INCRA, SIGEF ou cartórios, que seguem normas e entendimentos próprios.
@@ -51,7 +51,7 @@ Após o cancelamento, você tem **[30] dias** para baixar seus documentos. Depoi
 
 ## 10. Propriedade intelectual
 
-O sistema, a marca Vértice e os modelos-padrão são nossos. Os documentos gerados e os dados cadastrados pelo escritório são do escritório. Modelos de documento enviados pelo escritório continuam dele.
+O sistema, a marca Vertces e os modelos-padrão são nossos. Os documentos gerados e os dados cadastrados pelo escritório são do escritório. Modelos de documento enviados pelo escritório continuam dele.
 
 ## 11. Mudanças nestes termos
 

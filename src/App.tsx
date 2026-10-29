@@ -123,8 +123,8 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/casca")) return <Suspense fallback={null}><LaboratorioCasca /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
-  if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vértice", href: "#/" }} />;
-  if (rota.t === "privacidade") return <PaginaDocumento texto={privacidade} voltar={{ rotulo: "Vértice", href: "#/" }} />;
+  if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vertces", href: "#/" }} />;
+  if (rota.t === "privacidade") return <PaginaDocumento texto={privacidade} voltar={{ rotulo: "Vertces", href: "#/" }} />;
 
   if (!configOk) {
     return (
@@ -218,7 +218,7 @@ export default function App() {
             <div className="centro">
               <div>
                 <h2>{def.titulo} não está no seu plano</h2>
-                <p className="sub">Fale com o suporte do Vértice para incluir este serviço no plano da sua empresa.</p>
+                <p className="sub">Fale com o suporte do Vertces para incluir este serviço no plano da sua empresa.</p>
                 <button className="principal" onClick={() => ir({ t: "inicio" })}>Voltar ao início</button>
               </div>
             </div>
@@ -334,13 +334,13 @@ function EmpresaBloqueada({ nome, status }: { nome: string; status: string }) {
         {status === "desativado" ? (
           <>
             <h2 style={{ marginTop: 14 }}>Seu acesso foi desativado</h2>
-            <p>O responsável pela <b>{nome}</b> desativou o seu acesso ao Vértice. Fale com ele para reativar.</p>
+            <p>O responsável pela <b>{nome}</b> desativou o seu acesso ao Vertces. Fale com ele para reativar.</p>
           </>
         ) : (
           <>
             <h2 style={{ marginTop: 14 }}>Acesso {status === "cancelado" ? "encerrado" : "suspenso"}</h2>
-            <p>O acesso da <b>{nome}</b> ao Vértice está {status === "cancelado" ? "encerrado" : "suspenso"} no momento. Os seus dados continuam guardados.</p>
-            <p>Fale com o suporte do Vértice para reativar.</p>
+            <p>O acesso da <b>{nome}</b> ao Vertces está {status === "cancelado" ? "encerrado" : "suspenso"} no momento. Os seus dados continuam guardados.</p>
+            <p>Fale com o suporte do Vertces para reativar.</p>
           </>
         )}
         <button onClick={() => supabase.auth.signOut()}>Sair</button>

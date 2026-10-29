@@ -1,4 +1,4 @@
-# Vértice — Gerador de Memorial INCRA + Planilha SIGEF
+# Vertces — Gerador de Memorial INCRA + Planilha SIGEF
 
 Sistema para empresa de topografia/georreferenciamento: recebe o TXT da máquina
 de topografia, apresenta formulário de conferência (dados do serviço,

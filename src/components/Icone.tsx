@@ -1,4 +1,4 @@
-// Ícone de traço único (1.8px), no padrão do protótipo Vértice.
+// Ícone de traço único (1.8px), no padrão do protótipo Vertces.
 // O `d` é o path SVG em viewBox 24×24 — os das modalidades vivem em
 // src/lib/modalidades.ts, ao lado do resto da definição de cada serviço.
 export function Icone({ d, size = 20, traco = 1.8, className }: {

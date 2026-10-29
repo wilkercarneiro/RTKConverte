@@ -23,7 +23,7 @@ export function Ajuda() {
             {SUPORTE_PRAZO && <p className="sub">{SUPORTE_PRAZO}</p>}
           </div>
         ) : (
-          <p className="sub sem-margem">Fale com quem implantou o Vértice no seu escritório.</p>
+          <p className="sub sem-margem">Fale com quem implantou o Vertces no seu escritório.</p>
         )}
         <p className="sub ajuda-dica">
           Ao relatar um erro, diga o nome do serviço e o que estava fazendo — e, se puder, mande um print da tela.

@@ -43,7 +43,7 @@ export function TrocarSenhaObrigatoria({ email, onOk }: { email: string | null; 
       <div className="login-box esquerda">
         <Logo size={28} />
         <h2>Crie a sua senha</h2>
-        <p>Bem-vindo ao Vértice{email ? <>, <b>{email}</b></> : null}. Você entrou com a senha provisória do cadastro. Para continuar, crie uma senha só sua.</p>
+        <p>Bem-vindo ao Vertces{email ? <>, <b>{email}</b></> : null}. Você entrou com a senha provisória do cadastro. Para continuar, crie uma senha só sua.</p>
         <FormSenha onOk={onOk} rotulo="Salvar e entrar" />
         <p className="sub sair-link">
           <button type="button" className="link" onClick={() => supabase.auth.signOut()}>Sair e entrar com outra conta</button>
@@ -60,7 +60,7 @@ export function TrocarSenhaCartao() {
     <section className="bloco">
       <header>
         <h3>Senha de acesso</h3>
-        <span className="desc">a senha com que você entra no Vértice</span>
+        <span className="desc">a senha com que você entra no Vertces</span>
       </header>
       <div className="form-senha">
         <FormSenha onOk={() => setOk(true)} rotulo="Trocar senha" />

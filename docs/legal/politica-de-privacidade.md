@@ -1,18 +1,18 @@
-# Política de Privacidade do Vértice
+# Política de Privacidade do Vertces
 
 > **MINUTA — PENDENTE DE REVISÃO JURÍDICA.** Este texto foi redigido a partir do que o sistema faz hoje (código e infraestrutura) e ainda não foi revisado por advogado. Os trechos entre colchetes são dados que só o titular do negócio pode informar e não devem ser publicados em branco. Versão da minuta: 2026-10-08.
 
 ## 1. Quem somos
 
-O Vértice é um sistema on-line para escritórios de topografia e georreferenciamento: transforma o arquivo do levantamento (TXT do receptor RTK) em memorial descritivo, planilha SIGEF, planta e peças técnicas.
+O Vertces é um sistema on-line para escritórios de topografia e georreferenciamento: transforma o arquivo do levantamento (TXT do receptor RTK) em memorial descritivo, planilha SIGEF, planta e peças técnicas.
 
-O Vértice é oferecido por **[RAZÃO SOCIAL]**, inscrita no CNPJ sob o nº **[CNPJ]**, com sede em **[ENDEREÇO COMPLETO]** ("nós").
+O Vertces é oferecido por **[RAZÃO SOCIAL]**, inscrita no CNPJ sob o nº **[CNPJ]**, com sede em **[ENDEREÇO COMPLETO]** ("nós").
 
 Encarregado pelo tratamento de dados pessoais (art. 41 da LGPD): **[NOME DO ENCARREGADO]**, pelo e-mail **[E-MAIL DO ENCARREGADO]**.
 
 ## 2. Papéis: quem decide sobre os dados
 
-- **O escritório que assina o Vértice é o controlador** dos dados dos clientes dele, dos proprietários e dos confrontantes dos imóveis que ele cadastra. É o escritório que decide por que e para que esses dados são coletados (o serviço de georreferenciamento contratado pelo cliente dele).
+- **O escritório que assina o Vertces é o controlador** dos dados dos clientes dele, dos proprietários e dos confrontantes dos imóveis que ele cadastra. É o escritório que decide por que e para que esses dados são coletados (o serviço de georreferenciamento contratado pelo cliente dele).
 - **Nós somos operador** desses dados: tratamos em nome do escritório, só para prestar o serviço do sistema, conforme o contrato e as instruções do escritório.
 - **Nós somos controlador** apenas dos dados da conta de acesso (nome, e-mail e senha de quem usa o sistema) e dos registros técnicos de uso.
 
@@ -54,7 +54,7 @@ Só com os fornecedores necessários para o sistema funcionar, cada um recebendo
 | **[GATEWAY DE PAGAMENTO — quando contratado]** | cobrança da assinatura | dados de faturamento do escritório | **[A DEFINIR]** |
 | **[PROVEDOR DE E-MAIL — quando contratado]** | e-mails do sistema (confirmação de cadastro, troca de senha) | e-mail do usuário | **[A DEFINIR]** |
 
-Na versão atual o Vértice **não envia dados a serviços de inteligência artificial** (como OpenAI). Se isso mudar, esta política será atualizada antes.
+Na versão atual o Vertces **não envia dados a serviços de inteligência artificial** (como OpenAI). Se isso mudar, esta política será atualizada antes.
 
 Transferência internacional (art. 33 da LGPD): os envios a Vercel e Mapbox se apoiam nas cláusulas contratuais desses fornecedores **[CONFIRMAR O MECANISMO COM O JURÍDICO]**.
 

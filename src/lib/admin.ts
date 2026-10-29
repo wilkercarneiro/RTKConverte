@@ -119,7 +119,7 @@ export const removerUsuario = (user_id: string) =>
 export function mensagemDeAcesso(o: { responsavel: string; empresa: string; login: string; senha: string; url: string }): string {
   const nome = o.responsavel.split(/\s+/)[0] || o.responsavel;
   return [
-    `Olá, ${nome}! O acesso da ${o.empresa} ao Vértice está pronto.`,
+    `Olá, ${nome}! O acesso da ${o.empresa} ao Vertces está pronto.`,
     ``,
     `Endereço: ${o.url}`,
     `Login: ${o.login}`,

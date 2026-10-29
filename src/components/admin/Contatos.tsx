@@ -25,7 +25,7 @@ export function Contatos({ d }: { d: DadosAdmin }) {
 
   return (
     <>
-      <Topo olho="Clientes" titulo="Pedidos de reunião" sub="Quem pediu uma demonstração pela página do Vértice." />
+      <Topo olho="Clientes" titulo="Pedidos de reunião" sub="Quem pediu uma demonstração pela página do Vertces." />
       {erro && <div className="sa-aviso erro">{erro}</div>}
       <div className="sa-filtros">
         <div className="sa-segmento" role="group" aria-label="Etapa">

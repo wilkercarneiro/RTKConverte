@@ -1,4 +1,4 @@
-// Símbolo da marca Vértice: um vértice e seus dois vizinhos.
+// Símbolo da marca Vertces: um vértice e seus dois vizinhos.
 export function Logo({ className, size }: { className?: string; size?: number }) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 28 28" fill="none" aria-hidden="true">

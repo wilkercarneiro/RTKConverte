@@ -70,7 +70,7 @@ export const apagarConta = (user_id: string) => chamarFuncao<{ ok: true }>("equi
 export function mensagemDeAcesso(o: { nome: string; empresa: string; login: string; senha: string }): string {
   const primeiro = o.nome.split(/\s+/)[0] || "";
   return [
-    `Olá${primeiro ? `, ${primeiro}` : ""}! Seu acesso ao Vértice (${o.empresa}) está pronto.`,
+    `Olá${primeiro ? `, ${primeiro}` : ""}! Seu acesso ao Vertces (${o.empresa}) está pronto.`,
     ``,
     `Endereço: ${location.origin}/app/`,
     `Login: ${o.login}`,

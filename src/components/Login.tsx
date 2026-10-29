@@ -50,7 +50,7 @@ export function Login({ onOk, cadastroAberto = false }: { onOk: () => void; cada
   return (
     <div className="login">
       <div className="login-lado">
-        <div className="marca login-marca"><Logo size={28} /><span className="marca-nome">Vértice</span></div>
+        <div className="marca login-marca"><Logo size={28} /><span className="marca-nome">Vertces</span></div>
         <div>
           <h1>Do levantamento à certificação.</h1>
           <p>Memorial descritivo, planilha SIGEF, planta e as sete peças técnicas, gerados a partir do TXT da máquina.</p>
@@ -60,7 +60,7 @@ export function Login({ onOk, cadastroAberto = false }: { onOk: () => void; cada
       <div className="login-form">
         <div className="login-box">
           <h2>Entrar</h2>
-          <p>{cadastroAberto ? <>Ainda não tem conta? <a href="#/cadastro">Criar conta</a></> : "Use o e-mail e a senha da sua conta no Vértice."}</p>
+          <p>{cadastroAberto ? <>Ainda não tem conta? <a href="#/cadastro">Criar conta</a></> : "Use o e-mail e a senha da sua conta no Vertces."}</p>
           <form onSubmit={entrar}>
             <label>E-mail<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="username" /></label>
             <label>Senha<input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} required autoComplete="current-password" /></label>

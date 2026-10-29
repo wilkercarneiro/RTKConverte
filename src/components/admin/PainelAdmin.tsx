@@ -56,7 +56,7 @@ const MENU: { secao: string; itens: { aba: AbaAdmin; rotulo: string; icone: stri
     secao: "Sistema",
     itens: [
       { aba: "config", rotulo: "Configurações", icone: ICO.config },
-      // só o superadmin: o guia da marca do Vértice não é assunto das empresas
+      // só o superadmin: o guia da marca do Vertces não é assunto das empresas
       { aba: "marca", rotulo: "Guia da marca", icone: ICO.marca },
     ],
   },
@@ -116,7 +116,7 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
       <aside className="sa-lateral" aria-label="Menu do painel">
         <div className="sa-marca">
           <Logo size={26} />
-          <div><b>Vértice</b><small>Painel SaaS</small></div>
+          <div><b>Vertces</b><small>Painel SaaS</small></div>
         </div>
         {MENU.map((g) => (
           <div key={g.secao} style={{ display: "contents" }}>

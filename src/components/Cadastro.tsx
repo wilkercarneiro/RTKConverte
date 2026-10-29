@@ -45,7 +45,7 @@ export function Cadastro() {
   return (
     <div className="login">
       <div className="login-lado">
-        <div className="marca" style={{ padding: 0 }}><Logo size={28} /><span className="marca-nome" style={{ fontSize: 20 }}>Vértice</span></div>
+        <div className="marca" style={{ padding: 0 }}><Logo size={28} /><span className="marca-nome" style={{ fontSize: 20 }}>Vertces</span></div>
         <div>
           <h1>Do levantamento à certificação.</h1>
           <p>Crie a conta do seu escritório e gere o primeiro memorial a partir do TXT do receptor.</p>

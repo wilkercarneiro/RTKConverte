@@ -62,7 +62,7 @@ export function Equipe({ escritorio }: { escritorio: EstadoEscritorio }) {
     return (
       <div className="pagina eq">
         <Cabeca empresa={empresa} />
-        <div className="eq-aviso">O plano da sua empresa não inclui equipe com vários usuários. Fale com o suporte do Vértice para incluir.</div>
+        <div className="eq-aviso">O plano da sua empresa não inclui equipe com vários usuários. Fale com o suporte do Vertces para incluir.</div>
       </div>
     );
   }

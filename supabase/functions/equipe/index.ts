@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
         });
         if (error || !criado.user) {
           const msg = /already|registered|exists/i.test(error?.message ?? "")
-            ? "Já existe uma conta com este e-mail no Vértice. Use outro e-mail."
+            ? "Já existe uma conta com este e-mail no Vertces. Use outro e-mail."
             : (error?.message ?? "Não foi possível criar a conta.");
           return json({ erro: msg }, 409);
         }

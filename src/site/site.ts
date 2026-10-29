@@ -1,4 +1,4 @@
-/* Página pública do Vértice: motor das cenas, navegação, perguntas e o
+/* Página pública do Vertces: motor das cenas, navegação, perguntas e o
  * formulário de reunião. TypeScript puro, sem dependências.
  *
  * Tudo aqui é aprimoramento: sem JS (ou com "reduzir movimento") o HTML já
@@ -337,7 +337,7 @@ $$("[data-ano]").forEach((el) => (el.textContent = String(new Date().getFullYear
   const valor = (nome: string) => (campo(nome)?.value || "").trim();
 
   function textoWa() {
-    const linhas = ["Olá! Quero agendar uma demonstração do Vértice."];
+    const linhas = ["Olá! Quero agendar uma demonstração do Vertces."];
     const nome = valor("nome");
     const emp = valor("empresa");
     const cid = valor("cidade_uf");

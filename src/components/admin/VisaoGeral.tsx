@@ -29,7 +29,7 @@ export function VisaoGeral({ d }: { d: DadosAdmin }) {
 
   return (
     <>
-      <Topo olho="Visão geral" titulo="Painel do Vértice" sub="Empresas, uso do sistema e o que pede atenção hoje." />
+      <Topo olho="Visão geral" titulo="Painel do Vertces" sub="Empresas, uso do sistema e o que pede atenção hoje." />
 
       <section className="sa-kpis" aria-label="Indicadores">
         <Kpi rotulo="Empresas ativas" valor={fmtNum(ativas.length)} icone={ICO.empresas}
