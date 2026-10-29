@@ -16,8 +16,8 @@ import type { DadosPecas, Requerente } from "../_shared/pecas.ts";
 import { ehViaPorLimite, montarServico } from "../_shared/servico.ts";
 import { geometriaDoCalculo, sigefDoCalculo } from "../_shared/planta_dados.ts";
 import type { Proj4 } from "../_shared/geo.ts";
-import { exigirPermissao, exigirServicoDoUsuario } from "../_shared/acesso.ts";
-import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { autorDaChamada, exigirPermissao, exigirServicoDoUsuario, gravarHistoricoDocumentos } from "../_shared/acesso.ts";
+import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
 
@@ -133,6 +133,8 @@ Deno.serve(async (req) => {
     if (recusa) return json({ erro: recusa.erro }, recusa.status);
     const semPermissao = await exigirPermissao(clienteDoUsuario(req), "documentos.gerar", "gerar documentos");
     if (semPermissao) return json({ erro: semPermissao.erro }, semPermissao.status);
+    // quem pediu: o histórico de documentos guarda o nome (auditoria, 0026)
+    const autor = await autorDaChamada(clienteDoUsuario(req));
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -504,7 +506,7 @@ Deno.serve(async (req) => {
     }
 
     await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
-    await supa.from("documentos_gerados").insert(historico);
+    await gravarHistoricoDocumentos(supa as unknown as ClienteHistorico, historico, autor);
 
     return json({
       ok: true,

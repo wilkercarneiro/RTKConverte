@@ -75,6 +75,33 @@ export async function exigirPermissao(cli: ClienteUsuario, permissao: string, oQ
   return { erro: `Você não tem permissão para ${oQue}. Fale com o responsável pela equipe.`, status: 403 };
 }
 
+/** Id de quem chamou, ou null. Para a auditoria: as funções gravam com a service_role. */
+export async function autorDaChamada(cli: ClienteUsuario): Promise<string | null> {
+  const u = await exigirUsuario(cli);
+  return ehRecusa(u) ? null : u.userId;
+}
+
+/** O mínimo do supabase-js para gravar o histórico de documentos. */
+export interface ClienteHistorico {
+  from: (t: string) => { insert: (linhas: Record<string, unknown>[]) => PromiseLike<{ error: unknown }> };
+}
+
+/**
+ * Grava as linhas de documentos_gerados com `gerado_por` (0026). Banco ainda
+ * sem a coluna: grava sem ela — o histórico de documentos não pode se perder
+ * por causa da auditoria.
+ */
+export async function gravarHistoricoDocumentos(
+  supa: ClienteHistorico, linhas: Record<string, unknown>[], autor: string | null,
+): Promise<void> {
+  if (linhas.length === 0) return;
+  if (autor) {
+    const { error } = await supa.from("documentos_gerados").insert(linhas.map((l) => ({ ...l, gerado_por: autor })));
+    if (!error) return;
+  }
+  await supa.from("documentos_gerados").insert(linhas);
+}
+
 export function ehRecusa(x: unknown): x is Recusa {
   return typeof x === "object" && x !== null && "erro" in x && "status" in x;
 }

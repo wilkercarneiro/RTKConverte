@@ -78,7 +78,10 @@
 .tr-sair { color: var(--floresta-texto-2); }
 
 .tr-topo { display: none; }
-.app-conteudo { animation: casca-entra 0.32s cubic-bezier(.2, .8, .2, 1) both; }
+/* "backwards" e não "both": um transform que sobra depois da animação faz o
+   conteúdo virar o bloco de referência do position: fixed, e a barra inferior da
+   conferência nascia deslocada da largura do trilho ("quebrada na esquerda"). */
+.app-conteudo { animation: casca-entra 0.32s cubic-bezier(.2, .8, .2, 1) backwards; }
 @keyframes casca-entra { from { opacity: 0; transform: translateY(6px); } }
 
 /* o que o styles.css antigo desenhava na barra fica de fora */
@@ -127,56 +130,67 @@
 }
 .ns-faixa::-webkit-scrollbar { height: 8px; }
 .ns-faixa::-webkit-scrollbar-thumb { background: var(--borda-forte); border-radius: 8px; }
+/* Cartão vertical com foto de fundo: a imagem diz de que serviço se trata antes
+   do texto, e o véu escuro de baixo garante a leitura sobre qualquer foto. */
 .ns-cartao {
   all: unset; box-sizing: border-box; cursor: pointer; scroll-snap-align: start;
-  flex: 0 0 286px; min-height: 248px;
-  display: flex; flex-direction: column; gap: 10px;
-  padding: 20px 20px 18px; border-radius: 18px;
-  background: #fff; box-shadow: var(--anel);
-  position: relative; overflow: hidden;
+  flex: 0 0 236px; height: 340px;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  border-radius: 18px; overflow: hidden; position: relative; isolation: isolate;
+  background: var(--floresta); color: #fff;
+  box-shadow: var(--anel);
   transition: transform 0.22s cubic-bezier(.2, .8, .2, 1), box-shadow 0.22s ease;
 }
-.ns-cartao::before { /* faixa de cor no topo, por modalidade */
-  content: ""; position: absolute; inset: 0 0 auto 0; height: 4px; background: var(--cor-mod, var(--primaria)); opacity: 0.85;
+.ns-foto {
+  position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; object-fit: cover;
+  transform: scale(1.02); transition: transform 0.6s cubic-bezier(.2, .8, .2, 1), filter 0.3s ease;
+  filter: saturate(0.92);
 }
-.ns-cartao:hover, .ns-cartao:focus-visible { transform: translateY(-3px); box-shadow: var(--anel-alto); }
-.ns-cartao:focus-visible { outline: 2px solid var(--primaria); outline-offset: 2px; }
-.ns-icone { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; background: var(--fundo-mod, var(--primaria-clara)); color: var(--cor-mod, var(--primaria)); }
-.ns-nome { font-family: var(--fonte-titulo); font-size: 18px; font-weight: 600; letter-spacing: -0.01em; color: var(--texto); }
-.ns-resumo { font-size: 13px; line-height: 1.5; color: var(--texto-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ns-veu {
+  position: absolute; inset: 0; z-index: -1;
+  background:
+    linear-gradient(180deg, rgb(6 24 18 / 18%) 0%, rgb(6 24 18 / 0%) 26%, rgb(6 24 18 / 55%) 52%, rgb(6 24 18 / 92%) 100%);
+}
+.ns-cartao:hover, .ns-cartao:focus-visible { transform: translateY(-4px); box-shadow: var(--anel-alto); }
+.ns-cartao:hover .ns-foto, .ns-cartao:focus-visible .ns-foto { transform: scale(1.08); filter: saturate(1.05); }
+.ns-cartao:focus-visible { outline: 2px solid var(--primaria); outline-offset: 3px; }
+.ns-selo {
+  position: absolute; top: 14px; left: 14px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 5px 10px; border-radius: 999px;
+  background: rgb(255 255 255 / 16%); color: #fff; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgb(255 255 255 / 22%);
+}
+.ns-corpo { display: flex; flex-direction: column; gap: 9px; padding: 18px 18px 18px; }
+.ns-nome { font-family: var(--fonte-titulo); font-size: 19px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; color: #fff; text-shadow: 0 1px 12px rgb(0 0 0 / 30%); }
+.ns-resumo { font-size: 12.5px; line-height: 1.5; color: rgb(255 255 255 / 82%); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .ns-entrega { display: flex; flex-wrap: wrap; gap: 5px; }
-.ns-entrega span { font-size: 11.5px; padding: 3px 8px; border-radius: 999px; background: #F1F4F2; color: var(--texto-2); white-space: nowrap; }
-.ns-entrega .mais { background: transparent; color: var(--texto-3); }
+.ns-entrega span { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgb(255 255 255 / 14%); color: rgb(255 255 255 / 92%); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ns-entrega .mais { background: transparent; color: rgb(255 255 255 / 70%); }
 .ns-cta {
-  margin-top: auto; align-self: flex-start;
+  margin-top: 4px; align-self: stretch; justify-content: space-between;
   display: inline-flex; align-items: center; gap: 8px;
-  height: 34px; padding: 0 14px; border-radius: 999px;
-  background: var(--primaria-clara); color: var(--primaria-escura); font-size: 13px; font-weight: 700;
-  transition: background 0.18s ease, color 0.18s ease, gap 0.18s ease;
+  height: 36px; padding: 0 14px; border-radius: 11px;
+  background: rgb(255 255 255 / 94%); color: var(--floresta); font-size: 13px; font-weight: 700;
+  transition: background 0.18s ease, color 0.18s ease;
 }
-.ns-cartao:hover .ns-cta, .ns-cartao:focus-visible .ns-cta { background: var(--primaria); color: #fff; gap: 12px; }
-/* cores por modalidade (mesma família do verde, com acentos distintos) */
-.ns-cartao.mod-completo { --cor-mod: #178552; --fundo-mod: #E4F3EB; }
-.ns-cartao.mod-conferencia { --cor-mod: #2F6FB3; --fundo-mod: #E6EFF9; }
-.ns-cartao.mod-gleba { --cor-mod: #8A6D1F; --fundo-mod: #F6EFDC; }
-.ns-cartao.mod-divisao { --cor-mod: #7A4FB0; --fundo-mod: #EFE8F8; }
-.ns-cartao.mod-loteamento { --cor-mod: #0E3B2B; --fundo-mod: #E3ECE7; }
-.ns-cartao.mod-car { --cor-mod: #3D8B2E; --fundo-mod: #E8F4E2; }
-.ns-cartao.mod-pecas { --cor-mod: #9A4A2C; --fundo-mod: #F7E9E2; }
-/* compacta (página do cliente) */
+.ns-cta span { transition: transform 0.18s ease; }
+.ns-cartao:hover .ns-cta, .ns-cartao:focus-visible .ns-cta { background: var(--acento, #7BD3A6); color: var(--floresta); }
+.ns-cartao:hover .ns-cta span, .ns-cartao:focus-visible .ns-cta span { transform: translateX(3px); }
+/* compacta (página do cliente): só a foto, o nome e a ação */
 .ns-compacto .ns-titulo { font-size: 15.5px; }
-.ns-compacto .ns-cartao { flex-basis: 196px; min-height: 0; padding: 16px; gap: 10px; border-radius: 14px; }
-.ns-compacto .ns-icone { width: 36px; height: 36px; border-radius: 11px; }
+.ns-compacto .ns-cartao { flex-basis: 172px; height: 216px; border-radius: 14px; }
+.ns-compacto .ns-corpo { padding: 14px; gap: 8px; }
 .ns-compacto .ns-nome { font-size: 15px; }
-.ns-compacto .ns-cta { height: 28px; padding: 0 11px; font-size: 12px; }
+.ns-compacto .ns-cta { height: 30px; padding: 0 11px; font-size: 12px; border-radius: 9px; }
 .pagina .ns { margin-bottom: 22px; }
 @media (max-width: 720px) {
-  .ns-cartao { flex-basis: 78vw; }
-  .ns-compacto .ns-cartao { flex-basis: 58vw; }
+  .ns-cartao { flex-basis: 64vw; height: 320px; }
+  .ns-compacto .ns-cartao { flex-basis: 46vw; height: 200px; }
   .ns-setas { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ns-cartao, .tr, .tr-rotulo, .app-conteudo { transition: none !important; animation: none !important; }
+  .ns-cartao, .ns-foto, .tr, .tr-rotulo, .app-conteudo { transition: none !important; animation: none !important; }
 }
 
 /* ---------------------------------------------------------------- Início */
@@ -341,3 +355,97 @@ fieldset.sem-borda:disabled input, fieldset.sem-borda:disabled select { backgrou
 .topo.topo-limpo .stepper { margin-top: 2px; }
 .botao-pendencias { background: var(--alerta) !important; }
 .botao-pendencias:hover:not(:disabled) { background: var(--alerta-escuro) !important; }
+
+/* ---------------------------------------------------------------- serviço: etapas fixas, cabeçalho que rola
+   O cabeçalho (nome, modalidade, fuso, avisos, autoria) faz parte da página e
+   rola junto; só a faixa das etapas, com voltar/avançar, fica presa no topo. */
+.app.casca .conferencia > .topo:has(+ .etapas-barra) { position: static; padding-bottom: 16px; border-bottom: 0; }
+.app.casca .topo-meta { flex-basis: 100%; display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; margin-top: -4px; font-size: 12.5px; color: var(--texto-3); }
+.app.casca .topo-meta .arquivo { font-size: 12px; }
+.app.casca .etapas-barra {
+  position: sticky; top: 0; z-index: 25;
+  display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap;
+  padding: 10px var(--pad-x);
+  background: rgb(255 255 255 / 92%); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid var(--borda); border-bottom: 1px solid var(--borda);
+  box-shadow: 0 8px 20px -18px rgb(14 59 43 / 40%);
+}
+.app.casca .etapas-barra .stepper { flex: 1 1 auto; min-width: 0; }
+.app.casca .etapas-barra-nav { display: flex; gap: 8px; margin-left: auto; }
+.app.casca .etapas-barra-nav button { height: 34px; padding: 0 14px; border-radius: 9px; font-size: 13px; white-space: nowrap; }
+@media (max-width: 900px) {
+  .app.casca .etapas-barra { top: 58px; } /* abaixo da barra do celular */
+  .app.casca .etapas-barra { gap: 8px; padding-top: 8px; padding-bottom: 8px; }
+  .app.casca .etapas-barra .stepper { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .app.casca .etapas-barra .stepper::-webkit-scrollbar { display: none; }
+  .app.casca .etapas-barra .step-item { flex: none; white-space: nowrap; }
+  .app.casca .etapas-barra-nav { width: 100%; justify-content: space-between; }
+  .app.casca .etapas-barra-nav button { height: 32px; padding: 0 12px; }
+}
+
+/* ---------------------------------------------------------------- barra de gerar: uma linha, a tela toda */
+.app.casca .conferencia:has(> .preview-fina) { padding-bottom: 84px; }
+.app.casca .preview.preview-fina {
+  left: var(--largura-lateral); right: 0;
+  padding: 9px var(--pad-x);
+  max-height: none; overflow: visible;
+}
+.app.casca .preview-fina .stats { flex-wrap: nowrap; gap: 8px 22px; min-width: 0; }
+.app.casca .preview-fina .stat { display: inline-flex; align-items: baseline; gap: 7px; }
+.app.casca .preview-fina .stat .valor { font-size: 14px; }
+.app.casca .preview-fina .stats .acoes { gap: 8px; }
+.app.casca .preview-fina button, .app.casca .preview-fina select { height: 36px; }
+.app.casca .preview-fina select { max-width: 250px; }
+.app.casca .preview-balao {
+  position: absolute; left: var(--pad-x); right: var(--pad-x); bottom: calc(100% + 8px);
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 40vh; overflow: auto;
+  padding: 12px 14px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--borda); box-shadow: var(--anel-alto);
+}
+.app.casca .preview-balao .paragrafo { margin: 0; }
+.app.casca .preview-balao .erro { padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+/* o fuso já está no topo do serviço: no rodapé ficaria repetido */
+.app.casca .preview-fina .stat:nth-child(1) { display: none; }
+.app.casca .preview-fina .link-previa { white-space: nowrap; }
+.app.casca .preview-fina .stats .acoes { flex-shrink: 0; }
+@media (max-width: 1500px) {
+  /* M/P/V está na etapa de vértices: sai antes de apertar os botões */
+  .app.casca .preview-fina .stat:nth-child(4) { display: none; }
+}
+@media (max-width: 1000px) {
+  .app.casca .preview-fina .stats { flex-wrap: wrap; }
+  .app.casca .preview-fina .opcao-metragem { display: none; }
+}
+@media (max-width: 900px) {
+  .app.casca .preview.preview-fina { left: 0; padding: 8px 14px; }
+  .app.casca .preview-fina .stats { gap: 6px 16px; }
+  .app.casca .preview-fina .stats .acoes { width: 100%; margin-left: 0; flex-wrap: wrap; }
+  .app.casca .preview-fina .stats .acoes > * { flex: 1 1 auto; }
+  .app.casca .preview-fina select { max-width: none; flex-basis: 100%; }
+  .app.casca .conferencia:has(> .preview-fina) { padding-bottom: 150px; }
+}
+
+/* ---------------------------------------------------------------- auditoria */
+.app.casca .au-autoria { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.app.casca .au-autoria b { color: var(--texto-2); font-weight: 600; }
+.app.casca .au-autoria .link { font-size: 12.5px; padding: 0 0 0 4px; height: auto; }
+.app.casca .au-filtros { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; }
+.app.casca .au-pessoa { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--texto-2); margin-left: auto; }
+.app.casca .au-pessoa select { height: 34px; border-radius: 9px; min-width: 200px; }
+.app.casca .au-texto { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.app.casca .au-texto a { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
+.app.casca .au-texto a:hover { color: var(--primaria); }
+.app.casca .au-vezes { color: var(--texto-3); font-size: 12.5px; }
+.app.casca .au-campos { display: flex; flex-wrap: wrap; gap: 4px; }
+.app.casca .au-campos span { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: #F1F4F2; color: var(--texto-2); }
+.app.casca .au-campos .mais { background: transparent; color: var(--texto-3); }
+.app.casca .au-mais { align-self: center; }
+.app.casca .eq-ponto.documentos { background: #2F6FB3; }
+.app.casca .eq-ponto.clientes { background: #8A6D1F; }
+.app.casca .eq-ponto.cadastros { background: #9A4A2C; }
+.app.casca .eq-ponto.equipe { background: #7A4FB0; }
+.app.casca .ultima-alteracao { display: inline-flex; flex-direction: column; line-height: 1.3; }
+.app.casca .ultima-alteracao b { font-weight: 600; color: var(--texto-2); font-size: 12.5px; }
+.app.casca .ultima-alteracao span { font-size: 11.5px; color: var(--texto-3); }
+.app.casca .etapas-barra-nav .escuro { margin-left: auto; }

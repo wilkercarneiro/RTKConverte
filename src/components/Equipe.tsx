@@ -4,18 +4,20 @@
 // sistema cria a conta com uma senha provisória, que aparece UMA vez para ser
 // passada à pessoa —, marca as permissões por perfil ou uma a uma, desativa sem
 // apagar, gera senha nova e remove. O banco confere tudo de novo (0025).
+// A aba Auditoria (0026) mostra quem fez o quê: ver Auditoria.tsx.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EstadoEscritorio } from "../lib/escritorio";
 import {
-  apagarConta, criarMembro, listarAtividades, listarMembros, mensagemDeAcesso, novaSenha,
-  podeAdicionar, rotuloAtividade, salvarMembro,
+  apagarConta, criarMembro, listarMembros, mensagemDeAcesso, novaSenha,
+  podeAdicionar, salvarMembro,
 } from "../lib/equipe";
-import type { Atividade, Membro, PodeAdicionar } from "../lib/equipe";
+import type { Membro, PodeAdicionar } from "../lib/equipe";
 import { PERFIS, PERMISSOES, temPermissao } from "../lib/permissoes";
 import type { ChavePermissao } from "../lib/permissoes";
 import { temRecurso } from "../lib/recursos";
 import { emailValido } from "../../supabase/functions/_shared/cnpj.ts";
-import { avisar, confirmar } from "./ui";
+import { avisar, confirmar, Gaveta } from "./ui";
+import { AuditoriaEmpresa } from "./Auditoria";
 
 const iniciais = (s: string) =>
   s.split(/[\s@._-]+/).filter(Boolean).filter((_, i, a) => i === 0 || i === a.length - 1).map((w) => w[0]?.toUpperCase()).join("") || "?";
@@ -91,11 +93,11 @@ export function Equipe({ escritorio }: { escritorio: EstadoEscritorio }) {
       {gerencio && (
         <nav className="eq-abas" aria-label="Seções da equipe">
           <button className={aba === "pessoas" ? "ativo" : ""} onClick={() => setAba("pessoas")}>Pessoas</button>
-          <button className={aba === "historico" ? "ativo" : ""} onClick={() => setAba("historico")}>Histórico</button>
+          <button className={aba === "historico" ? "ativo" : ""} onClick={() => setAba("historico")}>Auditoria</button>
         </nav>
       )}
 
-      {aba === "historico" && gerencio ? <Historico /> : (
+      {aba === "historico" && gerencio ? <AuditoriaEmpresa membros={membros} /> : (
         <>
           {(membros?.length ?? 0) > 6 && (
             <input className="eq-busca" type="search" placeholder="Buscar por nome, e-mail ou cargo" value={busca}
@@ -205,29 +207,6 @@ function Permissoes({ marcadas, onMudar, souDono, bloqueadas = [] }: {
         </fieldset>
       ))}
     </div>
-  );
-}
-
-function Gaveta({ titulo, olho, onFechar, children, rodape }: {
-  titulo: string; olho: string; onFechar: () => void; children: React.ReactNode; rodape?: React.ReactNode;
-}) {
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onFechar(); };
-    addEventListener("keydown", esc);
-    return () => removeEventListener("keydown", esc);
-  }, [onFechar]);
-  return (
-    <>
-      <div className="eq-veu" onClick={onFechar} />
-      <aside className="eq-gaveta" role="dialog" aria-modal="true" aria-label={titulo}>
-        <header>
-          <div><span className="eq-olho">{olho}</span><h2>{titulo}</h2></div>
-          <button className="fantasma eq-x" onClick={onFechar} aria-label="Fechar">✕</button>
-        </header>
-        <div className="eq-corpo">{children}</div>
-        {rodape && <footer>{rodape}</footer>}
-      </aside>
-    </>
   );
 }
 
@@ -365,49 +344,5 @@ function GavetaMembro({ m, souDono, empresa, onFechar, onPronto }: { m: Membro; 
         </>
       )}
     </Gaveta>
-  );
-}
-
-function Historico() {
-  const [itens, setItens] = useState<Atividade[] | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-  const [filtro, setFiltro] = useState<"tudo" | "servicos" | "equipe">("tudo");
-  useEffect(() => { listarAtividades(200).then(setItens).catch((e) => setErro(String(e.message ?? e))); }, []);
-
-  const lista = (itens ?? []).filter((a) =>
-    filtro === "tudo" || (filtro === "equipe" ? a.acao.startsWith("membro.") : !a.acao.startsWith("membro.")));
-  const porDia = new Map<string, Atividade[]>();
-  for (const a of lista) {
-    const d = new Date(a.created_at).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
-    porDia.set(d, [...(porDia.get(d) ?? []), a]);
-  }
-
-  if (erro) return <div className="eq-aviso">Não foi possível carregar o histórico: {erro}</div>;
-  if (!itens) return <div className="eq-hist" aria-busy="true"><div className="eq-esqueleto eq-linha" /><div className="eq-esqueleto eq-linha" /></div>;
-  return (
-    <div className="eq-hist">
-      <div className="eq-filtro" role="group" aria-label="Filtrar histórico">
-        {([["tudo", "Tudo"], ["servicos", "Serviços e documentos"], ["equipe", "Equipe"]] as const).map(([k, r]) => (
-          <button key={k} className={filtro === k ? "ativo" : ""} onClick={() => setFiltro(k)}>{r}</button>
-        ))}
-      </div>
-      {lista.length === 0 ? <p className="sub">Nada registrado ainda. O histórico começa a contar a partir de agora.</p> : (
-        [...porDia].map(([dia, as]) => (
-          <section key={dia} className="eq-dia">
-            <h4>{dia}</h4>
-            <ol>
-              {as.map((a) => (
-                <li key={a.id}>
-                  <span className={`eq-ponto ${a.acao.split(".")[0]}`} aria-hidden="true" />
-                  <span className="eq-hora">{new Date(a.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
-                  <span><b>{a.quem}</b> {rotuloAtividade(a.acao)} <b>{a.alvo}</b>
-                    {a.acao === "documento.gerado" && a.detalhe?.servico ? <> em {String(a.detalhe.servico)}</> : null}</span>
-                </li>
-              ))}
-            </ol>
-          </section>
-        ))
-      )}
-    </div>
   );
 }

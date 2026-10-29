@@ -134,6 +134,29 @@ export function Passos({ passos, onClick, rotulo = "Etapas do serviço" }: {
   );
 }
 
+/**
+ * Faixa das etapas de um serviço: é a única coisa que fica presa no topo ao
+ * rolar. Leva junto voltar/avançar etapa, para não precisar descer até o fim
+ * da página para trocar de etapa.
+ */
+export function BarraEtapas({ passos, onClick, anterior, seguinte, onIr }: {
+  passos: Passo[];
+  onClick: (passo: Passo, indice: number) => void;
+  anterior: { rotulo: string } | null;
+  seguinte: { rotulo: string } | null;
+  onIr: (direcao: -1 | 1) => void;
+}) {
+  return (
+    <div className="etapas-barra">
+      <Passos passos={passos} onClick={onClick} />
+      <div className="etapas-barra-nav">
+        {anterior && <button type="button" onClick={() => onIr(-1)} title={`Voltar para ${anterior.rotulo}`}>← {anterior.rotulo}</button>}
+        {seguinte && <button type="button" className="escuro" onClick={() => onIr(1)}>{seguinte.rotulo} →</button>}
+      </div>
+    </div>
+  );
+}
+
 /** Rola até um elemento, abrindo as seções recolhidas que o contêm. */
 export function irPara(id: string, piscar = false): void {
   const el = document.getElementById(id);
@@ -431,5 +454,29 @@ export function BotaoPerigo({ titulo, confirmacao, onConfirmar, children, classN
       </button>
       <button className="fantasma" onClick={(e) => { e.stopPropagation(); setArmado(false); }}>cancelar</button>
     </span>
+  );
+}
+
+/** Painel lateral (equipe, histórico do serviço). Esc ou clique fora fecha. */
+export function Gaveta({ titulo, olho, onFechar, children, rodape }: {
+  titulo: string; olho: string; onFechar: () => void; children: React.ReactNode; rodape?: React.ReactNode;
+}) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onFechar(); };
+    addEventListener("keydown", esc);
+    return () => removeEventListener("keydown", esc);
+  }, [onFechar]);
+  return (
+    <>
+      <div className="eq-veu" onClick={onFechar} />
+      <aside className="eq-gaveta" role="dialog" aria-modal="true" aria-label={titulo}>
+        <header>
+          <div><span className="eq-olho">{olho}</span><h2>{titulo}</h2></div>
+          <button className="fantasma eq-x" onClick={onFechar} aria-label="Fechar">✕</button>
+        </header>
+        <div className="eq-corpo">{children}</div>
+        {rodape && <footer>{rodape}</footer>}
+      </aside>
+    </>
   );
 }

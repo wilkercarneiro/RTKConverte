@@ -20,9 +20,10 @@ import { Planos } from "./Planos";
 import { RecursosAdmin } from "./RecursosAdmin";
 import { Contatos } from "./Contatos";
 import { ConfigAdmin } from "./ConfigAdmin";
+import { Marca } from "../Marca";
 import { AvisosGlobais, DialogosGlobais } from "../ui";
 
-export type AbaAdmin = "visao" | "empresas" | "planos" | "recursos" | "contatos" | "config";
+export type AbaAdmin = "visao" | "empresas" | "planos" | "recursos" | "contatos" | "config" | "marca";
 
 export interface DadosAdmin {
   empresas: Empresa[];
@@ -51,7 +52,14 @@ const MENU: { secao: string; itens: { aba: AbaAdmin; rotulo: string; icone: stri
       { aba: "recursos", rotulo: "Recursos", icone: ICO.recursos },
     ],
   },
-  { secao: "Sistema", itens: [{ aba: "config", rotulo: "Configurações", icone: ICO.config }] },
+  {
+    secao: "Sistema",
+    itens: [
+      { aba: "config", rotulo: "Configurações", icone: ICO.config },
+      // só o superadmin: o guia da marca do Vértice não é assunto das empresas
+      { aba: "marca", rotulo: "Guia da marca", icone: ICO.marca },
+    ],
+  },
 ];
 
 export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
@@ -98,6 +106,7 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
       case "recursos": pagina = <RecursosAdmin d={ctx} />; break;
       case "contatos": pagina = <Contatos d={ctx} />; break;
       case "config": pagina = <ConfigAdmin />; break;
+      case "marca": pagina = <Marca />; break;
       default: pagina = <VisaoGeral d={ctx} />;
     }
   }

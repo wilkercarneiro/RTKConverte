@@ -16,6 +16,7 @@ export const ICO = {
   alerta: "M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
   pausa: "M10 15V9M14 15V9M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z",
   mais: "M12 5v14M5 12h14",
+  marca: "M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5",
 };
 
 export function Ico({ d }: { d: string }) {

@@ -13,7 +13,8 @@ import { ehRioPorLimite, ehViaPorLimite, numerarConfrontantes, viasDaPlanta } fr
 import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
-import { Avisos, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { Avisos, BarraEtapas, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { AutoriaServico } from "./Auditoria";
 import { Icone, ICONE } from "./Icone";
 
 interface TrechoPdf {
@@ -345,12 +346,8 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
   const indiceEtapa = etapas.findIndex((e) => e.chave === etapa);
   const etapaAnterior = etapas[indiceEtapa - 1] ?? null;
   const etapaSeguinte = etapas[indiceEtapa + 1] ?? null;
-  const navEtapa = (
-    <div className="etapa-nav">
-      {etapaAnterior && <button onClick={() => setEtapa(etapaAnterior.chave)}>← {etapaAnterior.rotulo}</button>}
-      {etapaSeguinte && <button className="escuro direita" onClick={() => setEtapa(etapaSeguinte.chave)}>{etapaSeguinte.rotulo} →</button>}
-    </div>
-  );
+  // trocar de etapa pela faixa fixa volta ao começo da etapa nova
+  const trocarEtapa = (e: typeof etapa) => { setEtapa(e); window.scrollTo({ top: 0 }); };
 
   const proxima: Acao = pendencias.length > 0
     ? {
@@ -393,9 +390,17 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         <span className="chip mod-pecas">Peças</span>
         {(pdfNome ?? servico.nome_arquivo_txt) && <span className="arquivo">{pdfNome ?? servico.nome_arquivo_txt}</span>}
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
-        <span className="esticar" />
-        <Passos passos={passos} onClick={(_, i) => setEtapa(etapas[i].chave)} />
+        {servicoId && (
+          <div className="topo-meta">
+            <AutoriaServico servicoId={servicoId} titulo={servico.denominacao || "Peças técnicas"} versao={auto.horaSalvo} />
+          </div>
+        )}
       </header>
+
+      {/* Só as etapas ficam presas no topo ao rolar; o cabeçalho acima rola junto. */}
+      <BarraEtapas passos={passos} onClick={(_, i) => trocarEtapa(etapas[i].chave)}
+        anterior={etapaAnterior} seguinte={etapaSeguinte}
+        onIr={(d) => trocarEtapa((d < 0 ? etapaAnterior : etapaSeguinte)!.chave)} />
 
       <div className="conferencia-corpo fade" key={etapa}>
         <ProximaAcao acao={proxima} />
@@ -527,7 +532,6 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                 </Secao>
               </div>
             </section>
-            {navEtapa}
           </>
         )}
 
@@ -616,7 +620,6 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
               })}
               {trechos.length === 0 && <p className="sub" style={{ margin: 0 }}>Nenhum confrontante lido do PDF.</p>}
             </div>
-            {navEtapa}
           </>
         )}
 
@@ -693,7 +696,6 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                 <span className="desc">cada geração vira uma versão preservada — baixe qualquer uma a qualquer momento</span></header>
               <HistoricoDocs servicoId={servico.id} />
             </section>
-            {navEtapa}
           </>
         )}
       </div>

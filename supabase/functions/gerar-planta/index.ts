@@ -24,8 +24,8 @@ import { numerosDoSigefPorAnel, numerosTotaisDoSigef } from "../_shared/sigef_gl
 import type { NumerosSigef } from "../_shared/sigef_glebas.ts";
 import { anelLonLatDeEN, garantirImagemSatelite } from "../_shared/satelite.ts";
 import type { LonLat } from "../_shared/satelite.ts";
-import { exigirPermissao, exigirServicoDoUsuario } from "../_shared/acesso.ts";
-import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { autorDaChamada, exigirPermissao, exigirServicoDoUsuario, gravarHistoricoDocumentos } from "../_shared/acesso.ts";
+import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { escritorioDoServico } from "../_shared/modelos.ts";
 import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
 import type { ClienteVertices } from "../_shared/vertices_db.ts";
@@ -68,6 +68,8 @@ Deno.serve(async (req) => {
     if (recusa) return json({ erro: recusa.erro }, recusa.status);
     const semPermissao = await exigirPermissao(clienteDoUsuario(req), "documentos.gerar", "gerar documentos");
     if (semPermissao) return json({ erro: semPermissao.erro }, semPermissao.status);
+    // quem pediu: o histórico de documentos guarda o nome (auditoria, 0026)
+    const autor = await autorDaChamada(clienteDoUsuario(req));
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { data: servico } = await supa.from("servicos").select().eq("id", servico_id).single();
@@ -323,7 +325,7 @@ Deno.serve(async (req) => {
     if (up.error) throw up.error;
     // "SIGEF" no título/nome do arquivo: esta é a planta oficial, para não se
     // confundir com a que sai junto do memorial (gerar-documentos, tipo planta_pdf_sistema)
-    await supa.from("documentos_gerados").insert([{ servico_id, versao, tipo: "planta_pdf", titulo: `Planta ${folhaSaida} (PDF · SIGEF)`, path }]);
+    await gravarHistoricoDocumentos(supa as unknown as ClienteHistorico, [{ servico_id, versao, tipo: "planta_pdf", titulo: `Planta ${folhaSaida} (PDF · SIGEF)`, path }], autor);
     const nomeBase = servico.denominacao.replace(/[\\/:*?"<>|]/g, "-").trim();
     const s = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `Planta SIGEF - ${nomeBase}.pdf` });
 

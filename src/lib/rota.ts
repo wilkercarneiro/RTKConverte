@@ -15,7 +15,6 @@ export type Rota =
   | { t: "servicos" }
   | { t: "config" }
   | { t: "equipe" }
-  | { t: "marca" }
   | { t: "ajuda" }
   // públicas (abrem sem login)
   | { t: "cadastro" }
@@ -44,7 +43,8 @@ export function hashParaRota(hash: string): Rota {
     case "servicos": return { t: "servicos" };
     case "config": return { t: "config" };
     case "equipe": return { t: "equipe" };
-    case "marca": return { t: "marca" };
+    // o guia da marca mora no painel do superadmin (links antigos caem lá)
+    case "marca": return { t: "admin", aba: "marca" };
     case "ajuda": return { t: "ajuda" };
     case "cadastro": return { t: "cadastro" };
     case "termos": return { t: "termos" };

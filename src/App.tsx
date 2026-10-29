@@ -14,7 +14,6 @@ import { Car } from "./components/car/Car";
 import { CarNovo } from "./components/car/CarNovo";
 import { Configuracoes } from "./components/Configuracoes";
 import { ClientePage } from "./components/ClientePage";
-import { Marca } from "./components/Marca";
 import { Cadastro } from "./components/Cadastro";
 import { Ajuda } from "./components/Ajuda";
 import { PaginaDocumento } from "./components/Documento";
@@ -312,9 +311,6 @@ export default function App() {
 
     case "equipe":
       return <AppShell {...casca}><Equipe escritorio={escritorio} /></AppShell>;
-
-    case "marca":
-      return <AppShell {...casca}><Marca /></AppShell>;
 
     case "ajuda":
       return <AppShell {...casca}><Ajuda /></AppShell>;

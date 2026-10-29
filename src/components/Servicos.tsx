@@ -15,6 +15,9 @@ import { avisar, CabecalhoPagina, confirmar, EstadoErro, EstadoVazio, Esqueleto 
 import { guardar, lembrar } from "../lib/ux";
 import { temPermissao } from "../lib/permissoes";
 import { Icone, ICONE } from "./Icone";
+import { autoriaServicos } from "../lib/equipe";
+import type { Autoria } from "../lib/equipe";
+import { quandoFoi } from "./Auditoria";
 
 type Andamento = "todos" | "andamento" | "concluidos";
 const ANDAMENTOS: { chave: Andamento; rotulo: string }[] = [
@@ -33,6 +36,8 @@ export function Servicos({ onAbrir, onNovo }: { onAbrir: (s: Servico) => void; o
   const [andamento, setAndamento] = useState<Andamento>(() => (lembrar("servicos.andamento") as Andamento | null) ?? "todos");
   const podeCriar = temPermissao("servicos.criar");
   const podeExcluir = temPermissao("servicos.excluir");
+  // quem mexeu por último (0026); vazio enquanto o banco não tem a auditoria
+  const [autoria, setAutoria] = useState<Record<string, Autoria>>({});
 
   async function carregar() {
     setCarregando(true);
@@ -45,6 +50,7 @@ export function Servicos({ onAbrir, onNovo }: { onAbrir: (s: Servico) => void; o
     setServicos((ss.data as Servico[]) ?? []);
     setDocs(indexarDocumentos((ds.data as { servico_id: string; tipo: string }[]) ?? []));
     setCarregando(false);
+    autoriaServicos(((ss.data as Servico[]) ?? []).map((s) => s.id)).then(setAutoria);
   }
   useEffect(() => { carregar(); }, []);
 
@@ -139,7 +145,7 @@ export function Servicos({ onAbrir, onNovo }: { onAbrir: (s: Servico) => void; o
               <thead>
                 <tr>
                   <th>Imóvel</th><th className="col-sec">Cliente</th><th className="col-sec">Município</th>
-                  <th className="col-sec">Modalidade</th><th>Progresso</th><th className="col-sec">Falta</th>
+                  <th className="col-sec">Modalidade</th><th>Progresso</th><th className="col-sec">Falta</th><th className="col-sec">Última alteração</th>
                   {podeExcluir && <th><span className="sr-only">Ações</span></th>}
                 </tr>
               </thead>
@@ -163,6 +169,14 @@ export function Servicos({ onAbrir, onNovo }: { onAbrir: (s: Servico) => void; o
                       </span>
                     </td>
                     <td className="sub col-sec">{p.falta}</td>
+                    <td className="sub col-sec">
+                      {autoria[s.id]?.atualizado_em ? (
+                        <span className="ultima-alteracao" title={autoria[s.id].criado_por ? `criado por ${autoria[s.id].criado_por}` : undefined}>
+                          <b>{autoria[s.id].atualizado_por ?? "—"}</b>
+                          <span>{quandoFoi(autoria[s.id].atualizado_em)}</span>
+                        </span>
+                      ) : "—"}
+                    </td>
                     {podeExcluir && (
                       <td className="acao">
                         <button type="button" className="icone" aria-label={`Excluir "${nome(s)}"`} title="Excluir serviço"

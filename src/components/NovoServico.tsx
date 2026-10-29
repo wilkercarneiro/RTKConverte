@@ -5,11 +5,25 @@
 // (só os que o plano libera), então modalidade nova aparece aqui sozinha.
 // Setas para quem usa mouse, encaixe por cartão (scroll-snap), roda do mouse
 // vira rolagem lateral, e o teclado anda pelos cartões com Tab.
+//
+// Cartão vertical com uma foto do tipo de trabalho ao fundo (src/assets/servicos,
+// fotos do Unsplash, licença livre). Modalidade sem foto cai no fundo verde.
 import { useEffect, useRef, useState } from "react";
 import { SERVICOS } from "../lib/modalidades";
 import type { ChaveServico } from "../lib/modalidades";
 import { servicoLiberado } from "../lib/recursos";
-import { Icone } from "./Icone";
+import fotoCompleto from "../assets/servicos/completo.jpg";
+import fotoConferencia from "../assets/servicos/conferencia.jpg";
+import fotoGleba from "../assets/servicos/gleba.jpg";
+import fotoDivisao from "../assets/servicos/divisao.jpg";
+import fotoLoteamento from "../assets/servicos/loteamento.jpg";
+import fotoCar from "../assets/servicos/car.jpg";
+import fotoPecas from "../assets/servicos/pecas.jpg";
+
+const FOTOS: Partial<Record<ChaveServico, string>> = {
+  completo: fotoCompleto, conferencia: fotoConferencia, gleba: fotoGleba, divisao: fotoDivisao,
+  loteamento: fotoLoteamento, car: fotoCar, pecas: fotoPecas,
+};
 
 export function NovoServico({ onNovo, compacto = false, titulo = "Novo serviço" }: {
   onNovo: (chave: ChaveServico) => void; compacto?: boolean; titulo?: string;
@@ -64,16 +78,22 @@ export function NovoServico({ onNovo, compacto = false, titulo = "Novo serviço"
           {lista.map((d) => (
             <button key={d.chave} type="button" className={`ns-cartao mod-${d.chave}`} onClick={() => onNovo(d.chave)}
               title={compacto ? d.resumo : undefined}>
-              <span className="ns-icone" aria-hidden="true"><Icone d={d.icone} size={compacto ? 18 : 22} /></span>
-              <b className="ns-nome">{d.titulo}</b>
-              {!compacto && <span className="ns-resumo">{d.resumo}</span>}
+              {FOTOS[d.chave] && <img className="ns-foto" src={FOTOS[d.chave]} alt="" loading="lazy" decoding="async" />}
+              <span className="ns-veu" aria-hidden="true" />
               {!compacto && (
-                <span className="ns-entrega">
-                  {d.entrega.slice(0, 3).map((e) => <span key={e}>{e}</span>)}
-                  {d.entrega.length > 3 && <span className="mais">+{d.entrega.length - 3}</span>}
-                </span>
+                <span className="ns-selo">{d.entrega.length} {d.entrega.length === 1 ? "entrega" : "entregas"}</span>
               )}
-              <span className="ns-cta">{d.cta}<span aria-hidden="true">→</span></span>
+              <span className="ns-corpo">
+                <b className="ns-nome">{d.titulo}</b>
+                {!compacto && <span className="ns-resumo">{d.resumo}</span>}
+                {!compacto && (
+                  <span className="ns-entrega">
+                    {d.entrega.slice(0, 2).map((e) => <span key={e}>{e}</span>)}
+                    {d.entrega.length > 2 && <span className="mais">+{d.entrega.length - 2}</span>}
+                  </span>
+                )}
+                <span className="ns-cta">{d.cta}<span aria-hidden="true">→</span></span>
+              </span>
             </button>
           ))}
         </div>

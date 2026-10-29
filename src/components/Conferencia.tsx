@@ -37,7 +37,8 @@ import { HistoricoDocs } from "./HistoricoDocs";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { temRecurso } from "../lib/recursos";
 import { temPermissao } from "../lib/permissoes";
-import { Avisos, BotaoPerigo, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { Avisos, BarraEtapas, BotaoPerigo, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { AutoriaServico } from "./Auditoria";
 
 /** Etapas do serviço: uma por vez, como abas dentro do cabeçalho. */
 type Etapa = "dados" | "confrontantes" | "glebas" | "documentos";
@@ -1145,12 +1146,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
   const indiceEtapa = etapas.findIndex((e) => e.chave === etapa);
   const etapaAnterior = etapas[indiceEtapa - 1] ?? null;
   const etapaSeguinte = etapas[indiceEtapa + 1] ?? null;
-  const navEtapa = (
-    <div className="etapa-nav">
-      {etapaAnterior && <button onClick={() => setEtapa(etapaAnterior.chave)}>← {etapaAnterior.rotulo}</button>}
-      {etapaSeguinte && <button className="escuro direita" onClick={() => setEtapa(etapaSeguinte.chave)}>{etapaSeguinte.rotulo} →</button>}
-    </div>
-  );
+  // trocar de etapa pela faixa fixa volta ao começo da etapa nova
+  const trocarEtapa = (e: Etapa) => { setEtapa(e); window.scrollTo({ top: 0 }); };
 
   const chave = chaveDoServico(servico);
   const verticeInicialNome = (() => {
@@ -1227,9 +1224,16 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {avisosTopo.map((a, i) => <li key={i} title={a.detalhe}>{a.texto}</li>)}
           </ul>
         )}
-        {servico.nome_arquivo_txt && servico.denominacao && <span className="arquivo topo-arquivo">{servico.nome_arquivo_txt}</span>}
-        <Passos passos={passos} onClick={(_, i) => setEtapa(etapas[i].chave)} />
+        <div className="topo-meta">
+          {servico.nome_arquivo_txt && servico.denominacao && <span className="arquivo">{servico.nome_arquivo_txt}</span>}
+          <AutoriaServico servicoId={servico.id} titulo={servico.denominacao || servico.nome_arquivo_txt || "Serviço"} versao={auto.horaSalvo} />
+        </div>
       </header>
+
+      {/* Só as etapas ficam presas no topo ao rolar; o cabeçalho acima rola junto. */}
+      <BarraEtapas passos={passos} onClick={(_, i) => trocarEtapa(etapas[i].chave)}
+        anterior={etapaAnterior} seguinte={etapaSeguinte}
+        onIr={(d) => trocarEtapa((d < 0 ? etapaAnterior : etapaSeguinte)!.chave)} />
 
       <div className="conferencia-corpo fade" key={etapa}>
         <ProximaAcao acao={proxima} />
@@ -1387,7 +1391,6 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 <button type="button" onClick={comecarDivisao}>Dividir em partes iguais</button>
               </div>
             )}
-            {navEtapa}
           </>
         )}
 
@@ -1757,7 +1760,6 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 </p>
               </div>
             </div>
-            {navEtapa}
           </>
         )}
 
@@ -1815,7 +1817,6 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               )}
             </section>
             )}
-            {navEtapa}
           </>
         )}
 
@@ -2362,13 +2363,20 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               </header>
               <HistoricoDocs servicoId={servico.id} />
             </section>
-            {navEtapa}
           </>
         )}
       </div>
 
-      {/* ---------------- Barra fixa (preview) ---------------- */}
-      <footer className="preview">
+      {/* ---------------- Barra fixa (preview): uma linha só, a tela inteira ----------------
+          Pendências e prévia do memorial abrem num balão acima da barra, quando pedidos. */}
+      <footer className="preview preview-fina">
+        {(previaAberta || preview.erro || erro) && (
+          <div className="preview-balao">
+            {preview.erro ? <div className="erro">{preview.erro}</div>
+              : previaAberta && <div className="paragrafo aberto">{preview.primeiroParagrafo}</div>}
+            {erro && <div className="erro">{erro}</div>}
+          </div>
+        )}
         <div className="stats">
           <span className="stat"><span className="rotulo">Fuso</span><span className="valor">{servico.fuso_utm}S · MC-{Math.abs(6 * (servico.fuso_utm ?? 24) - 183)}°W</span></span>
           <span className="stat"><span className="rotulo">Área</span><span className="valor">{preview.areaHa} ha</span></span>
@@ -2383,8 +2391,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {!ehConferencia && (
               <select value={folhaEfetiva} title="Folha da planta que sai junto com o memorial e a planilha" aria-label="Folha da planta"
                 onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
-                <option value="A1">Planta A1 (com quadro analítico)</option>
-                <option value="A3">Planta A3 (sem quadro analítico)</option>
+                <option value="A1">Planta A1 · quadro analítico</option>
+                <option value="A3">Planta A3</option>
               </select>
             )}
             <label className="opcao-metragem" title="Escreve o comprimento de cada lado (de cada parte, na divisão) ao longo dele na planta">
@@ -2409,18 +2417,6 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             )}
           </span>
         </div>
-        {pendencias.length > 0 && (
-          <div className="pendencias-lista">
-            Antes de gerar:{" "}
-            {pendencias.map((p, i) => (
-              <button key={i} className="link-pendencia" onClick={() => irParaCampo(p.alvo, true)}>{p.msg}</button>
-            ))}
-          </div>
-        )}
-        {preview.erro
-          ? <div className="erro">{preview.erro}</div>
-          : <div className={`paragrafo ${previaAberta ? "aberto" : ""}`}>{preview.primeiroParagrafo}</div>}
-        {erro && <div className="erro">{erro}</div>}
       </footer>
     </div>
   );

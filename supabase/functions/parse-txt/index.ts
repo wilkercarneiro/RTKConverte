@@ -27,7 +27,7 @@ import {
   blocosPorNumeracao, fusoPelosCertificados, montarVerticesUnidos, parseCsvSigef, unirEmBlocos,
 } from "../_shared/certificados.ts";
 import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts";
-import { ehRecusa, escritorioDoUsuario, exigirPermissao } from "../_shared/acesso.ts";
+import { autorDaChamada, ehRecusa, escritorioDoUsuario, exigirPermissao } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
 
@@ -64,6 +64,8 @@ Deno.serve(async (req) => {
     if (ehRecusa(acesso)) return json({ erro: acesso.erro }, acesso.status);
     const semPermissao = await exigirPermissao(clienteDoUsuario(req), "servicos.criar", "criar serviços");
     if (semPermissao) return json({ erro: semPermissao.erro }, semPermissao.status);
+    // quem criou (auditoria, 0026): a gravação abaixo é com a service_role
+    const autor = await autorDaChamada(clienteDoUsuario(req));
     const nomeArquivo = typeof nome_arquivo === "string" && nome_arquivo ? nome_arquivo : "pontos.txt";
 
     // ---- confrontantes com área certificada (opcional) ----
@@ -145,7 +147,7 @@ Deno.serve(async (req) => {
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-    const { data: servico, error: eServ } = await supa.from("servicos").insert({
+    const novo: Record<string, unknown> = {
       status: "rascunho",
       nome_arquivo_txt: nomeArquivo,
       fuso_utm: escolhido.zone,
@@ -155,7 +157,11 @@ Deno.serve(async (req) => {
       // e um bloco de identificação por parte
       ...(emPartes ? { tem_glebas: true } : {}),
       ...(acesso.escritorioId ? { escritorio_id: acesso.escritorioId } : {}),
-    }).select().single();
+    };
+    let { data: servico, error: eServ } = await supa.from("servicos")
+      .insert(autor ? { ...novo, criado_por: autor } : novo).select().single();
+    // banco ainda sem a 0026 (coluna criado_por): cria sem o autor
+    if (eServ && autor) ({ data: servico, error: eServ } = await supa.from("servicos").insert(novo).select().single());
     if (eServ) throw eServ;
 
     const up = await supa.storage.from("uploads-txt")
