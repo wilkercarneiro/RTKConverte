@@ -31,7 +31,7 @@ interface Props {
 }
 
 /**
- * A falha do WFS chega com a URL inteira de cada camada (centenas de caracteres
+ * A falha do WFS chega com a URL inteira da consulta (centenas de caracteres
  * sem espaço). Na tela basta o motivo.
  */
 function resumoFalha(detalhe: string): string {
@@ -106,18 +106,22 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
   const areaImovel = resultado?.area_imovel_m2 ?? 0;
   const somaSobre = sobre.reduce((s, x) => s + x.area_m2, 0);
   const tolerancia = String(resultado?.largura_min_m ?? 0.5).replace(".", ",");
-  // "sem sobreposição" só vale se o INCRA respondeu agora ou a base local tem parcelas por perto
+  // "sem sobreposição" só vale de verdade se o INCRA respondeu agora; sem isso,
+  // a base local pode não ter a parcela vizinha e o ✓ verde enganaria
   const naoVerificado = modo === "sobreposicao" && resultado && !sobre.length && online?.estado !== "ok" && nParcelas === 0;
+  const naoConfirmado = modo === "sobreposicao" && resultado && !sobre.length && online !== null && online.estado !== "ok";
+  const porque = online?.estado === "sem-uf" ? "falta a UF do imóvel" : "o INCRA não respondeu";
 
-  const classe = modo === "sobreposicao" && resultado ? (sobre.length ? "perigo" : naoVerificado ? "aviso" : "ok") : "";
+  const classe = modo === "sobreposicao" && resultado ? (sobre.length ? "perigo" : naoConfirmado ? "aviso" : "ok") : "";
   const titulo = modo === "sobreposicao"
     ? (carregando && !resultado ? "Consultando o SIGEF (INCRA) e verificando sobreposição…"
       : !resultado ? "Sobreposição com parcelas certificadas (SIGEF)"
       : sobre.length ? `⚠ ${sobre.length} sobreposição(ões) com parcela certificada`
-      : naoVerificado ? "Sobreposição NÃO verificada: sem dados do SIGEF para esta região"
-      : proprias.length ? `✓ Imóvel já certificado no SIGEF, sem sobreposição com outras parcelas${online?.estado === "ok" ? "" : " (base local)"}`
-      : online?.estado === "ok" ? "✓ Sem sobreposição com parcelas certificadas (SIGEF consultado agora)"
-      : "✓ Sem sobreposição com as parcelas da base local (SIGEF não consultado agora)")
+      : naoVerificado ? `⚠ Sobreposição NÃO verificada: ${porque} e a base local não tem parcelas nesta região`
+      : naoConfirmado && proprias.length ? `⚠ Imóvel já certificado na base local, mas a sobreposição com vizinhos NÃO foi confirmada no SIGEF (${porque})`
+      : naoConfirmado ? `⚠ Sem sobreposição só na base local: NÃO confirmado no SIGEF (${porque})`
+      : proprias.length ? "✓ Imóvel já certificado no SIGEF, sem sobreposição com outras parcelas"
+      : "✓ Sem sobreposição com parcelas certificadas (SIGEF consultado agora)")
     : "Parcelas certificadas ao redor (SIGEF)";
 
   return (
@@ -134,6 +138,13 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
           </button>
         </header>
         {erro && <div className="erro">{erro}</div>}
+        {online?.estado === "falhou" && (
+          <p className="sub">
+            <b>O SIGEF não foi consultado agora</b>
+            {online.detalhe ? ` (${resumoFalha(online.detalhe)})` : ""}. O mapa mostra só as parcelas já guardadas na base local, e
+            uma parcela vizinha que não esteja nela não aparece. Tente "verificar de novo" antes de concluir que não há sobreposição.
+          </p>
+        )}
         {modo === "sobreposicao" && sobre.length > 0 && (
           <>
             <p className="sub">
@@ -175,7 +186,7 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
           <p className="sub">
             {nParcelas} parcela(s) certificada(s) num raio de {raio} m
             {online?.estado === "ok" && <> · <b>SIGEF consultado agora</b>{online.detalhe ? ` (${online.detalhe})` : ""}</>}
-            {online?.estado === "falhou" && <> · <b>o INCRA não respondeu</b>, valendo a cópia da base local{online.detalhe ? ` (${resumoFalha(online.detalhe)})` : ""}</>}
+            {online?.estado === "falhou" && <> · valendo a cópia da base local</>}
             {online?.estado === "sem-uf" && <> · <b>informe a UF</b> para consultar o SIGEF na hora</>}
             {totalBase !== null && <> · base local com {totalBase} parcela(s){uf ? `, ${naUf ?? 0} em ${uf.toUpperCase()}` : ""}</>}.
           </p>

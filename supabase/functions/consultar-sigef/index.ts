@@ -3,8 +3,10 @@
 // A sobreposição em si continua no PostGIS (`sigef_consultar`): esta função só
 // mantém a base em dia. Se o INCRA cair, a tela segue com a última cópia.
 //
-// Por que passa pelo servidor: o acervo fundiário não manda cabeçalho CORS.
-// Serviço: WFS 1.0.0 do i3geo/MapServer, só GML2, coordenadas com 6 casas.
+// Fonte: Geoportal do INCRA (GeoNode/GeoServer), camada única `geonode:sigef_geo`
+// com todas as parcelas do SIGEF do país, em GeoJSON (EPSG:4674, 8 casas).
+// Substitui o WFS do acervo fundiário (i3geo), cujo domínio saiu do DNS em 2026-10-28.
+// Por que passa pelo servidor: o GeoServer não manda cabeçalho CORS.
 //
 // Corpo: { imovel: GeoJSON MultiPolygon|Polygon (lon/lat), uf: "BA", margem_m?: 300 }
 // Resposta: { ok, uf, caixa, camadas: [{ tema, parcelas, erro? }], guardadas, removidas, avisos }
@@ -17,14 +19,28 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-const OGC = "https://acervofundiario.incra.gov.br/i3geo/ogc.php";
-const TEMAS = ["certificada_sigef_particular", "certificada_sigef_publico"];
+const OWS = "https://geoportal.incra.gov.br/geoserver/ows";
+const CAMADA = "geonode:sigef_geo";
 const MAX_FEATURES = 2000;
 const UFS = new Set("AC AL AM AP BA CE DF ES GO MA MG MS MT PA PB PE PI PR RJ RN RO RR RS SC SE SP TO".split(" "));
+// código IBGE da UF (uf_id da camada) → sigla
+const UF_IBGE: Record<number, string> = {
+  11: "RO", 12: "AC", 13: "AM", 14: "RR", 15: "PA", 16: "AP", 17: "TO", 21: "MA", 22: "PI", 23: "CE", 24: "RN",
+  25: "PB", 26: "PE", 27: "AL", 28: "SE", 29: "BA", 31: "MG", 32: "ES", 33: "RJ", 35: "SP", 41: "PR", 42: "SC",
+  43: "RS", 50: "MS", 51: "MT", 52: "GO", 53: "DF",
+};
 
 type Pos = [number, number];
 type Anel = Pos[];
-interface ParcelaWfs { codigo: string; situacao: string | null; registro: string | null; municipio: string | null; geometria: { type: "MultiPolygon"; coordinates: Anel[][] } }
+interface ParcelaWfs {
+  codigo: string; nome: string | null; uf: string | null; codigo_imovel: string | null;
+  situacao: string | null; registro: string | null; municipio: string | null;
+  geometria: { type: "MultiPolygon"; coordinates: Anel[][] };
+}
+interface Feicao {
+  properties?: Record<string, unknown>;
+  geometry?: { type: string; coordinates: unknown } | null;
+}
 
 function caixaDe(geo: { type: string; coordinates: unknown }, margemM: number): [number, number, number, number] | null {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -41,54 +57,59 @@ function caixaDe(geo: { type: string; coordinates: unknown }, margemM: number): 
   return [x0 - dx, y0 - dy, x1 + dx, y1 + dy];
 }
 
-const lerCoords = (txt: string): Anel =>
-  txt.trim().split(/\s+/).map((par) => par.split(",").map(Number) as Pos).filter((p) => p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]));
-
-const campo = (bloco: string, nome: string): string | null => {
-  const m = bloco.match(new RegExp(`<ms:${nome}>([^<]*)</ms:${nome}>`));
-  const v = m?.[1]?.trim();
-  return v ? v : null;
+const texto = (v: unknown): string | null => {
+  const s = v == null ? "" : String(v).trim();
+  return s ? s : null;
 };
 
-/** GML2 do MapServer → parcelas. Cada gml:Polygon vira um polígono do MultiPolygon. */
-export function lerGml(xml: string): ParcelaWfs[] {
+/** Registro em uma linha: situação informada + matrícula/CNS ou transcrição. */
+function registroDe(p: Record<string, unknown>): string | null {
+  const partes = [
+    texto(p.situacao_informada)?.toLowerCase(),
+    texto(p.registro_matricula) ? `matrícula ${texto(p.registro_matricula)}` : null,
+    texto(p.transcricao) ? `transcrição ${texto(p.transcricao)}` : null,
+    texto(p.registro_cns) ? `CNS ${texto(p.registro_cns)}` : null,
+  ].filter(Boolean);
+  return partes.length ? partes.join(", ") : null;
+}
+
+/** GeoJSON do GeoServer → parcelas. Polygon vira MultiPolygon de um polígono. */
+export function lerGeoJson(fc: { features?: Feicao[] }): ParcelaWfs[] {
   const out: ParcelaWfs[] = [];
-  for (const bloco of xml.split("<gml:featureMember>").slice(1)) {
-    const codigo = campo(bloco, "parcela_codigo");
-    if (!codigo) continue;
-    const poligonos: Anel[][] = [];
-    for (const pm of bloco.matchAll(/<gml:Polygon[^>]*>([\s\S]*?)<\/gml:Polygon>/g)) {
-      const corpo = pm[1];
-      const externo = corpo.match(/<gml:outerBoundaryIs>[\s\S]*?<gml:coordinates[^>]*>([^<]*)<\/gml:coordinates>/);
-      if (!externo) continue;
-      const aneis = [lerCoords(externo[1])];
-      for (const im of corpo.matchAll(/<gml:innerBoundaryIs>[\s\S]*?<gml:coordinates[^>]*>([^<]*)<\/gml:coordinates>/g)) aneis.push(lerCoords(im[1]));
-      if (aneis[0].length >= 4) poligonos.push(aneis.filter((a) => a.length >= 4));
-    }
-    if (!poligonos.length) continue;
+  for (const f of fc.features ?? []) {
+    const p = f.properties ?? {};
+    const codigo = texto(p.parcela_codigo);
+    const g = f.geometry;
+    if (!codigo || !g) continue;
+    const poligonos = (g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : []) as Anel[][];
+    const validos = poligonos.map((pol) => pol.filter((a) => a.length >= 4)).filter((pol) => pol.length);
+    if (!validos.length) continue;
     out.push({
       codigo,
-      situacao: campo(bloco, "status"),
-      registro: campo(bloco, "registro_data") ? `registrada em ${campo(bloco, "registro_data")}` : null,
-      municipio: campo(bloco, "codigo_municipio") ? `IBGE ${campo(bloco, "codigo_municipio")}` : null,
-      geometria: { type: "MultiPolygon", coordinates: poligonos },
+      nome: texto(p.nome_area),
+      uf: UF_IBGE[Number(p.uf_id)] ?? null,
+      codigo_imovel: texto(p.codigo_imovel),
+      situacao: texto(p.status),
+      registro: registroDe(p),
+      municipio: texto(p.municipio_id) ? `IBGE ${texto(p.municipio_id)}` : null,
+      geometria: { type: "MultiPolygon", coordinates: validos },
     });
   }
   return out;
 }
 
-async function buscarTema(tema: string, caixa: number[]): Promise<{ parcelas: ParcelaWfs[]; truncado: boolean }> {
+async function buscarCaixa(caixa: number[]): Promise<{ parcelas: ParcelaWfs[]; truncado: boolean }> {
   const q = new URLSearchParams({
-    tema, service: "WFS", version: "1.0.0", request: "GetFeature", typename: tema,
-    bbox: caixa.map((v) => v.toFixed(6)).join(","), maxfeatures: String(MAX_FEATURES),
+    service: "WFS", version: "1.0.0", request: "GetFeature", typename: CAMADA, outputFormat: "application/json",
+    bbox: caixa.map((v) => v.toFixed(8)).join(","), maxFeatures: String(MAX_FEATURES),
   });
-  const r = await fetch(`${OGC}?${q}`, { signal: AbortSignal.timeout(25000) });
+  const r = await fetch(`${OWS}?${q}`, { signal: AbortSignal.timeout(25000) });
   const txt = await r.text();
   if (!r.ok) throw new Error(`INCRA respondeu ${r.status}`);
-  if (!txt.includes("FeatureCollection")) throw new Error(`resposta inesperada do INCRA: ${txt.slice(0, 160).replace(/\s+/g, " ")}`);
-  const parcelas = lerGml(txt);
-  const membros = (txt.match(/<gml:featureMember>/g) ?? []).length;
-  return { parcelas, truncado: membros >= MAX_FEATURES };
+  let fc: { type?: string; features?: Feicao[] };
+  try { fc = JSON.parse(txt); } catch { fc = {}; }
+  if (fc.type !== "FeatureCollection") throw new Error(`resposta inesperada do INCRA: ${txt.slice(0, 160).replace(/\s+/g, " ")}`);
+  return { parcelas: lerGeoJson(fc), truncado: (fc.features?.length ?? 0) >= MAX_FEATURES };
 }
 
 Deno.serve(async (req) => {
@@ -100,27 +121,25 @@ Deno.serve(async (req) => {
     const caixa = caixaDe(imovel, Math.min(Math.max(Number(margem_m) || 300, 0), 3000));
     if (!caixa) return json({ erro: "Polígono do imóvel vazio" }, 422);
 
-    const camadas: { tema: string; parcelas: number; erro?: string }[] = [];
-    const todas = new Map<string, ParcelaWfs>();
+    let parcelas: ParcelaWfs[] = [];
     let completo = true;
-    await Promise.all(TEMAS.map(async (base) => {
-      const tema = `${base}_${uf.toLowerCase()}`;
-      try {
-        const { parcelas, truncado } = await buscarTema(tema, caixa);
-        if (truncado) completo = false;
-        for (const p of parcelas) todas.set(p.codigo, p);
-        camadas.push({ tema, parcelas: parcelas.length });
-      } catch (e) {
-        completo = false;
-        camadas.push({ tema, parcelas: 0, erro: e instanceof Error ? e.message : String(e) });
-      }
-    }));
-    const ok = camadas.some((c) => !c.erro);
-    const avisos = camadas.filter((c) => c.erro).map((c) => `${c.tema}: ${c.erro}`);
+    const camada: { tema: string; parcelas: number; erro?: string } = { tema: CAMADA, parcelas: 0 };
+    try {
+      const r = await buscarCaixa(caixa);
+      parcelas = r.parcelas;
+      completo = !r.truncado;
+      camada.parcelas = parcelas.length;
+    } catch (e) {
+      camada.erro = e instanceof Error ? e.message : String(e);
+    }
+    const camadas = [camada];
+    const ok = !camada.erro;
+    const avisos = camada.erro ? [`${CAMADA}: ${camada.erro}`] : [];
     if (!ok) return json({ ok, uf, caixa, camadas, guardadas: 0, removidas: 0, avisos });
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const lote = [...todas.values()].map((p) => ({ ...p, uf, fonte: "wfs" }));
+    // parcela vizinha de outra UF (divisa de estado) fica com a UF dela
+    const lote = parcelas.map((p) => ({ ...p, uf: p.uf ?? uf, fonte: "wfs" }));
     const { data, error } = await supa.rpc("sigef_sincronizar", {
       parcelas: lote, x0: caixa[0], y0: caixa[1], x1: caixa[2], y1: caixa[3], remover: completo,
     });
