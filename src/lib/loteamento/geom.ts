@@ -103,6 +103,12 @@ export function distSegmento(p: Pt, a: Pt, b: Pt): { d: number; t: number } {
   return { d: dist(p, lerp(a, b, t)), t };
 }
 
+/** Distância de `p` à reta (infinita) por `a` e `b`; com `a` ≈ `b`, até `a`. */
+export function distReta(p: Pt, a: Pt, b: Pt): number {
+  const l = dist(a, b);
+  return l < 1e-9 ? dist(p, a) : Math.abs(cross(sub(b, a), sub(p, a))) / l;
+}
+
 export function distPolilinha(p: Pt, linha: Pt[]): number {
   let m = Infinity;
   for (let i = 0; i + 1 < linha.length; i++) m = Math.min(m, distSegmento(p, linha[i], linha[i + 1]).d);
@@ -166,6 +172,25 @@ export function limparAnel(anel: Anel, tol = 0.002): Anel {
     }
   }
   return pts;
+}
+
+/**
+ * Tira o "bico" de largura zero que o clipper às vezes deixa: o anel vai pela
+ * reta além de `c` e volta por ela (a → b → c, `b` no prolongamento). No plano
+ * a área é nula e `limparAnel` não o vê (`b` fica fora do segmento a–c), mas em
+ * grau a reta vira curva, ida e volta se cruzam e o SICAR recusa (erro 3001).
+ */
+export function tirarBicos(anel: Anel, tol = 0.002): Anel {
+  let pts = anel.slice();
+  let mudou = true;
+  while (mudou && pts.length > 3) {
+    mudou = false;
+    for (let i = 0; i < pts.length && pts.length > 3; i++) {
+      const a = pts[(i - 1 + pts.length) % pts.length], b = pts[i], c = pts[(i + 1) % pts.length];
+      if (dot(sub(b, a), sub(c, b)) < 0 && distReta(b, a, c) < tol) { pts.splice(i, 1); mudou = true; i--; }
+    }
+  }
+  return limparAnel(pts, tol);
 }
 
 // ---------------------------------------------------------------------------

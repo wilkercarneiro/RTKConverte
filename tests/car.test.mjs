@@ -165,3 +165,42 @@ test("shapefile com furo: externo horário, furo anti-horário, multipolígono n
   assert.equal(fs2[0].geometry.type, "MultiPolygon");
   assert.equal(fs2[0].geometry.coordinates[0].length, 2, "o furo ficou no 1º polígono");
 });
+
+// Paulo (Campo Formoso, 2026-10-29): a produtiva saiu do clipper com um bico de
+// largura zero (ia pela divisa além da ponta da reserva e voltava pela mesma
+// reta). Em grau a reta vira curva, ida e volta se cruzaram e o SICAR recusou
+// com "vértices sobrepostos ou muito próximos" (3001).
+test("tirarBicos tira o bico de largura zero (ida e volta pela mesma reta)", async () => {
+  const { tirarBicos } = await import("../src/lib/loteamento/geom.ts");
+  const anel = [[0, 0], [100, 0], [100, 50], [60, 50], [80, 50], [0, 50]];
+  assert.deepEqual(tirarBicos(anel), [[0, 0], [100, 0], [100, 50], [0, 50]]);
+});
+
+const cruzamentos = (anel) => {
+  const n = anel.length, out = [];
+  const x = (a, b, c, d) => {
+    const r = [b[0] - a[0], b[1] - a[1]], s = [d[0] - c[0], d[1] - c[1]];
+    const den = r[0] * s[1] - r[1] * s[0];
+    if (den === 0) return false;
+    const t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den;
+    const u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den;
+    return t > 1e-12 && t < 1 - 1e-12 && u > 1e-12 && u < 1 - 1e-12;
+  };
+  for (let i = 0; i < n; i++) for (let j = i + 2; j < n; j++) {
+    if (i === 0 && j === n - 1) continue;
+    if (x(anel[i], anel[(i + 1) % n], anel[j], anel[(j + 1) % n])) out.push([i, j]);
+  }
+  return out;
+};
+
+test("camadas em grau sem aresta cruzada, em todo lado e giro da reserva", () => {
+  const pr = base();
+  const lados = calcularCar(pr).imovel.ext.length;
+  for (let lado = 0; lado < lados; lado++) for (const giro of [-60, -30, 0, 30, 60]) {
+    const p = { ...pr, reserva: { ...pr.reserva, lado, giro, poligonos: reservaPorLado(pr, lado, giro) } };
+    const res = calcularCar(p);
+    for (const c of ["reserva", "produtiva"]) for (const pol of poligonosDaCamada(p, res, c))
+      for (const anel of [pol.ext, ...pol.furos])
+        assert.deepEqual(cruzamentos(anel), [], `${c}, lado ${lado}, giro ${giro}`);
+  }
+});

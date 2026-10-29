@@ -18,7 +18,7 @@ import proj4mod from "proj4";
 import { GEO_DEF } from "../../../supabase/functions/_shared/geo.ts";
 import {
   antiHorario, areaPol, areaPols, areaPolAteCorte, bufferLinha, caixa, diferenca, dist, dot, esquerda,
-  faixaReferencial, intersecao, offsetPols, sub, unit, uniao,
+  faixaReferencial, intersecao, offsetPols, sub, tirarBicos, unit, uniao,
 } from "../loteamento/geom.ts";
 import type { Poligono, Pt } from "../loteamento/geom.ts";
 import type { LonLat } from "./kml.ts";
@@ -142,16 +142,20 @@ export function faixaDoRio(pl: PlanoCar, r: RioCar): Poligono[] {
   return r.linha.length >= 2 && r.faixa > 0 ? bufferLinha(r.linha.map(pl.para), 2 * r.faixa, "redonda") : [];
 }
 
+/** O bico de largura zero do clipper vira aresta cruzada em grau (SICAR 3001). */
+const semBicos = (pols: Poligono[]): Poligono[] =>
+  pols.map((p) => ({ ext: tirarBicos(p.ext), furos: p.furos.map((f) => tirarBicos(f)) }));
+
 export function calcularCar(pr: ProjetoCar): ResultadoCar {
   const plano = planoDe(pr.perimetro);
   const imovel: Poligono = { ext: antiHorario(pr.perimetro.map(plano.para)), furos: [] };
   const areaImovel = areaPol(imovel);
-  const reserva = pr.reserva.poligonos.length
+  const reserva = semBicos(pr.reserva.poligonos.length
     ? intersecao([imovel], uniao(pr.reserva.poligonos.map((p) => polPlano(plano, p))))
-    : [];
+    : []);
   const faixas = pr.rios.flatMap((r) => faixaDoRio(plano, r));
-  const app = faixas.length ? intersecao([imovel], uniao(faixas)) : [];
-  const produtiva = diferenca([imovel], pr.produtivaSemApp ? uniao([...reserva, ...app]) : reserva);
+  const app = semBicos(faixas.length ? intersecao([imovel], uniao(faixas)) : []);
+  const produtiva = semBicos(diferenca([imovel], pr.produtivaSemApp ? uniao([...reserva, ...app]) : reserva));
 
   const area = {
     imovel: areaImovel,
