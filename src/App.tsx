@@ -32,6 +32,9 @@ import { servicoLiberado } from "./lib/recursos";
 import { definirPermissoes } from "./lib/permissoes";
 import { Equipe } from "./components/Equipe";
 import { TrocarSenhaObrigatoria } from "./components/TrocarSenha";
+import { SemCreditos } from "./components/Creditos";
+import { avisarConsumo, carregarCreditos, temCredito } from "./lib/creditos";
+import type { Creditos } from "./lib/creditos";
 import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
 
 // só no `npm run dev`: fica num pedaço à parte que o build nunca carrega
@@ -56,6 +59,9 @@ export default function App() {
   const [escritorio, setEscritorio] = useState<EstadoEscritorio | null>(null);
   // superadmin, senha provisória e recursos do plano (null = carregando). Ver lib/conta.ts.
   const [conta, setConta] = useState<Conta | null>(null);
+  // créditos de serviço do mês (null = banco sem a 0027 ou ainda carregando: nada bloqueia)
+  const [creditos, setCreditos] = useState<Creditos | null>(null);
+  const atualizarCreditos = () => { carregarCreditos().then(setCreditos).catch(() => setCreditos(null)); };
 
   useEffect(() => {
     if (!configOk) return;
@@ -80,6 +86,12 @@ export default function App() {
     });
     return () => { cancelado = true; };
   }, [logado, usuario]);
+
+  // relido ao abrir um serviço novo e ao voltar ao início: o saldo muda a cada envio
+  useEffect(() => {
+    if (!logado || (rota.t !== "novo" && rota.t !== "inicio")) return;
+    atualizarCreditos();
+  }, [logado, rota.t]);
 
   // A rota é a fonte da verdade da navegação: o serviço da URL é carregado aqui,
   // e não empurrado por quem clicou. É isso que faz atualizar a página (F5) e o
@@ -225,10 +237,18 @@ export default function App() {
           </AppShell>
         );
       }
+      if (!temCredito(creditos, def.chave)) {
+        return (
+          <AppShell {...casca}>
+            <SemCreditos def={def} creditos={creditos!} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizarCreditos} />
+          </AppShell>
+        );
+      }
       if (def.campos.tipo === "pecas") {
         return (
           <AppShell {...casca}>
-            <PecasServico servicoId={null} clienteId={rota.clienteId} onVoltar={() => ir({ t: "inicio" })} />
+            <PecasServico servicoId={null} clienteId={rota.clienteId} onVoltar={() => ir({ t: "inicio" })}
+              onCriado={() => { void avisarConsumo("pecas"); }} />
           </AppShell>
         );
       }
@@ -237,6 +257,7 @@ export default function App() {
           <AppShell {...casca}>
             <CarNovo definicao={def} clienteId={rota.clienteId} onVoltar={() => ir({ t: "inicio" })}
               onCriado={(servico) => {
+                void avisarConsumo(def.chave);
                 setAberto({ servico, vertices: [], trechos: [], preview: previewVazio(servico) });
                 substituir({ t: "servico", id: servico.id });
               }} />
@@ -250,6 +271,7 @@ export default function App() {
             onParsed={async (parse) => {
               const comCliente = await vincularCliente(parse, rota.clienteId);
               const pronto = await aplicarModalidade(comCliente, def.chave);
+              void avisarConsumo(def.chave);
               setAberto(pronto);
               // replace: voltar não pode retornar à tela de upload de um TXT
               // que já foi consumido e virou serviço.
@@ -319,7 +341,8 @@ export default function App() {
       return (
         <AppShell {...casca}>
           <Inicio onNovo={(chave) => ir({ t: "novo", chave })} onAbrir={abrirServico}
-            onVerServicos={() => ir({ t: "servicos" })} nome={usuario ?? undefined} />
+            onVerServicos={() => ir({ t: "servicos" })} nome={usuario ?? undefined}
+            creditos={creditos} onAtualizarCreditos={atualizarCreditos} />
         </AppShell>
       );
   }

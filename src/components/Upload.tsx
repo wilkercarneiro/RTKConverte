@@ -16,6 +16,7 @@ import { PainelSigef } from "./PainelSigef";
 import { temRecurso } from "../lib/recursos";
 import { guardarParcelasSigef } from "../lib/sigef";
 import { loteamentoDisponivel } from "../lib/loteamento/persistencia";
+import { textoSemCredito } from "../lib/creditos";
 import type { LonLat } from "../lib/sigef";
 
 export interface ResultadoParse {
@@ -137,6 +138,8 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
       const conteudo = await file.text();
       const r = await chamarFuncao<ResultadoParse>("parse-txt", {
         nome_arquivo: file.name, conteudo, uf: uf || undefined,
+        // o serviço nasce já com a modalidade: é nela que o crédito do mês é gasto
+        campos: definicao.campos,
         fuso: fuso ? Number(fuso) : undefined,
         ...(usaCertificados ? {
           certificados: gruposValidos.map((g) => ({ nome: g.nome, conteudo: g.conteudo, selecionados: [...g.selecionados] })),
@@ -145,7 +148,7 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
       });
       onParsed(r);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : String(e));
+      setErro(textoSemCredito(e instanceof Error ? e.message : String(e)));
     } finally {
       setCarregando(false);
     }

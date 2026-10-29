@@ -54,10 +54,21 @@ const entradaCalc = (l: VerticeUnido): EntradaVertice => l.inserido_manual
   ? { numTxt: l.num_txt, latGms: parseGmsPlanilha(l.lat_gms), lonGms: parseGmsPlanilha(l.lon_gms), h: l.h, sigmaPos: l.sigma_pos, sigmaH: l.sigma_h, inserido: true }
   : { numTxt: l.num_txt, e: l.e, n: l.n, h: l.h, sigmaPos: l.sigma_pos, sigmaH: l.sigma_h };
 
+/** Colunas da modalidade vindas da tela (sem elas, o default do banco: completo). */
+function camposDaModalidade(c: unknown): Record<string, unknown> {
+  if (!c || typeof c !== "object") return {};
+  const { modalidade, tem_glebas, divisao } = c as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  if (modalidade === "completo" || modalidade === "conferencia" || modalidade === "loteamento") out.modalidade = modalidade;
+  if (tem_glebas === true) out.tem_glebas = true;
+  if (divisao === true) out.divisao = { iguais: true };
+  return out;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { nome_arquivo, conteudo, uf, fuso, certificados, tolerancia_certificados, tolerancia_linha } = await req.json();
+    const { nome_arquivo, conteudo, uf, fuso, certificados, tolerancia_certificados, tolerancia_linha, campos } = await req.json();
     if (typeof conteudo !== "string" || !conteudo.trim()) return json({ erro: "Conteúdo do TXT ausente" }, 400);
     // o serviço nasce no escritório de quem enviou (null = banco ainda sem escritórios)
     const acesso = await escritorioDoUsuario(clienteDoUsuario(req));
@@ -153,6 +164,9 @@ Deno.serve(async (req) => {
       fuso_utm: escolhido.zone,
       vertice_inicial: verticeInicial,
       uf: uf ?? null,
+      // a modalidade do cartão escolhido: o crédito do mês (0027) é gasto nela,
+      // no momento em que o serviço nasce
+      ...camposDaModalidade(campos),
       // várias partes só existem como serviço com glebas: uma aba, uma poligonal
       // e um bloco de identificação por parte
       ...(emPartes ? { tem_glebas: true } : {}),

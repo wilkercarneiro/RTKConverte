@@ -16,6 +16,7 @@ import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { Avisos, BarraEtapas, Dica, Passos, Rotulo, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 import { AutoriaServico } from "./Auditoria";
 import { Icone, ICONE } from "./Icone";
+import { textoSemCredito } from "../lib/creditos";
 
 interface TrechoPdf {
   id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string; eh_via: boolean;
@@ -59,7 +60,11 @@ function bufParaBase64(buf: ArrayBuffer): string {
   return btoa(bin);
 }
 
-export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: string | null; clienteId?: string; onVoltar: () => void }) {
+export function PecasServico({ servicoId, clienteId, onVoltar, onCriado }: {
+  servicoId: string | null; clienteId?: string; onVoltar: () => void;
+  /** o serviço nasceu do PDF (o crédito do mês foi gasto) */
+  onCriado?: () => void;
+}) {
   const [servico, setServico] = useState<Servico | null>(null);
   const [trechos, setTrechos] = useState<TrechoPdf[]>([]);
   const [rts, setRts] = useState<RT[]>([]);
@@ -187,10 +192,11 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
       }));
       await supabase.from("trechos_confrontantes").insert(linhas);
       setServico(novo as Servico);
+      onCriado?.();
       setTrechos(linhas.map((l) => ({ codigo_inicio: l.codigo_inicio, descritivo: l.descritivo, tipo_limite: l.tipo_limite, eh_via: l.eh_via, numerado: false })));
       avisar("ok", `PDF lido: ${a.vertices} vértices e ${a.trechos.length} confrontantes detectados. Complete os dados e revise os descritivos.`);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : String(e));
+      setErro(textoSemCredito(e instanceof Error ? e.message : String(e)));
     } finally {
       setOcupado(null);
     }

@@ -12,6 +12,7 @@ import type { Rota } from "../lib/rota";
 import { temRecurso } from "../lib/recursos";
 import { Logo } from "./Logo";
 import { AvisosGlobais, DialogosGlobais } from "./ui";
+import { AvisoCreditoGlobal } from "./Creditos";
 import "./casca.css";
 
 const I = {
@@ -151,6 +152,7 @@ export function AppShell({ rota, ir, children, usuario, superadmin }: {
 
       <main className="app-conteudo" key={rota.t}>{children}</main>
       <AvisosGlobais />
+      <AvisoCreditoGlobal />
       <DialogosGlobais />
     </div>
   );

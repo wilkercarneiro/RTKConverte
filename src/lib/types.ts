@@ -86,6 +86,8 @@ export interface Servico {
   modalidade: Modalidade;
   /** Serviço com glebas: liga o editor e o desenho dos sub-polígonos. */
   tem_glebas: boolean;
+  /** serviço derivado de outro (gleba separada, GEO de herdeiro): não gasta crédito (0027) */
+  origem_id?: string | null;
   /**
    * Folha da planta da conferência (o operador escolhe). Nulo = A4.
    * Não se aplica ao serviço completo, que segue posse → A3 / matrícula → A1.

@@ -330,6 +330,8 @@ export function servicoDaParte(servico: Servico, g: Gleba): Partial<Servico> {
     ...campos,
     tem_glebas: false,
     divisao: null,
+    // sai do imóvel dividido, que já gastou o crédito
+    origem_id: servico.id,
     status: "rascunho",
     denominacao: denominacaoDaParte(servico, g),
     denominacao_parcela: null,

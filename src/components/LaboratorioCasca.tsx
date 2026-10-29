@@ -13,6 +13,10 @@ import { AppShell } from "./AppShell";
 import { Inicio } from "./Inicio";
 import { ClientePage } from "./ClientePage";
 import { Equipe } from "./Equipe";
+import { SemCreditos } from "./Creditos";
+import { avisarConsumo } from "../lib/creditos";
+import type { Creditos } from "../lib/creditos";
+import { definicaoDe } from "../lib/modalidades";
 
 const dia = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 const SERVICOS = [
@@ -51,7 +55,24 @@ const ATIVIDADES = [
   { id: 3, acao: "membro.desativado", alvo: "Ana Lúcia", detalhe: null, created_at: dia(6), quem: "Daniel Nascimento" },
   { id: 2, acao: "cliente.criado", alvo: "MARIA DAS DORES SILVA", detalhe: null, created_at: dia(6), quem: "Marta Ribeiro" },
 ];
+// créditos (0027): CAR esgotado, o resto com folga
+const CREDITOS: Creditos = {
+  mes: "2026-10-01",
+  total: { limite: 30, usado: 27, extra: 0 },
+  servicos: {
+    "servico.completo": { limite: 20, usado: 18, extra: 0, disponivel: true },
+    "servico.car": { limite: 4, usado: 4, extra: 0, disponivel: false },
+  },
+  sou_dono: true,
+  pacotes: [
+    { id: "p1", nome: "10 serviços extras", chave: "total", quantidade: 10, preco: 900 },
+    { id: "p2", nome: "CAR 10", chave: "servico.car", quantidade: 10, preco: 450 },
+  ],
+  pedidos: [{ id: "x1", chave: "total", quantidade: 5, preco: null, descricao: "Pedido avulso", status: "aprovado", created_at: "2026-10-12T12:00:00Z" }],
+};
+
 const RPC: Record<string, unknown> = {
+  meus_creditos: CREDITOS,
   listar_membros: MEMBROS,
   listar_atividades: ATIVIDADES,
   pode_adicionar_membro: { ok: true, limite: 5, ativos: 3, sou_dono: true },
@@ -89,6 +110,10 @@ export function LaboratorioCasca() {
   instalar(operador);
   const tela = location.hash.replace(/^#\/lab\/casca\/?/, "").split(/[/?]/)[0] || "inicio";
   const [, forcar] = useState(0);
+  if (tela === "creditos" && !(window as { _avisou?: boolean })._avisou) {
+    (window as { _avisou?: boolean })._avisou = true;
+    setTimeout(() => void avisarConsumo("completo"), 300);
+  }
   const rota: Rota = tela === "equipe" ? { t: "equipe" } : tela === "cliente" ? { t: "cliente", id: "c1" } : { t: "inicio" };
   const ir = (r: Rota) => {
     const alvo = r.t === "equipe" ? "equipe" : r.t === "cliente" || r.t === "clientes" ? "cliente" : "inicio";
@@ -99,8 +124,9 @@ export function LaboratorioCasca() {
   return (
     <AppShell rota={rota} ir={ir} usuario={{ nome: operador ? "Paulo Sena" : "Daniel Nascimento", papel: operador ? "Equipe · D'Prol" : "Dono · D'Prol" }} superadmin={!operador}>
       {tela === "equipe" ? <Equipe escritorio={escritorio} />
+        : tela === "creditos" ? <SemCreditos def={definicaoDe("car")} creditos={CREDITOS} onVoltar={() => ir({ t: "inicio" })} onAtualizar={() => {}} />
         : tela === "cliente" ? <ClientePage clienteId="c1" onVoltar={() => ir({ t: "inicio" })} onAbrirServico={() => {}} onNovoServico={() => {}} />
-          : <Inicio onNovo={() => {}} onAbrir={() => {}} onVerServicos={() => {}} nome="Daniel Nascimento" />}
+          : <Inicio onNovo={() => {}} onAbrir={() => {}} onVerServicos={() => {}} nome="Daniel Nascimento" creditos={CREDITOS} />}
     </AppShell>
   );
 }

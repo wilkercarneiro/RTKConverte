@@ -1,6 +1,8 @@
 // Visão geral do SaaS: quantas empresas, quanto usam, quem precisa de atenção.
 import { useEffect, useState } from "react";
-import { serieServicos, usoModalidades } from "../../lib/admin";
+import { pedidosPendentes, serieServicos, usoModalidades } from "../../lib/admin";
+import type { PedidoPendente } from "../../lib/admin";
+import { fmtPreco, nomeDaChave } from "../../lib/creditos";
 import { recursoDe } from "../../lib/recursos";
 import type { DadosAdmin } from "./PainelAdmin";
 import { Dica } from "../ui";
@@ -9,10 +11,12 @@ import { Carregando, ICO, Kpi, PlanoTag, Topo, fmtNum, iniciais, quando, semUso 
 export function VisaoGeral({ d }: { d: DadosAdmin }) {
   const [serie, setSerie] = useState<{ dia: string; total: number }[] | null>(null);
   const [uso, setUso] = useState<{ chave: string; total: number }[] | null>(null);
+  const [pedidos, setPedidos] = useState<PedidoPendente[]>([]);
 
   useEffect(() => {
     serieServicos(30).then(setSerie).catch(() => setSerie([]));
     usoModalidades(null, 30).then(setUso).catch(() => setUso([]));
+    pedidosPendentes().then(setPedidos);
   }, []);
 
   const ativas = d.empresas.filter((e) => e.status === "ativo");
@@ -42,6 +46,22 @@ export function VisaoGeral({ d }: { d: DadosAdmin }) {
         <Kpi rotulo="Pedidos de reunião" valor={fmtNum(novosContatos)} icone={ICO.contatos} tom={novosContatos ? "alerta" : undefined}
           detalhe={suspensas ? `${suspensas} empresa(s) suspensa(s)` : "novos, vindos do site"} onClick={() => d.ir({ t: "admin", aba: "contatos" })} />
       </section>
+
+      {pedidos.length > 0 && (
+        <section className="sa-card" style={{ marginBottom: 18 }}>
+          <header><h3>Pedidos de créditos aguardando<Dica>aprove na página da empresa, aba Créditos, depois de combinar o pagamento</Dica></h3></header>
+          <div className="sa-lista">
+            {pedidos.map((p) => (
+              <button type="button" key={p.id} className="sa-item" onClick={() => d.ir({ t: "admin", aba: "empresas", id: p.escritorio_id })}>
+                <span className="av">{iniciais(p.empresa)}</span>
+                <span style={{ flex: 1, textAlign: "left" }}><b>{p.empresa}</b>
+                  <span className="sub" style={{ display: "block", fontSize: 12 }}>{p.quantidade} · {nomeDaChave(p.chave)} · {fmtPreco(p.preco)} · {quando(p.created_at)}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="sa-grade c3" style={{ marginBottom: 18 }}>
         <section className="sa-card">

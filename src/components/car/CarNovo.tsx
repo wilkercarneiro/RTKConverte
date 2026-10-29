@@ -12,6 +12,7 @@ import { calcularCar, fmtHa, fmtNum, projetoNovo } from "../../lib/car/motor.ts"
 import { criarServicoCar } from "../../lib/car/persistencia.ts";
 import { Icone, ICONE } from "../Icone";
 import { Dica, Passos } from "../ui";
+import { textoSemCredito } from "../../lib/creditos";
 import "./car.css";
 
 async function textoDoArquivo(f: File): Promise<string> {
@@ -77,7 +78,7 @@ export function CarNovo({ definicao, clienteId, onCriado, onVoltar }: {
       });
       onCriado(s);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : String(e));
+      setErro(textoSemCredito(e instanceof Error ? e.message : String(e)));
     } finally {
       setCriando(false);
     }

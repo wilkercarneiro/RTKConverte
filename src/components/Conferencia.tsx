@@ -662,6 +662,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
           tem_glebas: false,
           status: "rascunho",
           denominacao_parcela: g.nome,
+          // derivado: não gasta crédito (a origem já gastou)
+          origem_id: servico.id,
           // a origem continua existindo e continua com as glebas desenhadas
         }).select().single();
         if (error) throw error;

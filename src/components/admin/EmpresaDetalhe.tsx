@@ -1,4 +1,5 @@
 // Uma empresa: dados do cadastro, plano e situação, recursos (com exceções),
+// créditos do mês (tetos negociados, pacotes, pedidos),
 // usuários (adicionar, redefinir senha, remover) e o uso do sistema.
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -12,12 +13,13 @@ import {
   cnpjValido, emailValido, formatarCnpj, formatarTelefone, problemaDaSenha, telefoneValido,
 } from "../../../supabase/functions/_shared/cnpj.ts";
 import type { DadosAdmin } from "./PainelAdmin";
+import { CreditosEmpresa } from "./CreditosEmpresa";
 import { confirmar, Dica, Rotulo } from "../ui";
 import {
   Carregando, ICO, Kpi, PlanoTag, StatusPill, Topo, copiar, fmtCnpj, fmtData, fmtNum, fmtTel, iniciais, quando,
 } from "./comum";
 
-type Aba = "geral" | "recursos" | "usuarios" | "uso" | "historico";
+type Aba = "geral" | "recursos" | "creditos" | "usuarios" | "uso" | "historico";
 
 export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
   const e = d.empresas.find((x) => x.id === id);
@@ -78,13 +80,14 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
       </div>
 
       <nav className="sa-abas" aria-label="Seções da empresa">
-        {([["geral", "Cadastro e plano"], ["recursos", "Recursos"], ["usuarios", "Usuários"], ["uso", "Uso"], ["historico", "Histórico"]] as [Aba, string][]).map(([a, r]) => (
+        {([["geral", "Cadastro e plano"], ["recursos", "Recursos"], ["creditos", "Créditos"], ["usuarios", "Usuários"], ["uso", "Uso"], ["historico", "Histórico"]] as [Aba, string][]).map(([a, r]) => (
           <button key={a} type="button" className={aba === a ? "ativo" : ""} onClick={() => setAba(a)}>{r}</button>
         ))}
       </nav>
 
       {aba === "geral" && <Geral e={e} d={d} onSalvo={(t) => setAviso({ tipo: "ok", texto: t })} />}
       {aba === "recursos" && <RecursosEmpresa e={e} d={d} />}
+      {aba === "creditos" && <CreditosEmpresa e={e} d={d} />}
       {aba === "usuarios" && <Usuarios e={e} d={d} />}
       {aba === "uso" && <Uso e={e} />}
       {aba === "historico" && <Historico e={e} />}

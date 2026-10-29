@@ -14,6 +14,8 @@ import type { DocsDoServico } from "../lib/progresso";
 import type { Servico } from "../lib/types";
 import { Icone, ICONE } from "./Icone";
 import { NovoServico } from "./NovoServico";
+import { CreditosResumo } from "./Creditos";
+import type { Creditos } from "../lib/creditos";
 
 interface Props {
   onNovo: (chave: ChaveServico) => void;
@@ -21,6 +23,9 @@ interface Props {
   onVerServicos: () => void;
   /** nome ou e-mail do operador logado, para a saudação */
   nome?: string;
+  /** créditos de serviço do mês (null = sem a 0027) */
+  creditos?: Creditos | null;
+  onAtualizarCreditos?: () => void;
 }
 
 function saudacao(): string {
@@ -43,7 +48,7 @@ function primeiroNome(nome?: string): string | null {
   return base.charAt(0).toUpperCase() + base.slice(1).toLowerCase();
 }
 
-export function Inicio({ onNovo, onAbrir, onVerServicos, nome }: Props) {
+export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos }: Props) {
   // null = carregando; erro separado: falha nunca aparece como "nenhum serviço"
   const [servicos, setServicos] = useState<Servico[] | null>(null);
   const [docs, setDocs] = useState<Record<string, DocsDoServico>>({});
@@ -97,6 +102,8 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome }: Props) {
           <div><b>{servicos === null ? "–" : servicos.length >= 200 ? "200+" : servicos.length}</b><span>serviços no total</span></div>
         </div>
       </div>
+
+      {creditos && <CreditosResumo creditos={creditos} onAtualizar={onAtualizarCreditos ?? (() => {})} />}
 
       {erro && (
         <div className="aviso-erro-pagina" role="alert">

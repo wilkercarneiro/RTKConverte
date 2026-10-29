@@ -56,6 +56,27 @@ const RPC: Record<string, (a: Record<string, unknown>) => unknown> = {
     { user_id: "u1", email: "contato@empresa1.com.br", papel: "dono", desde: dia(60), ultimo_acesso: dia(1), senha_provisoria: false },
     { user_id: "u2", email: "campo@empresa1.com.br", papel: "membro", desde: dia(20), ultimo_acesso: null, senha_provisoria: true },
   ],
+  sa_pedidos_credito_pendentes: () => [
+    { id: "pc1", escritorio_id: EMPRESAS[0]?.id, empresa: EMPRESAS[0]?.nome ?? "Empresa", chave: "servico.car", quantidade: 10, preco: 450, descricao: "CAR 10", created_at: dia(0) },
+  ],
+  sa_creditos_empresa: () => ({
+    mes: dia(0).slice(0, 8) + "01",
+    total: { limite: 30, usado: 27, extra: 5 },
+    servicos: Object.fromEntries(RECURSOS.filter((r) => r.chave.startsWith("servico.")).map((r, i) => [r.chave, {
+      limite: i === 0 ? 20 : i === 5 ? 4 : null, usado: i === 0 ? 18 : i === 5 ? 4 : i, extra: i === 5 ? 2 : 0, disponivel: true,
+    }])),
+    plano: { total: 30, servicos: { "servico.completo": 20, "servico.car": 4 } },
+    negociado: { "servico.car": 6 },
+    pacotes: [
+      { id: "p1", escritorio_id: "e1", nome: "10 serviços extras", chave: "total", quantidade: 10, preco: 900, ativo: true, ordem: 0 },
+      { id: "p2", escritorio_id: "e1", nome: "CAR 10", chave: "servico.car", quantidade: 10, preco: 450, ativo: true, ordem: 1 },
+    ],
+    extras: [
+      { id: "x1", chave: "servico.car", quantidade: 10, preco: 450, descricao: "CAR 10", origem: "pedido", status: "pendente", observacao: null, created_at: dia(0), resolvido_em: null, quem: "contato@empresa1.com.br" },
+      { id: "x2", chave: "total", quantidade: 5, preco: null, descricao: "Cortesia de lançamento", origem: "manual", status: "aprovado", observacao: null, created_at: dia(12), resolvido_em: dia(12), quem: null },
+    ],
+    historico: [{ mes: dia(0).slice(0, 8) + "01", total: 27 }, { mes: dia(35).slice(0, 8) + "01", total: 31 }],
+  }),
   sa_recursos_empresa: () => RECURSOS.map((r, i) => ({
     chave: r.chave, liberado: i % 4 !== 3, origem: i === 4 ? "excecao" : r.chave === "sigef.mapa" ? "padrao" : "plano", excecao: i === 4 ? true : null,
   })),

@@ -1153,3 +1153,35 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .dv-item-corpo .acoes-linha { gap: 6px; }
 .dv-item-corpo .acoes-linha button { height: 30px; font-size: 12.5px; }
 .dv-resumo-pe { font-size: 12px; color: var(--texto-3); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--linha); }
+
+/* ---- créditos de serviço (0027) ---- */
+.aviso-credito { position: fixed; left: 18px; bottom: 18px; z-index: 91; display: flex; gap: 12px; align-items: flex-start; max-width: min(420px, calc(100vw - 36px)); padding: 14px 14px 14px 16px; border-radius: var(--raio-g); background: var(--card); border: 1px solid var(--borda); box-shadow: var(--sombra-alta); animation: fadeUp 0.2s ease both; }
+.aviso-credito .ac-icone { width: 30px; height: 30px; flex: none; border-radius: 9px; display: grid; place-items: center; background: var(--primaria-clara); color: var(--primaria-escura); font-weight: 700; }
+.aviso-credito .ac-corpo { display: grid; gap: 4px; font-size: 13.5px; flex: 1; }
+.aviso-credito .ac-corpo .link { justify-self: start; font-size: 12.5px; padding: 0; }
+.aviso-credito .ac-x { width: 26px; height: 26px; padding: 0; }
+@media (max-width: 720px) { .aviso-credito { left: 12px; right: 12px; bottom: 12px; max-width: none; } }
+.aviso-ok-pagina { padding: 12px 16px; border-radius: 12px; background: var(--primaria-clara); color: var(--primaria-escura); font-size: 14px; margin: 12px 0; }
+.sem-credito { max-width: 560px; display: grid; gap: 12px; }
+.sem-credito h2 { margin: 0; }
+.creditos-resumo { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 16px; border-radius: 12px; background: #F1F4F2; font-size: 13.5px; }
+.creditos-resumo > span { flex: 1; }
+.creditos-resumo.alerta { background: var(--alerta-claro); }
+.creditos-resumo .link { padding: 0; }
+.compra-creditos { display: grid; gap: 18px; }
+.compra-creditos .pacotes { display: grid; gap: 10px; }
+.compra-creditos .pacote { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--borda); border-radius: 12px; }
+.compra-creditos .pacote > div { display: grid; gap: 2px; }
+.compra-creditos .pacote .preco { font-weight: 700; }
+.compra-creditos .pedido-livre { display: grid; gap: 10px; padding: 14px; border: 1px dashed var(--borda-forte); border-radius: 12px; }
+.compra-creditos .pedido-livre label { display: grid; gap: 4px; font-size: 13px; }
+.compra-creditos .pl-campos { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+.compra-creditos .pedido-livre .sub { margin: 0; font-size: 12.5px; }
+.compra-creditos .pedido-livre button { justify-self: start; }
+.compra-creditos .pedidos-credito { display: grid; gap: 8px; }
+.compra-creditos .pedido { display: flex; gap: 10px; align-items: center; font-size: 13.5px; }
+.compra-creditos .pedido > span:first-child { flex: 1; display: grid; }
+.compra-creditos .pedido small { color: var(--texto-3); font-size: 12px; }
+.chip.st-pendente { background: var(--alerta-claro); color: var(--alerta-escuro); }
+.chip.st-aprovado { background: var(--primaria-clara); color: var(--primaria-escura); }
+.chip.st-recusado, .chip.st-cancelado { background: #EEF0EF; color: var(--texto-3); }
