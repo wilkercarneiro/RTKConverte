@@ -57,7 +57,10 @@
 .car-campo > span:first-child { color: var(--texto-2); }
 .car-entrada { display: inline-flex; align-items: center; gap: 6px; }
 .car-entrada input { width: 84px; }
-.car-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.car-check { display: flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; line-height: 1.3; }
+/* o checkbox herdava a altura/largura dos campos de texto e saía da linha */
+.car-check input[type="checkbox"] { flex: none; width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--primaria); }
+.car-check > span { display: inline-flex; align-items: center; }
 .car-check small { color: var(--texto-3); }
 .car-botoes { display: flex; gap: 8px; flex-wrap: wrap; }
 .car-botoes button { flex: 1; }
@@ -88,3 +91,11 @@
   .car-area-trabalho { grid-template-columns: 52px minmax(0, 1fr); grid-template-rows: minmax(420px, 1fr) auto; height: auto; }
   .car-painel { grid-column: 1 / 3; border-left: 0; border-top: 1px solid var(--borda); }
 }
+
+/* Reserva legal: % + "Encostar num lado" + "Desenhar à mão" na mesma linha */
+.car-reserva-linha { display: grid; grid-template-columns: auto 1fr 1fr; gap: 6px; align-items: center; }
+.car-reserva-linha button { height: 34px; padding: 0 8px; font-size: 12.5px; white-space: nowrap; min-width: 0; }
+.car-reserva-linha button.ativo { background: var(--primaria-clara); border-color: var(--primaria); color: var(--floresta); }
+.car-pct { gap: 3px; }
+.car-pct input { width: 48px; height: 34px; padding: 0 6px; text-align: right; }
+.car-pct .dica { margin-left: 2px; }

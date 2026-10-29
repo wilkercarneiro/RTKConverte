@@ -235,18 +235,16 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
           </section>
 
           <section className="car-cartao">
-            <header><h3>Reserva legal</h3>{res.reservaOk ? <span className="car-ok">✓ ok</span> : <span className="car-falta">abaixo do pedido</span>}</header>
-            <label className="car-campo">
-              <span>Porcentagem exigida<Dica>20% fora da Amazônia Legal; 35% no cerrado e 80% na floresta dentro dela. Confirme a regra do imóvel.</Dica></span>
-              <span className="car-entrada">
+            <header><h3>Reserva legal<Dica>A porcentagem exigida é 20% fora da Amazônia Legal; 35% no cerrado e 80% na floresta dentro dela — confirme a regra do imóvel. "Encostar" põe a reserva junto de um lado do imóvel (clique no lado; o giro fica no mapa); "Desenhar" é à mão, clicando os vértices.</Dica></h3>{res.reservaOk ? <span className="car-ok">✓ ok</span> : <span className="car-falta">abaixo do pedido</span>}</header>
+            {/* porcentagem e as duas formas de desenhar numa linha só */}
+            <div className="car-reserva-linha">
+              <label className="car-entrada car-pct" title="Porcentagem exigida da reserva legal">
                 <input type="number" min={0} max={100} step={1} value={projeto.reserva.pct}
                   onChange={(e) => mudarPct(Number(e.target.value))} aria-label="Porcentagem da reserva legal" />
                 <span>%</span>
-              </span>
-            </label>
-            <div className="car-botoes">
-              <button className={ferramenta === "lado" ? "ativo" : ""} onClick={() => setFerramenta("lado")}>⊟ Encostar num lado</button>
-              <button className={ferramenta === "reserva" ? "ativo" : ""} onClick={() => setFerramenta("reserva")}>⬠ Desenhar à mão</button>
+              </label>
+              <button className={ferramenta === "lado" ? "ativo" : ""} onClick={() => setFerramenta("lado")} title="Encostar a reserva num lado do imóvel">⊟ Encostar</button>
+              <button className={ferramenta === "reserva" ? "ativo" : ""} onClick={() => setFerramenta("reserva")} title="Desenhar a reserva à mão">⬠ Desenhar</button>
             </div>
             {projeto.reserva.poligonos.length > 0 && (
               <div className="car-botoes">
