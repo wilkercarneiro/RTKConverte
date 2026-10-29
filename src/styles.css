@@ -1079,3 +1079,27 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .dv-barra .esticar { flex: 1; }
 .dv-barra .dv-sem { font-size: 13px; }
 .dv-recolhido > summary .dica { vertical-align: middle; }
+
+/* Glebas · "Pontos e ligações": o contorno como ligações entre pontos */
+.ct-abas { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.ct-abas button { height: 36px; }
+.ct-abas button.ativa { border-color: var(--primaria); background: var(--primaria-clara); color: var(--floresta); }
+.ct-abas .sub { margin-left: 8px; font-size: 13px; }
+.ct-editor { border: 1px solid var(--borda); border-radius: var(--raio); overflow: hidden; background: var(--card); }
+.ct-barra { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--linha); min-height: 56px; box-sizing: border-box; }
+.ct-barra button { height: 34px; }
+.ct-barra .esticar { flex: 1; }
+.ct-barra b { font-size: 13.5px; }
+.ct-ligando { color: var(--primaria); }
+.ct-svg { display: block; width: 100%; height: 620px; background: #FBFCFB; touch-action: none; cursor: grab; user-select: none; }
+.ct-svg:active { cursor: grabbing; }
+.ct-svg.ligando, .ct-svg.ligando .ct-ponto { cursor: crosshair; }
+.ct-ponto, .ct-ligacao { cursor: pointer; }
+.ct-ligacao:hover line:last-child { stroke: var(--primaria); }
+.ct-rotulo { fill: #33413A; font-family: var(--fonte); pointer-events: none; }
+.ct-rotulo-area { fill: var(--floresta); font-family: var(--fonte); font-weight: 700; pointer-events: none; paint-order: stroke; stroke: #fff; }
+.ct-situacao { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; padding: 10px 12px; border-top: 1px solid var(--linha); font-size: 13px; color: var(--texto-2); }
+.ct-chip { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; font-weight: 600; color: var(--texto); }
+.ct-chip i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.ct-alerta { color: var(--perigo); font-weight: 600; }
+.ct-aviso { color: var(--alerta-escuro); font-weight: 600; }

@@ -15,6 +15,8 @@ import { calcularGleba, dadosDasPartes, geometriaDoCalculo, servicoDaGleba } fro
 import { gerarPlantaPdf } from "../../supabase/functions/_shared/planta.ts";
 // @ts-expect-error fixture em JS dos testes, sem declaração de tipos
 import { ANEL, dadosPlantaDe } from "../../tests/fixtures/salgada_velha.mjs";
+// @ts-expect-error fixture em JS dos testes, sem declaração de tipos
+import { VERTICES as IBERA_V, GLEBAS as IBERA_G } from "../../tests/fixtures/ibera.mjs";
 
 const SID = "lab-divisao";
 const VIZINHOS = ["", "", "", "", "FAZENDA BOA ESPERANÇA\\JOSÉ PEREIRA\\CPF:000.000.001-00", "", "", "", "", "", "", "", "", "", "", "SÍTIO SÃO JOSÉ\\MARIA LIMA\\CPF:000.000.002-00"];
@@ -44,7 +46,33 @@ function calcular(vs: Vertice[]) {
   }, p4);
 }
 
+// #/lab/divisao/glebas: a etapa Glebas sobre o IBERA.txt (duas áreas no mesmo TXT)
+const verticesIbera: Vertice[] = (IBERA_V as [number, number | null, "M" | "P", number, number][]).map(([ordem, num, tipo, e, n]) => ({
+  id: `i${ordem}`, servico_id: SID, ordem, num_txt: num, rotulo_txt: null, e, n, h: 300, sigma_pos: 0.01, sigma_h: 0.01,
+  tipo, codigo: null, codigo_provisorio: false, metodo: "PG6", inserido_manual: false, lat_gms: "", lon_gms: "",
+  descritivo: tipo === "M" ? `VIZINHO ${ordem}` : null, tipo_limite: tipo === "M" ? "LA1" : null, eh_via: false, cns: null, matricula: null, apelido_txt: null,
+}) as unknown as Vertice);
+const glebasIbera: Gleba[] = (IBERA_G as { nome: string; anel: [number, number][] }[]).map((g, k) => ({ id: `g${k}`, servico_id: SID, ordem: k, nome: g.nome, anel: g.anel, confrontante_interno: null }));
+
+function LaboratorioGlebas() {
+  const [vertices, setVertices] = useState<Vertice[]>(verticesIbera);
+  const [glebas, setGlebas] = useState<Gleba[]>(glebasIbera);
+  return (
+    <div style={{ padding: "28px 40px", display: "grid", gap: 16, maxWidth: 1280, margin: "0 auto" }}>
+      <h2 style={{ margin: 0 }}>Laboratório · glebas<Dica>IBERA.txt: áreas 1–117 e 200–217 no mesmo TXT.</Dica></h2>
+      <DivisaoEditor modo="glebas" servico={{ ...servicoInicial, divisao: null, denominacao: "FAZENDA" } as Servico} vertices={vertices} glebas={glebas}
+        onAplicar={(r) => { setVertices(r.vertices); setGlebas(r.glebas); }} onGlebas={setGlebas} />
+      <p className="sub" style={{ margin: 0 }}>Salvo: {vertices.length} vértices · {glebas.map((g) => `${g.nome} (${g.anel.length} pts)`).join(" · ")}</p>
+    </div>
+  );
+}
+
 export function LaboratorioDivisao() {
+  if (location.hash.startsWith("#/lab/divisao/glebas")) return <LaboratorioGlebas />;
+  return <LaboratorioDivisaoPartes />;
+}
+
+function LaboratorioDivisaoPartes() {
   const [vertices, setVertices] = useState<Vertice[]>(verticesIniciais);
   const [glebas, setGlebas] = useState<Gleba[]>([]);
   const [erro, setErro] = useState<string | null>(null);

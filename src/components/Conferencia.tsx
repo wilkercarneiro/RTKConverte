@@ -1771,29 +1771,20 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 onAplicar={aplicarDivisaoNaTela} onGlebas={setGlebas}
                 onRascunho={(d) => setServico((x) => ({ ...x, divisao: d }))} />
             )}
-            {/* Serviço de glebas: a prancheta é o caminho principal — o operador
-                escolhe em quantas glebas, ajusta as divisas e "Dividir em glebas"
-                grava PARTE 1, PARTE 2… Sem herdeiro e sem GEO por parte: isso é
-                da partilha (servico.divisao), que este botão NÃO liga.
-                Glebas que vieram de outro jeito (TXT levantado gleba por gleba,
-                partes separadas por estrada) a prancheta não sabe redesenhar —
-                para essas a montagem pelos pontos do TXT abre por padrão. */}
-            {!ehDivisao && (() => {
-              const glebasDoTxt = glebas.some((g) => g.anel.length >= 3) && !vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO);
-              const prancheta = (
-                <DivisaoEditor modo="glebas" servico={servico} vertices={vertices} glebas={glebas}
-                  onAplicar={aplicarGlebasNaTela} onGlebas={setGlebas} />
-              );
-              return glebasDoTxt ? (
-                <details className="bloco dv-recolhido">
-                  <summary><b>Redividir pela prancheta</b><Dica>Apaga as glebas atuais e divide o imóvel de novo, ajustando as divisas na prancheta.</Dica></summary>
-                  {prancheta}
-                </details>
-              ) : prancheta;
-            })()}
+            {/* Serviço de glebas: "Pontos e ligações" + prancheta é o caminho
+                principal. Começa pelos contornos das glebas que o serviço já tem
+                (nada é apagado ao abrir): o operador exclui ponto, liga ou
+                desliga, e cada área fechada é uma gleba; com uma área só, a
+                prancheta divide. Sem herdeiro e sem GEO por parte — isso é da
+                partilha (servico.divisao), que esta tela NÃO liga. A chave
+                remonta o editor quando as glebas mudam pela seleção do TXT. */}
             {!ehDivisao && (
-            <details className="bloco dv-recolhido" id="bloco-glebas"
-              open={glebas.some((g) => g.anel.length >= 3) && !vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO)}>
+              <DivisaoEditor key={glebas.map((g) => `${g.id}:${g.anel.length}`).join("|") + `#${vertices.length}`}
+                modo="glebas" servico={servico} vertices={vertices} glebas={glebas}
+                onAplicar={aplicarGlebasNaTela} onGlebas={setGlebas} />
+            )}
+            {!ehDivisao && (
+            <details className="bloco dv-recolhido" id="bloco-glebas">
               <summary>
                 <b>Glebas pelos pontos do TXT</b>
                 <Dica>Para o levantamento feito gleba por gleba: marque os vértices de cada gleba (ou o intervalo de números do TXT). Use quando a divisa interna foi medida em campo.</Dica>

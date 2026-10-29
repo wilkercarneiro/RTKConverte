@@ -24,6 +24,9 @@ import type { Pt } from "../lib/loteamento/geom";
 import { Editor, type OpcoesVista } from "./loteamento/Editor";
 import { Avisos } from "./loteamento/Avisos";
 import { Dica } from "./ui";
+import { ContornoEditor } from "./ContornoEditor";
+import { areasFechadas, ligacoesIniciais, type Ligacao } from "../lib/contorno";
+import { ordensDasGlebas } from "../lib/glebas";
 import "./loteamento/loteamento.css";
 
 const CORES_PARTE = ["#2E86AB", "#E07A1F", "#3BA55C", "#A23B72", "#C9A227", "#5B5FC7", "#D1495B", "#1B998B", "#8D6A9F", "#6C8EAD"];
@@ -77,8 +80,25 @@ function useHistorico(inicial: () => Projeto | null) {
   return { h, mudar, fimArraste, desfazer, refazer };
 }
 
-export function DivisaoEditor({ modo = "divisao", servico, vertices, glebas, onAplicar, onGlebas, onRascunho }: Props) {
+export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, glebas, onAplicar, onGlebas, onRascunho }: Props) {
   const ehGleba = modo === "glebas";
+
+  // ---------------- glebas: o contorno como ligações entre pontos ----------------
+  // Começa pelos contornos das glebas que o serviço já tem (não pela sequência
+  // do TXT, que cruza o mapa quando há mais de uma área). Uma área fechada =
+  // o imóvel, que a prancheta divide; duas ou mais = as glebas prontas.
+  const [lig, setLig] = useState<{ atual: Ligacao[]; passado: Ligacao[][] }>(() => ({ atual: ehGleba ? ligacoesIniciais(todos, glebas) : [], passado: [] }));
+  const mudarLig = (ls: Ligacao[]) => setLig((h) => ({ atual: ls, passado: [...h.passado.slice(-60), h.atual] }));
+  const desfazerLig = () => setLig((h) => (h.passado.length ? { atual: h.passado[h.passado.length - 1], passado: h.passado.slice(0, -1) } : h));
+  const areas = useMemo(() => (ehGleba ? areasFechadas(todos, lig.atual) : null), [ehGleba, todos, lig.atual]);
+  const porOrdem = useMemo(() => new Map(todos.map((v) => [v.ordem, v])), [todos]);
+  const anelUnico = ehGleba && areas?.aneis.length === 1 ? areas.aneis[0] : null;
+  const chaveAnel = anelUnico?.join(",") ?? "";
+  // a prancheta trabalha só com os pontos do contorno, na volta dele
+  const vertices = useMemo(() => (anelUnico ? anelUnico.map((o) => porOrdem.get(o)!) : todos), [chaveAnel, todos]); // eslint-disable-line react-hooks/exhaustive-deps
+  const glebasProntas = ehGleba && (areas?.aneis.length ?? 0) >= 2;
+  const [vistaGleba, setVistaGleba] = useState<"pontos" | "prancheta">(() => (ehGleba && (areas?.aneis.length !== 1 || areas.pontas.length || areas.cruzadas.length) ? "pontos" : "prancheta"));
+
   const aplicadaAntes = vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO) && glebas.length >= 2;
   const fuso = servico.fuso_utm ?? 24;
   const [n, setN] = useState(() => (aplicadaAntes ? glebas.length : 2));
@@ -211,6 +231,55 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices, glebas, onA
     }
   };
 
+  // o contorno mudou em "Ajustar pontos" e continua uma área só: a prancheta divide de novo
+  const contornoAntes = useRef(chaveAnel);
+  useEffect(() => {
+    if (contornoAntes.current === chaveAnel) return;
+    contornoAntes.current = chaveAnel;
+    if (anelUnico) regerar(n, iguais, pct, azManual, inverter);
+  }, [chaveAnel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------------- glebas prontas pelas ligações (duas ou mais áreas fechadas) ----------------
+  /** A gleba do serviço que mais divide pontos com a área k (para manter id, nome e confrontante). */
+  const glebaDaArea = useMemo(() => {
+    if (!areas) return [] as (Gleba | undefined)[];
+    const conjuntos = glebas.map((g) => new Set(ordensDasGlebas([g], todos)[0] ?? []));
+    const usadas = new Set<number>();
+    return areas.aneis.map((a) => {
+      let melhor = -1, comum = 0;
+      conjuntos.forEach((c, i) => {
+        if (usadas.has(i)) return;
+        const n = a.filter((o) => c.has(o)).length;
+        if (n > comum) { comum = n; melhor = i; }
+      });
+      if (melhor >= 0) usadas.add(melhor);
+      return melhor >= 0 ? glebas[melhor] : undefined;
+    });
+  }, [areas, glebas, todos]);
+  const nomesAreas = (areas?.aneis ?? []).map((_, k) => glebaDaArea[k]?.nome || `PARTE ${k + 1}`);
+  // já é o que está salvo? (mesmos pontos em cada gleba e nenhum ponto a apagar)
+  const areasSalvas = glebasProntas && !areas!.soltos.length && !areas!.pontas.length
+    && glebas.filter((g) => g.anel.length >= 3).length === areas!.aneis.length
+    && areas!.aneis.every((a, k) => {
+      const g = glebaDaArea[k];
+      const c = g ? new Set(ordensDasGlebas([g], todos)[0] ?? []) : null;
+      return !!c && c.size === a.length && a.every((o) => c.has(o));
+    });
+  const salvarAreas = () => {
+    if (!areas || !glebasProntas || areas.cruzadas.length) return;
+    const usados = new Set(areas.aneis.flat());
+    const gs: Gleba[] = areas.aneis.map((a, k) => {
+      const g = glebaDaArea[k];
+      return {
+        id: g?.id ?? crypto.randomUUID(), servico_id: servico.id, ordem: k, nome: nomesAreas[k],
+        anel: a.map((o) => [Number(porOrdem.get(o)!.e), Number(porOrdem.get(o)!.n)] as [number, number]),
+        confrontante_interno: g?.confrontante_interno ?? null,
+      };
+    });
+    // ponto fora de toda área sai do serviço (o salvar da Conferência apaga o que não veio)
+    onAplicar({ vertices: todos.filter((v) => usados.has(v.ordem) || v.e === null || v.n === null), glebas: gs, divisao: {} as ParametrosDivisao });
+  };
+
   function rodarComando(texto: string) {
     if (!projeto || !res) return;
     const s = executar(texto, projeto, res, sel);
@@ -316,6 +385,50 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices, glebas, onA
         )}
       </header>
 
+      {ehGleba && areas && (
+        <div className="ct-abas" role="tablist">
+          <button type="button" role="tab" aria-selected={vistaGleba === "pontos"} className={vistaGleba === "pontos" ? "ativa" : ""} onClick={() => setVistaGleba("pontos")}>
+            Pontos e ligações
+          </button>
+          <button type="button" role="tab" aria-selected={vistaGleba === "prancheta"} className={vistaGleba === "prancheta" ? "ativa" : ""}
+            disabled={!anelUnico} onClick={() => setVistaGleba("prancheta")}
+            title={anelUnico ? "Dividir o contorno em glebas com o motor e ajustar na prancheta" : "A prancheta divide um contorno só: hoje há " + areas.aneis.length + " áreas fechadas"}>
+            Dividir na prancheta
+          </button>
+          <span className="sub">
+            {areas.aneis.length === 1 ? "uma área fechada: divida na prancheta ou ligue dois pontos para fazer a divisa"
+              : areas.aneis.length >= 2 ? `${areas.aneis.length} áreas fechadas = ${areas.aneis.length} glebas`
+              : "nenhuma área fechada: ligue os pontos para fechar o contorno"}
+          </span>
+        </div>
+      )}
+
+      {ehGleba && areas && vistaGleba === "pontos" && (
+        <>
+          <ContornoEditor vertices={todos} ligacoes={lig.atual} areas={areas} nomes={nomesAreas}
+            onLigacoes={mudarLig} onDesfazer={desfazerLig} podeDesfazer={lig.passado.length > 0}
+            onRecomecar={() => mudarLig(ligacoesIniciais(todos, glebas))} />
+          <div className="dv-barra">
+            <span className="esticar" />
+            {areas.cruzadas.length > 0 && <b className="dv-sem">Ainda não dá para salvar: há ligações que se cruzam.</b>}
+            {glebasProntas ? (
+              <div className="dv-barra-grupo">
+                <button type="button" className="principal" disabled={areasSalvas || areas.cruzadas.length > 0} onClick={salvarAreas}>
+                  {areasSalvas ? "Glebas salvas ✓" : `Salvar ${areas.aneis.length} glebas`}
+                </button>
+                <Dica>Grava cada área fechada como uma gleba, com os pontos que já existem (nenhum marco novo).{areas.soltos.length > 0 ? ` Os ${areas.soltos.length} pontos sem ligação saem do serviço.` : ""} Em Documentos sai a planta A1 com todas as glebas e, de cada uma, a A3 e o memorial.</Dica>
+              </div>
+            ) : (
+              <div className="dv-barra-grupo">
+                <button type="button" className="principal" disabled={!anelUnico} onClick={() => setVistaGleba("prancheta")}>Dividir na prancheta →</button>
+                <Dica>Com uma área só, a prancheta corta o contorno em glebas (iguais ou em frações) e cria os marcos das divisas. Se a divisa já existe no levantamento, ligue os pontos dela aqui — de um lado ao outro do imóvel — e salve as glebas.</Dica>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {!(ehGleba && vistaGleba === "pontos") && (<>
       <div className="dv-gerar">
         <label className="dv-campo">{ehGleba ? "Quantas glebas" : "Quantas partes"}
           <div className="dv-contador">
@@ -582,6 +695,7 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices, glebas, onA
           </Dica>
         </div>
       </div>
+      </>)}
     </section>
   );
 }
