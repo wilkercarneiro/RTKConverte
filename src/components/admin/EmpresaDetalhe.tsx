@@ -3,7 +3,7 @@
 // usuários (adicionar, redefinir senha, remover) e o uso do sistema.
 import { useCallback, useEffect, useState } from "react";
 import {
-  adicionarUsuario, atividadesDaEmpresa, atualizarEmpresa, definirRecursoEmpresa, lerSenhaPadrao, mensagemDeAcesso,
+  adicionarUsuario, atividadesDaEmpresa, atualizarEmpresa, creditosDaEmpresa, definirRecursoEmpresa, lerSenhaPadrao, mensagemDeAcesso,
   recursosDaEmpresa, redefinirSenha, removerUsuario, usoModalidades, usuariosDaEmpresa,
 } from "../../lib/admin";
 import type { AtividadeEmpresa, Empresa, RecursoEmpresa, StatusEmpresa, UsuarioEmpresa } from "../../lib/admin";
@@ -13,7 +13,8 @@ import {
   cnpjValido, emailValido, formatarCnpj, formatarTelefone, problemaDaSenha, telefoneValido,
 } from "../../../supabase/functions/_shared/cnpj.ts";
 import type { DadosAdmin } from "./PainelAdmin";
-import { CreditosEmpresa } from "./CreditosEmpresa";
+import { CampoCreditosMes, CreditosEmpresa, creditosMesDe, gravarCreditosMes } from "./CreditosEmpresa";
+import type { CreditosMes } from "./CreditosEmpresa";
 import { confirmar, Dica, Rotulo } from "../ui";
 import {
   Carregando, ICO, Kpi, PlanoTag, StatusPill, Topo, copiar, fmtCnpj, fmtData, fmtNum, fmtTel, iniciais, quando,
@@ -102,6 +103,12 @@ function Geral({ e, d, onSalvo }: { e: Empresa; d: DadosAdmin; onSalvo: (t: stri
   });
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
+  // créditos por mês fechados com a empresa (null = carregando ou banco sem a 0027)
+  const [creditosAntes, setCreditosAntes] = useState<CreditosMes | null>(null);
+  const [creditos, setCreditos] = useState<CreditosMes | null>(null);
+  useEffect(() => {
+    creditosDaEmpresa(e.id).then((c) => { const v = creditosMesDe(c.negociado); setCreditosAntes(v); setCreditos(v); }).catch(() => {});
+  }, [e.id]);
 
   async function salvar(ev: React.FormEvent) {
     ev.preventDefault();
@@ -112,6 +119,7 @@ function Geral({ e, d, onSalvo }: { e: Empresa; d: DadosAdmin; onSalvo: (t: stri
     setSalvando(true);
     try {
       await atualizarEmpresa(e.id, { ...f, plano_id: f.plano_id || null });
+      if (creditos) { await gravarCreditosMes(e.id, creditos, creditosAntes ?? undefined); setCreditosAntes(creditos); }
       await d.recarregar();
       onSalvo("Cadastro salvo.");
     } catch (err) { setErro(String(err instanceof Error ? err.message : err)); }
@@ -132,6 +140,8 @@ function Geral({ e, d, onSalvo }: { e: Empresa; d: DadosAdmin; onSalvo: (t: stri
             <option value="">Sem plano</option>
           </select>
         </label>
+        {creditos && <CampoCreditosMes valor={creditos} onChange={setCreditos}
+          planoTotal={f.plano_id ? d.planos.find((p) => p.id === f.plano_id)?.limite_servicos_mes ?? null : undefined} />}
         <label className="largo">Observações internas
           <textarea value={f.observacoes} onChange={(x) => setF({ ...f, observacoes: x.target.value })} placeholder="Condições combinadas na reunião, contatos, próximos passos…" />
         </label>

@@ -1,6 +1,6 @@
 // Aba Créditos da empresa: o que foi negociado com ela.
 //
-//   - teto do mês, total e por serviço: "Plano" segue o plano; "Negociado"
+//   - teto do mês, total e por serviço: "Plano" segue o plano; "Desta empresa"
 //     troca o teto só para ela (vazio = sem teto)
 //   - pacotes que ela pode comprar (nome, serviço, quantidade, preço)
 //   - pedidos de compra (aprovar = o crédito passa a valer) e crédito avulso
@@ -52,7 +52,7 @@ export function CreditosEmpresa({ e, d }: { e: Empresa; d: DadosAdmin }) {
       </div>
 
       <section className="sa-card">
-        <header><h3>Teto do mês<Dica>“Plano” segue o plano da empresa. “Negociado” vale só para ela. Campo vazio = sem limite. O crédito é gasto quando o arquivo é enviado; apagar o serviço não devolve.</Dica></h3></header>
+        <header><h3>Teto do mês<Dica>“Plano” segue o plano da empresa. “Desta empresa” vale só para ela. Campo vazio = sem limite. O crédito é gasto quando o arquivo é enviado; apagar o serviço não devolve.</Dica></h3></header>
         <div className="sa-tabela-wrap">
           <table className="sa-tabela">
             <thead><tr><th>Serviço</th><th>No plano</th><th>Para esta empresa</th><th>Usados no mês</th><th>Extras</th></tr></thead>
@@ -120,6 +120,42 @@ export function CreditosEmpresa({ e, d }: { e: Empresa; d: DadosAdmin }) {
   );
 }
 
+/** Créditos por mês da empresa no cadastro: segue o plano ou vale o número fechado com ela (vazio = sem limite). */
+export interface CreditosMes { modo: "plano" | "empresa"; limite: string }
+export const creditosMesDe = (negociado: Record<string, number | null> | undefined): CreditosMes =>
+  negociado && "total" in negociado ? { modo: "empresa", limite: negociado.total === null ? "" : String(negociado.total) } : { modo: "plano", limite: "" };
+
+/** Grava o total do mês da empresa (só se mudou). */
+export async function gravarCreditosMes(id: string, v: CreditosMes, antes?: CreditosMes): Promise<void> {
+  if (antes && antes.modo === v.modo && (v.modo === "plano" || antes.limite === v.limite)) return;
+  if (v.modo === "plano") { if (antes?.modo === "empresa") await definirLimiteEmpresa(id, "total", null, true); return; }
+  await definirLimiteEmpresa(id, "total", v.limite === "" ? null : Math.max(0, Math.floor(Number(v.limite))));
+}
+
+export function CampoCreditosMes({ valor, onChange, planoTotal }: {
+  valor: CreditosMes; onChange: (v: CreditosMes) => void;
+  /** teto total do plano escolhido (undefined = sem plano) */
+  planoTotal: number | null | undefined;
+}) {
+  const doPlano = planoTotal === undefined ? "sem plano" : planoTotal === null ? "sem limite" : `${planoTotal} por mês`;
+  return (
+    <>
+      <label><Rotulo dica="quantos serviços a empresa pode enviar por mês, somando todos. O limite de cada serviço fica na aba Créditos.">Créditos por mês</Rotulo>
+        <select value={valor.modo} onChange={(x) => onChange({ ...valor, modo: x.target.value as CreditosMes["modo"] })}>
+          <option value="plano">Seguir o plano ({doPlano})</option>
+          <option value="empresa">Definir para esta empresa</option>
+        </select>
+      </label>
+      {valor.modo === "empresa" && (
+        <label><Rotulo dica="vazio = sem limite">Créditos fechados com a empresa</Rotulo>
+          <input type="number" min={0} placeholder="sem limite" value={valor.limite}
+            onChange={(x) => onChange({ ...valor, limite: x.target.value })} />
+        </label>
+      )}
+    </>
+  );
+}
+
 function LinhaLimite({ chave, nome, doPlano, c, salvar }: {
   chave: string; nome: string; doPlano: number | null; c: Dados;
   salvar: (limite: number | null, seguirPlano: boolean) => Promise<void>;
@@ -137,11 +173,11 @@ function LinhaLimite({ chave, nome, doPlano, c, salvar }: {
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <div className="sa-tri" role="group" aria-label={`Teto de ${nome}`}>
             <button type="button" className={!negociado ? "on" : ""} onClick={() => negociado && salvar(null, true)}>Plano</button>
-            <button type="button" className={negociado ? "on lib" : ""} onClick={() => !negociado && salvar(doPlano, false)}>Negociado</button>
+            <button type="button" className={negociado ? "on lib" : ""} onClick={() => !negociado && salvar(doPlano, false)}>Desta empresa</button>
           </div>
           {negociado && (
             <input type="number" min={0} placeholder="sem limite" value={valor} style={{ width: 110 }}
-              aria-label={`Teto negociado de ${nome}`}
+              aria-label={`Limite de ${nome} desta empresa`}
               onChange={(x) => setValor(x.target.value)} onBlur={gravar}
               onKeyDown={(x) => { if (x.key === "Enter") { x.preventDefault(); gravar(); } }} />
           )}

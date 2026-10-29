@@ -1,6 +1,8 @@
 // Empresas clientes: busca, filtro por status e cadastro de empresa nova.
 import { useEffect, useMemo, useState } from "react";
 import { criarEmpresa, lerSenhaPadrao, mensagemDeAcesso } from "../../lib/admin";
+import { CampoCreditosMes, gravarCreditosMes } from "./CreditosEmpresa";
+import type { CreditosMes } from "./CreditosEmpresa";
 import type { StatusEmpresa } from "../../lib/admin";
 import {
   cnpjValido, emailValido, formatarCnpj, formatarTelefone, problemaDaSenha, soDigitos, telefoneValido,
@@ -112,6 +114,7 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
   const [erro, setErro] = useState<string | null>(null);
   const [criada, setCriada] = useState<Criada | null>(null);
   const [copiado, setCopiado] = useState(false);
+  const [creditos, setCreditos] = useState<CreditosMes>({ modo: "plano", limite: "" });
 
   useEffect(() => { lerSenhaPadrao().then((s) => setF((x) => (x.senha ? x : { ...x, senha: s }))).catch(() => {}); }, []);
   useEffect(() => {
@@ -140,6 +143,9 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
     setErro(null);
     try {
       const r = await criarEmpresa({ ...f, plano_id: f.plano_id || null });
+      // o combinado com a empresa (a conta já existe: se falhar aqui, ajusta-se na página dela)
+      try { await gravarCreditosMes(r.escritorio_id, creditos); }
+      catch (err) { setErro(`Empresa criada, mas os créditos por mês não foram gravados: ${err instanceof Error ? err.message : err}. Ajuste na aba Créditos da empresa.`); }
       setCriada({ empresa: f.nome.trim(), responsavel: f.responsavel.trim(), login: r.login, senha: f.senha, id: r.escritorio_id });
       await d.recarregar();
     } catch (err) {
@@ -163,6 +169,7 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
         {criada ? (
           <>
             <div className="corpo">
+              {erro && <div className="sa-aviso erro">{erro}</div>}
               <p style={{ marginTop: 0 }}>A <b>{criada.empresa}</b> já pode entrar. Mande os dados abaixo ao responsável: no primeiro acesso o sistema pede uma senha nova.</p>
               <div className="sa-credenciais">
                 <div className="linha"><span>Endereço</span><b>{url}</b></div>
@@ -219,6 +226,8 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
                     <option value="">Sem plano (segue o padrão de cada recurso)</option>
                   </select>
                 </label>
+                <CampoCreditosMes valor={creditos} onChange={setCreditos}
+                  planoTotal={f.plano_id ? d.planos.find((p) => p.id === f.plano_id)?.limite_servicos_mes ?? null : undefined} />
               </div>
             </div>
             <footer>
