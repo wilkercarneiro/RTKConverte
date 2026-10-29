@@ -10,6 +10,7 @@ import { gerarPlantaPdf, type Folha } from "../../../supabase/functions/_shared/
 // @ts-expect-error fixture em JS dos testes, sem declaração de tipos
 import { dadosPlantaDe, entrada } from "../../../tests/fixtures/salgada_velha.mjs";
 import { abrirPlanta } from "./VisualizadorPlanta";
+import { Dica } from "../ui";
 
 /** Uma "imagem de satélite" sintética, para a planta de situação não sair vazia. */
 async function satelite(): Promise<Uint8Array> {
@@ -48,8 +49,7 @@ export function LaboratorioPlanta() {
 
   return (
     <div style={{ padding: 40, display: "grid", gap: 16, maxWidth: 560 }}>
-      <h2 style={{ margin: 0 }}>Laboratório · editor de planta</h2>
-      <p className="sub" style={{ margin: 0 }}>Gera a planta da fixture SALGADA VELHA no navegador e abre o visualizador com o editor.</p>
+      <h2 style={{ margin: 0 }}>Laboratório · editor de planta<Dica>Gera a planta da fixture SALGADA VELHA no navegador e abre o visualizador com o editor.</Dica></h2>
       <div className="acoes-linha" style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <select value={folha} onChange={(e) => setFolha(e.target.value as Folha)}>
           <option value="A1">A1</option><option value="A3">A3</option><option value="A4">A4 (conferência)</option>

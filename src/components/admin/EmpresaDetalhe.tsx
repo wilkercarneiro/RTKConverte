@@ -12,7 +12,7 @@ import {
   cnpjValido, emailValido, formatarCnpj, formatarTelefone, problemaDaSenha, telefoneValido,
 } from "../../../supabase/functions/_shared/cnpj.ts";
 import type { DadosAdmin } from "./PainelAdmin";
-import { confirmar } from "../ui";
+import { confirmar, Dica, Rotulo } from "../ui";
 import {
   Carregando, ICO, Kpi, PlanoTag, StatusPill, Topo, copiar, fmtCnpj, fmtData, fmtNum, fmtTel, iniciais, quando,
 } from "./comum";
@@ -122,8 +122,7 @@ function Geral({ e, d, onSalvo }: { e: Empresa; d: DadosAdmin; onSalvo: (t: stri
         <label>CNPJ<input className="mono" value={f.cnpj} onChange={(x) => setF({ ...f, cnpj: formatarCnpj(x.target.value) })} /></label>
         <label>Responsável<input value={f.responsavel} onChange={(x) => setF({ ...f, responsavel: x.target.value })} /></label>
         <label>Telefone / WhatsApp<input value={f.telefone} onChange={(x) => setF({ ...f, telefone: formatarTelefone(x.target.value) })} /></label>
-        <label>E-mail da empresa<input type="email" value={f.email} onChange={(x) => setF({ ...f, email: x.target.value })} />
-          <small className="sub" style={{ fontWeight: 400 }}>contato; o login de cada pessoa fica em Usuários</small></label>
+        <label><Rotulo dica="contato; o login de cada pessoa fica em Usuários">E-mail da empresa</Rotulo><input type="email" value={f.email} onChange={(x) => setF({ ...f, email: x.target.value })} /></label>
         <label>Plano
           <select value={f.plano_id} onChange={(x) => setF({ ...f, plano_id: x.target.value })}>
             {d.planos.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.ativo ? "" : " (inativo)"}</option>)}
@@ -167,7 +166,7 @@ function RecursosEmpresa({ e, d }: { e: Empresa; d: DadosAdmin }) {
 
   return (
     <section className="sa-card">
-      <header><h3>O que esta empresa acessa</h3><span className="sub">“Plano” segue {plano ? `o ${plano.nome}` : "o padrão de cada recurso"}; liberar ou bloquear cria uma exceção só para ela.</span></header>
+      <header><h3>O que esta empresa acessa<Dica>“Plano” segue {plano ? `o ${plano.nome}` : "o padrão de cada recurso"}; liberar ou bloquear cria uma exceção só para ela.</Dica></h3></header>
       {erro && <div className="sa-aviso erro">{erro}</div>}
       {[...grupos].map(([g, itens]) => (
         <div className="sa-grupo-rec" key={g}>
@@ -178,8 +177,7 @@ function RecursosEmpresa({ e, d }: { e: Empresa; d: DadosAdmin }) {
             return (
               <div className="sa-rec" key={l.chave}>
                 <div className="tx">
-                  <b>{nome}</b> <span className={l.liberado ? "sa-pill ativo" : "sa-pill cancelado"} style={{ marginLeft: 6 }}>{l.liberado ? "Liberado" : "Bloqueado"}</span>
-                  {r?.descricao && <p>{r.descricao}</p>}
+                  <b>{nome}</b>{r?.descricao && <Dica>{r.descricao}</Dica>} <span className={l.liberado ? "sa-pill ativo" : "sa-pill cancelado"} style={{ marginLeft: 6 }}>{l.liberado ? "Liberado" : "Bloqueado"}</span>
                 </div>
                 <span className="origem">{l.origem === "excecao" ? "exceção" : l.origem === "plano" ? "pelo plano" : "padrão"}</span>
                 <div className="sa-tri" role="group" aria-label={`Acesso a ${nome}`}>
@@ -246,7 +244,7 @@ function Usuarios({ e, d }: { e: Empresa; d: DadosAdmin }) {
 
   return (
     <section className="sa-card">
-      <header><h3>Usuários</h3><span className="sub">contas novas entram com a senha padrão e trocam no 1º acesso</span></header>
+      <header><h3>Usuários<Dica>contas novas entram com a senha padrão e trocam no 1º acesso</Dica></h3></header>
       {msg && (
         <div className={`sa-aviso ${msg.tipo}`} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ flex: 1 }}>{msg.texto}</span>
@@ -324,7 +322,7 @@ function Historico({ e }: { e: Empresa }) {
   useEffect(() => { atividadesDaEmpresa(e.id).then(setItens).catch((x) => setErro(String(x.message ?? x))); }, [e.id]);
   return (
     <section className="sa-card">
-      <header><h3>Histórico da empresa</h3><span className="sub">serviços, documentos, clientes e equipe (últimos 200)</span></header>
+      <header><h3>Histórico da empresa<Dica>serviços, documentos, clientes e equipe (últimos 200)</Dica></h3></header>
       {erro ? <div className="sa-aviso erro">{erro}</div> : !itens ? <Carregando /> : itens.length === 0 ? (
         <div className="sa-vazio">Nada registrado ainda. O histórico conta a partir da ativação da equipe.</div>
       ) : (

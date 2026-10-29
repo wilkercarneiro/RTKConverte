@@ -9,6 +9,7 @@
 // não responder, vale a cópia da base local — e a tela diz isso.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MapaInterativo } from "./MapaInterativo";
+import { Dica } from "./ui";
 import type { PontoMapa } from "./MapaInterativo";
 import { coberturaSigef, consultarSigef, fmtArea, sincronizarSigef } from "../lib/sigef";
 import type { LonLat, ResultadoSigef } from "../lib/sigef";
@@ -138,7 +139,8 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
             <p className="sub">
               Área do imóvel dentro de parcela já certificada: <b>{fmtArea(somaSobre)}</b>
               {areaImovel > 0 && <> ({(100 * somaSobre / areaImovel).toFixed(2).replace(".", ",")}% do imóvel)</>}.
-              Clique numa parcela para enquadrar no mapa. Use a correção de sobreposição (etapa Confrontantes) ou ajuste os vértices.
+              Use a correção de sobreposição (etapa Confrontantes) ou ajuste os vértices.
+              <Dica>Clique numa parcela da lista para enquadrá-la no mapa.</Dica>
             </p>
             <ul className="sobreposicao-lista">
               {sobre.map((s) => (

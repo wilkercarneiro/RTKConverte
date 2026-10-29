@@ -14,7 +14,7 @@ import type { ProjetoCar, ResultadoCar } from "../../lib/car/motor.ts";
 import { CAMADAS, baixar, gerarKmlCar, nomeArquivo, zipCompleto, zipDaCamada } from "../../lib/car/saidas.ts";
 import type { CamadaCar } from "../../lib/car/saidas.ts";
 import { carregarProjetoCar, marcarCarExportado, salvarProjetoCar } from "../../lib/car/persistencia.ts";
-import { StatusSalvamento } from "../ui";
+import { Dica, StatusSalvamento } from "../ui";
 import { CarEditor, COR } from "./CarEditor";
 import type { FerramentaCar, SelecaoCar } from "./CarEditor";
 import "./car.css";
@@ -220,21 +220,20 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
             {a.appNaReserva > 0.01 && <p className="car-dica">{fmtHa(a.appNaReserva)} da APP estão dentro da reserva legal.</p>}
             <label className="car-check">
               <input type="checkbox" checked={projeto.produtivaSemApp} onChange={(e) => mudar({ ...projeto, produtivaSemApp: e.target.checked })} />
-              <span>Tirar a APP da área produtiva <small>(padrão: produtiva = total − reserva)</small></span>
+              <span>Tirar a APP da área produtiva<Dica>Padrão: produtiva = total − reserva.</Dica></span>
             </label>
           </section>
 
           <section className="car-cartao">
             <header><h3>Reserva legal</h3>{res.reservaOk ? <span className="car-ok">✓ ok</span> : <span className="car-falta">abaixo do pedido</span>}</header>
             <label className="car-campo">
-              <span>Porcentagem exigida</span>
+              <span>Porcentagem exigida<Dica>20% fora da Amazônia Legal; 35% no cerrado e 80% na floresta dentro dela. Confirme a regra do imóvel.</Dica></span>
               <span className="car-entrada">
                 <input type="number" min={0} max={100} step={1} value={projeto.reserva.pct}
                   onChange={(e) => mudarPct(Number(e.target.value))} aria-label="Porcentagem da reserva legal" />
                 <span>%</span>
               </span>
             </label>
-            <p className="car-dica">20% fora da Amazônia Legal; 35% no cerrado e 80% na floresta dentro dela. Confirme a regra do imóvel.</p>
             <div className="car-botoes">
               <button className={ferramenta === "lado" ? "ativo" : ""} onClick={() => setFerramenta("lado")}>⊟ Encostar num lado</button>
               <button className={ferramenta === "reserva" ? "ativo" : ""} onClick={() => setFerramenta("reserva")}>⬠ Desenhar à mão</button>
@@ -267,8 +266,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
           </section>
 
           <section className="car-cartao">
-            <header><h3>Rios e APP</h3><span className="car-cont">{projeto.rios.length}</span></header>
-            <p className="car-dica">Trace o rio pela linha do leito e informe a faixa de APP, em metros, medida da linha para cada margem.</p>
+            <header><h3>Rios e APP<Dica>Trace o rio pela linha do leito e informe a faixa de APP, em metros, medida da linha para cada margem.</Dica></h3><span className="car-cont">{projeto.rios.length}</span></header>
             <button className={ferramenta === "rio" ? "ativo" : ""} onClick={() => setFerramenta("rio")}>〰 Traçar rio</button>
             {projeto.rios.map((r) => (
               <div key={r.id} className={`car-rio${rioSel?.id === r.id ? " sel" : ""}`} onClick={() => setSel({ tipo: "rio", id: r.id })}>
@@ -295,8 +293,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
           )}
 
           <section className="car-cartao">
-            <header><h3>Arquivos para o SICAR</h3></header>
-            <p className="car-dica">Cada camada sai num zip com SHP, SHX, DBF e PRJ (SIRGAS 2000, em grau).</p>
+            <header><h3>Arquivos para o SICAR<Dica>Cada camada sai num zip com SHP, SHX, DBF e PRJ (SIRGAS 2000, em grau).</Dica></h3></header>
             {CAMADAS.map((c) => (
               <div key={c.id} className="car-baixar">
                 <i style={{ background: c.cor }} />

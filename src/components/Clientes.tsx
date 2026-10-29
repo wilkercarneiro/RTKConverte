@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import type { Cliente, Servico } from "../lib/types";
-import { avisar, CabecalhoPagina, confirmar, EstadoErro, EstadoVazio, Esqueleto } from "./ui";
+import { avisar, CabecalhoPagina, confirmar, Dica, EstadoErro, EstadoVazio, Esqueleto } from "./ui";
 import { temPermissao } from "../lib/permissoes";
 import { Icone, ICONE } from "./Icone";
 
@@ -88,12 +88,11 @@ export function Clientes({ onAbrir }: { onAbrir: (clienteId: string) => void }) 
         <form className="novo-inline" onSubmit={(e) => { e.preventDefault(); criar(); }}>
           <label className="sr-only" htmlFor="novo-cliente">Nome do novo cliente</label>
           <input id="novo-cliente" placeholder="Nome do novo cliente" value={novo} autoFocus
-            aria-describedby="novo-cliente-dica"
             onChange={(e) => setNovo(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Escape") setNovo(null); }} />
           <button type="submit" className="principal" disabled={!novo.trim() || criando}>{criando ? "Criando…" : "Criar e abrir"}</button>
           <button type="button" className="fantasma" onClick={() => setNovo(null)}>Cancelar</button>
-          <span id="novo-cliente-dica" className="dica-campo">O nome é gravado em MAIÚSCULAS, como sai nos documentos.</span>
+          <Dica>O nome é gravado em MAIÚSCULAS, como sai nos documentos.</Dica>
         </form>
       )}
 

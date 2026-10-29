@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { lerSenhaPadrao, salvarSenhaPadrao } from "../../lib/admin";
 import { problemaDaSenha } from "../../../supabase/functions/_shared/cnpj.ts";
 import { Topo } from "./comum";
+import { Dica } from "../ui";
 
 export function ConfigAdmin() {
   const [senha, setSenha] = useState("");
@@ -21,11 +22,10 @@ export function ConfigAdmin() {
     <>
       <Topo olho="Sistema" titulo="Configurações" />
       <form className="sa-card" onSubmit={salvar} style={{ maxWidth: 640 }}>
-        <header><h3>Senha padrão das contas novas</h3></header>
-        <p className="sub" style={{ marginTop: 0 }}>
+        <header><h3>Senha padrão das contas novas<Dica>
           Toda empresa e todo usuário cadastrados aqui entram com esta senha e o sistema pede uma senha própria no primeiro acesso.
           Ela também é a senha usada em “Redefinir senha”.
-        </p>
+        </Dica></h3></header>
         {msg && <div className={`sa-aviso ${msg.tipo}`}>{msg.texto}</div>}
         <div className="sa-campos">
           <label>Senha padrão<input className="mono" value={senha} onChange={(e) => setSenha(e.target.value)} /></label>

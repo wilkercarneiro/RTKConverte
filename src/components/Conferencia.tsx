@@ -37,7 +37,7 @@ import { HistoricoDocs } from "./HistoricoDocs";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { temRecurso } from "../lib/recursos";
 import { temPermissao } from "../lib/permissoes";
-import { Avisos, BarraEtapas, BotaoPerigo, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { Avisos, BarraEtapas, BotaoPerigo, Dica, ProximaAcao, Rotulo, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 import { AutoriaServico } from "./Auditoria";
 
 /** Etapas do serviço: uma por vez, como abas dentro do cabeçalho. */
@@ -710,6 +710,13 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     setServico((s) => ({ ...s, tem_glebas: true, divisao: r.divisao ?? {} }));
     avisar("ok", `Divisão salva em ${r.glebas.length} partes. Confira os confrontantes do perímetro e gere os documentos de novo: a planta A1 sai com as divisões, e cada parte com a sua A3 e o seu memorial.`);
   }
+  /** Serviço de glebas: as partes da prancheta viram glebas, sem virar partilha. */
+  function aplicarGlebasNaTela(r: { vertices: Vertice[]; glebas: Gleba[] }) {
+    setVertices(r.vertices);
+    setGlebas(r.glebas);
+    setServico((s) => ({ ...s, tem_glebas: true }));
+    avisar("ok", `Imóvel dividido em ${r.glebas.length} glebas. Confira os confrontantes e gere os documentos: sai a planta A1 com todas as glebas e, de cada uma, a A3 e o memorial.`);
+  }
   /** Serviço completo que vira partilha: liga as glebas e abre a etapa Divisão. */
   function comecarDivisao() {
     setServico((s) => ({ ...s, tem_glebas: true, divisao: { iguais: true } }));
@@ -1243,15 +1250,14 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
           <>
             <section className="bloco" id="bloco-dados">
               <header>
-                <h3>Dados do serviço</h3>
-                <span className="desc">o essencial fica à vista; o resto abre quando precisar</span>
+                <h3>Dados do serviço<Dica>o essencial fica à vista; o resto abre quando precisar</Dica></h3>
               </header>
 
               {/* Sempre visível: exatamente o que bloqueia a geração. Nenhum campo
                   obrigatório pode morar numa seção recolhida — a lista de pendências
                   precisa apontar para algo que o operador vê. */}
               <div className="grade">
-                <label>Cliente
+                <label><Rotulo dica="preenche detentor, endereço e espólio de uma vez">Cliente</Rotulo>
                   <select value={servico.cliente_id ?? ""} onChange={(e) => {
                     const cli = clientes.find((c) => c.id === e.target.value) ?? null;
                     setServico((s) => ({
@@ -1270,7 +1276,6 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     <option value="">— (sem vínculo)</option>
                     {clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
                   </select>
-                  <small className="sub">preenche detentor, endereço e espólio de uma vez</small>
                 </label>
                 <label><span>Credenciado <span className="obrigatorio">*</span></span>
                   <select id="campo-credenciado" className={obg(servico.credenciado_id)}
@@ -1309,21 +1314,19 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   selo={<span className={rtSel ? "secao-selo completa" : "secao-selo vazia"}>{rtSel ? rtSel.nome : "não definido"}</span>}
                   dica="assina o memorial, as peças e a planta">
                   <div className="grade">
-                    <label>Responsável Técnico
+                    <label><Rotulo dica="cadastre novos em Configurações">Responsável Técnico</Rotulo>
                       <select value={servico.rt_id ?? ""} onChange={(e) => campo("rt_id", e.target.value || null)}>
                         <option value="">—</option>
                         {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
                       </select>
-                      <small className="sub">cadastre novos em Configurações</small>
                     </label>
-                    <label>TRT (Termo de Responsabilidade Técnica)
+                    {/* "preenchido com o TRT padrão" é estado deste serviço: fica à vista */}
+                    <label><Rotulo dica="Termo de Responsabilidade Técnica — vai no memorial, nas peças e na planta; sobrepõe o TRT do PDF do SIGEF">TRT</Rotulo>
                       <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}
                         onChange={(e) => campo("trt", e.target.value.trim() || null)} />
-                      <small className="sub">
-                        {rtSel?.trt && servico.trt === rtSel.trt
-                          ? `preenchido com o TRT padrão de ${rtSel.nome} — troque se este serviço tem outro`
-                          : "vai no memorial, nas peças e na planta; sobrepõe o TRT do PDF do SIGEF"}
-                      </small>
+                      {rtSel?.trt && servico.trt === rtSel.trt && (
+                        <small className="sub">preenchido com o TRT padrão de {rtSel.nome} — troque se este serviço tem outro</small>
+                      )}
                     </label>
                   </div>
                 </Secao>
@@ -1336,7 +1339,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     <label>Tipo pessoa {sel(servico.tipo_pessoa, TIPOS_PESSOA, (v) => campo("tipo_pessoa", v))}</label>
                     <label>Situação {sel(servico.situacao, SITUACOES, (v) => campo("situacao", v))}</label>
                     <label>Natureza da área {sel(servico.natureza_area, NATUREZAS_AREA, (v) => campo("natureza_area", v))}</label>
-                    <label>Código SNCR <input className="mono" value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
+                    <label>{ehConferencia
+                      ? <Rotulo dica="Matrícula e CNS ficam na etapa Documentos, junto da escolha entre matrícula e posse.">Código SNCR</Rotulo>
+                      : "Código SNCR"} <input className="mono" value={servico.codigo_sncr ?? ""} onChange={(e) => campo("codigo_sncr", e.target.value)} /></label>
                     {!ehConferencia && (
                       <>
                         <label>CNS (cartório)
@@ -1347,11 +1352,6 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                       </>
                     )}
                   </div>
-                  {ehConferencia && (
-                    <p className="sub" style={{ margin: "8px 0 0" }}>
-                      Matrícula e CNS ficam na etapa Documentos, junto da escolha entre matrícula e posse.
-                    </p>
-                  )}
                 </Secao>
 
                 <Secao titulo="Identificação da parcela"
@@ -1386,7 +1386,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               <div className="bloco dv-convite">
                 <div>
                   <b>Partilha ou herança?</b>
-                  <span className="sub"> Divida este imóvel em partes iguais: sai o GEO do imóvel inteiro e um GEO para cada parte, no nome de cada herdeiro.</span>
+                  <Dica>Divida este imóvel em partes iguais: sai o GEO do imóvel inteiro e um GEO para cada parte, no nome de cada herdeiro.</Dica>
                 </div>
                 <button type="button" onClick={comecarDivisao}>Dividir em partes iguais</button>
               </div>
@@ -1398,10 +1398,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         {etapa === "confrontantes" && (
           <>
             <div className="etapa-cabeca" id="bloco-confrontantes">
-              <h2>Confrontantes</h2>
+              <h2>Confrontantes<Dica>as cores dos trechos correspondem ao mapa</Dica></h2>
               <span className="desc">
                 {trechosOrdenados.length} {trechosOrdenados.length === 1 ? "trecho" : "trechos"} · {confrontantesPreenchidos} {confrontantesPreenchidos === 1 ? "descrito" : "descritos"}
-                {numeracao.size > 0 ? ` · ${numeracao.size} ${numeracao.size === 1 ? "numerado" : "numerados"}` : ""} — as cores correspondem ao mapa
+                {numeracao.size > 0 ? ` · ${numeracao.size} ${numeracao.size === 1 ? "numerado" : "numerados"}` : ""}
               </span>
               <span className="esticar" />
               {/* Divisa curta não comporta o bloco de nome do vizinho: o texto quebra
@@ -1414,15 +1414,13 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 onClick={() => setModoNumeracao((v) => !v)}>
                 {modoNumeracao ? "Concluir numeração" : "Adicionar numeração"}
               </button>
-            </div>
-            {modoNumeracao && (
-              <p className="sub" style={{ margin: "-8px 0 0" }}>
+              <Dica lado="baixo">
                 Marque os confrontantes cujo espaço na planta é curto demais para o nome.
                 Cada marcado recebe um número, na ordem do perímetro, e os dados dele
                 saem no quadro <b>CONFRONTANTES</b> embaixo do desenho. Faixa de domínio
                 e curso d'água não entram: o nome deles acompanha o próprio traço.
-              </p>
-            )}
+              </Dica>
+            </div>
             <div className="confrontantes">
               <div className="coluna-esq">
               <div className="trechos">
@@ -1536,8 +1534,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {/* ------- Vértices: na mesma etapa, porque a ORDEM deles é o que define os
                 trechos e o mapa acima; reordenar aqui atualiza tudo ao mesmo tempo. ------- */}
             <div className="etapa-cabeca" id="bloco-vertices">
-              <h2>Vértices</h2>
-              <span className="desc">{vertices.length} pontos · início automático em {verticeInicialNome} (mais ao norte, exigido pelo SIGEF) · a ordem da tabela é a sequência do perímetro: mudar aqui muda o mapa, os trechos e os documentos</span>
+              <h2>Vértices<Dica>O início é automático no ponto mais ao norte, como exige o SIGEF. A ordem da tabela é a sequência do perímetro: mudar aqui muda o mapa, os trechos e os documentos.</Dica></h2>
+              <span className="desc">{vertices.length} pontos · início automático em {verticeInicialNome}</span>
               <span className="esticar" />
               {/* O método era um select por linha: em 60 vértices, 60 cliques para
                   trocar todos. Aqui troca de uma vez, sem perder o ajuste por linha. */}
@@ -1560,7 +1558,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
 
             {mostrarInserirV && (
               <fieldset className="inserir-v painel" style={{ margin: 0 }}>
-                <legend>Inserir vértice pré-existente · tipo V · método PA1 — vértice já certificado que precisa entrar no perímetro</legend>
+                <legend>Inserir vértice pré-existente · tipo V · método PA1<Dica>vértice já certificado que precisa entrar no perímetro</Dica></legend>
                 <label>após o ponto
                   <select value={novoV.aposOrdem} onChange={(e) => setNovoV({ ...novoV, aposOrdem: e.target.value })}>
                     <option value="">—</option>
@@ -1588,10 +1586,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             )}
 
             <div className="ordem-toolbar" role="toolbar" aria-label="Reordenar vértices">
-              <b style={{ fontSize: 13 }}>Ordem dos pontos</b>
-              <span className="sub" style={{ fontSize: 12.5 }}>
-                {selVert.size ? `${selVert.size} selecionado(s)` : "marque os pontos (Shift + clique seleciona um intervalo) e mova o bloco"}
-              </span>
+              <b style={{ fontSize: 13 }}>Ordem dos pontos<Dica>marque os pontos (Shift + clique seleciona um intervalo) e mova o bloco</Dica></b>
+              {selVert.size > 0 && (
+                <span className="sub" style={{ fontSize: 12.5 }}>{selVert.size} selecionado(s)</span>
+              )}
               <span className="grupo">
                 <button disabled={!selVert.size} onClick={() => reordenar({ tipo: "cima" })} title="sobe um passo">↑ subir</button>
                 <button disabled={!selVert.size} onClick={() => reordenar({ tipo: "baixo" })} title="desce um passo">↓ descer</button>
@@ -1751,13 +1749,13 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                         : t.eh_via && <span className="marca-via" title="Faixa de domínio pública: sai na planta como linha dupla vermelha"> ═ via</span>}
                     </span>
                   ))}
+                  <Dica>
+                    A linha dupla vermelha é o que sairá na planta como estrada. Se ela aparecer
+                    onde não há estrada, desmarque "faixa de domínio" naquele trecho.
+                    A linha dupla azul é o curso d'água: sai em todo trecho com tipo de limite
+                    LN1. Se ali não houver rio, troque o tipo de limite.
+                  </Dica>
                 </div>
-                <p className="sub" style={{ margin: 0 }}>
-                  A linha dupla vermelha é o que sairá na planta como estrada. Se ela aparecer
-                  onde não há estrada, desmarque "faixa de domínio" naquele trecho.
-                  A linha dupla azul é o curso d'água: sai em todo trecho com tipo de limite
-                  LN1. Se ali não houver rio, troque o tipo de limite.
-                </p>
               </div>
             </div>
           </>
@@ -1773,24 +1771,37 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 onAplicar={aplicarDivisaoNaTela} onGlebas={setGlebas}
                 onRascunho={(d) => setServico((x) => ({ ...x, divisao: d }))} />
             )}
+            {/* Serviço de glebas: a prancheta é o caminho principal — o operador
+                escolhe em quantas glebas, ajusta as divisas e "Dividir em glebas"
+                grava PARTE 1, PARTE 2… Sem herdeiro e sem GEO por parte: isso é
+                da partilha (servico.divisao), que este botão NÃO liga.
+                Glebas que vieram de outro jeito (TXT levantado gleba por gleba,
+                partes separadas por estrada) a prancheta não sabe redesenhar —
+                para essas a montagem pelos pontos do TXT abre por padrão. */}
+            {!ehDivisao && (() => {
+              const glebasDoTxt = glebas.some((g) => g.anel.length >= 3) && !vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO);
+              const prancheta = (
+                <DivisaoEditor modo="glebas" servico={servico} vertices={vertices} glebas={glebas}
+                  onAplicar={aplicarGlebasNaTela} onGlebas={setGlebas} />
+              );
+              return glebasDoTxt ? (
+                <details className="bloco dv-recolhido">
+                  <summary><b>Redividir pela prancheta</b><Dica>Apaga as glebas atuais e divide o imóvel de novo, ajustando as divisas na prancheta.</Dica></summary>
+                  {prancheta}
+                </details>
+              ) : prancheta;
+            })()}
             {!ehDivisao && (
-              <details className="bloco dv-recolhido">
-                <summary><b>Dividir automaticamente em partes iguais</b> <span className="sub">— partilha ou herança: o motor corta o imóvel em partes de mesma área</span></summary>
-                <DivisaoEditor servico={servico} vertices={vertices} glebas={glebas}
-                  onAplicar={aplicarDivisaoNaTela} onGlebas={setGlebas} />
-              </details>
-            )}
-            {/* Na divisão a prancheta de cima já cria, ajusta e salva as partes
-                como glebas: o editor manual aqui embaixo só repetia o mesmo. */}
-            {!ehDivisao && (
-            <section className="bloco" id="bloco-glebas">
-              <header>
-                <h3>Glebas</h3>
-                <span className="desc">
-                  {glebas.length} gleba(s) — divida ANTES de confrontar: cada gleba é um anel próprio na planta dos confrontantes e no documento completo
+            <details className="bloco dv-recolhido" id="bloco-glebas"
+              open={glebas.some((g) => g.anel.length >= 3) && !vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO)}>
+              <summary>
+                <b>Glebas pelos pontos do TXT</b>
+                <Dica>Para o levantamento feito gleba por gleba: marque os vértices de cada gleba (ou o intervalo de números do TXT). Use quando a divisa interna foi medida em campo.</Dica>
+                <span className="sub">
+                  {" "}{glebas.length} gleba(s)
                   {verticesFora.length > 0 && glebasOrdens.length > 0 && <> · <b>{verticesFora.length} vértice(s) fora de gleba</b> ({verticesFora.slice(0, 12).map((v) => v.num_txt).join(", ")}{verticesFora.length > 12 ? "…" : ""})</>}
                 </span>
-              </header>
+              </summary>
               <GlebasEditor
                 glebas={glebas}
                 vertices={vertices}
@@ -1809,13 +1820,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     onConfirmar={separarGlebas}
                     className=""
                   >Separar glebas em serviços</BotaoPerigo>
-                  <span className="sub" style={{ flex: 1, minWidth: 260 }}>
-                    Cria um serviço por gleba, com os vértices e os códigos que ela já tem.
-                    Este serviço continua como está — separar não move nada.
-                  </span>
+                  <Dica>Cria um serviço por gleba, com os vértices e os códigos que ela já tem. Este serviço continua como está — separar não move nada.</Dica>
                 </div>
               )}
-            </section>
+            </details>
             )}
           </>
         )}
@@ -1838,18 +1846,16 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {ehConferencia && (
               <section className="bloco" id="bloco-conferencia">
                 <header>
-                  <h3>Conferência de área</h3>
-                  <span className="desc">documento do imóvel, folha e entregas da prévia — não vai ao SIGEF e não consome numeração oficial</span>
+                  <h3>Conferência de área<Dica>documento do imóvel, folha e entregas da prévia — não vai ao SIGEF e não consome numeração oficial</Dica></h3>
                 </header>
 
                 <div className="grade">
-                  <label>Folha da planta
+                  <label><Rotulo dica="padrão A3 · vale na próxima geração dos documentos">Folha da planta</Rotulo>
                     <select value={servico.folha_conferencia ?? "A3"}
                       onChange={(e) => campo("folha_conferencia", e.target.value as Servico["folha_conferencia"])}>
                       <option value="A3">A3 (420×297 mm)</option>
                       <option value="A4">A4 (297×210 mm)</option>
                     </select>
-                    <small className="sub">padrão A3 · vale na próxima geração dos documentos</small>
                   </label>
 
                   {/* Matrícula ou posse: é o que decide se a planta imprime
@@ -1857,18 +1863,15 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                       cartório — os campos só aparecem para quem tem matrícula. E a
                       prévia pode acontecer antes de o imóvel ter qualquer documento:
                       é o terceiro estado, que não imprime nem um nem outro. */}
-                  <label>Situação do imóvel
+                  <label><Rotulo dica={situacaoImovel === "matricula" ? "a planta sai com (MATR./CNS.) e o campo Matrícula do Imóvel"
+                    : situacaoImovel === "posse" ? "a planta sai com (POSSE) no lugar da matrícula"
+                      : "a planta sai sem o bloco de matrícula/posse"}>Situação do imóvel</Rotulo>
                     <select id="conf-situacao-imovel" value={situacaoImovel}
                       onChange={(e) => setSituacaoImovel(e.target.value as SituacaoImovel)}>
                       <option value="matricula">Matrícula (imóvel registrado)</option>
                       <option value="posse">Posse (imóvel sem matrícula)</option>
                       <option value="nao_informar">Ainda sem documento — não imprimir</option>
                     </select>
-                    <small className="sub">
-                      {situacaoImovel === "matricula" ? "a planta sai com (MATR./CNS.) e o campo Matrícula do Imóvel"
-                        : situacaoImovel === "posse" ? "a planta sai com (POSSE) no lugar da matrícula"
-                          : "a planta sai sem o bloco de matrícula/posse"}
-                    </small>
                   </label>
 
                   {pedeMatricula(situacaoImovel) && (
@@ -1899,7 +1902,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                       <input type="checkbox" checked={servico[campoNome] !== false}
                         onChange={(e) => campo(campoNome, e.target.checked)} />
                       <b>{rotulo}</b>
-                      <small className="sub">— {dica}</small>
+                      <Dica>{dica}</Dica>
                     </label>
                   ))}
                 </fieldset>
@@ -1908,11 +1911,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   <button onClick={gerarTabular} disabled={!docsProntos || gerandoTabular}>
                     {gerandoTabular ? <><span className="spinner" /> Gerando…</> : "Gerar Memorial Tabular"}
                   </button>
-                  <span className="sub" style={{ flex: 1, minWidth: 260 }}>
-                    {docsProntos
-                      ? "Sai do cálculo do sistema, com os mesmos azimutes e distâncias do Memorial Descritivo. Não são os valores SGL que o SIGEF devolve após certificar — por isso vale como prévia."
-                      : "Gere primeiro o memorial e a planta no botão do rodapé."}
-                  </span>
+                  <Dica>Sai do cálculo do sistema, com os mesmos azimutes e distâncias do Memorial Descritivo. Não são os valores SGL que o SIGEF devolve após certificar — por isso vale como prévia.</Dica>
+                  {/* o porquê do botão travado é estado: fica à vista */}
+                  {!docsProntos && <span className="sub">Gere primeiro o memorial e a planta no botão do rodapé.</span>}
                 </div>
 
                 {tabular && (
@@ -1931,8 +1932,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               {/* ---- Imagem de satélite: entra na planta desta etapa e na pós-SIGEF ---- */}
               <section className="bloco cartao" id="bloco-satelite">
                 <header>
-                  <h3>Imagem de satélite</h3>
-                  <span className="desc">buscada automaticamente pelas coordenadas do levantamento · entra no quadro Planta de Situação das plantas · se ainda não existir, a geração busca sozinha</span>
+                  <h3>Imagem de satélite<Dica>buscada automaticamente pelas coordenadas do levantamento · entra no quadro Planta de Situação das plantas · se ainda não existir, a geração busca sozinha</Dica></h3>
                 </header>
                 {previaSat && (
                   <img src={previaSat} alt="Prévia da imagem de satélite do imóvel"
@@ -1944,13 +1944,14 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     {buscandoSat ? "Buscando imagem…" : salvo.satelite ? "Buscar de novo pelas coordenadas" : "Buscar pelas coordenadas"}
                   </button>
                   <span className="sub">
-                    {salvo.satelite ? "imagem pronta — busque de novo se o levantamento mudou" : buscandoSat ? "buscando…" : "ainda sem imagem — a geração busca sozinha"}
+                    {salvo.satelite ? "imagem pronta" : buscandoSat ? "buscando…" : "ainda sem imagem"}
                   </span>
+                  <Dica>Busque de novo se o levantamento mudou. Sem imagem, a geração dos documentos busca sozinha.</Dica>
                 </div>
                 {/* ---- Uma imagem POR GLEBA: cada planta A3 tem a sua Planta de Situação ---- */}
                 {temGlebas && glebas.filter((g) => g.anel.length >= 3).length > 0 && (
                   <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-                    <span className="sub">Imagem de cada gleba — buscada pelas coordenadas dela, entra na planta A3 da gleba.</span>
+                    <span className="sub">Imagem de cada gleba<Dica>buscada pelas coordenadas dela, entra na planta A3 da gleba</Dica></span>
                     {glebas.filter((g) => g.anel.length >= 3).map((g, i) => {
                       const k = i + 1;
                       const sg = salvo.satelitesGlebas?.[k];
@@ -1975,12 +1976,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               {!ehConferencia && (
                 <section className={`bloco cartao ${docsProntos && !temSigef ? "destaque" : ""} ${!docsProntos ? "apagado" : ""}`} id="bloco-sigef">
                   <header>
-                    <h3><span className="num-etapa">4</span>Documento do SIGEF</h3>
-                    <span className="desc">
-                      {docsProntos
-                        ? "após certificar a planilha, envie o PDF de prévia/certificação — ele libera a planta e as peças"
-                        : "liberado após a geração do memorial, da planilha e da planta"}
-                    </span>
+                    <h3><span className="num-etapa">4</span>Documento do SIGEF<Dica>após certificar a planilha, envie o PDF de prévia/certificação — ele libera a planta e as peças</Dica></h3>
+                    {!docsProntos && <span className="desc">liberado após a geração do memorial, da planilha e da planta</span>}
                   </header>
                   {!docsProntos ? (
                     <p className="sub" style={{ margin: 0 }}>
@@ -2024,18 +2021,16 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {!ehConferencia && docsProntos && (sobreAberto || sobreCsvs.length > 0 || relatorioSobre !== null) && (
               <section className="bloco" id="bloco-sobreposicao">
                 <header>
-                  <h3>Correção de sobreposição</h3>
-                  <span className="desc">CSVs das parcelas certificadas que conflitam com esta</span>
+                  <h3>Correção de sobreposição<Dica lado="baixo">
+                    Quando há sobreposição, o SIGEF não gera o PDF e libera o CSV de cada parcela certificada
+                    que conflita. Envie <b>todos</b> esses CSVs aqui. Com a opção abaixo ligada, a divisa com o
+                    vizinho passa a ser descrita pelos <b>vértices já certificados dele</b> (mesmo código, mesmas
+                    coordenadas do CSV): vértices nossos a menos da tolerância de um vértice certificado são
+                    igualados a ele, e os vértices medidos dentro da parcela alheia saem. Onde ainda sobrar
+                    conflito, o sistema recorta com o afastamento escolhido e insere vértices calculados
+                    (tipo V · método PA1). Ao final regera a planilha ODS para reenvio ao SIGEF.
+                  </Dica></h3>
                 </header>
-                <p className="sub" style={{ marginTop: 0 }}>
-                  Quando há sobreposição, o SIGEF não gera o PDF e libera o CSV de cada parcela certificada
-                  que conflita. Envie <b>todos</b> esses CSVs aqui. Com a opção abaixo ligada, a divisa com o
-                  vizinho passa a ser descrita pelos <b>vértices já certificados dele</b> (mesmo código, mesmas
-                  coordenadas do CSV): vértices nossos a menos da tolerância de um vértice certificado são
-                  igualados a ele, e os vértices medidos dentro da parcela alheia saem. Onde ainda sobrar
-                  conflito, o sistema recorta com o afastamento escolhido e insere vértices calculados
-                  (tipo V · método PA1). Ao final regera a planilha ODS para reenvio ao SIGEF.
-                </p>
                 <div className="acoes-linha">
                   <label className="dropzone linha" style={{ flex: "1 1 280px" }}
                     onDragOver={(e) => e.preventDefault()}
@@ -2047,16 +2042,13 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   </label>
                   <label className="marcador" style={{ fontSize: 13.5 }}>
                     <input type="checkbox" checked={usarCertificados} onChange={(e) => setUsarCertificados(e.target.checked)} />
-                    <span>Usar os vértices certificados do vizinho
-                      <small className="sub" style={{ display: "block" }}>divisa pelos pontos do CSV, sem pontos virtuais</small></span>
+                    <span>Usar os vértices certificados do vizinho<Dica>divisa pelos pontos do CSV, sem pontos virtuais</Dica></span>
                   </label>
-                  <label>Tolerância p/ igualar (m)
+                  <label><Rotulo dica="vértice nosso até esta distância vira o certificado">Tolerância p/ igualar (m)</Rotulo>
                     <input className="mono" style={{ width: 90 }} value={tolIgualar} disabled={!usarCertificados} onChange={(e) => setTolIgualar(e.target.value)} />
-                    <small className="sub">vértice nosso até esta distância vira o certificado</small>
                   </label>
-                  <label>Afastamento (m)
+                  <label><Rotulo dica={usarCertificados ? "recuo onde ainda sobrar conflito" : "recuo aplicado à divisa"}>Afastamento (m)</Rotulo>
                     <input className="mono" style={{ width: 90 }} value={afastamento} onChange={(e) => setAfastamento(e.target.value)} />
-                    <small className="sub">{usarCertificados ? "recuo onde ainda sobrar conflito" : "recuo aplicado à divisa"}</small>
                   </label>
                   <button className="principal" disabled={corrigindo || sobreCsvs.length === 0 || !temRecurso("sigef.sobreposicao")} onClick={corrigirSobreposicao}
                     title={temRecurso("sigef.sobreposicao") ? undefined : "A correção de sobreposição não está no plano da sua empresa"}>
@@ -2120,8 +2112,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {gerado && (
               <section className="bloco gerados" id="bloco-gerados">
                 <header>
-                  <h3>Documentos gerados</h3>
-                  <span className="desc">regeração ilimitada — cada geração vira uma nova versão no histórico</span>
+                  <h3>Documentos gerados<Dica>regeração ilimitada — cada geração vira uma nova versão no histórico</Dica></h3>
                 </header>
                 <div className="downloads">
                   <a className="botao-download" href={gerado.memorial_docx} target="_blank" rel="noreferrer">
@@ -2168,8 +2159,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {ehDivisao && glebas.filter((g) => g.anel.length >= 3).length >= 2 && (
               <section className="bloco" id="bloco-geos-partes">
                 <header>
-                  <h3>GEO de cada parte</h3>
-                  <span className="desc">um serviço completo por parte, no nome do herdeiro, com os mesmos marcos do imóvel e as divisas internas já confrontando com a parte vizinha — segue para o SIGEF e para as peças como qualquer serviço</span>
+                  <h3>GEO de cada parte<Dica>um serviço completo por parte, no nome do herdeiro, com os mesmos marcos do imóvel e as divisas internas já confrontando com a parte vizinha — segue para o SIGEF e para as peças como qualquer serviço</Dica></h3>
                 </header>
                 <div className="tabela-scroll">
                   <table className="dv-tabela">
@@ -2193,11 +2183,13 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     onClick={criarGeosIndividuais}>
                     {criandoGeos ? "Criando os GEOs…" : `Criar os GEOs individuais (${glebas.filter((g) => g.anel.length >= 3 && !g.servico_parte_id).length})`}
                   </button>
-                  <span className="sub">
-                    {semCodigo > 0
-                      ? `Gere os documentos do imóvel primeiro: ${semCodigo} marco(s) ainda sem código definitivo, e os GEOs das partes usam os mesmos códigos.`
-                      : "O GEO geral (todas as partes) é este serviço; cada parte ganha o seu."}
-                  </span>
+                  <Dica>O GEO geral (todas as partes) é este serviço; cada parte ganha o seu.</Dica>
+                  {/* pendência que trava o botão: fica à vista */}
+                  {semCodigo > 0 && (
+                    <span className="sub">
+                      Gere os documentos do imóvel primeiro: {semCodigo} marco(s) ainda sem código definitivo, e os GEOs das partes usam os mesmos códigos.
+                    </span>
+                  )}
                 </div>
               </section>
             )}
@@ -2209,24 +2201,23 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {!ehConferencia && docsProntos && temSigef && (
               <section className="bloco" id="bloco-planta">
                 <header>
-                  <h3><span className="num-etapa">5</span>Planta {folhaEfetiva} {servico.tipo_imovel === "posse" ? "(posse)" : "(matrícula)"} do SIGEF</h3>
-                  <span className="desc">mesmo padrão da planta gerada com o memorial, mas desenhada a partir do PDF certificado do SIGEF · escala automática · carimbo e desenhista vêm das Configurações</span>
+                  <h3><span className="num-etapa">5</span>Planta {folhaEfetiva} {servico.tipo_imovel === "posse" ? "(posse)" : "(matrícula)"} do SIGEF<Dica>mesmo padrão da planta gerada com o memorial, mas desenhada a partir do PDF certificado do SIGEF · escala automática · carimbo e desenhista vêm das Configurações</Dica></h3>
                 </header>
                 <div className="acoes-linha">
-                  <label>Folha
+                  <label><Rotulo dica={`padrão: ${servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}`}>Folha</Rotulo>
                     <select value={folhaEfetiva} onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
                       <option value="A1">A1 — modelo com quadro analítico</option>
                       <option value="A3">A3 — modelo sem quadro analítico</option>
                     </select>
-                    <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
                   </label>
                   <label className="opcao-metragem" title="Escreve o comprimento de cada lado (de cada parte, na divisão) ao longo dele na planta">
                     <input type="checkbox" checked={comMetragem} onChange={(e) => setMetragemPlanta(e.target.checked)} /> com metragem
                   </label>
-                  <span className="sub" style={{ flex: "1 1 280px" }}>
+                  <span className="sub" style={{ flex: "1 1 auto" }}>
                     {salvo.satelite
-                      ? "imagem de satélite pronta — buscada pelas coordenadas"
-                      : buscandoSat ? "buscando a imagem de satélite pelas coordenadas…" : "a imagem de satélite é buscada pelas coordenadas ao gerar"}
+                      ? "imagem de satélite pronta"
+                      : buscandoSat ? "buscando a imagem de satélite…" : "satélite: busca ao gerar"}
+                    <Dica>a imagem de satélite é buscada pelas coordenadas do levantamento</Dica>
                   </span>
                   <button className="principal" disabled={gerandoPlanta} onClick={gerarPlanta}>
                     {gerandoPlanta ? "Gerando planta…" : `Gerar Planta ${folhaEfetiva} do SIGEF (PDF)`}
@@ -2249,8 +2240,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {!ehConferencia && docsProntos && temSigef && (
               <section className="bloco" id="bloco-pecas">
                 <header>
-                  <h3><span className="num-etapa">6</span>Peças técnicas</h3>
-                  <span className="desc">os dados abaixo + o memorial + o PDF do SIGEF viram as 7 peças (memorial, tabular, cartas, declarações, requerimento)</span>
+                  <h3><span className="num-etapa">6</span>Peças técnicas<Dica>os dados abaixo + o memorial + o PDF do SIGEF viram as 7 peças (memorial, tabular, cartas, declarações, requerimento)</Dica></h3>
                 </header>
 
                 {/* Só o que muda peça a peça fica à vista; a papelada do RT vem do
@@ -2358,8 +2348,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {/* ---- Histórico de documentos ---- */}
             <section className="bloco">
               <header>
-                <h3>Histórico de documentos</h3>
-                <span className="desc">cada geração vira uma versão preservada — baixe qualquer uma a qualquer momento</span>
+                <h3>Histórico de documentos<Dica>cada geração vira uma versão preservada — baixe qualquer uma a qualquer momento</Dica></h3>
               </header>
               <HistoricoDocs servicoId={servico.id} />
             </section>

@@ -756,7 +756,6 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .planta-cert .tabela-vertices td, .planta-cert .tabela-vertices th { padding: 6px 10px; font-size: 12.5px; white-space: nowrap; }
 .planta-cert .tabela-vertices tbody tr { cursor: pointer; }
 .planta-cert tr.sel td { background: var(--primaria-clara); }
-.planta-cert .dica { font-size: 12.5px; color: var(--texto-3); margin: 0; }
 .planta-cert .acoes-linha button { height: 30px; padding: 0 12px; font-size: 12.5px; }
 .resumo-cert { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: 9px; background: var(--primaria-clara); color: var(--floresta); font-size: 13.5px; }
 .resumo-cert .fantasma { padding: 0; height: auto; color: var(--floresta); text-decoration: underline; }
@@ -985,7 +984,6 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .dv-m-estrada td:first-child { color: #B42318; }
 .dv-m-divisa td:first-child { font-style: italic; }
 .dv-m-total td { font-weight: 700; }
-.dv-gerar { display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: flex-end; margin-bottom: 12px; }
 .dv-gerar .dv-campo { margin: 0; }
 .dv-prancheta { height: 680px; min-height: 520px; border: 1px solid var(--borda); border-radius: var(--raio); overflow: hidden; background: var(--card); }
 .dv-painel header { display: flex; align-items: center; gap: 8px; }
@@ -1030,3 +1028,54 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 
 /* "com metragem" ao lado da folha, antes de gerar */
 .opcao-metragem { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--texto-2); white-space: nowrap; cursor: pointer; }
+
+/* ---------------------------------------------------------------------------
+   Dica (?) — explicação não fica solta na tela: aparece ao passar o mouse
+   --------------------------------------------------------------------------- */
+.dica {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 16px; height: 16px; margin-left: 6px; border-radius: 50%;
+  border: 1px solid var(--borda); background: var(--card); color: var(--texto-3);
+  font-size: 10.5px; font-weight: 700; line-height: 1; font-style: normal; letter-spacing: 0;
+  cursor: help; vertical-align: 1px; user-select: none; text-transform: none;
+}
+.dica:hover, .dica:focus-visible { border-color: var(--primaria); color: var(--primaria); outline: none; }
+.dica-balao {
+  position: fixed; z-index: 10000; transform: translate(-50%, -100%);
+  max-width: 300px; width: max-content; padding: 8px 11px; border-radius: 8px;
+  background: var(--floresta); color: #fff; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
+  font-size: 12.5px; font-weight: 400; line-height: 1.45; text-align: left; white-space: normal;
+  pointer-events: none;
+}
+.dica-balao.baixo { transform: translate(-50%, 0); }
+.dica-balao b, .dica-balao strong { color: #fff; }
+.rotulo-campo { display: inline-flex; align-items: center; gap: 0; flex-wrap: wrap; }
+.rotulo-campo .obrigatorio { margin-left: 3px; }
+.secao-titulo { display: inline-flex; align-items: center; }
+.bloco > header h3, .etapa-cabeca h2 { display: inline-flex; align-items: center; }
+
+/* Grade das glebas: era um template inline; agora é a grade balanceada */
+.gleba-painel.campos-gleba { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px 20px; align-items: end; }
+.gleba-painel.campos-gleba label { display: grid; gap: 6px; }
+
+/* Divisão / glebas pela prancheta: controles numa faixa só, cada grupo com o
+   rótulo em cima e o controle embaixo, todos alinhados pelo topo — sem o
+   "Começar pelo outro lado" pendurado numa linha própria. */
+.dv-gerar { display: grid; grid-template-columns: auto auto minmax(320px, 1fr) auto; gap: 16px 28px; align-items: start; margin-bottom: 14px; }
+.dv-gerar .dv-campo > span:first-child, .dv-gerar .dv-campo { line-height: 1.3; }
+.dv-gerar .dv-campo > span:first-child { display: inline-flex; align-items: center; min-height: 18px; }
+.dv-direcao { min-width: 0; }
+.dv-direcao .dv-sugestoes button { min-height: 38px; }
+.dv-direcao .dv-giro { max-width: 640px; }
+.dv-inverter { flex: none; white-space: nowrap; height: 36px; }
+.dv-inverter.ativa { border-color: var(--primaria); background: var(--primaria-clara); color: var(--floresta); }
+.dv-direcao .dv-giro span { color: var(--texto-2); font-weight: 600; }
+.dv-botoes-linha { display: flex; gap: 8px; flex-wrap: nowrap; }
+@media (max-width: 1100px) { .dv-gerar { grid-template-columns: auto 1fr; } .dv-direcao { grid-column: 1 / -1; grid-row: 2; } }
+@media (max-width: 640px) { .dv-gerar { grid-template-columns: 1fr; } .dv-direcao { grid-column: auto; grid-row: auto; } }
+.dv-barra { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--linha); }
+.dv-barra-grupo { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0; }
+.dv-barra select { height: 36px; max-width: 320px; min-width: 0; }
+.dv-barra .esticar { flex: 1; }
+.dv-barra .dv-sem { font-size: 13px; }
+.dv-recolhido > summary .dica { vertical-align: middle; }

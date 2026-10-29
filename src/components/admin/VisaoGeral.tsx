@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { serieServicos, usoModalidades } from "../../lib/admin";
 import { recursoDe } from "../../lib/recursos";
 import type { DadosAdmin } from "./PainelAdmin";
+import { Dica } from "../ui";
 import { Carregando, ICO, Kpi, PlanoTag, Topo, fmtNum, iniciais, quando, semUso } from "./comum";
 
 export function VisaoGeral({ d }: { d: DadosAdmin }) {
@@ -44,7 +45,7 @@ export function VisaoGeral({ d }: { d: DadosAdmin }) {
 
       <div className="sa-grade c3" style={{ marginBottom: 18 }}>
         <section className="sa-card">
-          <header><h3>Serviços criados por dia</h3><span className="sub">últimos 30 dias · todas as empresas</span></header>
+          <header><h3>Serviços criados por dia<Dica>últimos 30 dias · todas as empresas</Dica></h3></header>
           {serie ? <Serie dados={serie} /> : <Carregando />}
         </section>
         <section className="sa-card">
@@ -63,7 +64,7 @@ export function VisaoGeral({ d }: { d: DadosAdmin }) {
 
       <div className="sa-grade c2">
         <section className="sa-card">
-          <header><h3>Uso por serviço</h3><span className="sub">serviços criados em 30 dias</span></header>
+          <header><h3>Uso por serviço<Dica>serviços criados em 30 dias</Dica></h3></header>
           {!uso ? <Carregando /> : uso.length === 0 ? <div className="sa-vazio">Nenhum serviço criado nos últimos 30 dias.</div> : (
             <div className="sa-barras">
               {uso.map((u) => (
@@ -78,7 +79,7 @@ export function VisaoGeral({ d }: { d: DadosAdmin }) {
         </section>
 
         <section className="sa-card">
-          <header><h3>Pedem atenção</h3><span className="sub">ativas sem uso há mais de 14 dias</span></header>
+          <header><h3>Pedem atenção<Dica>ativas sem uso há mais de 14 dias</Dica></h3></header>
           {paradas.length === 0 ? <div className="sa-vazio">Todas as empresas ativas usaram o sistema nas últimas duas semanas.</div> : (
             <div className="sa-lista">
               {paradas.slice(0, 6).map((e) => (

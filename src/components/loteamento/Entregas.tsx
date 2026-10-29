@@ -20,6 +20,7 @@ import { imagemSituacao } from "../../lib/loteamento/situacao.ts";
 import type { SecaoDocx } from "../../lib/loteamento/docx.ts";
 import { fmtAzimute } from "../../../supabase/functions/_shared/geo.ts";
 import { dist } from "../../lib/loteamento/geom.ts";
+import { Dica } from "../ui";
 import type { RT, Servico } from "../../lib/types";
 import { Miniatura } from "./Assistente";
 
@@ -256,8 +257,8 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
           <div className="lot-entrega-itens">
             <div className="lot-item">
               <div>
-                <b>Planta do loteamento (PDF)</b>
-                <span>No padrão das plantas da equipe: legendas, convenções, quadro de áreas, planta de situação com satélite, carimbo com a logo, seção da rua e detalhe de esquina; lotes cotados e quadro de lotes nas folhas seguintes. Escala 1:{den}.</span>
+                <b>Planta do loteamento (PDF)<Dica>No padrão das plantas da equipe: legendas, convenções, quadro de áreas, planta de situação com satélite, carimbo com a logo, seção da rua e detalhe de esquina; lotes cotados e quadro de lotes nas folhas seguintes.</Dica></b>
+                <span>Escala 1:{den}</span>
               </div>
               <select value={folha} onChange={(e) => setFolha(e.target.value as Folha)}>
                 {(["A0", "A1", "A2", "A3"] as Folha[]).map((f) => <option key={f} value={f}>{f}</option>)}
@@ -265,23 +266,23 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
               <button className="principal" disabled={!!ocupado} onClick={planta}>{ocupado === "planta" ? "Gerando…" : "Baixar"}</button>
             </div>
             <div className="lot-item">
-              <div><b>Memorial descritivo do loteamento (DOCX)</b><span>Identificação, quadro de áreas, quadras, vias, áreas públicas (art. 9º §2º e art. 22 da Lei 6.766).</span></div>
+              <div><b>Memorial descritivo do loteamento (DOCX)<Dica>Identificação, quadro de áreas, quadras, vias, áreas públicas (art. 9º §2º e art. 22 da Lei 6.766).</Dica></b></div>
               <button disabled={!!ocupado} onClick={memorialGeral}>{ocupado === "memorial" ? "Gerando…" : "Baixar"}</button>
             </div>
             <div className="lot-item">
-              <div><b>Memoriais dos {res.lotes.length} lotes (DOCX)</b><span>Um por página: frente, lados e fundos com os confrontantes, e o perímetro vértice a vértice com coordenadas e azimutes.</span></div>
+              <div><b>Memoriais dos {res.lotes.length} lotes (DOCX)<Dica>Um por página: frente, lados e fundos com os confrontantes, e o perímetro vértice a vértice com coordenadas e azimutes.</Dica></b></div>
               <button disabled={!!ocupado} onClick={memoriais}>{ocupado === "memoriais" ? "Gerando…" : "Baixar"}</button>
             </div>
             <div className="lot-item">
-              <div><b>Quadro de lotes (planilha)</b><span>Medidas e áreas de todos os lotes{projeto.params.precoM2 > 0 ? ", com o preço de cada um" : ""} — abre no Excel.</span></div>
+              <div><b>Quadro de lotes (planilha)<Dica>Medidas e áreas de todos os lotes{projeto.params.precoM2 > 0 ? ", com o preço de cada um" : ""} — abre no Excel.</Dica></b></div>
               <button disabled={!!ocupado} onClick={() => fazer("quadro", () => baixar(quadroDeLotesCsv(res, projeto), `QUADRO_DE_LOTES_${base}.csv`, "text/csv;charset=utf-8"))}>Baixar</button>
             </div>
             <div className="lot-item">
-              <div><b>Google Earth (KML)</b><span>O cliente abre no celular e vê os lotes sobre a imagem de satélite.</span></div>
+              <div><b>Google Earth (KML)<Dica>O cliente abre no celular e vê os lotes sobre a imagem de satélite.</Dica></b></div>
               <button disabled={!!ocupado} onClick={() => fazer("kml", () => baixar(gerarKml(res, fuso, projeto.nome), `${base}.kml`, "application/vnd.google-earth.kml+xml"))}>Baixar</button>
             </div>
             <div className="lot-item">
-              <div><b>Projeto em CAD (DXF)</b><span>Camadas separadas (perímetro, quadras, lotes, eixos, áreas, textos e cotas) em coordenadas UTM.</span></div>
+              <div><b>Projeto em CAD (DXF)<Dica>Camadas separadas (perímetro, quadras, lotes, eixos, áreas, textos e cotas) em coordenadas UTM.</Dica></b></div>
               <button disabled={!!ocupado} onClick={() => fazer("dxf", () => baixar(gerarDxf(res, pontos), `PROJETO_${base}.dxf`, "application/dxf"))}>Baixar</button>
             </div>
           </div>
@@ -289,7 +290,7 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
       </section>
 
       <section className="bloco lot-entrega-campo">
-        <header><h3>Para o técnico de campo (coletora GNSS)</h3><span className="desc">Pontos em UTM SIRGAS 2000 fuso {fuso}S, com o mesmo nome da planta e dos memoriais.</span></header>
+        <header><h3>Para o técnico de campo (coletora GNSS)<Dica>Pontos em UTM SIRGAS 2000 fuso {fuso}S, com o mesmo nome da planta e dos memoriais.</Dica></h3></header>
         <div className="lot-campo-grade">
           <div>
             <label className="lot-rotulo">Aparelho / formato</label>
@@ -313,8 +314,8 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
             </div>
             <p className="lot-dica">
               <b>{pontos.length} pontos</b> — {pontos.filter((p) => p.tipo === "lote").length} de lote, {pontos.filter((p) => p.tipo === "curva").length} de curva,{" "}
-              {pontos.filter((p) => p.tipo === "eixo").length} de eixo. Nome curto, sem acento (A-07 = ponto 7 da quadra A); o código traz os lotes que o ponto divide (QA L03/04).
-              Cota estimada pelos marcos do perímetro, só para referência.
+              {pontos.filter((p) => p.tipo === "eixo").length} de eixo
+              <Dica>Nome curto, sem acento (A-07 = ponto 7 da quadra A); o código traz os lotes que o ponto divide (QA L03/04). Cota estimada pelos marcos do perímetro, só para referência.</Dica>
             </p>
             {amostra && <pre className="lot-amostra">{amostra}{pontos.length > 6 ? "…" : ""}</pre>}
             <button className="principal grande" disabled={!!ocupado || !pontos.length} onClick={locacao}>

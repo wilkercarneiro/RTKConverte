@@ -6,6 +6,7 @@ import {
   cnpjValido, emailValido, formatarCnpj, formatarTelefone, problemaDaSenha, soDigitos, telefoneValido,
 } from "../../../supabase/functions/_shared/cnpj.ts";
 import type { DadosAdmin } from "./PainelAdmin";
+import { Rotulo } from "../ui";
 import {
   ICO, Ico, PlanoTag, StatusPill, Topo, copiar, fmtCnpj, fmtNum, quando, semUso,
 } from "./comum";
@@ -203,15 +204,13 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
                     onChange={(e) => campo("telefone", formatarTelefone(e.target.value))} onBlur={() => setTocado({ ...tocado, telefone: true })} />
                   {msg("telefone")}
                 </label>
-                <label>E-mail da empresa
+                <label><Rotulo dica="é o login de acesso">E-mail da empresa</Rotulo>
                   <input type="email" value={f.email} placeholder="contato@empresa.com.br"
                     onChange={(e) => campo("email", e.target.value)} onBlur={() => setTocado({ ...tocado, email: true })} />
-                  <small className="sub" style={{ fontWeight: 400 }}>é o login de acesso</small>
                   {msg("email")}
                 </label>
-                <label>Senha provisória
+                <label><Rotulo dica="a senha padrão; o cliente troca no 1º acesso">Senha provisória</Rotulo>
                   <input className="mono" value={f.senha} onChange={(e) => campo("senha", e.target.value)} onBlur={() => setTocado({ ...tocado, senha: true })} />
-                  <small className="sub" style={{ fontWeight: 400 }}>a senha padrão; o cliente troca no 1º acesso</small>
                   {msg("senha")}
                 </label>
                 <label>Plano

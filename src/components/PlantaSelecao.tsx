@@ -12,6 +12,7 @@
 // prévia da seleção).
 import { useMemo, useRef } from "react";
 import type { ReactNode } from "react";
+import { Dica } from "./ui";
 
 export interface PontoSelecao {
   /** identidade estável (código do vértice, ordem…) — é o que vai no Set de selecionados */
@@ -165,11 +166,12 @@ export function PlantaSelecao({
           <button type="button" onClick={() => onChange(new Set(pontos.map((p) => p.id)))}>Selecionar todos</button>
           <button type="button" className="fantasma" onClick={() => { ultimo.current = null; onChange(new Set()); }}>Limpar</button>
           <span className="sub" style={{ fontSize: 13 }}>{selecionados.size} de {n} ponto(s) escolhido(s)</span>
+          {/* como selecionar: no "?" para não ocupar uma linha inteira */}
+          <Dica>
+            {dica ?? <>Clique no primeiro ponto e depois no último: todos os que estão entre eles ficam marcados, pelo caminho mais curto do anel. <b>Shift + clique</b> força o caminho para a frente. Clicar num ponto marcado desmarca só ele.</>}
+          </Dica>
           {acoes}
         </div>
-        <p className="dica">
-          {dica ?? <>Clique no primeiro ponto e depois no último: todos os que estão entre eles ficam marcados, pelo caminho mais curto do anel. <b>Shift + clique</b> força o caminho para a frente. Clicar num ponto marcado desmarca só ele.</>}
-        </p>
         <div className="tabela-wrap">
           <table className="tabela-vertices">
             <thead>

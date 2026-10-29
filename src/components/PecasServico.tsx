@@ -13,7 +13,7 @@ import { ehRioPorLimite, ehViaPorLimite, numerarConfrontantes, viasDaPlanta } fr
 import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
-import { Avisos, BarraEtapas, Passos, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { Avisos, BarraEtapas, Dica, Passos, Rotulo, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 import { AutoriaServico } from "./Auditoria";
 import { Icone, ICONE } from "./Icone";
 
@@ -284,9 +284,8 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         <div className="upload-card">
           <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para o Início</button>
           <div>
-            <h2>Peças a partir do PDF do SIGEF</h2>
-            <p className="sub">Já tem o memorial do SIGEF em mãos? Envie o PDF de prévia/certificação:
-              o sistema lê o imóvel, o proprietário e os confrontantes automaticamente.</p>
+            <h2>Peças a partir do PDF do SIGEF<Dica>Já tem o memorial do SIGEF em mãos? Envie o PDF de prévia/certificação:
+              o sistema lê o imóvel, o proprietário e os confrontantes automaticamente.</Dica></h2>
           </div>
           <label className="dropzone" onDragOver={(e) => e.preventDefault()}
             aria-busy={!!ocupado}
@@ -409,38 +408,35 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         {etapa === "dados" && (
           <>
             <section className="bloco" id="pc-dados">
-              <header><h3>Imóvel e requerentes</h3>
-                <span className="desc">pré-preenchido pelo PDF — confira o essencial; o resto abre quando precisar</span></header>
+              <header><h3>Imóvel e requerentes<Dica>pré-preenchido pelo PDF — confira o essencial; o resto abre quando precisar</Dica></h3></header>
 
               <div className="grade">
-                <label><span>Situação do imóvel <span className="obrigatorio">*</span></span>
+                <label><Rotulo obrigatorio dica="define planta A1 ou A3 e o conjunto de peças">Situação do imóvel</Rotulo>
                   <select value={servico.tipo_imovel ?? "matricula"} onChange={(e) => campo("tipo_imovel", e.target.value as "matricula" | "posse")}>
                     <option value="matricula">Matrícula (proprietário)</option>
                     <option value="posse">Posse (posseiro)</option>
                   </select>
-                  <small className="sub">define planta A1 ou A3 e o conjunto de peças</small>
                 </label>
-                <label><span>Denominação <span className="obrigatorio">*</span></span>
+                <label><Rotulo obrigatorio>Denominação</Rotulo>
                   <input id="pc-denominacao" value={servico.denominacao ?? ""} onChange={(e) => campo("denominacao", e.target.value)} />
                 </label>
-                <label><span>Município <span className="obrigatorio">*</span></span>
+                <label><Rotulo obrigatorio>Município</Rotulo>
                   <input id="pc-municipio" value={servico.municipio ?? ""} onChange={(e) => campo("municipio", e.target.value)} />
                 </label>
-                <label><span>UF <span className="obrigatorio">*</span></span>
+                <label><Rotulo obrigatorio>UF</Rotulo>
                   <select id="pc-uf" value={servico.uf ?? ""} onChange={(e) => campo("uf", e.target.value)}>
                     <option value="">—</option>{UFS.map((u) => <option key={u}>{u}</option>)}
                   </select>
                 </label>
-                <label><span>Detentor <span className="obrigatorio">*</span></span>
+                <label><Rotulo obrigatorio>Detentor</Rotulo>
                   <input id="pc-detentor" value={servico.detentor_nome ?? ""} onChange={(e) => campo("detentor_nome", e.target.value)} />
                 </label>
                 <label>CPF do detentor <input className="mono" value={servico.detentor_cpf ?? ""} onChange={(e) => campo("detentor_cpf", e.target.value)} /></label>
-                <label><span>Responsável Técnico <span className="obrigatorio">*</span></span>
+                <label><Rotulo obrigatorio dica="cadastre novos em Configurações">Responsável Técnico</Rotulo>
                   <select id="pc-rt" value={servico.rt_id ?? ""} onChange={(e) => campo("rt_id", e.target.value || null)}>
                     <option value="">—</option>
                     {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
                   </select>
-                  <small className="sub">cadastre novos em Configurações</small>
                 </label>
                 <label style={{ gridColumn: "span 2" }}>Endereço dos requerentes
                   <input placeholder="Rua ..., Nº ..., Bairro, Cidade, Estado, CEP:..." value={servico.endereco_detentor ?? ""} onChange={(e) => campo("endereco_detentor", e.target.value || null)} /></label>
@@ -507,21 +503,18 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                   abrirEm={seloRt < 4}
                   dica={rtSel ? `salvo no cadastro de ${rtSel.nome}` : "selecione um RT acima"}>
                   <div className="grade">
-                    <label>Credenciado
+                    <label><Rotulo dica="o código vai no carimbo da planta">Credenciado</Rotulo>
                       <select value={servico.credenciado_id ?? ""} onChange={(e) => campo("credenciado_id", e.target.value || null)}>
                         <option value="">—</option>
                         {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
                       </select>
-                      <small className="sub">o código vai no carimbo da planta</small>
                     </label>
-                    <label>TRT (Termo de Responsabilidade Técnica)
+                    <label><Rotulo dica="vai nas peças e na planta; sobrepõe o TRT do PDF do SIGEF">TRT (Termo de Responsabilidade Técnica)</Rotulo>
                       <input className="mono" placeholder="ex.: BR20250804764" value={servico.trt ?? ""}
                         onChange={(e) => campo("trt", e.target.value.trim() || null)} />
-                      <small className="sub">
-                        {rtSel?.trt && servico.trt === rtSel.trt
-                          ? `preenchido com o TRT padrão de ${rtSel.nome}`
-                          : "vai nas peças e na planta; sobrepõe o TRT do PDF do SIGEF"}
-                      </small>
+                      {rtSel?.trt && servico.trt === rtSel.trt && (
+                        <small className="sub">preenchido com o TRT padrão de {rtSel.nome}</small>
+                      )}
                     </label>
                     <label>Formação do RT <input value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} /></label>
                     <label>Conselho (sigla) <input value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} /></label>
@@ -539,10 +532,10 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         {etapa === "confrontantes" && (
           <>
             <div className="etapa-cabeca" id="pc-confrontantes">
-              <h2>Confrontantes</h2>
+              <h2>Confrontantes<Dica>o PDF traz o texto truncado — confira e complete o descritivo formal de cada trecho</Dica></h2>
               <span className="desc">
                 {trechos.length} {trechos.length === 1 ? "trecho" : "trechos"}{semDescritivo > 0 ? ` · ${semDescritivo} sem descritivo formal` : " · todos descritos"}
-                {numeracao.size > 0 ? ` · ${numeracao.size} ${numeracao.size === 1 ? "numerado" : "numerados"}` : ""} — o PDF traz o texto truncado
+                {numeracao.size > 0 ? ` · ${numeracao.size} ${numeracao.size === 1 ? "numerado" : "numerados"}` : ""}
               </span>
               <span className="esticar" />
               <button
@@ -551,15 +544,13 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                 onClick={() => setModoNumeracao((v) => !v)}>
                 {modoNumeracao ? "Concluir numeração" : "Adicionar numeração"}
               </button>
-            </div>
-            {modoNumeracao && (
-              <p className="sub" style={{ margin: "-8px 0 0" }}>
+              <Dica>
                 Marque os confrontantes cujo espaço na planta é curto demais para o nome.
                 Cada marcado recebe um número, na ordem do perímetro, e os dados dele saem
                 no quadro <b>CONFRONTANTES</b> embaixo do desenho. Faixa de domínio e curso
                 d'água não entram: o nome deles acompanha o próprio traço.
-              </p>
-            )}
+              </Dica>
+            </div>
             <div className="trechos" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {trechos.map((t, i) => {
                 const ehVia = t.eh_via || ehViaPorLimite(t.tipo_limite);
@@ -627,8 +618,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
         {etapa === "documentos" && (
           <>
             <section className="bloco" id="pc-gerar">
-              <header><h3>Peças técnicas</h3>
-                <span className="desc">os dados conferidos + o PDF do SIGEF viram as 7 peças (memorial, tabular, cartas, declarações, requerimento)</span></header>
+              <header><h3>Peças técnicas<Dica>os dados conferidos + o PDF do SIGEF viram as 7 peças (memorial, tabular, cartas, declarações, requerimento)</Dica></h3></header>
               <div className="acoes-linha">
                 <button disabled={!!ocupado} onClick={async () => {
                   try { setErro(null); await salvar(); avisar("ok", "Rascunho salvo."); } catch (e) { setErro(String(e)); }
@@ -664,15 +654,13 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
                 lado faz a mesma coisa. A imagem de satélite do quadro Planta de
                 Situação é buscada pelo servidor pelas coordenadas do PDF. */}
             <section className="bloco" id="pc-planta">
-              <header><h3>Planta {folhaEfetiva} {servico.tipo_imovel === "posse" ? "(posse)" : "(matrícula)"}</h3>
-                <span className="desc">desenhada a partir do PDF certificado do SIGEF · a imagem de satélite do quadro Planta de Situação é buscada automaticamente pelas coordenadas</span></header>
+              <header><h3>Planta {folhaEfetiva} {servico.tipo_imovel === "posse" ? "(posse)" : "(matrícula)"}<Dica>desenhada a partir do PDF certificado do SIGEF · a imagem de satélite do quadro Planta de Situação é buscada automaticamente pelas coordenadas</Dica></h3></header>
               <div className="acoes-linha">
-                <label>Folha
+                <label><Rotulo dica={`padrão: ${servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}`}>Folha</Rotulo>
                   <select value={folhaEfetiva} onChange={(e) => setFolhaPlanta(e.target.value as "A1" | "A3")}>
                     <option value="A1">A1 — modelo com quadro analítico</option>
                     <option value="A3">A3 — modelo sem quadro analítico</option>
                   </select>
-                  <small className="sub">padrão: {servico.tipo_imovel === "posse" ? "A3 (posse)" : "A1 (matrícula)"}</small>
                 </label>
                 <button className="principal" disabled={!!ocupado} onClick={gerarPlanta}>
                   Gerar Planta {folhaEfetiva} (PDF)
@@ -692,8 +680,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar }: { servicoId: st
             </section>
 
             <section className="bloco">
-              <header><h3>Histórico de documentos</h3>
-                <span className="desc">cada geração vira uma versão preservada — baixe qualquer uma a qualquer momento</span></header>
+              <header><h3>Histórico de documentos<Dica>cada geração vira uma versão preservada — baixe qualquer uma a qualquer momento</Dica></h3></header>
               <HistoricoDocs servicoId={servico.id} />
             </section>
           </>

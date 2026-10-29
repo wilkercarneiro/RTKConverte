@@ -15,6 +15,7 @@ import type { ModoDivisao, Projeto, Sobra, TipoArea } from "../../lib/loteamento
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { paraUtm } from "../../lib/loteamento/plano.ts";
 import { cotaEm, declividadeEm } from "../../lib/loteamento/terreno.ts";
+import { Dica } from "../ui";
 
 interface Props {
   projeto: Projeto;
@@ -109,7 +110,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
         const qq = quadraDe(res, l.quadra);
         return (
           <section className="lot-cartao">
-            <header><span className="lot-tag">Lote</span><h3>Quadra {l.quadra} · Lote {String(l.numero).padStart(2, "0")}</h3></header>
+            <header><span className="lot-tag">Lote</span><h3>Quadra {l.quadra} · Lote {String(l.numero).padStart(2, "0")}<Dica>Arraste no desenho as quinas (quadrados) e as divisas (barras verdes). A quina na rua corre pela rua; os vizinhos se ajustam.</Dica></h3></header>
             <div className="lot-metricas">
               <div><b>{fmt(l.area)}</b><span>m²</span></div>
               <div><b>{fmt(l.frente)}</b><span>m de frente</span></div>
@@ -139,7 +140,6 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
               <CampoNum valor={l.area} sufixo="m²" titulo="Digite a área: a divisa lateral desliza e o vizinho se ajusta"
                 onAplicar={(v) => { if (v !== undefined) onComando(`area ${String(v).replace(".", ",")}`); }} />
             </div>
-            <p className="lot-dica">Arraste no desenho as quinas (quadrados) e as divisas (barras verdes). A quina na rua corre pela rua; os vizinhos se ajustam.</p>
             <div className="lot-botoes">
               <button onClick={() => onComando("unir")} title="Une com o vizinho de maior divisa em comum">Unir ao vizinho</button>
               <button onClick={() => onComando("dividir 2")}>Dividir em 2</button>
@@ -151,7 +151,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
               <button className="inst" onClick={() => virarArea("institucional")}>→ Institucional</button>
             </div>
             <details className="lot-lados" open>
-              <summary>Medidas e confrontações</summary>
+              <summary>Medidas e confrontações<Dica>☆ escolhe a frente do lote: o lado que dá para a servidão ou área verde (lote sem rua) ou a rua principal da esquina. Só o lado escolhido conta como frente. Ou use a ferramenta Frente (T) e clique no lado.</Dica></summary>
               <table>
                 <tbody>
                   {agruparArcos(l.lados).map((x, i) => {
@@ -174,7 +174,6 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
                   })}
                 </tbody>
               </table>
-              <p className="lot-dica">☆ escolhe a frente do lote: o lado que dá para a servidão ou área verde (lote sem rua) ou a rua principal da esquina. Só o lado escolhido conta como frente. Ou use a ferramenta Frente (T) e clique no lado.</p>
             </details>
             {qq && <button className="fantasma lot-link" onClick={() => onSel({ tipo: "quadra", nome: qq.nome })}>Ver a quadra {qq.nome} →</button>}
           </section>
@@ -200,7 +199,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
 
       {quadra && (
         <section className="lot-cartao">
-          <header><span className="lot-tag">Quadra</span><h3>Quadra {quadra.nome}</h3></header>
+          <header><span className="lot-tag">Quadra</span><h3>Quadra {quadra.nome}<Dica>Clique num lote para arrastar as quinas e as divisas dele. L desenha um lote, C corta lotes com uma linha.</Dica></h3></header>
           <div className="lot-metricas">
             <div><b>{quadra.lotes.length}</b><span>lotes</span></div>
             <div><b>{fmt(quadra.area)}</b><span>m²</span></div>
@@ -263,7 +262,6 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
               if (n && n !== quadra.nome) { onMudar(ajustarQuadra(projeto, res, quadra, { nome: n })); onSel({ tipo: "quadra", nome: n }); }
             }} />
           </div>
-          <p className="lot-dica">Clique num lote para arrastar as quinas e as divisas dele. L desenha um lote, C corta lotes com uma linha.</p>
           <div className="lot-botoes">
             <button onClick={() => { onFerramenta("frente"); onMsg(`Clique no lado da quadra ${quadra.nome} que é o acesso (frente) dela — servidão, área verde, divisa com saída. Clicar de novo tira.`); }}
               title="Para quadra sem rua (ou com acesso por outro lado): o lado marcado conta como frente dos lotes">Escolher o acesso (frente) da quadra</button>
@@ -279,7 +277,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
 
       {rua && (
         <section className="lot-cartao">
-          <header><span className="lot-tag">Rua</span><h3>{rua.nome}</h3></header>
+          <header><span className="lot-tag">Rua</span><h3>{rua.nome}<Dica>Arraste os quadradinhos para mover o eixo; o "+" no meio de um trecho dobra a rua. Delete apaga.</Dica></h3></header>
           <div className="lot-metricas">
             <div><b>{fmt(rua.comprimento, 1)}</b><span>m de eixo</span></div>
             <div><b>{fmt(rua.area, 0)}</b><span>m² na gleba</span></div>
@@ -293,7 +291,6 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
           <div className="lot-linha"><label>Balão no fim</label>
             <CampoNum valor={projeto.ruas.find((r) => r.id === rua.id)?.balao} sufixo="m de raio" onAplicar={(v) => onMudar(editarRua(projeto, rua.id, { balao: v || undefined }))} />
           </div>
-          <p className="lot-dica">Arraste os quadradinhos para mover o eixo; o "+" no meio de um trecho dobra a rua. Delete apaga.</p>
           <div className="lot-botoes">
             <button className="perigo" onClick={() => { onMudar(removerRua(projeto, rua.id)); onSel(null); onMsg("Rua apagada."); }}>Apagar rua</button>
           </div>

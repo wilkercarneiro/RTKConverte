@@ -11,7 +11,7 @@ import type { KmlLido } from "../../lib/car/kml.ts";
 import { calcularCar, fmtHa, fmtNum, projetoNovo } from "../../lib/car/motor.ts";
 import { criarServicoCar } from "../../lib/car/persistencia.ts";
 import { Icone, ICONE } from "../Icone";
-import { Passos } from "../ui";
+import { Dica, Passos } from "../ui";
 import "./car.css";
 
 async function textoDoArquivo(f: File): Promise<string> {
@@ -93,8 +93,7 @@ export function CarNovo({ definicao, clienteId, onCriado, onVoltar }: {
       <div className="upload-card">
         {onVoltar && <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para o Início</button>}
         <div>
-          <h2>{definicao.titulo}</h2>
-          <p className="sub">{definicao.resumo}</p>
+          <h2>{definicao.titulo}<Dica>{definicao.resumo}</Dica></h2>
         </div>
 
         <div

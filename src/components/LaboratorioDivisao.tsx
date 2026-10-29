@@ -8,6 +8,7 @@ import proj4 from "proj4";
 import type { Gleba, Servico, Vertice } from "../lib/types";
 import { DivisaoEditor } from "./DivisaoEditor";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
+import { Dica } from "./ui";
 import { servicoDaParte, verticesDaParte } from "../lib/divisao_servico";
 import { montarServico } from "../../supabase/functions/_shared/servico.ts";
 import { calcularGleba, dadosDasPartes, geometriaDoCalculo, servicoDaGleba } from "../../supabase/functions/_shared/planta_dados.ts";
@@ -83,14 +84,13 @@ export function LaboratorioDivisao() {
 
   return (
     <div style={{ padding: "28px 40px", display: "grid", gap: 16, maxWidth: 1280, margin: "0 auto" }}>
-      <h2 style={{ margin: 0 }}>Laboratório · divisão em partes iguais</h2>
-      <p className="sub" style={{ margin: 0 }}>FAZENDA SALGADA VELHA (fixture) · espólio de José de Souza · estrada vicinal a leste</p>
+      <h2 style={{ margin: 0 }}>Laboratório · divisão em partes iguais<Dica>FAZENDA SALGADA VELHA (fixture) · espólio de José de Souza · estrada vicinal a leste</Dica></h2>
       <DivisaoEditor servico={servicoInicial} vertices={vertices} glebas={glebas}
         onAplicar={(r) => { setVertices(r.vertices); setGlebas(r.glebas); setResumo(null); }}
         onGlebas={setGlebas} />
       {glebas.length >= 2 && (
         <section className="bloco">
-          <header><h3>Documentos (gerados no navegador pelo caminho do servidor)</h3></header>
+          <header><h3>Documentos<Dica>Gerados no navegador pelo caminho do servidor.</Dica></h3></header>
           <div className="acoes-linha">
             <button className="principal" onClick={plantaTotal}>Planta A1 do imóvel inteiro</button>
             {glebas.map((g, k) => <button key={k} onClick={() => plantaDaParte(k)}>GEO de {g.nome}</button>)}

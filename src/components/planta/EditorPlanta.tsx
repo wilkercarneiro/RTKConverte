@@ -14,6 +14,7 @@ import { textoWinAnsi } from "../../../supabase/functions/_shared/texto.ts";
 import {
   PALETA, blocoDeTexto, caixaDe, corCss, corHex, deHex, escalar, mesmaCor, mover, pecaNoPonto, uniao, type Caixa,
 } from "../../lib/planta_editor";
+import { Dica } from "../ui";
 
 type Texto = Extract<ItemCena, { k: "texto" }>;
 interface Doc { itens: ItemCena[]; objetos: Record<string, ObjetoCena> }
@@ -737,8 +738,7 @@ export function EditorPlanta({ cena, original, chaveRascunho, onConcluir, onVolt
         <aside className="ep-painel">
           {selItens.length === 0 ? (
             <>
-              <h4>Camadas</h4>
-              <p className="ep-sub">Clique no nome para selecionar a camada inteira; o olho tira ela do PDF.</p>
+              <h4>Camadas<Dica>Clique no nome para selecionar a camada inteira; o olho tira ela do PDF.</Dica></h4>
               <ul className="ep-camadas">
                 {camadas.map(([cat, c]) => (
                   <li key={cat} className={c.ocultos === c.total ? "oculta" : ""}>
@@ -771,7 +771,7 @@ export function EditorPlanta({ cena, original, chaveRascunho, onConcluir, onVolt
             </>
           ) : (
             <>
-              <h4 className="ep-titulo-sel">{tituloSel}</h4>
+              <h4 className="ep-titulo-sel">{tituloSel}<Dica>Arraste para mover · a alça do canto amplia ou reduz{umaLinha ? " · arraste as pontas para esticar (Shift trava em 45°)" : ""}.</Dica></h4>
               <p className="ep-sub">
                 {camadaSel && <>{camadaSel} · </>}{selItens.length} peça{selItens.length > 1 ? "s" : ""}
                 {objsSel.length === 1 && !objInteiro && (
@@ -845,7 +845,6 @@ export function EditorPlanta({ cena, original, chaveRascunho, onConcluir, onVolt
                 <button type="button" onClick={() => reordenar(false)} title="Desenha por baixo dos outros"><Ic d={IC.tras} s={15} /> Para trás</button>
                 <button type="button" className="ep-perigo" onClick={apagar} title="Delete"><Ic d={IC.lixeira} s={15} /> Apagar</button>
               </section>
-              <p className="ep-sub">Arraste para mover · a alça do canto amplia ou reduz{umaLinha ? " · arraste as pontas para esticar (Shift trava em 45°)" : ""}.</p>
             </>
           )}
           {mudou && <p className="ep-sub ep-guardado">Edição guardada neste navegador enquanto não vira PDF.</p>}

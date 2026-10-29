@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { Cadastros } from "./Cadastros";
 import { guardar, lembrar } from "../lib/ux";
-import { Abas, avisar, CabecalhoPagina, EstadoErro, Esqueleto } from "./ui";
+import { Abas, avisar, CabecalhoPagina, Dica, EstadoErro, Esqueleto, Rotulo } from "./ui";
 import { rotuloRT } from "../lib/domains";
 import type { Credenciado, RT } from "../lib/types";
 import { pastaDoEscritorio, salvarConfigEmpresa } from "../lib/escritorio";
@@ -148,15 +148,13 @@ function Empresa({ pasta }: { pasta: string }) {
   return (
     <section className="bloco">
       <header>
-        <h3>Empresa</h3>
-        <span className="desc">identidade usada nos documentos gerados</span>
+        <h3>Empresa<Dica>identidade usada nos documentos gerados</Dica></h3>
       </header>
 
       {!pode && <p className="modo-leitura">Modo leitura. {SEM_PERMISSAO}</p>}
 
       <div className="config-logo-area">
-        <div className="titulo-campo">Carimbo da empresa (logo)</div>
-        <p className="sub">aparece no quadro "Carimbo da Empresa" de todas as plantas geradas (PNG ou JPG, fundo claro)</p>
+        <div className="titulo-campo">Carimbo da empresa (logo)<Dica>aparece no quadro "Carimbo da Empresa" de todas as plantas geradas (PNG ou JPG, fundo claro)</Dica></div>
         {logoUrl ? (
           <div className="config-logo"><img src={logoUrl} alt="Logo da empresa" /></div>
         ) : !pode && <p className="sub">Nenhuma logo enviada.</p>}
@@ -183,19 +181,17 @@ function Empresa({ pasta }: { pasta: string }) {
             <label>Desenhista (rodapé da planta)
               <input value={config.desenhista} onChange={(e) => campo("desenhista", e.target.value)} placeholder="ex.: JANETE OLIVEIRA" />
             </label>
-            <label>Responsável técnico padrão
+            <label><Rotulo dica="já vem selecionado em todo serviço novo">Responsável técnico padrão</Rotulo>
               <select value={config.rt_padrao} onChange={(e) => campo("rt_padrao", e.target.value)}>
                 <option value="">—</option>
                 {rts.map((r) => <option key={r.id} value={r.id}>{rotuloRT(r)}</option>)}
               </select>
-              <small className="sub">já vem selecionado em todo serviço novo</small>
             </label>
-            <label>Credenciado padrão
+            <label><Rotulo dica="já vem selecionado em todo serviço novo">Credenciado padrão</Rotulo>
               <select value={config.credenciado_padrao} onChange={(e) => campo("credenciado_padrao", e.target.value)}>
                 <option value="">—</option>
                 {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
               </select>
-              <small className="sub">já vem selecionado em todo serviço novo</small>
             </label>
           </div>
         </fieldset>
@@ -259,13 +255,13 @@ function Modelos({ pasta }: { pasta: string }) {
   return (
     <section className="bloco">
       <header>
-        <h3>Modelos do escritório</h3>
-        <span className="desc">timbre e texto dos documentos gerados (DOCX){existe ? ` · ${proprios} de ${MODELOS.length} próprios` : ""}</span>
+        <h3>Modelos do escritório<Dica>
+          Timbre e texto dos documentos gerados (DOCX). Sem modelo próprio, o documento sai do modelo padrão do Vertces.
+          Os campos do modelo seguem os mesmos marcadores do padrão — peça o pacote de modelos ao suporte para partir dele.
+        </Dica></h3>
+        {existe && <span className="desc">{proprios} de {MODELOS.length} próprios</span>}
       </header>
       {!pode && <p className="modo-leitura">Modo leitura. {SEM_PERMISSAO}</p>}
-      <p className="sub modelos-nota">
-        Sem modelo próprio, o documento sai do modelo padrão do Vertces. Os campos do modelo seguem os mesmos marcadores do padrão — peça o pacote de modelos ao suporte para partir dele.
-      </p>
       <div className="tabela-wrap">
         {!existe ? <Esqueleto linhas={5} rotulo="Conferindo os modelos…" /> : (
           <table className="tabela-vertices">

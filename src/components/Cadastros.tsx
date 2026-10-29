@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { CONSELHOS } from "../lib/domains";
 import { useAvisos } from "../lib/ux";
-import { confirmar, EstadoErro, EstadoVazio, Esqueleto } from "./ui";
+import { confirmar, Dica, EstadoErro, EstadoVazio, Esqueleto, Rotulo } from "./ui";
 import { temPermissao } from "../lib/permissoes";
 import type { Credenciado, RT } from "../lib/types";
 
@@ -110,8 +110,7 @@ function CadastroRTs() {
   return (
     <section className="bloco">
       <header>
-        <h3>Responsáveis técnicos</h3>
-        <span className="desc">nome + conselho (CFTA, CFT ou CREA) — aparecem no select "Responsável Técnico" dos serviços</span>
+        <h3>Responsáveis técnicos<Dica>nome + conselho (CFTA, CFT ou CREA) — aparecem no select "Responsável Técnico" dos serviços</Dica></h3>
         <span className="esticar" />
         {pode && !form && rts.length > 0 && <button onClick={abrirNovo}>+ Novo responsável</button>}
       </header>
@@ -171,10 +170,9 @@ function CadastroRTs() {
             <label>Identidade (RG)
               <input value={form.identidade ?? ""} onChange={(e) => campo("identidade", e.target.value || null)} />
             </label>
-            <label>TRT padrão (opcional)
+            <label><Rotulo dica="usado quando o serviço não informa um TRT próprio">TRT padrão (opcional)</Rotulo>
               <input className="mono" value={form.trt ?? ""} onChange={(e) => campo("trt", e.target.value.trim() || null)}
                 placeholder="ex.: BR20250804764" />
-              <small className="sub">usado quando o serviço não informa um TRT próprio</small>
             </label>
           </div>
           <div className="rodape-acoes">
@@ -267,8 +265,7 @@ function CadastroCredenciados() {
   return (
     <section className="bloco">
       <header>
-        <h3>Credenciados</h3>
-        <span className="desc">o código prefixa todo vértice gerado (ex.: <code>DSBN-M-3605</code>)</span>
+        <h3>Credenciados<Dica>o código prefixa todo vértice gerado (ex.: <code>DSBN-M-3605</code>)</Dica></h3>
         <span className="esticar" />
         {pode && !form && creds.length > 0 && <button onClick={abrirNovo}>+ Novo credenciado</button>}
       </header>
@@ -304,16 +301,18 @@ function CadastroCredenciados() {
 
       {form && (
         <fieldset className="inserir-v cadastro-form">
-          <legend>{editId ? "Editando credenciado" : "Novo credenciado"}</legend>
+          <legend>{editId ? "Editando credenciado" : "Novo credenciado"}<Dica>
+            Os contadores continuam a numeração do Anexo A: informe o último número já usado por este
+            credenciado. Cada geração incrementa automaticamente — só mexa aqui para acertar a sequência.
+          </Dica></legend>
           <div className="grade">
             <label>Nome do credenciado *
               <input value={form.nome} onChange={(e) => campo("nome", e.target.value)} placeholder="ex.: JOSÉ DA SILVA" />
             </label>
-            <label>Código do credenciado *
+            <label><Rotulo dica="prefixo dos vértices no SIGEF">Código do credenciado *</Rotulo>
               <input className="mono" value={form.prefixo_vertice} maxLength={8}
                 onChange={(e) => campo("prefixo_vertice", e.target.value.toUpperCase())}
                 placeholder="ex.: DSBN" />
-              <small className="sub">prefixo dos vértices no SIGEF</small>
             </label>
             <label>Contador M
               <input className="mono" type="number" min={0} value={form.contador_m}
@@ -328,10 +327,6 @@ function CadastroCredenciados() {
                 onChange={(e) => contador("contador_v", e.target.value)} />
             </label>
           </div>
-          <p className="sub contadores-nota">
-            Os contadores continuam a numeração do Anexo A: informe o último número já usado por este
-            credenciado. Cada geração incrementa automaticamente — só mexa aqui para acertar a sequência.
-          </p>
           <div className="rodape-acoes">
             <button className="principal" onClick={salvar}>{editId ? "Salvar alterações" : "Cadastrar"}</button>
             <button className="fantasma" onClick={() => { setForm(null); setEditId(null); setErro(null); }}>Cancelar</button>

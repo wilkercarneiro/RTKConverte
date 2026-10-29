@@ -1,7 +1,7 @@
 // Tela de entrada do serviço 'geo': pergunta se confronta com área certificada
 // (CSV do SIGEF do vizinho → escolha dos vértices na planta) e depois recebe o
 // TXT → Edge Function parse-txt, que une os dois e cria o serviço.
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { chamarFuncao } from "../lib/supabase";
 import { UFS } from "../lib/domains";
 import { guardar, lembrar } from "../lib/ux";
@@ -10,7 +10,7 @@ import type { PreviewParse, Servico, Trecho, Vertice } from "../lib/types";
 import { parseCsvSigef } from "../../supabase/functions/_shared/certificados.ts";
 import type { VerticeSigef } from "../../supabase/functions/_shared/certificados.ts";
 import { Icone, ICONE } from "./Icone";
-import { Passos, type Passo } from "./ui";
+import { Dica, Passos, Rotulo, type Passo } from "./ui";
 import { PlantaCertificada } from "./PlantaCertificada";
 import { PainelSigef } from "./PainelSigef";
 import { temRecurso } from "../lib/recursos";
@@ -160,15 +160,17 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
       : [{ rotulo: "Conferência", estado: "futura" as const }, { rotulo: "Documentos", estado: "futura" as const }]),
   ];
   const stepper = <Passos passos={passos} rotulo="Etapas do novo serviço" />;
-  const cabecalho = (
+  // `dica`: explicação de uso da fase, no "?" ao lado do título
+  const cabecalhoCom = (dica?: ReactNode) => (
     <>
       {onVoltar && <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
       <div>
-        <h2>{definicao.titulo}</h2>
+        <h2>{definicao.titulo}{dica && <Dica>{dica}</Dica>}</h2>
         <p className="sub">{definicao.resumo}</p>
       </div>
     </>
   );
+  const cabecalho = cabecalhoCom();
 
   // ---- 1) Confronta com área certificada? ----
   if (fase === "pergunta") {
@@ -178,12 +180,11 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
         <div className="upload-card">
           {cabecalho}
           <div className="pergunta-cert">
-            <b>Confronta com área certificada?</b>
-            <p className="sub">
+            <b>Confronta com área certificada?<Dica>
               Se algum vizinho já tem parcela certificada no SIGEF, envie o CSV de exportação dele antes do
               TXT. A divisa comum sai com os <b>vértices certificados</b> (mesmo código, mesmas coordenadas,
               método e precisão do SIGEF) e o levantamento chega à conferência já unido a eles.
-            </p>
+            </Dica></b>
             <div className="acoes-linha">
               <button className="principal" onClick={() => { setConfronta(true); setFase("certificados"); }}>
                 Sim, tenho o CSV do vizinho
@@ -204,12 +205,11 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
         <div className="upload-card largo">
           {cabecalho}
           <div>
-            <h3 className="titulo-etapa">Confrontantes com área certificada</h3>
-            <p className="sub">
+            <h3 className="titulo-etapa">Confrontantes com área certificada<Dica>
               Envie o CSV de exportação do SIGEF de cada vizinho certificado (um arquivo por parcela). Na
               planta, marque os vértices que fazem divisa com o imóvel levantado — só esses entram no
               serviço. Pode adicionar quantas parcelas precisar.
-            </p>
+            </Dica></h3>
           </div>
           <div
             className={`dropzone linha ${arrastandoCsv ? "ativo" : ""}`}
@@ -248,8 +248,7 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
           {grupos.length > 0 && temRecurso("sigef.mapa") && (
             <section className="cert-grupo">
               <header>
-                <span className="nome">Mapa das parcelas</span>
-                <span className="sub pequeno">satélite Esri + relevo AWS · em azul os CSVs enviados, em amarelo as parcelas certificadas já na base</span>
+                <span className="nome">Mapa das parcelas<Dica>satélite Esri + relevo AWS · em azul os CSVs enviados, em amarelo as parcelas certificadas já na base</Dica></span>
               </header>
               <PainelSigef modo="vizinhanca" destaques={destaquesSigef} ignorar={destaquesSigef.map((d) => d.codigo)} uf={uf || null} altura={420} />
             </section>
@@ -257,11 +256,10 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
 
           {grupos.length > 0 && (
             <label className="campo-tolerancia">
-              <span>Tolerância para igualar (m)</span>
+              <Rotulo dica="ponto do TXT a menos disso de um vértice certificado vira ele; os demais são inseridos entre os pontos do TXT">
+                Tolerância para igualar (m)
+              </Rotulo>
               <input className="mono" inputMode="decimal" value={tolerancia} onChange={(e) => setTolerancia(e.target.value)} />
-              <small className="sub">
-                ponto do TXT a menos disso de um vértice certificado vira ele; os demais são inseridos entre os pontos do TXT
-              </small>
             </label>
           )}
 
@@ -283,7 +281,9 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
     <div className="upload-tela fade">
       {stepper}
       <div className="upload-card">
-        {cabecalho}
+        {cabecalhoCom(<>Envie o TXT gerado pela máquina de topografia. O sistema detecta o fuso,
+          converte as coordenadas e sugere os trechos de confrontantes pelos rótulos.
+          {usaCertificados && " Na próxima tela o perímetro já aparece com os vértices do vizinho encaixados."}</>)}
         {perguntaCabe && (
           <div className="resumo-cert">
             {usaCertificados ? (
@@ -297,9 +297,6 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
             <button className="fantasma" onClick={() => setFase(confronta ? "certificados" : "pergunta")}>alterar</button>
           </div>
         )}
-        <p className="sub">Envie o TXT gerado pela máquina de topografia. O sistema detecta o fuso,
-          converte as coordenadas e sugere os trechos de confrontantes pelos rótulos.
-          {usaCertificados && " Na próxima tela o perímetro já aparece com os vértices do vizinho encaixados."}</p>
         <div className="acoes-linha upload-campos">
           <label className="campo-uf">
             <span>UF do imóvel <span className="sub opcional">opcional</span></span>
@@ -310,14 +307,16 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
             {uf && lembrar("uf") === uf && <small className="sub">última UF usada</small>}
           </label>
           <label className="campo-fuso">
-            <span>Fuso UTM <span className="sub opcional">define a projeção do serviço</span></span>
+            <Rotulo dica="define a projeção do serviço; no automático, pode ser ajustado na conferência">Fuso UTM</Rotulo>
             <select value={fuso} onChange={(e) => { setFuso(e.target.value); guardar("fuso", e.target.value); }}>
               <option value="">automático{usaCertificados ? " (pelos CSVs dos vizinhos)" : " (pelo TXT)"}</option>
               {[18, 19, 20, 21, 22, 23, 24, 25].map((z) => <option key={z} value={z}>{z}S · MC {6 * z - 183}°</option>)}
             </select>
-            <small className="sub">
-              {fuso ? (lembrar("fuso") === fuso ? "último fuso usado — confira para este imóvel" : "fuso fixado para este serviço") : "pode ser ajustado na conferência"}
-            </small>
+            {fuso && (
+              <small className="sub">
+                {lembrar("fuso") === fuso ? "último fuso usado — confira para este imóvel" : "fuso fixado para este serviço"}
+              </small>
+            )}
           </label>
         </div>
         {/* role/tabIndex/onKeyDown: a zona de arraste era um div com onClick,

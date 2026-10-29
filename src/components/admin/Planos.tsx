@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { excluirPlano, matrizPlanos, salvarMatrizPlano, salvarPlano } from "../../lib/admin";
 import type { Plano } from "../../lib/admin";
 import type { DadosAdmin } from "./PainelAdmin";
-import { confirmar } from "../ui";
+import { confirmar, Dica, Rotulo } from "../ui";
 import { Carregando, ICO, Ico, Topo } from "./comum";
 
 type Matriz = Record<string, Record<string, boolean>>; // plano → recurso → liberado
@@ -93,10 +93,9 @@ export function Planos({ d }: { d: DadosAdmin }) {
                 <option value="1">Ativo (aparece no cadastro de empresa)</option><option value="0">Inativo</option>
               </select>
             </label>
-            <label>Limite de usuários ativos
+            <label><Rotulo dica="vazio = sem limite; a empresa não ativa ninguém além disso">Limite de usuários ativos</Rotulo>
               <input type="number" min={1} placeholder="sem limite" value={editando.limite_usuarios ?? ""}
                 onChange={(e) => setEditando({ ...editando, limite_usuarios: e.target.value ? Math.max(1, Number(e.target.value)) : null })} />
-              <small className="sub" style={{ fontWeight: 400 }}>vazio = sem limite; a empresa não ativa ninguém além disso</small>
             </label>
             <label className="largo">Descrição<input value={editando.descricao ?? ""} onChange={(e) => setEditando({ ...editando, descricao: e.target.value })} placeholder="Para quem é este plano" /></label>
           </div>
@@ -136,7 +135,7 @@ export function Planos({ d }: { d: DadosAdmin }) {
                         <td className="rec">
                           <b>{r.nome}</b>
                           {d.planos.some((p) => base[p.id]?.[r.chave] === undefined) && <> <span className="sa-novo">decidir</span></>}
-                          <small>{r.descricao}</small>
+                          {r.descricao && <Dica>{r.descricao}</Dica>}
                         </td>
                         {d.planos.map((p) => {
                           const v = valor(p.id, r.chave);

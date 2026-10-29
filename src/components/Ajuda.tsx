@@ -2,7 +2,7 @@
 import guia from "../../docs/guia-primeiros-passos.md?raw";
 import { SUPORTE_EMAIL, SUPORTE_PRAZO, SUPORTE_WHATSAPP, TERMOS_PUBLICADOS } from "../lib/config";
 import { Markdown } from "./Documento";
-import { CabecalhoPagina } from "./ui";
+import { CabecalhoPagina, Dica } from "./ui";
 
 export function Ajuda() {
   const temCanal = Boolean(SUPORTE_EMAIL || SUPORTE_WHATSAPP);
@@ -11,7 +11,7 @@ export function Ajuda() {
       <CabecalhoPagina olho="Suporte" titulo="Ajuda" descricao="Fale com o suporte ou siga o guia de primeiros passos" />
 
       <section className="bloco">
-        <header><h3>Suporte</h3><span className="desc">dúvida, erro ou pedido</span></header>
+        <header><h3>Suporte<Dica>dúvida, erro ou pedido</Dica></h3></header>
         {temCanal ? (
           <div className="canais-suporte">
             {SUPORTE_WHATSAPP && (

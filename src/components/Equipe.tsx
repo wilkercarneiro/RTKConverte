@@ -16,7 +16,7 @@ import { PERFIS, PERMISSOES, temPermissao } from "../lib/permissoes";
 import type { ChavePermissao } from "../lib/permissoes";
 import { temRecurso } from "../lib/recursos";
 import { emailValido } from "../../supabase/functions/_shared/cnpj.ts";
-import { avisar, confirmar, Gaveta } from "./ui";
+import { avisar, confirmar, Dica, Gaveta, Rotulo } from "./ui";
 import { AuditoriaEmpresa } from "./Auditoria";
 
 const iniciais = (s: string) =>
@@ -194,7 +194,7 @@ function Permissoes({ marcadas, onMudar, souDono, bloqueadas = [] }: {
             const travada = (p.chave === "equipe.gerenciar" && !souDono) || bloqueadas.includes(p.chave);
             return (
               <label key={p.chave} className={travada ? "eq-perm travada" : "eq-perm"}>
-                <span className="tx"><b>{p.nome}</b><small>{p.descricao}</small></span>
+                <span className="tx"><b>{p.nome}<Dica>{p.descricao}</Dica></b></span>
                 <input type="checkbox" role="switch" className="eq-switch" checked={set.has(p.chave)} disabled={travada}
                   onChange={(e) => {
                     const n = new Set(set);
@@ -265,8 +265,7 @@ function GavetaNova({ souDono, empresa, onFechar, onPronto }: { souDono: boolean
         <div className="eq-campos">
           <label>Nome<input value={f.nome} onChange={(e) => setF({ ...f, nome: e.target.value })} autoFocus placeholder="Nome e sobrenome" /></label>
           <label>Cargo <small>opcional</small><input value={f.cargo} onChange={(e) => setF({ ...f, cargo: e.target.value })} placeholder="Ex.: Topógrafo, Projetista" /></label>
-          <label className="largo">E-mail de acesso<input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="pessoa@empresa.com.br" />
-            <small>é o login; a senha provisória é criada pelo sistema</small></label>
+          <label className="largo"><Rotulo dica="é o login; a senha provisória é criada pelo sistema">E-mail de acesso</Rotulo><input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="pessoa@empresa.com.br" /></label>
         </div>
         <h3 className="eq-h3">O que esta pessoa pode fazer</h3>
         <Permissoes marcadas={f.permissoes} souDono={souDono} onMudar={(p) => setF({ ...f, permissoes: p })} />

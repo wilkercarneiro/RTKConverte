@@ -14,6 +14,7 @@ import type { Borda, Parametros, Projeto, TipoBorda } from "../../lib/loteamento
 import { caixa, dist } from "../../lib/loteamento/geom.ts";
 import type { Poligono, Pt } from "../../lib/loteamento/geom.ts";
 import { CampoNum } from "./Painel";
+import { Dica } from "../ui";
 
 interface Props {
   projeto: Projeto;
@@ -133,7 +134,15 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
   return (
     <div className="lot-assistente">
       <section className="bloco">
-        <header><h3>1. O terreno e os acessos</h3><span className="desc">{fmt(areaHa, 4)} ha · {pts.length} lados. Clique num lado para dizer o que existe nele.</span></header>
+        <header>
+          <h3>1. O terreno e os acessos<Dica>
+            Clique num lado para dizer o que existe nele. Marque como <b>rua/estrada existente</b> o lado por onde se chega: os
+            lotes desse lado ganham frente para ela e o sistema confere se toda rua nova se liga a um acesso.<br />
+            Rio pede APP (30 m para rio de até 10 m de largura — Código Florestal, art. 4º); rodovia e ferrovia pedem 15 m non
+            aedificandi (Lei 6.766, art. 4º, III).
+          </Dica></h3>
+          <span className="desc">{fmt(areaHa, 4)} ha · {pts.length} lados</span>
+        </header>
         <div className="lot-terreno">
           <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="lot-mapa-lados">
             <path d={"M" + pts.map((q) => T(q).join(" ")).join("L") + "Z"} fill="#EEF3EC" />
@@ -177,17 +186,15 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
                 </div>
               );
             })}
-            <p className="lot-dica">
-              Marque como <b>rua/estrada existente</b> o lado por onde se chega: os lotes desse lado ganham frente para ela e o
-              sistema confere se toda rua nova se liga a um acesso. Rio pede APP (30 m para rio de até 10 m de largura — Código
-              Florestal, art. 4º); rodovia e ferrovia pedem 15 m non aedificandi (Lei 6.766, art. 4º, III).
-            </p>
           </div>
         </div>
       </section>
 
       <section className="bloco">
-        <header><h3>2. Os lotes</h3><span className="desc">Comece por um perfil e ajuste. Lote mínimo federal: 125 m² e 5 m de frente (Lei 6.766, art. 4º, II) — o município pode exigir mais.</span></header>
+        <header><h3>2. Os lotes<Dica>
+          Comece por um perfil e ajuste. Lote mínimo federal: 125 m² e 5 m de frente (Lei 6.766, art. 4º, II) — o município pode exigir mais.<br />
+          Depois, no desenho, cada quadra pode ter a sua regra: padronizada, áreas iguais ou quantidade fixa — e cada lote pode ser travado numa frente ou área.
+        </Dica></h3></header>
         <div className="lot-perfis">
           {PERFIS.map((pf) => (
             <button key={pf.nome} className={pf.p.frente === p.frente && pf.p.profundidade === p.profundidade ? "ativo" : ""} onClick={() => usarPerfil(pf.p)}>
@@ -196,7 +203,11 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
           ))}
         </div>
         <div className="lot-faixas" role="table" aria-label="Medidas do lote">
-          <span role="columnheader" />
+          <span role="columnheader"><Dica>
+            O gerador busca o <b>padrão</b> ({fmt(p.frente)} × {fmt(p.profundidade)} m = {fmt(lotePadrao)} m²) e não deixa lote fora das faixas:
+            o que passa da máxima é dividido ou aparado no fundo, o que fica abaixo da mínima se junta ao vizinho. Na prancheta,
+            a edição também respeita as faixas. Quadra de duas fileiras: {fmt(2 * p.profundidade)} m de fundo a fundo.
+          </Dica></span>
           <span role="columnheader">Mínima</span>
           <span role="columnheader">Padrão</span>
           <span role="columnheader">Máxima</span>
@@ -213,11 +224,6 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
             </div>
           ))}
         </div>
-        <p className="lot-dica">
-          O gerador busca o <b>padrão</b> ({fmt(p.frente)} × {fmt(p.profundidade)} m = {fmt(lotePadrao)} m²) e não deixa lote fora das faixas:
-          o que passa da máxima é dividido ou aparado no fundo, o que fica abaixo da mínima se junta ao vizinho. Na prancheta,
-          a edição também respeita as faixas. Quadra de duas fileiras: {fmt(2 * p.profundidade)} m de fundo a fundo.
-        </p>
         {ajustes.length > 0 && (
           <div className="lot-ajustes" role="status">
             <b>Ajustado automaticamente para manter as medidas coerentes:</b>
@@ -245,11 +251,15 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
             </select>
           </label>
         </div>
-        <p className="lot-dica">Depois, no desenho, cada quadra pode ter a sua regra: padronizada, áreas iguais ou quantidade fixa — e cada lote pode ser travado numa frente ou área.</p>
       </section>
 
       <section className="bloco">
-        <header><h3>3. As ruas</h3><span className="desc">Largura total = pista + calçadas dos dois lados.</span></header>
+        <header><h3>3. As ruas<Dica>
+          Largura total = pista + calçadas dos dois lados. Leis municipais costumam pedir via de 12 a 14 m e quadra de 100 a 250 m.<br />
+          <b>Acesso:</b> rua só encosta no perímetro onde existe estrada (lado marcado na pergunta 1). Na divisa com vizinho, no rio
+          ou na rodovia ela termina num cruzamento — em geral numa rua de contorno a uma profundidade de lote da divisa, que deixa
+          os lotes da beirada com o fundo na divisa — ou num balão de retorno. Rua desenhada à mão contra a divisa vira pendência.
+        </Dica></h3></header>
         <div className="lot-grade">
           <label>Largura total<CampoNum valor={p.ruaLargura} sufixo="m" onAplicar={(v) => v && setP({ ruaLargura: v })} /></label>
           <label>Pista<CampoNum valor={p.ruaPista} sufixo="m" onAplicar={(v) => v && setP({ ruaPista: Math.min(v, p.ruaLargura) })} /></label>
@@ -263,12 +273,7 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
           {p.esquina !== "nenhuma" && <label>{p.esquina === "raio" ? "Raio no alinhamento" : "Chanfro em cada lado"}<CampoNum valor={p.esquinaValor} sufixo="m" onAplicar={(v) => v !== undefined && setP({ esquinaValor: v })} /></label>}
           <label>Comprimento máximo da quadra<CampoNum valor={p.quadraCompMax} sufixo="m" casas={0} onAplicar={(v) => v && setP({ quadraCompMax: v })} /></label>
         </div>
-        <p className="lot-dica">Calçada de {fmt(Math.max(0, (p.ruaLargura - p.ruaPista) / 2))} m de cada lado. Leis municipais costumam pedir via de 12 a 14 m e quadra de 100 a 250 m.</p>
-        <p className="lot-dica">
-          <b>Acesso:</b> rua só encosta no perímetro onde existe estrada (lado marcado na pergunta 1). Na divisa com vizinho, no rio
-          ou na rodovia ela termina num cruzamento — em geral numa rua de contorno a uma profundidade de lote da divisa, que deixa
-          os lotes da beirada com o fundo na divisa — ou num balão de retorno. Rua desenhada à mão contra a divisa vira pendência.
-        </p>
+        <p className="lot-dica">Calçada de {fmt(Math.max(0, (p.ruaLargura - p.ruaPista) / 2))} m de cada lado.</p>
         <div className="lot-opcoes-ruas">
           <label className={modoRuas === "auto" ? "ativo" : ""}><input type="radio" checked={modoRuas === "auto"} onChange={() => setModoRuas("auto")} />
             <b>O sistema traça</b><span>testa as direções do terreno, com e sem rua de contorno, e mostra as 3 que rendem mais lotes</span></label>
@@ -283,17 +288,17 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
       </section>
 
       <section className="bloco">
-        <header><h3>4. Áreas públicas</h3><span className="desc">Desde a Lei 9.785/99 o percentual é do município; muitos ainda pedem 35% somando viário, verde e institucional.</span></header>
+        <header><h3>4. Áreas públicas<Dica>
+          Desde a Lei 9.785/99 o percentual é do município; muitos ainda pedem 35% somando viário, verde e institucional.<br />
+          A área verde vai para a terra menos valorizada: retalhos sem frente, baixadas (cota mais baixa), encostas íngremes, buracos e o
+          que fica longe do acesso. Lote de frente para a estrada <b>nunca</b> vira área verde. A institucional fica numa ponta da quadra mais
+          central. No desenho, qualquer lote ou quadra vira área pública com um clique — e volta.
+        </Dica></h3></header>
         <div className="lot-grade">
           <label>Área verde (mín.)<CampoNum valor={p.pctVerdeMin} sufixo="% da gleba" casas={1} onAplicar={(v) => v !== undefined && setP({ pctVerdeMin: v })} /></label>
           <label>Institucional (mín.)<CampoNum valor={p.pctInstitucionalMin} sufixo="% da gleba" casas={1} onAplicar={(v) => v !== undefined && setP({ pctInstitucionalMin: v })} /></label>
           <label>Públicas no total (mín.)<CampoNum valor={p.pctPublicasMin} sufixo="%" casas={1} onAplicar={(v) => v !== undefined && setP({ pctPublicasMin: v })} /></label>
         </div>
-        <p className="lot-dica">
-          A área verde vai para a terra menos valorizada: retalhos sem frente, baixadas (cota mais baixa), encostas íngremes, buracos e o
-          que fica longe do acesso. Lote de frente para a estrada <b>nunca</b> vira área verde. A institucional fica numa ponta da quadra mais
-          central. No desenho, qualquer lote ou quadra vira área pública com um clique — e volta.
-        </p>
         {projeto.terreno && (() => {
           const f = faixaDeCotas(projeto.terreno);
           return (
@@ -320,7 +325,7 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
             </select>
           </label>
           <label className="lot-check"><input type="checkbox" checked={p.distanciasTerreno} onChange={(e) => setP({ distanciasTerreno: e.target.checked })} />
-            <span><b>Medidas de terreno</b> — o lote de 10 m mede 10 m na trena; a locação volta para UTM com o fator de escala</span></label>
+            <span><b>Medidas de terreno</b><Dica>O lote de 10 m mede 10 m na trena; a locação volta para UTM com o fator de escala.</Dica></span></label>
         </div>
       </section>
 

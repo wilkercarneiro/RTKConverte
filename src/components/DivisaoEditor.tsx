@@ -23,6 +23,7 @@ import { COMANDOS, chaveDoLote, contextoDe, executar, lotesDaSelecao, type Ferra
 import type { Pt } from "../lib/loteamento/geom";
 import { Editor, type OpcoesVista } from "./loteamento/Editor";
 import { Avisos } from "./loteamento/Avisos";
+import { Dica } from "./ui";
 import "./loteamento/loteamento.css";
 
 const CORES_PARTE = ["#2E86AB", "#E07A1F", "#3BA55C", "#A23B72", "#C9A227", "#5B5FC7", "#D1495B", "#1B998B", "#8D6A9F", "#6C8EAD"];
@@ -38,6 +39,8 @@ const COMANDOS_DIVISAO = COMANDOS.filter((c) => CMDS_DIVISAO.has(c.cmd));
 const paraPartes = (t: string) => t.replace(/\b([Ll])otes?\b/g, (m, l: string) => (l === "L" ? "Parte" : "parte") + (m.endsWith("s") ? "s" : ""));
 
 interface Props {
+  /** "divisao" = partilha (herdeiro, GEO por parte); "glebas" = só divide o imóvel em glebas */
+  modo?: "divisao" | "glebas";
   servico: Servico;
   vertices: Vertice[];
   glebas: Gleba[];
@@ -74,7 +77,8 @@ function useHistorico(inicial: () => Projeto | null) {
   return { h, mudar, fimArraste, desfazer, refazer };
 }
 
-export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, onRascunho }: Props) {
+export function DivisaoEditor({ modo = "divisao", servico, vertices, glebas, onAplicar, onGlebas, onRascunho }: Props) {
+  const ehGleba = modo === "glebas";
   const aplicadaAntes = vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO) && glebas.length >= 2;
   const fuso = servico.fuso_utm ?? 24;
   const [n, setN] = useState(() => (aplicadaAntes ? glebas.length : 2));
@@ -165,10 +169,46 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, 
 
   const regerar = (nn: number, ig: boolean, pc: number[], az: number | null, inv: boolean) => {
     const { pr, motivo } = gerarProjeto(nn, ig, pc, az, inv);
-    if (!pr) { mostrar(`Não dá para dividir assim: ${motivo}. Escolha outra direção.`, true); return; }
+    if (!pr) { mostrar(`Não dá para dividir assim: ${motivo}. Escolha outra direção.`, true); return false; }
     hist.mudar(pr);
     setSel(null);
     mostrar(`Divisão gerada em ${nn} partes. Clique numa parte para ver os lados; arraste quinas e divisas para ajustar (Ctrl+Z volta).`);
+    return true;
+  };
+
+  // giro à mão: o controle deslizante redivide enquanto arrasta (com folga para o motor)
+  const giroT = useRef<ReturnType<typeof setTimeout>>();
+  const girar = (az: number) => {
+    setAzManual(az);
+    clearTimeout(giroT.current);
+    giroT.current = setTimeout(() => regerar(n, iguais, pct, az, inverter), 160);
+  };
+
+  /** "Ajustar lotes": deixa todas as partes do mesmo tamanho (ou na fração de cada uma).
+   *  Primeiro tenta sem desmanchar o desenho — as divisas deslizam, como o "area"
+   *  da linha de comando; se a forma não deixar (sem frente para deslizar, ou
+   *  sobra diferença), divide de novo pelo motor na direção atual, que garante
+   *  as áreas iguais como os documentos imprimem. */
+  const ajustarLotes = () => {
+    if (!projeto || !res) return;
+    const ls = [...res.lotes].sort((a, b) => a.numero - b.numero);
+    const total = ls.reduce((s, l) => s + l.area, 0);
+    const somaFr = fracoes.reduce((s, f) => s + f, 0);
+    const alvo = (k: number) => (fracoes.length === ls.length ? fracoes[k] / somaFr : 1 / ls.length) * total;
+    if (iguais && ls.length >= 2) {
+      const s = executar(`area ${alvo(0).toFixed(2)}`, projeto, res, { tipo: "lotes", chaves: ls.slice(0, -1).map(chaveDoLote) });
+      const r2 = s.pr ? calc(s.pr) : null;
+      const pior = r2 ? Math.max(...[...r2.lotes].sort((a, b) => a.numero - b.numero).map((l, k) => Math.abs(l.area - alvo(k)))) : Infinity;
+      if (s.pr && r2 && r2.lotes.length === ls.length && pior < 1) {
+        mudar(s.pr);
+        setSel(null);
+        mostrar(`Partes ajustadas: todas com ${fmtM2(alvo(0))} m², o desenho foi mantido (Ctrl+Z volta).`);
+        return;
+      }
+    }
+    if (regerar(ls.length, iguais, pct, azManual, inverter)) {
+      mostrar(`Partes ajustadas pelo motor na direção atual: todas ${iguais ? "do mesmo tamanho" : "na fração de cada uma"} (Ctrl+Z volta para o desenho anterior).`);
+    }
   };
 
   function rodarComando(texto: string) {
@@ -267,17 +307,17 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, 
   };
 
   return (
-    <section className="bloco" id="bloco-divisao">
+    <section className="bloco" id={ehGleba ? "bloco-glebas-prancheta" : "bloco-divisao"}>
       <header>
-        <h3>Divisão em partes iguais</h3>
-        <span className="desc">
-          partilha ou herança: o motor corta o imóvel em partes de mesma área (ou na fração de cada um) e você ajusta na prancheta,
-          com o mesmo manuseio do loteamento — sai o GEO do imóvel inteiro e, depois, um GEO para cada parte
-        </span>
+        {ehGleba ? (
+          <h3>Dividir em glebas<Dica>Escolha em quantas glebas, a direção das divisas e ajuste na prancheta (arrastar quinas e divisas, cortar, unir, dividir). "Dividir em glebas" grava cada parte como uma gleba — PARTE 1, PARTE 2… — e os pontos novos das divisas como marcos M do perímetro.</Dica></h3>
+        ) : (
+          <h3>Divisão em partes iguais<Dica>Partilha ou herança: o motor corta o imóvel em partes de mesma área (ou na fração de cada um) e você ajusta na prancheta, com o mesmo manuseio do loteamento. Sai o GEO do imóvel inteiro e, depois, um GEO para cada parte.</Dica></h3>
+        )}
       </header>
 
       <div className="dv-gerar">
-        <label className="dv-campo">Quantas partes
+        <label className="dv-campo">{ehGleba ? "Quantas glebas" : "Quantas partes"}
           <div className="dv-contador">
             <button type="button" onClick={() => { const v = Math.max(2, nPartes - 1); setN(v); setPct([]); regerar(v, iguais, [], azManual, inverter); }} disabled={nPartes <= 2} aria-label="Menos uma parte">−</button>
             <input type="number" min={2} max={30} value={n} onChange={(e) => setN(Math.max(2, Math.min(30, Math.round(Number(e.target.value)) || 2)))}
@@ -286,14 +326,14 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, 
           </div>
         </label>
         <div className="dv-campo">
-          <span>Área de cada parte</span>
+          <span>Área de cada {ehGleba ? "gleba" : "parte"}</span>
           <div className="dv-opcoes">
-            <label><input type="radio" checked={iguais} onChange={() => { setIguais(true); regerar(n, true, pct, azManual, inverter); }} /> Partes iguais</label>
+            <label><input type="radio" checked={iguais} onChange={() => { setIguais(true); regerar(n, true, pct, azManual, inverter); }} /> {ehGleba ? "Glebas iguais" : "Partes iguais"}</label>
             <label><input type="radio" checked={!iguais} onChange={() => setIguais(false)} /> Frações diferentes (na tabela)</label>
           </div>
         </div>
-        <div className="dv-campo">
-          <span>Direção das divisas</span>
+        <div className="dv-campo dv-direcao">
+          <span>Direção das divisas<Dica>As opções são as direções que o motor recomenda (passe o mouse em cada uma para ver quantos metros de cerca nova). Para girar à mão, arraste o controle ou digite o grau: a divisão é refeita na hora. "Começar pelo outro lado" inverte de onde sai a primeira parte.</Dica></span>
           <div className="dv-sugestoes">
             {sugestoes.map((s, i) => (
               <button type="button" key={i} className={Math.abs(s.azimute - (azManual ?? sugestoes[0]?.azimute ?? -1)) < 0.05 ? "ativa" : ""}
@@ -303,15 +343,27 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, 
                 {temEstrada && <small>{s.partes.every((p) => p.frenteEstradaM >= 5) ? "todas com frente" : "sem frente p/ alguma"}</small>}
               </button>
             ))}
-            <span className="dv-giro">
-              <input type="number" min={0} max={179.9} step={0.5} value={Math.round((azManual ?? sugestoes[0]?.azimute ?? 0) * 10) / 10}
-                onChange={(e) => setAzManual(Number(e.target.value))} onBlur={() => regerar(n, iguais, pct, azManual, inverter)}
-                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} aria-label="Azimute das divisas" />°
-            </span>
           </div>
-          <label className="dv-check"><input type="checkbox" checked={inverter} onChange={(e) => { setInverter(e.target.checked); regerar(n, iguais, pct, azManual, e.target.checked); }} /> Começar pelo outro lado</label>
+          <div className="dv-giro">
+            <input type="range" min={0} max={179.5} step={0.5} value={Math.round((azManual ?? sugestoes[0]?.azimute ?? 0) * 2) / 2}
+              onChange={(e) => girar(Number(e.target.value))} aria-label="Girar as divisas" />
+            <input type="number" min={0} max={179.9} step={0.5} value={Math.round((azManual ?? sugestoes[0]?.azimute ?? 0) * 10) / 10}
+              onChange={(e) => setAzManual(Number(e.target.value))} onBlur={() => regerar(n, iguais, pct, azManual, inverter)}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} aria-label="Azimute das divisas" />
+            <span>°</span>
+            <button type="button" className={`dv-inverter${inverter ? " ativa" : ""}`} aria-pressed={inverter}
+              onClick={() => { setInverter(!inverter); regerar(n, iguais, pct, azManual, !inverter); }}>
+              ⇄ Começar pelo outro lado
+            </button>
+          </div>
         </div>
-        <button type="button" onClick={() => regerar(n, iguais, pct, azManual, inverter)} title="Descarta os ajustes da prancheta e divide de novo (Ctrl+Z volta)">Gerar de novo</button>
+        <div className="dv-campo dv-botoes">
+          <span>Ajustes<Dica>"Ajustar lotes" deixa todas as {ehGleba ? "glebas" : "partes"} do mesmo tamanho (ou na fração de cada uma) mantendo o desenho; se a forma não deixar, divide de novo na direção atual. "Gerar de novo" descarta os ajustes da prancheta. Ctrl+Z volta nos dois.</Dica></span>
+          <div className="dv-botoes-linha">
+            <button type="button" className="principal" onClick={ajustarLotes} disabled={!projeto || !res}>Ajustar lotes</button>
+            <button type="button" onClick={() => regerar(n, iguais, pct, azManual, inverter)}>Gerar de novo</button>
+          </div>
+        </div>
       </div>
 
       {!projeto || !res ? (
@@ -402,13 +454,12 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, 
                 <div className="acoes-linha">
                   <button type="button" onClick={() => rodarComando("dividir 2")}>Dividir em 2</button>
                   <button type="button" onClick={() => rodarComando("unir")}>Unir</button>
+                  <Dica>Arraste as quinas (quadrados) e as divisas (barras verdes) da parte selecionada; a quina no perímetro corre por ele e a vizinha se ajusta.</Dica>
                 </div>
-                <p className="lot-dica">Arraste as quinas (quadrados) e as divisas (barras verdes) da parte selecionada; a quina no perímetro corre por ele e a vizinha se ajusta.</p>
               </>
             ) : (
               <>
-                <header><h3>Partes</h3></header>
-                <p className="lot-dica">Clique numa parte (no desenho ou aqui) para ver a medida de cada lado e a área total. Roda do mouse aproxima; arrastar o fundo move o desenho.</p>
+                <header><h3>{ehGleba ? "Glebas" : "Partes"}<Dica lado="baixo">Clique numa {ehGleba ? "gleba" : "parte"} (no desenho ou aqui) para ver a medida de cada lado e a área total. Roda do mouse aproxima; arrastar o fundo move o desenho.</Dica></h3></header>
                 <ul className="dv-lista">
                   {lotesOrdem.map((l, k) => (
                     <li key={l.id} onClick={() => selecionarParte(k)}>
@@ -431,7 +482,7 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, 
         <div className="tabela-scroll">
           <table className="dv-tabela">
             <thead>
-              <tr><th></th><th>Parte</th><th>Herdeiro / quem recebe</th><th>CPF</th><th>Denominação do GEO da parte</th><th>Fração</th><th>Área (ha)</th><th>Área (m²)</th><th>Perímetro (m)</th>{temEstrada && <th>Frente p/ estrada</th>}</tr>
+              <tr><th></th><th>{ehGleba ? "Gleba" : "Parte"}</th>{!ehGleba && <><th>Herdeiro / quem recebe</th><th>CPF</th><th>Denominação do GEO da parte</th></>}<th>Fração</th><th>Área (ha)</th><th>Área (m²)</th><th>Perímetro (m)</th>{temEstrada && <th>Frente p/ estrada</th>}</tr>
             </thead>
             <tbody>
               {Array.from({ length: nPartes }, (_, i) => {
@@ -441,10 +492,12 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, 
                   <tr key={i} className={parteSel === i ? "dv-linha-sel" : ""}>
                     <td><button type="button" className="dv-cor dv-cor-btn" style={{ background: CORES_PARTE[i % CORES_PARTE.length] }} onClick={() => selecionarParte(i)} title="Mostrar na prancheta" /></td>
                     <td><input value={l.nome} onChange={(e) => editarLinha(i, { nome: e.target.value })} placeholder={`PARTE ${i + 1}`} /></td>
-                    <td><input value={l.herdeiro} onChange={(e) => editarLinha(i, { herdeiro: e.target.value.toUpperCase() })} placeholder={servico.detentor_nome ?? "nome completo"} /></td>
-                    <td><input value={l.cpf} onChange={(e) => editarLinha(i, { cpf: e.target.value })} placeholder="000.000.000-00" className="mono" /></td>
-                    <td><input value={l.denominacao} onChange={(e) => editarLinha(i, { denominacao: e.target.value.toUpperCase() })}
-                      placeholder={denominacaoDaParte(servico, { nome: l.nome || `PARTE ${i + 1}`, denominacao: null }).toUpperCase()} /></td>
+                    {!ehGleba && <>
+                      <td><input value={l.herdeiro} onChange={(e) => editarLinha(i, { herdeiro: e.target.value.toUpperCase() })} placeholder={servico.detentor_nome ?? "nome completo"} /></td>
+                      <td><input value={l.cpf} onChange={(e) => editarLinha(i, { cpf: e.target.value })} placeholder="000.000.000-00" className="mono" /></td>
+                      <td><input value={l.denominacao} onChange={(e) => editarLinha(i, { denominacao: e.target.value.toUpperCase() })}
+                        placeholder={denominacaoDaParte(servico, { nome: l.nome || `PARTE ${i + 1}`, denominacao: null }).toUpperCase()} /></td>
+                    </>}
                     <td>
                       {iguais ? <span className="mono">1/{nPartes}</span> : (
                         <span className="dv-pct">
@@ -494,33 +547,40 @@ export function DivisaoEditor({ servico, vertices, glebas, onAplicar, onGlebas, 
         </div>
       )}
 
-      {rd?.ok && rd.novos.length > 0 && (
-        <div className="acoes-linha dv-locacao">
-          <button type="button" onClick={baixarLocacao}>Baixar arquivo de locação ({rd.novos.length} marcos)</button>
-          <select value={formato} onChange={(e) => setFormato(e.target.value as Exclude<FormatoLocacao, "dxf">)} aria-label="Formato do arquivo de locação">
-            {FORMATOS_LOCACAO.map((f) => <option key={f.id} value={f.id}>{f.nome} — {f.serve}</option>)}
-          </select>
-          <span className="sub">
-            Os pontos novos das divisas em UTM SIRGAS 2000 fuso {fuso}S, para importar na coletora e implantar os marcos.
-            {comCodigo && igualAplicada ? " Saem com o código do marco." : " Saem como DIV-01, DIV-02… (com os códigos alocados, saem com o código do marco)."}
-          </span>
+      {/* Uma barra só: baixar a locação, o formato dela e salvar. As explicações
+          ficam no "?" de cada lado; só o motivo de não poder salvar fica à vista. */}
+      <div className="dv-barra">
+        {rd?.ok && rd.novos.length > 0 && (
+          <div className="dv-barra-grupo">
+            <button type="button" onClick={baixarLocacao}>Baixar arquivo de locação ({rd.novos.length} marcos)</button>
+            <select value={formato} onChange={(e) => setFormato(e.target.value as Exclude<FormatoLocacao, "dxf">)} aria-label="Formato do arquivo de locação">
+              {FORMATOS_LOCACAO.map((f) => <option key={f.id} value={f.id}>{f.nome} — {f.serve}</option>)}
+            </select>
+            <Dica>
+              Os pontos novos das divisas em UTM SIRGAS 2000 fuso {fuso}S, para importar na coletora e implantar os marcos.
+              {comCodigo && igualAplicada ? " Saem com o código do marco." : " Saem como DIV-01, DIV-02… (com os códigos alocados, saem com o código do marco)."}
+            </Dica>
+          </div>
+        )}
+        <span className="esticar" />
+        {rd && !rd.ok && <b className="dv-sem">Ainda não dá para salvar: {rd.motivo}.</b>}
+        <div className="dv-barra-grupo">
+          <button type="button" className="principal" disabled={!rd?.ok || igualAplicada} onClick={aplicar}>
+            {ehGleba
+              ? (igualAplicada ? "Glebas salvas ✓" : aplicadaAntes ? "Salvar as novas glebas" : `Dividir em ${nPartes} glebas`)
+              : (igualAplicada ? "Divisão salva ✓" : aplicadaAntes ? "Salvar a nova divisão" : `Salvar a divisão em ${nPartes} partes`)}
+          </button>
+          <Dica>
+            {igualAplicada
+              ? (ehGleba
+                ? "As glebas estão salvas no serviço: em Documentos saem a planta A1 com todas as glebas e, de cada uma, a A3 e o memorial. O nome de cada gleba pode ser mudado aqui a qualquer momento."
+                : "As partes estão salvas no serviço: em Documentos saem a planta A1 com as divisões, a planta A3 e o memorial de cada parte, e o GEO de cada uma. Herdeiro, nome e denominação podem ser mudados aqui a qualquer momento.")
+              : <>Salva os {rd?.ok ? rd.novos.length : "—"} pontos novos como marcos <b>M</b> no perímetro (método PA1 até a implantação) e as {nPartes} {ehGleba ? "glebas" : "partes"} como glebas — só depois de salvas elas entram na planta A1, na A3 e no memorial de cada uma.
+                {!ehGleba && " Os ajustes da prancheta ficam guardados como rascunho mesmo sem salvar."}
+                {comCodigo && " Os códigos do imóvel serão realocados na próxima geração, por causa dos marcos novos."}
+                {aplicadaAntes && (ehGleba ? " As glebas salvas antes são substituídas." : " A divisão salva antes é substituída.")}</>}
+          </Dica>
         </div>
-      )}
-
-      <div className="acoes-linha dv-acoes">
-        <button type="button" className="principal" disabled={!rd?.ok || igualAplicada} onClick={aplicar}>
-          {igualAplicada ? "Divisão salva ✓" : aplicadaAntes ? "Salvar a nova divisão" : `Salvar a divisão em ${nPartes} partes`}
-        </button>
-        <span className="sub">
-          {rd && !rd.ok
-            ? <b className="dv-sem">Ainda não dá para salvar: {rd.motivo}.</b>
-            : igualAplicada
-            ? "As partes estão salvas no serviço: em Documentos saem a planta A1 com as divisões, a planta A3 e o memorial de cada parte, e o GEO de cada uma. Herdeiro, nome e denominação podem ser mudados aqui a qualquer momento."
-            : <>Salva os {rd?.ok ? rd.novos.length : "—"} pontos novos como marcos <b>M</b> no perímetro (método PA1 até a implantação) e as {nPartes} partes como glebas — só depois de salva a divisão entra na planta A1, na A3 e no memorial de cada parte.
-              {" "}Os ajustes da prancheta ficam guardados como rascunho mesmo sem salvar.
-              {comCodigo && " Os códigos do imóvel serão realocados na próxima geração, por causa dos marcos novos."}
-              {aplicadaAntes && " A divisão salva antes é substituída."}</>}
-        </span>
       </div>
     </section>
   );

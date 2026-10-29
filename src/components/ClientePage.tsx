@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { useAutosave, useAvisos } from "../lib/ux";
-import { Avisos, BotaoPerigo, Secao, StatusSalvamento } from "./ui";
+import { Avisos, BotaoPerigo, Dica, Secao, StatusSalvamento } from "./ui";
 import { chaveDoServico, rotuloCurto } from "../lib/modalidades";
 import type { ChaveServico } from "../lib/modalidades";
 import { temPermissao } from "../lib/permissoes";
@@ -107,7 +107,11 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
       {temPermissao("servicos.criar") && <NovoServico onNovo={onNovoServico} compacto titulo={`Novo serviço para ${cliente.nome.split(/\s+/)[0]}`} />}
 
       <section className="bloco">
-        <header><h3>Dados do cliente</h3><span className="desc">{editar ? "origem do detentor em todos os serviços deste cliente · salva sozinho" : "somente leitura: você não tem a permissão de editar clientes"}</span></header>
+        <header>
+          <h3>Dados do cliente{editar && <Dica>origem do detentor em todos os serviços deste cliente · salva sozinho</Dica>}</h3>
+          {/* sem permissão é estado, não instrução: fica à vista */}
+          {!editar && <span className="desc">somente leitura: você não tem a permissão de editar clientes</span>}
+        </header>
         <fieldset className="sem-borda" disabled={!editar}>
         <div className="grade">
           <label>Nome <input value={cliente.nome} onChange={(e) => campo("nome", e.target.value)} /></label>
@@ -146,15 +150,17 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
         <div className="rodape-bloco">
           {auto.estado === "erro" && <button className="principal" onClick={salvar}>Tentar salvar de novo</button>}
           <span className="esticar" />
-          <span className="sub" style={{ fontSize: 12.5 }}>
-            {servicos.length > 0
-              ? `excluir mantém os ${servicos.length} serviço(s), sem cliente vinculado`
-              : "este cliente não tem serviços"}
-          </span>
           {temPermissao("clientes.excluir") && (
-            <BotaoPerigo titulo={`Excluir cliente "${cliente.nome}"`}
-              confirmacao={servicos.length > 0 ? `excluir e desvincular ${servicos.length} serviço(s)` : "excluir mesmo"}
-              onConfirmar={excluirCliente}>Excluir cliente</BotaoPerigo>
+            <>
+              <BotaoPerigo titulo={`Excluir cliente "${cliente.nome}"`}
+                confirmacao={servicos.length > 0 ? `excluir e desvincular ${servicos.length} serviço(s)` : "excluir mesmo"}
+                onConfirmar={excluirCliente}>Excluir cliente</BotaoPerigo>
+              <Dica>
+                {servicos.length > 0
+                  ? `excluir mantém os ${servicos.length} serviço(s), sem cliente vinculado`
+                  : "este cliente não tem serviços"}
+              </Dica>
+            </>
           )}
         </div>
       </section>
@@ -180,8 +186,7 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
       </section>
 
       <section className="bloco">
-        <header><h3>Histórico de documentos</h3>
-          <span className="desc">todas as versões geradas, com download a qualquer momento</span></header>
+        <header><h3>Histórico de documentos<Dica>todas as versões geradas, com download a qualquer momento</Dica></h3></header>
         {servicos.length === 0 ? <p className="vazio">Os documentos gerados nos serviços deste cliente ficam guardados aqui, com todas as versões.</p> : servicos.map((s) => (
           <div key={s.id} style={{ marginBottom: 14 }}>
             <b style={{ fontSize: 13 }}>{s.denominacao ?? s.id.slice(0, 8)}</b>

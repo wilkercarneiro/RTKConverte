@@ -17,7 +17,7 @@ import { CORES } from "./MapaSVG";
 import { MapaGlebas } from "./MapaGlebas";
 import { PlantaSelecao } from "./PlantaSelecao";
 import type { PoligonoSelecao, PontoSelecao } from "./PlantaSelecao";
-import { Secao } from "./ui";
+import { Dica, Rotulo, Secao } from "./ui";
 
 export { areaHaDoAnel };
 
@@ -176,9 +176,7 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
       <section className="dividir-gleba">
         <header>
           <b>Dividir gleba</b>
-          <span className="sub">
-            marque os vértices do perímetro que formam a gleba — a divisa interna é a reta entre o último e o primeiro marcado
-          </span>
+          <Dica>Marque os vértices do perímetro que formam a gleba — a divisa interna é a reta entre o último e o primeiro marcado.</Dica>
         </header>
         <div className="acoes-linha intervalo-gleba">
           <b style={{ fontSize: 13 }}>Por intervalo do TXT</b>
@@ -188,11 +186,9 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
             onChange={(e) => setIntervalo((i) => ({ ...i, ate: e.target.value }))}
             onKeyDown={(e) => { if (e.key === "Enter") marcarIntervalo(); }} /></label>
           <button type="button" disabled={!intervaloIdx} onClick={marcarIntervalo}>Marcar intervalo</button>
-          <span className="sub" style={{ fontSize: 12.5 }}>
-            {intervalo.de && intervalo.ate
-              ? (intervaloIdx ? `${intervaloIdx.length} vértices, fechando por dentro de ${intervalo.ate} a ${intervalo.de}` : "número não encontrado no TXT")
-              : "a próxima gleba começa onde a anterior terminou; digite só o \"até\" e confira a prévia"}
-          </span>
+          {intervalo.de && intervalo.ate
+            ? <span className="sub" style={{ fontSize: 12.5 }}>{intervaloIdx ? `${intervaloIdx.length} vértices, fechando por dentro de ${intervalo.ate} a ${intervalo.de}` : "número não encontrado no TXT"}</span>
+            : <Dica>A próxima gleba começa onde a anterior terminou; digite só o "até" e confira a prévia.</Dica>}
         </div>
         <PlantaSelecao
           pontos={pontos} colunas={COLUNAS} selecionados={marcados} onChange={setMarcados}
@@ -242,23 +238,18 @@ export function GlebasEditor({ glebas, vertices, trechos, areaTotalHa, servicoId
       )}
 
       {atual && (
-        <div className="gleba-painel" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
-          <label>Nome da gleba
+        <div className="gleba-painel campos-gleba">
+          <label><Rotulo dica="É a denominação da aba desta gleba na planilha SIGEF.">Nome da gleba</Rotulo>
             <input value={atual.nome} onChange={(e) => editar(ativa, { nome: e.target.value })} placeholder="GLEBA 1" />
-            <small className="sub">é a denominação da aba desta gleba na planilha SIGEF</small>
           </label>
-          <label>Área calculada
+          <label><Rotulo dica="Sai do contorno; não se digita.">Área calculada</Rotulo>
             <input readOnly value={`${fmt(areaHaDoAnel(atual.anel))} ha`} className="mono" />
-            <small className="sub">sai do contorno; não se digita</small>
           </label>
-          <label>Confrontante da divisa interna
+          <label><Rotulo dica={'Descritivo do lado que fecha a gleba por dentro; em branco sai "(MATR./CNS.) IMÓVEL - GLEBA VIZINHA\\ PROPRIETÁRIO\\ CPF".'}>Confrontante da divisa interna</Rotulo>
             <input value={atual.confrontante_interno ?? ""} placeholder="automático: a gleba vizinha, mesmo proprietário"
               onChange={(e) => editar(ativa, { confrontante_interno: e.target.value || null })} />
-            <small className="sub">
-              descritivo do lado que fecha a gleba por dentro; em branco sai "(MATR./CNS.) IMÓVEL - GLEBA VIZINHA\ PROPRIETÁRIO\ CPF"
-            </small>
           </label>
-          <div style={{ alignSelf: "end" }}>
+          <div>
             <button className="perigo-btn" onClick={() => remover(ativa)}>Excluir esta gleba</button>
           </div>
         </div>

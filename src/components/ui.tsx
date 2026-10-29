@@ -6,6 +6,7 @@
 // de lista (CabecalhoPagina, EstadoVazio, EstadoErro, Esqueleto), indicador de
 // autossalvamento (StatusSalvamento) e confirmação inline (BotaoPerigo).
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { AvisoItem, EstadoSalvamento } from "../lib/ux";
 import { assinarAvisos, avisarGlobal, avisosAtuais, fecharAviso } from "../lib/ux";
 import { Icone, ICONE } from "./Icone";
@@ -46,12 +47,70 @@ export function Secao({ titulo, dica, selo, abrirEm, children }: {
       onToggle={(e) => setAberta((e.currentTarget as HTMLDetailsElement).open)}>
       <summary>
         <span className="secao-seta" aria-hidden="true"><Icone d={ICONE.seta} size={14} traco={2.4} /></span>
-        <span className="secao-titulo">{titulo}</span>
+        <span className="secao-titulo">{titulo}{dica && <Dica>{dica}</Dica>}</span>
         {selo != null && <span className="secao-selo">{selo}</span>}
-        {dica && <span className="secao-dica">{dica}</span>}
       </summary>
       <div className="secao-corpo">{children}</div>
     </details>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Dica — o "?" que guarda a explicação
+// ---------------------------------------------------------------------------
+
+/**
+ * Explicação de campo, de bloco ou de botão NUNCA fica solta na tela: vira um
+ * "?" ao lado do rótulo e o texto aparece ao passar o mouse (ou ao focar pelo
+ * teclado). Aviso que exige atenção (pendência, erro, sugestão a conferir)
+ * continua visível — este componente é só para o que é explicação.
+ *
+ * O balão vai para o <body> com posição fixa: dentro de cartões com
+ * overflow:hidden (tabelas, prancheta) um balão absoluto seria cortado.
+ */
+export function Dica({ children, lado = "cima" }: { children: ReactNode; lado?: "cima" | "baixo" }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const id = useId();
+  const [pos, setPos] = useState<{ x: number; y: number; baixo: boolean } | null>(null);
+  const abrir = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    // sem espaço em cima, abre embaixo
+    const baixo = lado === "baixo" || r.top < 140;
+    setPos({ x: r.left + r.width / 2, y: baixo ? r.bottom + 8 : r.top - 8, baixo });
+  };
+  const fechar = () => setPos(null);
+  useEffect(() => {
+    if (!pos) return;
+    addEventListener("scroll", fechar, true);
+    return () => removeEventListener("scroll", fechar, true);
+  }, [pos]);
+  return (
+    <span ref={ref} className="dica" tabIndex={0} role="button" aria-describedby={pos ? id : undefined}
+      aria-label="Ajuda"
+      onMouseEnter={abrir} onMouseLeave={fechar} onFocus={abrir} onBlur={fechar}
+      // dentro de <label> o clique focaria o campo; dentro de <summary> abriria a seção
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (pos) fechar(); else abrir(); }}>
+      ?
+      {pos && createPortal(
+        <span id={id} role="tooltip" className={`dica-balao${pos.baixo ? " baixo" : ""}`}
+          style={{ left: Math.max(150, Math.min(innerWidth - 150, pos.x)), top: pos.y }}>
+          {children}
+        </span>,
+        document.body,
+      )}
+    </span>
+  );
+}
+
+/** Rótulo de campo com o "?" ao lado — `<label><Rotulo dica="…">CNS</Rotulo><input/></label>`. */
+export function Rotulo({ children, dica, obrigatorio }: { children: ReactNode; dica?: ReactNode; obrigatorio?: boolean }) {
+  return (
+    <span className="rotulo-campo">
+      {children}
+      {obrigatorio && <span className="obrigatorio">*</span>}
+      {dica && <Dica>{dica}</Dica>}
+    </span>
   );
 }
 

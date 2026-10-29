@@ -5,6 +5,7 @@ import { trocarSenha } from "../lib/conta";
 import { problemaDaSenha } from "../../supabase/functions/_shared/cnpj.ts";
 import { supabase } from "../lib/supabase";
 import { Logo } from "./Logo";
+import { Dica } from "./ui";
 
 function FormSenha({ onOk, rotulo }: { onOk: () => void; rotulo: string }) {
   const [nova, setNova] = useState("");
@@ -59,8 +60,7 @@ export function TrocarSenhaCartao() {
   return (
     <section className="bloco">
       <header>
-        <h3>Senha de acesso</h3>
-        <span className="desc">a senha com que você entra no Vertces</span>
+        <h3>Senha de acesso<Dica>a senha com que você entra no Vertces</Dica></h3>
       </header>
       <div className="form-senha">
         <FormSenha onOk={() => setOk(true)} rotulo="Trocar senha" />
