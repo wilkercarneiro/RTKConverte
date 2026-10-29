@@ -1,10 +1,8 @@
 // Planta + tabela para ESCOLHER pontos de um anel.
 //
-// É um componente só, usado em dois lugares que pedem a mesma coisa:
-//   - confrontante com área certificada: marcar, no CSV do vizinho, os vértices
-//     da divisa comum (PlantaCertificada);
-//   - glebas: marcar, no perímetro do imóvel, os vértices que formam a gleba e
-//     apertar "Dividir gleba" (GlebasEditor).
+// Usado no confrontante com área certificada: marcar, no CSV do vizinho, os
+// vértices da divisa comum (PlantaCertificada). As glebas, que também usavam,
+// passaram ao editor de pontos e ligações (ContornoEditor).
 //
 // Clique alterna um ponto; Shift + clique marca a sequência do último ponto
 // clicado até este, seguindo a ordem do anel. Quem chama decide o que os pontos

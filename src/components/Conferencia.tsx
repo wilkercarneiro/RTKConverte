@@ -19,7 +19,7 @@ import {
   camposDaSituacao, chaveDoServico, pedeMatricula, rotuloCurto, situacaoDoImovel, vaiAoSigef,
 } from "../lib/modalidades";
 import type { SituacaoImovel } from "../lib/modalidades";
-import { areaHaDoAnel, GlebasEditor } from "./GlebasEditor";
+import { areaHaDoAnel } from "../lib/glebas";
 import { DivisaoEditor } from "./DivisaoEditor";
 import { ROTULO_DIVISAO, servicoDaParte, verticesDaParte } from "../lib/divisao_servico";
 import { glebasCobremTodos, ordensDasGlebas, partesDasGlebas, verticesForaDasGlebas } from "../lib/glebas";
@@ -49,7 +49,7 @@ function etapaDoAlvo(id: string): Etapa {
   if (id.startsWith("campo-") || id === "bloco-dados") return "dados";
   if (id === "bloco-confrontantes") return "confrontantes";
   if (id === "bloco-vertices") return "confrontantes";   // os vértices moram na mesma etapa dos confrontantes
-  if (id === "bloco-glebas" || id === "bloco-divisao") return "glebas";
+  if (id === "bloco-glebas" || id === "bloco-glebas-prancheta" || id === "bloco-divisao") return "glebas";
   return "documentos";
 }
 
@@ -1077,7 +1077,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         titulo: "Divida o imóvel em glebas",
         detalhe: "cada gleba vira um anel próprio na planta e nos documentos; sem a divisão, a sequência do TXT cruzaria o imóvel",
         rotuloBotao: ehDivisao ? "Ir para a divisão" : "Ir para as glebas",
-        onClick: () => irParaCampo(ehDivisao ? "bloco-divisao" : "bloco-glebas"),
+        onClick: () => irParaCampo(ehDivisao ? "bloco-divisao" : "bloco-glebas-prancheta"),
       };
     }
     if (!docsProntos) {
@@ -1777,44 +1777,22 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 desliga, e cada área fechada é uma gleba; com uma área só, a
                 prancheta divide. Sem herdeiro e sem GEO por parte — isso é da
                 partilha (servico.divisao), que esta tela NÃO liga. A chave
-                remonta o editor quando as glebas mudam pela seleção do TXT. */}
+                remonta o editor quando as glebas mudam por fora (salvar, recarregar). */}
             {!ehDivisao && (
               <DivisaoEditor key={glebas.map((g) => `${g.id}:${g.anel.length}`).join("|") + `#${vertices.length}`}
                 modo="glebas" servico={servico} vertices={vertices} glebas={glebas}
-                onAplicar={aplicarGlebasNaTela} onGlebas={setGlebas} />
-            )}
-            {!ehDivisao && (
-            <details className="bloco dv-recolhido" id="bloco-glebas">
-              <summary>
-                <b>Glebas pelos pontos do TXT</b>
-                <Dica>Para o levantamento feito gleba por gleba: marque os vértices de cada gleba (ou o intervalo de números do TXT). Use quando a divisa interna foi medida em campo.</Dica>
-                <span className="sub">
-                  {" "}{glebas.length} gleba(s)
-                  {verticesFora.length > 0 && glebasOrdens.length > 0 && <> · <b>{verticesFora.length} vértice(s) fora de gleba</b> ({verticesFora.slice(0, 12).map((v) => v.num_txt).join(", ")}{verticesFora.length > 12 ? "…" : ""})</>}
-                </span>
-              </summary>
-              <GlebasEditor
-                glebas={glebas}
-                vertices={vertices}
-                trechos={trechosOrdenados}
-                servicoId={servico.id}
-                // com glebas fechadas a prévia já é a soma delas: não há "total" para
-                // comparar — o imóvel É a soma das glebas (0 = não mostrar restante)
-                areaTotalHa={glebasOrdens.length ? 0 : (Number(String(preview.areaHa).replace(/\./g, "").replace(",", ".")) || 0)}
-                onChange={setGlebas}
-              />
-              {glebas.filter((g) => g.anel.length >= 3).length > 0 && (
-                <div className="rodape-bloco">
-                  <BotaoPerigo
-                    titulo="Separar cada gleba em um serviço próprio"
-                    confirmacao={`criar ${glebas.filter((g) => g.anel.length >= 3).length} serviço(s)`}
-                    onConfirmar={separarGlebas}
-                    className=""
-                  >Separar glebas em serviços</BotaoPerigo>
-                  <Dica>Cria um serviço por gleba, com os vértices e os códigos que ela já tem. Este serviço continua como está — separar não move nada.</Dica>
-                </div>
-              )}
-            </details>
+                onAplicar={aplicarGlebasNaTela} onGlebas={setGlebas}
+                extrasGlebas={glebas.filter((g) => g.anel.length >= 3).length > 1 && (
+                  <div className="dv-barra-grupo" id="bloco-glebas">
+                    <BotaoPerigo
+                      titulo="Separar cada gleba em um serviço próprio"
+                      confirmacao={`criar ${glebas.filter((g) => g.anel.length >= 3).length} serviço(s)`}
+                      onConfirmar={separarGlebas}
+                      className=""
+                    >Separar glebas em serviços</BotaoPerigo>
+                    <Dica>Cria um serviço por gleba, com os vértices e os códigos que ela já tem. Este serviço continua como está — separar não move nada.</Dica>
+                  </div>
+                )} />
             )}
           </>
         )}

@@ -9,7 +9,7 @@
 // grava os pontos novos das divisas como vértices M do perímetro e cada parte
 // como uma gleba; a partir daí o serviço segue o caminho das glebas e, com os
 // códigos alocados, cada parte vira um GEO individual no nome do herdeiro.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import proj4 from "proj4";
 import type { Gleba, ParametrosDivisao, Servico, Vertice } from "../lib/types";
 import { dividir, sugerirDivisoes } from "../lib/divisao";
@@ -26,7 +26,10 @@ import { Avisos } from "./loteamento/Avisos";
 import { Dica } from "./ui";
 import { ContornoEditor } from "./ContornoEditor";
 import { areasFechadas, ligacoesIniciais, type Ligacao } from "../lib/contorno";
-import { ordensDasGlebas } from "../lib/glebas";
+import { areaHaDoAnel, ordensDasGlebas } from "../lib/glebas";
+
+// as mesmas cores do editor de pontos, para a tabela casar com o desenho
+const CORES_GLEBA = ["#2E86AB", "#E07A1F", "#3BA55C", "#A23B72", "#C9A227", "#5B5FC7", "#D1495B", "#1B998B"];
 import "./loteamento/loteamento.css";
 
 const CORES_PARTE = ["#2E86AB", "#E07A1F", "#3BA55C", "#A23B72", "#C9A227", "#5B5FC7", "#D1495B", "#1B998B", "#8D6A9F", "#6C8EAD"];
@@ -53,6 +56,8 @@ interface Props {
   onGlebas: (g: Gleba[]) => void;
   /** guarda o rascunho da prancheta no serviço (só no serviço de divisão) */
   onRascunho?: (d: ParametrosDivisao) => void;
+  /** ações do serviço de glebas que moram na barra de baixo (ex.: separar em serviços) */
+  extrasGlebas?: ReactNode;
 }
 
 function infoDe(g: Gleba | undefined, k: number): InfoParte {
@@ -80,7 +85,7 @@ function useHistorico(inicial: () => Projeto | null) {
   return { h, mudar, fimArraste, desfazer, refazer };
 }
 
-export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, glebas, onAplicar, onGlebas, onRascunho }: Props) {
+export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, glebas, onAplicar, onGlebas, onRascunho, extrasGlebas }: Props) {
   const ehGleba = modo === "glebas";
 
   // ---------------- glebas: o contorno como ligações entre pontos ----------------
@@ -256,7 +261,19 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
       return melhor >= 0 ? glebas[melhor] : undefined;
     });
   }, [areas, glebas, todos]);
-  const nomesAreas = (areas?.aneis ?? []).map((_, k) => glebaDaArea[k]?.nome || `PARTE ${k + 1}`);
+  // nome e confrontante da divisa interna digitados aqui (antes de salvar); salvas, vão direto para a gleba
+  const [edicaoArea, setEdicaoArea] = useState<Record<number, { nome?: string; conf?: string }>>({});
+  const nomesAreas = (areas?.aneis ?? []).map((_, k) => edicaoArea[k]?.nome ?? (glebaDaArea[k]?.nome || `PARTE ${k + 1}`));
+  const confAreas = (areas?.aneis ?? []).map((_, k) => edicaoArea[k]?.conf ?? (glebaDaArea[k]?.confrontante_interno ?? ""));
+  const editarArea = (k: number, patch: { nome?: string; conf?: string }) => {
+    setEdicaoArea((e) => ({ ...e, [k]: { ...e[k], ...patch } }));
+    const g = glebaDaArea[k];
+    if (areasSalvas && g) onGlebas(glebas.map((x) => (x !== g ? x : {
+      ...x,
+      ...(patch.nome !== undefined ? { nome: patch.nome.trim() || `PARTE ${k + 1}` } : {}),
+      ...(patch.conf !== undefined ? { confrontante_interno: patch.conf.trim() || null } : {}),
+    })));
+  };
   // já é o que está salvo? (mesmos pontos em cada gleba e nenhum ponto a apagar)
   const areasSalvas = glebasProntas && !areas!.soltos.length && !areas!.pontas.length
     && glebas.filter((g) => g.anel.length >= 3).length === areas!.aneis.length
@@ -273,7 +290,7 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
       return {
         id: g?.id ?? crypto.randomUUID(), servico_id: servico.id, ordem: k, nome: nomesAreas[k],
         anel: a.map((o) => [Number(porOrdem.get(o)!.e), Number(porOrdem.get(o)!.n)] as [number, number]),
-        confrontante_interno: g?.confrontante_interno ?? null,
+        confrontante_interno: confAreas[k].trim() || null,
       };
     });
     // ponto fora de toda área sai do serviço (o salvar da Conferência apaga o que não veio)
@@ -395,11 +412,6 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
             title={anelUnico ? "Dividir o contorno em glebas com o motor e ajustar na prancheta" : "A prancheta divide um contorno só: hoje há " + areas.aneis.length + " áreas fechadas"}>
             Dividir na prancheta
           </button>
-          <span className="sub">
-            {areas.aneis.length === 1 ? "uma área fechada: divida na prancheta ou ligue dois pontos para fazer a divisa"
-              : areas.aneis.length >= 2 ? `${areas.aneis.length} áreas fechadas = ${areas.aneis.length} glebas`
-              : "nenhuma área fechada: ligue os pontos para fechar o contorno"}
-          </span>
         </div>
       )}
 
@@ -408,7 +420,31 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
           <ContornoEditor vertices={todos} ligacoes={lig.atual} areas={areas} nomes={nomesAreas}
             onLigacoes={mudarLig} onDesfazer={desfazerLig} podeDesfazer={lig.passado.length > 0}
             onRecomecar={() => mudarLig(ligacoesIniciais(todos, glebas))} />
+          {areas.aneis.length > 0 && (
+            <div className="tabela-scroll">
+              <table className="dv-tabela ct-tabela">
+                <thead>
+                  <tr>
+                    <th></th><th>Gleba</th><th>Área (ha)</th><th>Pontos</th>
+                    <th><span className="rotulo-campo">Confrontante da divisa interna<Dica>Descritivo do lado que fecha a gleba por dentro. Em branco sai o automático: "(MATR./CNS.) IMÓVEL - GLEBA VIZINHA\ PROPRIETÁRIO\ CPF".</Dica></span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {areas.aneis.map((a, k) => (
+                    <tr key={k}>
+                      <td><span className="dv-cor" style={{ background: CORES_GLEBA[k % CORES_GLEBA.length] }} /></td>
+                      <td><input value={nomesAreas[k]} onChange={(e) => editarArea(k, { nome: e.target.value.toUpperCase() })} placeholder={`PARTE ${k + 1}`} aria-label={`Nome da gleba ${k + 1}`} /></td>
+                      <td className="mono">{fmt(areaHaDoAnel(a.map((o) => [Number(porOrdem.get(o)!.e), Number(porOrdem.get(o)!.n)])))}</td>
+                      <td className="mono">{a.length}</td>
+                      <td><input value={confAreas[k]} onChange={(e) => editarArea(k, { conf: e.target.value })} placeholder="automático: a gleba vizinha" aria-label={`Confrontante da divisa interna da gleba ${k + 1}`} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <div className="dv-barra">
+            {glebasProntas && areasSalvas && extrasGlebas}
             <span className="esticar" />
             {areas.cruzadas.length > 0 && <b className="dv-sem">Ainda não dá para salvar: há ligações que se cruzam.</b>}
             {glebasProntas ? (

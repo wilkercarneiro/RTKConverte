@@ -8,12 +8,10 @@
 // ver src/lib/contorno.ts. Roda do mouse aproxima, arrastar o fundo move.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Vertice } from "../lib/types";
-import { areaHaDoAnel } from "../lib/glebas";
 import { desligar, excluirPonto, ligar, type Areas, type Ligacao } from "../lib/contorno";
 import { Dica } from "./ui";
 
 const CORES = ["#2E86AB", "#E07A1F", "#3BA55C", "#A23B72", "#C9A227", "#5B5FC7", "#D1495B", "#1B998B"];
-const fmtHa = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 
 interface Props {
   vertices: Vertice[];
@@ -129,7 +127,6 @@ export function ContornoEditor({ vertices, ligacoes, areas, nomes, onLigacoes, o
           <button type="button" onClick={soltar}>Tirar as ligações</button>
         </>}
         {esc?.tipo === "ligacao" && <button type="button" onClick={() => { onLigacoes(desligar(ligacoes, ...esc.l)); setEsc(null); }} title="Delete">Tirar a ligação</button>}
-        {!esc && !ligando && <span className="sub">Clique num ponto ou numa linha</span>}
         <span className="esticar" />
         <button type="button" className="fantasma" disabled={!podeDesfazer} onClick={onDesfazer} title="Ctrl+Z">↶ Desfazer</button>
         <button type="button" className="fantasma" onClick={() => { onRecomecar(); setEsc(null); setLigando(false); }}>Recomeçar</button>
@@ -159,7 +156,7 @@ export function ContornoEditor({ vertices, ligacoes, areas, nomes, onLigacoes, o
             <g key={k}>
               <polygon points={anel.map((p) => `${p.e},${-p.n}`).join(" ")} fill={CORES[k % CORES.length]} fillOpacity={0.16} stroke="none" />
               <text x={cx} y={-cy} fontSize={14 * escala} textAnchor="middle" className="ct-rotulo-area" strokeWidth={3 * escala}>
-                {nomes[k] ?? `PARTE ${k + 1}`} · {fmtHa(areaHaDoAnel(anel.map((p) => [p.e, p.n])))} ha
+                {nomes[k] ?? `PARTE ${k + 1}`}
               </text>
             </g>
           );
@@ -194,16 +191,15 @@ export function ContornoEditor({ vertices, ligacoes, areas, nomes, onLigacoes, o
           );
         })}
       </svg>
+      {/* só o que pede atenção: as áreas e os nomes estão na tabela de baixo */}
+      {(areas.pontas.length > 0 || areas.cruzadas.length > 0 || areas.soltos.length > 0 || !areas.aneis.length) && (
       <div className="ct-situacao">
-        <span><b>{areas.aneis.length}</b> {areas.aneis.length === 1 ? "área fechada" : "áreas fechadas"}
-          {areas.aneis.map((a, k) => (
-            <span key={k} className="ct-chip"><i style={{ background: CORES[k % CORES.length] }} />{nomes[k] ?? `PARTE ${k + 1}`} {fmtHa(areaHaDoAnel(a.map((o) => [xy.get(o)!.e, xy.get(o)!.n])))} ha</span>
-          ))}
-        </span>
+        {!areas.aneis.length && <span className="ct-alerta">Nenhuma área fechada: ligue os pontos para fechar o contorno</span>}
         {areas.pontas.length > 0 && <span className="ct-alerta">Contorno aberto nos pontos {areas.pontas.slice(0, 10).map(rot).join(", ")}{areas.pontas.length > 10 ? "…" : ""}: ligue-os ou exclua</span>}
         {areas.cruzadas.length > 0 && <span className="ct-alerta">{areas.cruzadas.length} {areas.cruzadas.length === 1 ? "ligação se cruza" : "ligações se cruzam"} (tracejadas em vermelho)</span>}
         {areas.soltos.length > 0 && <span className="ct-aviso">{areas.soltos.length} {areas.soltos.length === 1 ? "ponto sem ligação sai" : "pontos sem ligação saem"} do serviço ao salvar ({areas.soltos.slice(0, 10).map(rot).join(", ")}{areas.soltos.length > 10 ? "…" : ""})</span>}
       </div>
+      )}
     </div>
   );
 }
