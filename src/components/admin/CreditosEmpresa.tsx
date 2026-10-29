@@ -1,110 +1,80 @@
-// Aba Créditos da empresa: o que foi negociado com ela.
+// Aba "Créditos extras e pacotes" da empresa: o que ela COMPRA além do limite.
 //
-//   - teto do mês, total e por serviço: "Plano" segue o plano; "Desta empresa"
-//     troca o teto só para ela (vazio = sem teto)
-//   - pacotes que ela pode comprar (nome, serviço, quantidade, preço)
-//   - pedidos de compra (aprovar = o crédito passa a valer) e crédito avulso
+//   - pedidos aguardando (no topo: é o que pede ação)
+//   - saldo de créditos extras e "Dar créditos extras" (cortesia, venda por fora)
+//   - pacotes que ela vê em "Comprar mais créditos" (nome, serviço, quantidade, preço)
+//   - histórico de pedidos e uso por mês
 //
+// O limite do mês (do plano ou só desta empresa) fica na aba "Plano e limites".
 // Regras no banco: supabase/migrations/0027_creditos.sql.
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import {
-  adicionarCreditos, creditosDaEmpresa, definirLimiteEmpresa, excluirPacote, resolverPedidoCredito, salvarPacote,
+  adicionarCreditos, definirLimiteEmpresa, excluirPacote, resolverPedidoCredito, salvarPacote,
 } from "../../lib/admin";
-import type { CreditosEmpresa as Dados, Empresa, PacoteCredito } from "../../lib/admin";
+import type { CreditoExtra, CreditosEmpresa as Dados, Empresa, PacoteCredito } from "../../lib/admin";
 import { fmtPreco, nomeDaChave } from "../../lib/creditos";
 import { RECURSOS } from "../../lib/recursos";
-import type { DadosAdmin } from "./PainelAdmin";
 import { confirmar, Dica, Rotulo } from "../ui";
-import { Carregando, Kpi, ICO, fmtData, fmtNum } from "./comum";
+import { Carregando, fmtData } from "./comum";
 
-const ROTULO_STATUS = { pendente: "Aguardando", aprovado: "Aprovado", recusado: "Recusado", cancelado: "Cancelado" } as const;
+const ROTULO_STATUS = { pendente: "Aguardando", aprovado: "Aprovado", recusado: "Recusado", cancelado: "Cancelado pela empresa" } as const;
 const CLASSE_STATUS = { pendente: "suspenso", aprovado: "ativo", recusado: "cancelado", cancelado: "neutro" } as const;
 
-export function CreditosEmpresa({ e, d }: { e: Empresa; d: DadosAdmin }) {
-  const [c, setC] = useState<Dados | null>(null);
+export function CreditosEmpresa({ e, c, onMudou }: { e: Empresa; c: Dados | null; onMudou: () => Promise<void> }) {
   const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
-  const carregar = useCallback(() => creditosDaEmpresa(e.id).then(setC).catch((x) => setMsg({ tipo: "erro", texto: String(x.message ?? x) })), [e.id]);
-  useEffect(() => { carregar(); }, [carregar]);
 
   async function agir(f: () => Promise<void>, ok?: string) {
     setMsg(null);
-    try { await f(); await carregar(); if (ok) setMsg({ tipo: "ok", texto: ok }); }
+    try { await f(); await onMudou(); if (ok) setMsg({ tipo: "ok", texto: ok }); }
     catch (x) { setMsg({ tipo: "erro", texto: String(x instanceof Error ? x.message : x) }); }
   }
 
-  if (!c) return msg ? <div className={`sa-aviso ${msg.tipo}`}>{msg.texto}</div> : <Carregando />;
+  if (!c) return <Carregando />;
 
-  // os serviços que a empresa enxerga (os bloqueados não precisam de teto)
-  const servicos = d.recursos.filter((r) => r.ativo && r.chave.startsWith("servico.") && c.servicos[r.chave]);
-  const extras = c.total.extra + Object.values(c.servicos).reduce((s, x) => s + x.extra, 0);
   const pendentes = c.extras.filter((x) => x.status === "pendente");
-  const mes = new Date(`${c.mes}T12:00:00`).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  const historico = c.extras.filter((x) => x.status !== "pendente");
+  const saldos = [["total", c.total.extra] as const, ...Object.entries(c.servicos).map(([k, s]) => [k, s.extra] as const)].filter(([, n]) => n > 0);
 
   return (
     <div className="sa-grade">
       {msg && <div className={`sa-aviso ${msg.tipo}`}>{msg.texto}</div>}
 
-      <div className="sa-kpis">
-        <Kpi rotulo={`Serviços em ${mes}`} valor={c.total.limite === null ? fmtNum(c.total.usado) : `${c.total.usado} / ${c.total.limite}`}
-          icone={ICO.servicos} tom="escuro" detalhe={c.total.limite === null ? "sem teto mensal" : "usados / teto do mês"} />
-        <Kpi rotulo="Créditos extras" valor={fmtNum(extras)} icone={ICO.planos} detalhe="comprados e ainda não usados" />
-        <Kpi rotulo="Pedidos aguardando" valor={fmtNum(pendentes.length)} icone={ICO.contatos} />
-      </div>
+      {pendentes.length > 0 && (
+        <section className="sa-card sa-destaque">
+          <header><h3>Pedidos aguardando sua aprovação<Dica>combine o pagamento com a empresa antes de aprovar. Aprovado, o crédito vale na hora.</Dica></h3></header>
+          <TabelaPedidos itens={pendentes} acoes={(x) => <>
+            <button type="button" className="principal" onClick={() => agir(() => resolverPedidoCredito(x.id, true), `Aprovado: ${x.quantidade} crédito(s) já valem para a empresa.`)}>Aprovar</button>{" "}
+            <button type="button" className="fantasma" onClick={async () => {
+              if (await confirmar({ titulo: "Recusar o pedido?", texto: "A empresa vê o pedido como recusado. Nenhum crédito entra.", confirmar: "Recusar", perigo: true })) {
+                await agir(() => resolverPedidoCredito(x.id, false), "Pedido recusado.");
+              }
+            }}>Recusar</button>
+          </>} />
+        </section>
+      )}
 
       <section className="sa-card">
-        <header><h3>Teto do mês<Dica>“Plano” segue o plano da empresa. “Desta empresa” vale só para ela. Campo vazio = sem limite. O crédito é gasto quando o arquivo é enviado; apagar o serviço não devolve.</Dica></h3></header>
-        <div className="sa-tabela-wrap">
-          <table className="sa-tabela">
-            <thead><tr><th>Serviço</th><th>No plano</th><th>Para esta empresa</th><th>Usados no mês</th><th>Extras</th></tr></thead>
-            <tbody>
-              <LinhaLimite chave="total" nome="Total (todos os serviços)" doPlano={c.plano?.total ?? null} c={c}
-                salvar={(lim, seguir) => agir(() => definirLimiteEmpresa(e.id, "total", lim, seguir))} />
-              {servicos.map((r) => (
-                <LinhaLimite key={r.chave} chave={r.chave} nome={r.nome} doPlano={c.plano?.servicos[r.chave] ?? null} c={c}
-                  salvar={(lim, seguir) => agir(() => definirLimiteEmpresa(e.id, r.chave, lim, seguir))} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <header><h3>Saldo de créditos extras<Dica>créditos comprados ou dados. São usados só depois que o limite do mês acaba e não vencem.</Dica></h3></header>
+        {saldos.length === 0
+          ? <p className="sub" style={{ marginTop: 0 }}>A empresa não tem créditos extras. Quando o limite do mês acabar, ela não abre serviço novo até comprar mais ou o mês virar.</p>
+          : (
+            <div className="sa-saldos">
+              {saldos.map(([k, n]) => <div key={k}><b>{n}</b><span>{nomeDaChave(k)}</span></div>)}
+            </div>
+          )}
+        <AdicionarCreditos onAdicionar={(chave, qtd, desc, preco) => agir(() => adicionarCreditos(e.id, chave, qtd, desc, preco), `${qtd} crédito(s) extra(s) dado(s) à empresa.`)} />
       </section>
 
       <Pacotes e={e} pacotes={c.pacotes} agir={agir} />
 
       <section className="sa-card">
-        <header><h3>Pedidos e créditos extras<Dica>o pedido do cliente só vale depois de aprovado; combine o pagamento antes de aprovar</Dica></h3></header>
-        <AdicionarCreditos onAdicionar={(chave, qtd, desc, preco) => agir(() => adicionarCreditos(e.id, chave, qtd, desc, preco), `${qtd} crédito(s) adicionado(s).`)} />
-        {c.extras.length === 0 ? <div className="sa-vazio">Nenhum pedido ou crédito extra ainda.</div> : (
-          <div className="sa-tabela-wrap">
-            <table className="sa-tabela">
-              <thead><tr><th>Quando</th><th>O quê</th><th>Valor</th><th>Situação</th><th /></tr></thead>
-              <tbody>
-                {c.extras.map((x) => (
-                  <tr key={x.id}>
-                    <td style={{ whiteSpace: "nowrap" }}>{fmtData(x.created_at)}<div className="sub" style={{ fontSize: 12 }}>{x.origem === "manual" ? "dado pelo painel" : x.quem ?? "pedido"}</div></td>
-                    <td><b>{x.quantidade} · {nomeDaChave(x.chave)}</b><div className="sub" style={{ fontSize: 12 }}>{x.descricao}{x.observacao ? ` — ${x.observacao}` : ""}</div></td>
-                    <td>{fmtPreco(x.preco)}</td>
-                    <td><span className={`sa-pill ${CLASSE_STATUS[x.status]}`}>{ROTULO_STATUS[x.status]}</span></td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      {x.status === "pendente" && <>
-                        <button type="button" className="principal" onClick={() => agir(() => resolverPedidoCredito(x.id, true), "Pedido aprovado: os créditos já valem.")}>Aprovar</button>{" "}
-                        <button type="button" className="fantasma" onClick={async () => {
-                          if (await confirmar({ titulo: "Recusar o pedido?", texto: "A empresa vê o pedido como recusado.", confirmar: "Recusar", perigo: true })) {
-                            await agir(() => resolverPedidoCredito(x.id, false), "Pedido recusado.");
-                          }
-                        }}>Recusar</button>
-                      </>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <header><h3>Histórico de pedidos e créditos dados</h3></header>
+        {historico.length === 0 ? <div className="sa-vazio">Nada ainda.</div> : <TabelaPedidos itens={historico} />}
       </section>
 
       {c.historico.length > 0 && (
         <section className="sa-card">
-          <header><h3>Créditos usados por mês</h3></header>
+          <header><h3>Créditos usados por mês<Dica>serviços abertos no mês, contando os pagos com crédito extra</Dica></h3></header>
           <div className="sa-barras">
             {c.historico.map((h) => (
               <div className="sa-barra" key={h.mes}>
@@ -116,6 +86,27 @@ export function CreditosEmpresa({ e, d }: { e: Empresa; d: DadosAdmin }) {
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+function TabelaPedidos({ itens, acoes }: { itens: CreditoExtra[]; acoes?: (x: CreditoExtra) => React.ReactNode }) {
+  return (
+    <div className="sa-tabela-wrap">
+      <table className="sa-tabela">
+        <thead><tr><th>Quando</th><th>Créditos</th><th>Valor</th><th>Situação</th>{acoes && <th />}</tr></thead>
+        <tbody>
+          {itens.map((x) => (
+            <tr key={x.id}>
+              <td style={{ whiteSpace: "nowrap" }}>{fmtData(x.created_at)}<div className="sub" style={{ fontSize: 12 }}>{x.origem === "manual" ? "dado por você no painel" : `pedido por ${x.quem ?? "a empresa"}`}</div></td>
+              <td><b>{x.quantidade} · {nomeDaChave(x.chave)}</b><div className="sub" style={{ fontSize: 12 }}>{x.descricao}{x.observacao ? ` — ${x.observacao}` : ""}</div></td>
+              <td>{fmtPreco(x.preco)}</td>
+              <td><span className={`sa-pill ${CLASSE_STATUS[x.status]}`}>{ROTULO_STATUS[x.status]}</span></td>
+              {acoes && <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{acoes(x)}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -140,7 +131,7 @@ export function CampoCreditosMes({ valor, onChange, planoTotal }: {
   const doPlano = planoTotal === undefined ? "sem plano" : planoTotal === null ? "sem limite" : `${planoTotal} por mês`;
   return (
     <>
-      <label><Rotulo dica="quantos serviços a empresa pode enviar por mês, somando todos. O limite de cada serviço fica na aba Créditos.">Créditos por mês</Rotulo>
+      <label><Rotulo dica="quantos serviços a empresa pode abrir por mês, somando todos (1 crédito = 1 arquivo enviado). O limite de cada serviço fica em Plano e limites.">Créditos por mês</Rotulo>
         <select value={valor.modo} onChange={(x) => onChange({ ...valor, modo: x.target.value as CreditosMes["modo"] })}>
           <option value="plano">Seguir o plano ({doPlano})</option>
           <option value="empresa">Definir para esta empresa</option>
@@ -153,39 +144,6 @@ export function CampoCreditosMes({ valor, onChange, planoTotal }: {
         </label>
       )}
     </>
-  );
-}
-
-function LinhaLimite({ chave, nome, doPlano, c, salvar }: {
-  chave: string; nome: string; doPlano: number | null; c: Dados;
-  salvar: (limite: number | null, seguirPlano: boolean) => Promise<void>;
-}) {
-  const negociado = chave in c.negociado;
-  const [valor, setValor] = useState<string>(negociado ? String(c.negociado[chave] ?? "") : "");
-  useEffect(() => { setValor(negociado ? String(c.negociado[chave] ?? "") : ""); }, [negociado, c.negociado, chave]);
-  const s = chave === "total" ? c.total : c.servicos[chave];
-  const gravar = () => salvar(valor === "" ? null : Math.max(0, Math.floor(Number(valor))), false);
-  return (
-    <tr>
-      <td><b>{nome}</b></td>
-      <td>{doPlano === null ? "sem limite" : `${doPlano}/mês`}</td>
-      <td>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <div className="sa-tri" role="group" aria-label={`Teto de ${nome}`}>
-            <button type="button" className={!negociado ? "on" : ""} onClick={() => negociado && salvar(null, true)}>Plano</button>
-            <button type="button" className={negociado ? "on lib" : ""} onClick={() => !negociado && salvar(doPlano, false)}>Desta empresa</button>
-          </div>
-          {negociado && (
-            <input type="number" min={0} placeholder="sem limite" value={valor} style={{ width: 110 }}
-              aria-label={`Limite de ${nome} desta empresa`}
-              onChange={(x) => setValor(x.target.value)} onBlur={gravar}
-              onKeyDown={(x) => { if (x.key === "Enter") { x.preventDefault(); gravar(); } }} />
-          )}
-        </div>
-      </td>
-      <td>{s ? (s.limite === null ? s.usado : `${s.usado} / ${s.limite}`) : "—"}</td>
-      <td>{s?.extra ? s.extra : "—"}</td>
-    </tr>
   );
 }
 
@@ -205,7 +163,7 @@ function Pacotes({ e, pacotes, agir }: { e: Empresa; pacotes: PacoteCredito[]; a
 
   return (
     <section className="sa-card">
-      <header><h3>Pacotes desta empresa<Dica>o que aparece para ela em “Comprar mais créditos”. Sem pacote, ela pede uma quantidade e o valor é combinado.</Dica></h3></header>
+      <header><h3>Pacotes à venda para esta empresa<Dica>o que ela vê em “Comprar mais créditos”. Comprar um pacote gera um pedido que você aprova nesta aba. Sem pacote, ela pede uma quantidade e o valor é combinado.</Dica></h3></header>
       {pacotes.length > 0 && (
         <div className="sa-tabela-wrap" style={{ marginBottom: 14 }}>
           <table className="sa-tabela">
@@ -253,12 +211,12 @@ function AdicionarCreditos({ onAdicionar }: { onAdicionar: (chave: string, qtd: 
   const [f, setF] = useState({ chave: "total", quantidade: "", descricao: "", preco: "" });
   const servicos = useServicosDoCatalogo();
   return (
-    <form className="sa-campos" style={{ alignItems: "end", marginBottom: 14 }} onSubmit={async (ev) => {
+    <form className="sa-campos" style={{ alignItems: "end", marginTop: 16 }} onSubmit={async (ev) => {
       ev.preventDefault();
       await onAdicionar(f.chave, Math.max(1, Number(f.quantidade)), f.descricao, f.preco === "" ? null : Number(f.preco.replace(",", ".")));
       setF({ chave: "total", quantidade: "", descricao: "", preco: "" });
     }}>
-      <label>Adicionar créditos
+      <label><Rotulo dica="entra aprovado na hora, sem pedido da empresa">Dar créditos extras para</Rotulo>
         <select value={f.chave} onChange={(x) => setF({ ...f, chave: x.target.value })}>
           <option value="total">Qualquer serviço</option>
           {servicos.map((r) => <option key={r.chave} value={r.chave}>{r.nome}</option>)}
@@ -268,7 +226,7 @@ function AdicionarCreditos({ onAdicionar }: { onAdicionar: (chave: string, qtd: 
       <label>Motivo<input value={f.descricao} onChange={(x) => setF({ ...f, descricao: x.target.value })} placeholder="Cortesia, venda por fora…" /></label>
       <label><Rotulo dica="opcional, só para registro">Valor (R$)</Rotulo><input inputMode="decimal" value={f.preco} onChange={(x) => setF({ ...f, preco: x.target.value })} /></label>
       <div className="sa-rodape-form" style={{ gridColumn: "1 / -1", marginTop: 0 }}>
-        <button type="submit" disabled={!(Number(f.quantidade) > 0)}>Adicionar créditos</button>
+        <button type="submit" disabled={!(Number(f.quantidade) > 0)}>Dar créditos extras</button>
       </div>
     </form>
   );

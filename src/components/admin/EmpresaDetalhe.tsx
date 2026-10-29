@@ -1,31 +1,37 @@
-// Uma empresa: dados do cadastro, plano e situação, recursos (com exceções),
-// créditos do mês (tetos negociados, pacotes, pedidos),
-// usuários (adicionar, redefinir senha, remover) e o uso do sistema.
+// Uma empresa, por assunto:
+//   Plano e limites            — o que ela usa e quanto (plano, acesso, créditos por mês)
+//   Créditos extras e pacotes  — o que ela compra além do limite (pedidos, saldo, pacotes)
+//   Cadastro                   — dados da empresa
+//   Usuários, Uso, Histórico
 import { useCallback, useEffect, useState } from "react";
 import {
-  adicionarUsuario, atividadesDaEmpresa, atualizarEmpresa, creditosDaEmpresa, definirRecursoEmpresa, lerSenhaPadrao, mensagemDeAcesso,
-  recursosDaEmpresa, redefinirSenha, removerUsuario, usoModalidades, usuariosDaEmpresa,
+  adicionarUsuario, atividadesDaEmpresa, atualizarEmpresa, creditosDaEmpresa, lerSenhaPadrao, mensagemDeAcesso,
+  redefinirSenha, removerUsuario, usoModalidades, usuariosDaEmpresa,
 } from "../../lib/admin";
-import type { AtividadeEmpresa, Empresa, RecursoEmpresa, StatusEmpresa, UsuarioEmpresa } from "../../lib/admin";
+import type { AtividadeEmpresa, CreditosEmpresa as DadosCreditos, Empresa, StatusEmpresa, UsuarioEmpresa } from "../../lib/admin";
 import { rotuloAtividade } from "../../lib/equipe";
 import { recursoDe } from "../../lib/recursos";
 import {
   cnpjValido, emailValido, formatarCnpj, formatarTelefone, problemaDaSenha, telefoneValido,
 } from "../../../supabase/functions/_shared/cnpj.ts";
 import type { DadosAdmin } from "./PainelAdmin";
-import { CampoCreditosMes, CreditosEmpresa, creditosMesDe, gravarCreditosMes } from "./CreditosEmpresa";
-import type { CreditosMes } from "./CreditosEmpresa";
+import { CreditosEmpresa } from "./CreditosEmpresa";
+import { PlanoLimites } from "./PlanoLimites";
 import { confirmar, Dica, Rotulo } from "../ui";
 import {
   Carregando, ICO, Kpi, PlanoTag, StatusPill, Topo, copiar, fmtCnpj, fmtData, fmtNum, fmtTel, iniciais, quando,
 } from "./comum";
 
-type Aba = "geral" | "recursos" | "creditos" | "usuarios" | "uso" | "historico";
+type Aba = "plano" | "creditos" | "cadastro" | "usuarios" | "uso" | "historico";
 
 export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
   const e = d.empresas.find((x) => x.id === id);
-  const [aba, setAba] = useState<Aba>("geral");
+  const [aba, setAba] = useState<Aba>("plano");
   const [aviso, setAviso] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+  // créditos do mês: o topo, "Plano e limites" e "Créditos extras" leem daqui (null = carregando ou banco sem a 0027)
+  const [cred, setCred] = useState<DadosCreditos | null>(null);
+  const recarregarCred = useCallback(async () => { if (id) setCred(await creditosDaEmpresa(id).catch(() => null)); }, [id]);
+  useEffect(() => { recarregarCred(); }, [recarregarCred]);
 
   if (!e) {
     return (
@@ -49,6 +55,13 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
     } catch (err) { setAviso({ tipo: "erro", texto: String(err instanceof Error ? err.message : err) }); }
   }
 
+  const pendentes = cred?.extras.filter((x) => x.status === "pendente").length ?? 0;
+  const extras = cred ? cred.total.extra + Object.values(cred.servicos).reduce((s, x) => s + x.extra, 0) : 0;
+  const ajustes = e.excecoes + (cred ? Object.keys(cred.negociado).length : 0);
+  const mes = cred ? new Date(`${cred.mes}T12:00:00`) : new Date();
+  const nomeMes = mes.toLocaleDateString("pt-BR", { month: "long" });
+  const proximo = new Date(mes.getFullYear(), mes.getMonth() + 1, 1).toLocaleDateString("pt-BR", { day: "numeric", month: "long" });
+
   return (
     <>
       <Topo olho="Empresa" titulo={e.nome} sub={`${fmtCnpj(e.cnpj)} · cadastrada em ${fmtData(e.created_at)}`}>
@@ -66,7 +79,12 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
           <div style={{ flex: 1, minWidth: 220 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <StatusPill status={e.status} /><PlanoTag planoId={e.plano_id} planos={d.planos} />
-              {e.excecoes > 0 && <span className="sa-pill neutro">{e.excecoes} exceção(ões) ao plano</span>}
+              {ajustes > 0 && (
+                <button type="button" className="sa-pill neutro sa-pill-botao" onClick={() => setAba("plano")}
+                  title="Acessos ou limites que valem só para esta empresa, diferentes do plano">
+                  {ajustes} ajuste(s) só desta empresa
+                </button>
+              )}
             </div>
             <div className="sub" style={{ marginTop: 6 }}>{e.responsavel ?? "—"} · {fmtTel(e.telefone)} · {e.email ?? "—"}</div>
           </div>
@@ -74,21 +92,28 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
       </section>
 
       <div className="sa-kpis" style={{ marginTop: 18 }}>
-        <Kpi rotulo="Usuários" valor={fmtNum(e.usuarios)} icone={ICO.usuarios} tom="escuro" />
-        <Kpi rotulo="Serviços (30 dias)" valor={fmtNum(e.servicos_30d)} icone={ICO.servicos} detalhe={`${fmtNum(e.servicos)} no total`} />
-        <Kpi rotulo="Último serviço" valor={quando(e.ultimo_servico)} icone={ICO.planos} />
-        <Kpi rotulo="Último acesso" valor={quando(e.ultimo_acesso)} icone={ICO.visao} />
+        <Kpi rotulo={`Créditos de ${nomeMes}`} icone={ICO.servicos} tom="escuro"
+          valor={!cred ? "—" : cred.total.limite === null ? `${fmtNum(cred.total.usado)} usados` : `${cred.total.usado} de ${cred.total.limite}`}
+          detalhe={!cred ? "" : cred.total.limite === null ? "sem limite mensal" : `renova em ${proximo}`}
+          onClick={() => setAba("plano")} />
+        <Kpi rotulo="Créditos extras" valor={fmtNum(extras)} icone={ICO.planos} detalhe="usados depois do limite do mês" onClick={() => setAba("creditos")} />
+        <Kpi rotulo="Pedidos de crédito" valor={fmtNum(pendentes)} icone={ICO.contatos} tom={pendentes ? "alerta" : undefined}
+          detalhe={pendentes ? "aguardando sua aprovação" : "nenhum aguardando"} onClick={() => setAba("creditos")} />
+        <Kpi rotulo="Usuários" valor={fmtNum(e.usuarios)} icone={ICO.usuarios} detalhe={`último acesso: ${quando(e.ultimo_acesso)}`} onClick={() => setAba("usuarios")} />
       </div>
 
       <nav className="sa-abas" aria-label="Seções da empresa">
-        {([["geral", "Cadastro e plano"], ["recursos", "Recursos"], ["creditos", "Créditos"], ["usuarios", "Usuários"], ["uso", "Uso"], ["historico", "Histórico"]] as [Aba, string][]).map(([a, r]) => (
-          <button key={a} type="button" className={aba === a ? "ativo" : ""} onClick={() => setAba(a)}>{r}</button>
+        {([["plano", "Plano e limites"], ["creditos", "Créditos extras e pacotes"], ["cadastro", "Cadastro"], ["usuarios", "Usuários"], ["uso", "Uso"], ["historico", "Histórico"]] as [Aba, string][]).map(([a, r]) => (
+          <button key={a} type="button" className={aba === a ? "ativo" : ""} onClick={() => setAba(a)}>
+            {r}{a === "creditos" && pendentes > 0 && <span className="sa-badge" style={{ marginLeft: 6 }}>{pendentes}</span>}
+          </button>
         ))}
       </nav>
 
-      {aba === "geral" && <Geral e={e} d={d} onSalvo={(t) => setAviso({ tipo: "ok", texto: t })} />}
-      {aba === "recursos" && <RecursosEmpresa e={e} d={d} />}
-      {aba === "creditos" && <CreditosEmpresa e={e} d={d} />}
+      {aba === "plano" && <PlanoLimites e={e} d={d} cred={cred}
+        onSalvo={async (t) => { await Promise.all([d.recarregar(), recarregarCred()]); setAviso({ tipo: "ok", texto: t }); }} />}
+      {aba === "creditos" && <CreditosEmpresa e={e} c={cred} onMudou={recarregarCred} />}
+      {aba === "cadastro" && <Cadastro e={e} d={d} cred={cred} irPlano={() => setAba("plano")} onSalvo={(t) => setAviso({ tipo: "ok", texto: t })} />}
       {aba === "usuarios" && <Usuarios e={e} d={d} />}
       {aba === "uso" && <Uso e={e} />}
       {aba === "historico" && <Historico e={e} />}
@@ -96,19 +121,13 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
   );
 }
 
-function Geral({ e, d, onSalvo }: { e: Empresa; d: DadosAdmin; onSalvo: (t: string) => void }) {
+function Cadastro({ e, d, cred, irPlano, onSalvo }: { e: Empresa; d: DadosAdmin; cred: DadosCreditos | null; irPlano: () => void; onSalvo: (t: string) => void }) {
   const [f, setF] = useState({
     nome: e.nome, cnpj: formatarCnpj(e.cnpj ?? ""), responsavel: e.responsavel ?? "", telefone: formatarTelefone(e.telefone ?? ""),
-    email: e.email ?? "", plano_id: e.plano_id ?? "", observacoes: e.observacoes ?? "",
+    email: e.email ?? "", observacoes: e.observacoes ?? "",
   });
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
-  // créditos por mês fechados com a empresa (null = carregando ou banco sem a 0027)
-  const [creditosAntes, setCreditosAntes] = useState<CreditosMes | null>(null);
-  const [creditos, setCreditos] = useState<CreditosMes | null>(null);
-  useEffect(() => {
-    creditosDaEmpresa(e.id).then((c) => { const v = creditosMesDe(c.negociado); setCreditosAntes(v); setCreditos(v); }).catch(() => {});
-  }, [e.id]);
 
   async function salvar(ev: React.FormEvent) {
     ev.preventDefault();
@@ -118,30 +137,28 @@ function Geral({ e, d, onSalvo }: { e: Empresa; d: DadosAdmin; onSalvo: (t: stri
     if (f.email && !emailValido(f.email)) { setErro("E-mail inválido."); return; }
     setSalvando(true);
     try {
-      await atualizarEmpresa(e.id, { ...f, plano_id: f.plano_id || null });
-      if (creditos) { await gravarCreditosMes(e.id, creditos, creditosAntes ?? undefined); setCreditosAntes(creditos); }
+      await atualizarEmpresa(e.id, f);
       await d.recarregar();
       onSalvo("Cadastro salvo.");
     } catch (err) { setErro(String(err instanceof Error ? err.message : err)); }
     finally { setSalvando(false); }
   }
 
+  const plano = d.planos.find((p) => p.id === e.plano_id);
+  const total = cred?.total.limite;
+
   return (
     <form className="sa-card" onSubmit={salvar}>
+      <div className="sa-resumo-plano">
+        <span>Plano <b>{plano?.nome ?? "sem plano"}</b> · {total === undefined ? "créditos —" : total === null ? "créditos sem limite mensal" : <><b>{total}</b> créditos por mês{cred && "total" in cred.negociado ? " (definido para esta empresa)" : " (do plano)"}</>}</span>
+        <button type="button" className="link" onClick={irPlano}>Alterar em Plano e limites</button>
+      </div>
       <div className="sa-campos">
         <label>Nome da empresa<input value={f.nome} onChange={(x) => setF({ ...f, nome: x.target.value })} required /></label>
         <label>CNPJ<input className="mono" value={f.cnpj} onChange={(x) => setF({ ...f, cnpj: formatarCnpj(x.target.value) })} /></label>
         <label>Responsável<input value={f.responsavel} onChange={(x) => setF({ ...f, responsavel: x.target.value })} /></label>
         <label>Telefone / WhatsApp<input value={f.telefone} onChange={(x) => setF({ ...f, telefone: formatarTelefone(x.target.value) })} /></label>
-        <label><Rotulo dica="contato; o login de cada pessoa fica em Usuários">E-mail da empresa</Rotulo><input type="email" value={f.email} onChange={(x) => setF({ ...f, email: x.target.value })} /></label>
-        <label>Plano
-          <select value={f.plano_id} onChange={(x) => setF({ ...f, plano_id: x.target.value })}>
-            {d.planos.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.ativo ? "" : " (inativo)"}</option>)}
-            <option value="">Sem plano</option>
-          </select>
-        </label>
-        {creditos && <CampoCreditosMes valor={creditos} onChange={setCreditos}
-          planoTotal={f.plano_id ? d.planos.find((p) => p.id === f.plano_id)?.limite_servicos_mes ?? null : undefined} />}
+        <label className="largo"><Rotulo dica="só contato; o login de cada pessoa fica em Usuários">E-mail da empresa</Rotulo><input type="email" value={f.email} onChange={(x) => setF({ ...f, email: x.target.value })} /></label>
         <label className="largo">Observações internas
           <textarea value={f.observacoes} onChange={(x) => setF({ ...f, observacoes: x.target.value })} placeholder="Condições combinadas na reunião, contatos, próximos passos…" />
         </label>
@@ -151,59 +168,6 @@ function Geral({ e, d, onSalvo }: { e: Empresa; d: DadosAdmin; onSalvo: (t: stri
         <button type="submit" className="principal" disabled={salvando}>{salvando ? "Salvando…" : "Salvar cadastro"}</button>
       </div>
     </form>
-  );
-}
-
-function RecursosEmpresa({ e, d }: { e: Empresa; d: DadosAdmin }) {
-  const [linhas, setLinhas] = useState<RecursoEmpresa[] | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-  const carregar = useCallback(() => recursosDaEmpresa(e.id).then(setLinhas).catch((x) => setErro(String(x.message ?? x))), [e.id]);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  async function definir(chave: string, valor: boolean | null) {
-    setErro(null);
-    try {
-      await definirRecursoEmpresa(e.id, chave, valor);
-      await Promise.all([carregar(), d.recarregar()]);
-    } catch (x) { setErro(String(x instanceof Error ? x.message : x)); }
-  }
-
-  if (!linhas) return <Carregando />;
-  const porChave = new Map(d.recursos.map((r) => [r.chave, r]));
-  const grupos = new Map<string, RecursoEmpresa[]>();
-  for (const l of linhas) {
-    const g = porChave.get(l.chave)?.grupo ?? "Geral";
-    grupos.set(g, [...(grupos.get(g) ?? []), l]);
-  }
-  const plano = d.planos.find((p) => p.id === e.plano_id);
-
-  return (
-    <section className="sa-card">
-      <header><h3>O que esta empresa acessa<Dica>“Plano” segue {plano ? `o ${plano.nome}` : "o padrão de cada recurso"}; liberar ou bloquear cria uma exceção só para ela.</Dica></h3></header>
-      {erro && <div className="sa-aviso erro">{erro}</div>}
-      {[...grupos].map(([g, itens]) => (
-        <div className="sa-grupo-rec" key={g}>
-          <h4>{g}</h4>
-          {itens.map((l) => {
-            const r = porChave.get(l.chave);
-            const nome = r?.nome ?? recursoDe(l.chave)?.nome ?? l.chave;
-            return (
-              <div className="sa-rec" key={l.chave}>
-                <div className="tx">
-                  <b>{nome}</b>{r?.descricao && <Dica>{r.descricao}</Dica>} <span className={l.liberado ? "sa-pill ativo" : "sa-pill cancelado"} style={{ marginLeft: 6 }}>{l.liberado ? "Liberado" : "Bloqueado"}</span>
-                </div>
-                <span className="origem">{l.origem === "excecao" ? "exceção" : l.origem === "plano" ? "pelo plano" : "padrão"}</span>
-                <div className="sa-tri" role="group" aria-label={`Acesso a ${nome}`}>
-                  <button type="button" className={l.excecao === null ? "on" : ""} onClick={() => definir(l.chave, null)}>Plano</button>
-                  <button type="button" className={l.excecao === true ? "on lib" : ""} onClick={() => definir(l.chave, true)}>Liberar</button>
-                  <button type="button" className={l.excecao === false ? "on blo" : ""} onClick={() => definir(l.chave, false)}>Bloquear</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ))}
-    </section>
   );
 }
 
@@ -309,7 +273,7 @@ function Uso({ e }: { e: Empresa }) {
   return (
     <section className="sa-card">
       <header>
-        <h3>Serviços criados por tipo</h3>
+        <h3>Serviços abertos por tipo<Dica>{fmtNum(e.servicos)} no total · último em {quando(e.ultimo_servico)}</Dica></h3>
         <div className="sa-segmento" style={{ marginLeft: "auto" }}>
           {[30, 90, 365].map((n) => <button key={n} type="button" className={dias === n ? "ativo" : ""} onClick={() => setDias(n)}>{n === 365 ? "12 meses" : `${n} dias`}</button>)}
         </div>

@@ -12,7 +12,7 @@ const dia = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 const PLANOS = [
   { id: "p1", nome: "Essencial", descricao: "", cor: "#5B6B63", ordem: 10, ativo: true },
   { id: "p2", nome: "Profissional", descricao: "", cor: "#178552", ordem: 20, ativo: true },
-  { id: "p3", nome: "Completo", descricao: "", cor: "#0E3B2B", ordem: 30, ativo: true },
+  { id: "p3", nome: "Completo", descricao: "", cor: "#0E3B2B", ordem: 30, ativo: true, limite_servicos_mes: 30 },
 ];
 const EMPRESAS = [
   ["D'PROL GEORREFERENCIAMENTO", "p3", "ativo", 6, 214, 38, 0, 0],
