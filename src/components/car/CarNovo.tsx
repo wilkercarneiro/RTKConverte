@@ -12,7 +12,7 @@ import { calcularCar, fmtHa, fmtNum, projetoNovo } from "../../lib/car/motor.ts"
 import { criarServicoCar } from "../../lib/car/persistencia.ts";
 import { Icone, ICONE } from "../Icone";
 import { Dica, Passos } from "../ui";
-import { textoSemCredito } from "../../lib/creditos";
+import { ehAceiteGeral, textoSemCredito } from "../../lib/creditos";
 import "./car.css";
 
 async function textoDoArquivo(f: File): Promise<string> {
@@ -23,11 +23,13 @@ async function textoDoArquivo(f: File): Promise<string> {
   return kml.async("string");
 }
 
-export function CarNovo({ definicao, clienteId, pedidoId, onCriado, onVoltar, voltarPara = "o Início" }: {
+export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = false, onCriado, onVoltar, voltarPara = "o Início" }: {
   definicao: DefinicaoServico;
   clienteId?: string;
   pedidoId?: string;
-  onCriado: (s: Servico) => void;
+  /** a pessoa já aceitou pagar este CAR com 1 crédito geral */
+  usarCreditoGeral?: boolean;
+  onCriado: (s: Servico, usouCreditoGeral: boolean) => void;
   onVoltar?: () => void;
   /** para onde o "← Voltar" leva (aberto pela página do cliente, "o cliente") */
   voltarPara?: string;
@@ -40,6 +42,8 @@ export function CarNovo({ definicao, clienteId, pedidoId, onCriado, onVoltar, vo
   const [municipio, setMunicipio] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [criando, setCriando] = useState(false);
+  // os créditos de CAR acabaram entre abrir a tela e criar: o banco pede o aceite
+  const [pedeAceite, setPedeAceite] = useState(false);
 
   async function ler(f: File) {
     setErro(null);
@@ -70,18 +74,21 @@ export function CarNovo({ definicao, clienteId, pedidoId, onCriado, onVoltar, vo
     };
   }, [lido, nome]);
 
-  async function criar() {
+  async function criar(comGeral = usarCreditoGeral) {
     if (!lido || !previa) return;
     setCriando(true);
     setErro(null);
+    setPedeAceite(false);
     try {
       const s = await criarServicoCar({
         arquivo: lido.arquivo, projeto: { ...previa.pr, nome: nome.trim() || "Imóvel" },
-        uf: uf || null, municipio: municipio.trim() || null, clienteId, pedidoId,
+        uf: uf || null, municipio: municipio.trim() || null, clienteId, pedidoId, usarCreditoGeral: comGeral,
       });
-      onCriado(s);
+      onCriado(s, comGeral);
     } catch (e) {
-      setErro(textoSemCredito(e instanceof Error ? e.message : String(e)));
+      const m = e instanceof Error ? e.message : String(e);
+      if (ehAceiteGeral(m)) setPedeAceite(true);
+      setErro(textoSemCredito(m));
     } finally {
       setCriando(false);
     }
@@ -149,13 +156,19 @@ export function CarNovo({ definicao, clienteId, pedidoId, onCriado, onVoltar, vo
                   <input value={municipio} onChange={(e) => setMunicipio(e.target.value)} />
                 </label>
               </div>
-              <button className="principal" disabled={criando} onClick={criar}>
+              <button className="principal" disabled={criando} onClick={() => criar()}>
                 {criando ? "Criando o serviço…" : "Criar o serviço e marcar a reserva →"}
               </button>
+              {usarCreditoGeral && <small className="sub">Este CAR usa 1 crédito geral, como você aceitou.</small>}
             </div>
           </div>
         )}
         {erro && <div className="erro" role="alert">{erro}</div>}
+        {pedeAceite && (
+          <div className="acoes-linha">
+            <button className="principal" disabled={criando} onClick={() => criar(true)}>Usar 1 crédito geral e criar</button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,7 +1,9 @@
 // Uma empresa, por assunto:
-//   Plano e limites            — o que ela usa e quanto (plano, acesso, créditos por mês)
-//   Créditos extras e pacotes  — o que ela compra além do limite (pedidos, saldo, pacotes)
-//   Cadastro                   — dados da empresa
+//   Plano e créditos   — o que ela usa, quanto e por quanto (plano, mensalidade,
+//                        créditos por mês e preço do extra de cada carteira, acesso)
+//   Créditos extras    — o que ela compra além do plano (compras, pedidos, saldo)
+//   Cobrança           — a assinatura no Asaas, a fatura em aberto e os pagamentos
+//   Cadastro           — dados da empresa
 //   Usuários, Uso, Histórico
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -16,13 +18,16 @@ import {
 } from "../../../supabase/functions/_shared/cnpj.ts";
 import type { DadosAdmin } from "./PainelAdmin";
 import { CreditosEmpresa } from "./CreditosEmpresa";
+import { CobrancaEmpresa } from "./CobrancaEmpresa";
 import { PlanoLimites } from "./PlanoLimites";
+import { diaMes, fmtPreco } from "../../lib/creditos";
+import { ROTULO_SITUACAO } from "../../lib/cobranca";
 import { confirmar, Dica, Rotulo } from "../ui";
 import {
   Carregando, ICO, Kpi, PlanoTag, StatusPill, Topo, copiar, duracao, fmtCnpj, fmtData, fmtNum, fmtTel, haQuanto, iniciais, quando,
 } from "./comum";
 
-type Aba = "plano" | "creditos" | "cadastro" | "usuarios" | "uso" | "historico";
+type Aba = "plano" | "creditos" | "cobranca" | "cadastro" | "usuarios" | "uso" | "historico";
 
 export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
   const e = d.empresas.find((x) => x.id === id);
@@ -55,12 +60,13 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
     } catch (err) { setAviso({ tipo: "erro", texto: String(err instanceof Error ? err.message : err) }); }
   }
 
-  const pendentes = cred?.extras.filter((x) => x.status === "pendente").length ?? 0;
-  const extras = cred ? cred.total.extra + Object.values(cred.servicos).reduce((s, x) => s + x.extra, 0) : 0;
-  const ajustes = e.excecoes + (cred ? Object.keys(cred.negociado).length : 0);
-  const mes = cred ? new Date(`${cred.mes}T12:00:00`) : new Date();
-  const nomeMes = mes.toLocaleDateString("pt-BR", { month: "long" });
-  const proximo = new Date(mes.getFullYear(), mes.getMonth() + 1, 1).toLocaleDateString("pt-BR", { day: "numeric", month: "long" });
+  // pedidos sem o Asaas pedem aprovação; compras pelo Asaas só esperam o pagamento
+  const pendentes = cred?.extras.filter((x) => x.status === "pendente" && x.origem !== "compra").length ?? 0;
+  const extras = cred ? cred.carteiras.reduce((s, k) => s + k.extra, 0) : 0;
+  const ajustes = e.excecoes + (cred
+    ? Object.keys(cred.empresa.por_mes).length + Object.keys(cred.empresa.precos).length + (cred.empresa.mensalidade !== null ? 1 : 0)
+    : 0);
+  const comMes = cred?.carteiras.filter((k) => k.por_mes !== 0) ?? [];
 
   return (
     <>
@@ -68,7 +74,9 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
         <button onClick={() => d.ir({ t: "admin", aba: "empresas" })}>← Empresas</button>
         {e.status === "ativo"
           ? <button onClick={() => mudarStatus("suspenso")}>Suspender acesso</button>
-          : <button className="principal" onClick={() => mudarStatus("ativo")}>Reativar</button>}
+          : e.status === "aguardando_pagamento"
+            ? <button className="principal" onClick={() => setAba("cobranca")}>Ver a cobrança</button>
+            : <button className="principal" onClick={() => mudarStatus("ativo")}>Reativar</button>}
       </Topo>
 
       {aviso && <div className={`sa-aviso ${aviso.tipo}`}>{aviso.texto}</div>}
@@ -81,7 +89,7 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
               <StatusPill status={e.status} /><PlanoTag planoId={e.plano_id} planos={d.planos} />
               {ajustes > 0 && (
                 <button type="button" className="sa-pill neutro sa-pill-botao" onClick={() => setAba("plano")}
-                  title="Acessos ou limites que valem só para esta empresa, diferentes do plano">
+                  title="Acessos, créditos, preços ou mensalidade que valem só para esta empresa, diferentes do plano">
                   {ajustes} ajuste(s) só desta empresa
                 </button>
               )}
@@ -92,27 +100,33 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
       </section>
 
       <div className="sa-kpis" style={{ marginTop: 18 }}>
-        <Kpi rotulo={`Créditos de ${nomeMes}`} icone={ICO.servicos} tom="escuro"
-          valor={!cred ? "—" : cred.total.limite === null ? `${fmtNum(cred.total.usado)} usados` : `${cred.total.usado} de ${cred.total.limite}`}
-          detalhe={!cred ? "" : cred.total.limite === null ? "sem limite mensal" : `renova em ${proximo}`}
+        <Kpi rotulo="Créditos do mês restantes" icone={ICO.servicos} tom="escuro"
+          valor={!cred ? "—" : comMes.length === 0 ? "0" : comMes.some((k) => k.por_mes === null) ? "∞"
+            : fmtNum(comMes.reduce((s, k) => s + Math.max(0, (k.por_mes ?? 0) - k.usado), 0))}
+          detalhe={!cred ? "" : `${comMes.map((k) => `${k.nome.replace(/^Créditos\s*(de\s+)?/i, "")} ${k.por_mes === null ? "∞" : `${Math.max(0, k.por_mes - k.usado)}/${k.por_mes}`}`).join(" · ")} · renovam em ${diaMes(cred.periodo.renova_em)}`}
           onClick={() => setAba("plano")} />
-        <Kpi rotulo="Créditos extras" valor={fmtNum(extras)} icone={ICO.planos} detalhe="usados depois do limite do mês" onClick={() => setAba("creditos")} />
-        <Kpi rotulo="Pedidos de crédito" valor={fmtNum(pendentes)} icone={ICO.contatos} tom={pendentes ? "alerta" : undefined}
-          detalhe={pendentes ? "aguardando sua aprovação" : "nenhum aguardando"} onClick={() => setAba("creditos")} />
+        <Kpi rotulo="Créditos extras" valor={fmtNum(extras)} icone={ICO.planos} detalhe={pendentes ? `${pendentes} pedido(s) para aprovar` : "usados depois dos do mês"}
+          tom={pendentes ? "alerta" : undefined} onClick={() => setAba("creditos")} />
+        <Kpi rotulo="Mensalidade" icone={ICO.contatos} tom={e.cobranca === "atrasada" || e.status === "aguardando_pagamento" ? "alerta" : undefined}
+          valor={e.mensalidade == null ? "—" : fmtPreco(Number(e.mensalidade))}
+          detalhe={e.status === "aguardando_pagamento" ? "esperando a 1ª mensalidade" : e.cobranca ? ROTULO_SITUACAO[e.cobranca] : "sem cobrança no Asaas"}
+          onClick={() => setAba("cobranca")} />
         <Kpi rotulo="Usuários" valor={fmtNum(e.usuarios)} icone={ICO.usuarios} detalhe={`último acesso: ${quando(e.ultimo_acesso)}`} onClick={() => setAba("usuarios")} />
       </div>
 
       <nav className="sa-abas" aria-label="Seções da empresa">
-        {([["plano", "Plano e limites"], ["creditos", "Créditos extras e pacotes"], ["cadastro", "Cadastro"], ["usuarios", "Usuários"], ["uso", "Uso"], ["historico", "Histórico"]] as [Aba, string][]).map(([a, r]) => (
+        {([["plano", "Plano e créditos"], ["creditos", "Créditos extras"], ["cobranca", "Cobrança"], ["cadastro", "Cadastro"], ["usuarios", "Usuários"], ["uso", "Uso"], ["historico", "Histórico"]] as [Aba, string][]).map(([a, r]) => (
           <button key={a} type="button" className={aba === a ? "ativo" : ""} onClick={() => setAba(a)}>
             {r}{a === "creditos" && pendentes > 0 && <span className="sa-badge" style={{ marginLeft: 6 }}>{pendentes}</span>}
+            {a === "cobranca" && (e.cobranca === "atrasada" || e.status === "aguardando_pagamento") && <span className="sa-badge" style={{ marginLeft: 6 }}>!</span>}
           </button>
         ))}
       </nav>
 
       {aba === "plano" && <PlanoLimites e={e} d={d} cred={cred}
         onSalvo={async (t) => { await Promise.all([d.recarregar(), recarregarCred()]); setAviso({ tipo: "ok", texto: t }); }} />}
-      {aba === "creditos" && <CreditosEmpresa e={e} c={cred} onMudou={recarregarCred} />}
+      {aba === "creditos" && <CreditosEmpresa e={e} d={d} c={cred} onMudou={recarregarCred} />}
+      {aba === "cobranca" && <CobrancaEmpresa e={e} d={d} onMudou={async (t) => { await recarregarCred(); setAviso({ tipo: "ok", texto: t }); }} />}
       {aba === "cadastro" && <Cadastro e={e} d={d} cred={cred} irPlano={() => setAba("plano")} onSalvo={(t) => setAviso({ tipo: "ok", texto: t })} />}
       {aba === "usuarios" && <Usuarios e={e} d={d} />}
       {aba === "uso" && <Uso e={e} />}
@@ -145,13 +159,17 @@ function Cadastro({ e, d, cred, irPlano, onSalvo }: { e: Empresa; d: DadosAdmin;
   }
 
   const plano = d.planos.find((p) => p.id === e.plano_id);
-  const total = cred?.total.limite;
+  const creditos = cred?.carteiras.filter((k) => k.por_mes !== 0)
+    .map((k) => `${k.por_mes === null ? "sem limite de" : k.por_mes} ${k.nome.toLowerCase()}${cred.empresa.por_mes[k.chave] !== undefined ? " (só desta empresa)" : ""}`)
+    .join(" · ");
 
   return (
     <form className="sa-card" onSubmit={salvar}>
       <div className="sa-resumo-plano">
-        <span>Plano <b>{plano?.nome ?? "sem plano"}</b> · {total === undefined ? "créditos —" : total === null ? "créditos sem limite mensal" : <><b>{total}</b> créditos por mês{cred && "total" in cred.negociado ? " (definido para esta empresa)" : " (do plano)"}</>}</span>
-        <button type="button" className="link" onClick={irPlano}>Alterar em Plano e limites</button>
+        <span>Plano <b>{plano?.nome ?? "sem plano"}</b>
+          {e.mensalidade != null && <> · <b>{fmtPreco(Number(e.mensalidade))}</b>/mês</>}
+          {" · "}{creditos === undefined ? "créditos —" : creditos || "sem créditos no mês"}</span>
+        <button type="button" className="link" onClick={irPlano}>Alterar em Plano e créditos</button>
       </div>
       <div className="sa-campos">
         <label>Nome da empresa<input value={f.nome} onChange={(x) => setF({ ...f, nome: x.target.value })} required /></label>

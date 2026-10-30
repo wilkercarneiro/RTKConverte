@@ -16,6 +16,8 @@ import { Icone, ICONE } from "./Icone";
 import { NovoServico } from "./NovoServico";
 import { CreditosResumo } from "./Creditos";
 import type { Creditos } from "../lib/creditos";
+import { AvisoMensalidade } from "./Mensalidade";
+import type { MinhaCobranca } from "../lib/cobranca";
 import { PedidosGprol } from "./gprol/PedidosGprol";
 import type { PedidoGprol } from "../lib/gprol";
 import { GprolCartao } from "./gprol/GprolCartao";
@@ -29,6 +31,8 @@ interface Props {
   /** créditos de serviço do mês (null = sem a 0027) */
   creditos?: Creditos | null;
   onAtualizarCreditos?: () => void;
+  /** mensalidade em aberto ou vencida (0034) */
+  cobranca?: MinhaCobranca | null;
   /** executar um pedido do GPROL */
   onExecutarPedido?: (p: PedidoGprol, chave: ChaveServico) => void;
   /** abre Configurações → Integrações */
@@ -55,7 +59,7 @@ function primeiroNome(nome?: string): string | null {
   return base.charAt(0).toUpperCase() + base.slice(1).toLowerCase();
 }
 
-export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, onExecutarPedido, onConfigurarGprol }: Props) {
+export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, cobranca, onExecutarPedido, onConfigurarGprol }: Props) {
   // null = carregando; erro separado: falha nunca aparece como "nenhum serviço"
   const [servicos, setServicos] = useState<Servico[] | null>(null);
   const [docs, setDocs] = useState<Record<string, DocsDoServico>>({});
@@ -112,6 +116,7 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
 
       {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} />}
 
+      <AvisoMensalidade cobranca={cobranca ?? null} />
       {creditos && <CreditosResumo creditos={creditos} onAtualizar={onAtualizarCreditos ?? (() => {})} />}
 
       {erro && (

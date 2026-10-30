@@ -6,9 +6,11 @@
 // a service_role.
 //
 // Ações (POST { acao, ... }):
-//   criar_empresa      { cnpj, nome, responsavel, telefone, email, senha, plano_id? }
+//   criar_empresa      { cnpj, nome, responsavel, telefone, email, senha, plano_id?, aguardando_pagamento? }
 //                      → empresa + conta de login (e-mail da empresa, senha padrão)
-//                        como dona, marcada para trocar a senha no 1º acesso
+//                        como dona, marcada para trocar a senha no 1º acesso.
+//                        aguardando_pagamento: nasce sem acesso até pagar a
+//                        1ª mensalidade (a cobrança sai da função `cobranca`)
 //   adicionar_usuario  { escritorio_id, email, senha, papel? }
 //   redefinir_senha    { user_id, senha }   → volta a ser provisória
 //   remover_usuario    { user_id }          → apaga a conta do Auth
@@ -62,6 +64,7 @@ async function criarEmpresa(svc: Svc, b: Record<string, unknown>) {
   const email = String(b.email ?? "").trim().toLowerCase();
   const senha = String(b.senha ?? "");
   const planoId = b.plano_id ? String(b.plano_id) : null;
+  const status = b.aguardando_pagamento === true ? "aguardando_pagamento" : "ativo";
 
   if (!cnpjValido(cnpj)) return json({ erro: "CNPJ inválido." }, 400);
   if (nome.length < 2) return json({ erro: "Informe o nome da empresa." }, 400);
@@ -78,7 +81,7 @@ async function criarEmpresa(svc: Svc, b: Record<string, unknown>) {
   if ("erro" in conta) return json({ erro: conta.erro }, 409);
 
   const { data: esc, error: eEsc } = await svc.from("escritorios").insert({
-    nome, cnpj, responsavel, telefone, email, plano_id: planoId, status: "ativo",
+    nome, cnpj, responsavel, telefone, email, plano_id: planoId, status,
   }).select("id").single();
   if (eEsc || !esc) {
     await svc.auth.admin.deleteUser(conta.id);

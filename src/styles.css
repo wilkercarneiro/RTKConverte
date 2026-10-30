@@ -1244,3 +1244,90 @@ button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #f
   background: var(--primaria-clara); color: var(--floresta); font-size: 12.5px; font-weight: 700;
 }
 .concluido-selo .link { font-size: 12.5px; }
+
+/* ===== Créditos em carteiras, compra com Pix e mensalidade (0034) ===== */
+.cr-saldo b { color: var(--floresta); }
+.cr-carteiras { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.cr-carteira { display: grid; gap: 2px; padding: 12px 14px; border-radius: 12px; background: var(--primaria-clara); font-size: 13.5px; }
+.cr-carteira > span:first-child { font-size: 12px; font-weight: 600; color: var(--primaria-escura); }
+.cr-carteira.esgotada { background: #fff; box-shadow: inset 0 0 0 1px var(--borda); color: var(--texto-2); }
+.cr-carteira.esgotada > span:first-child { color: var(--texto-3); }
+.cr-carteira.esgotada .cr-saldo b { color: var(--perigo); }
+/* "créditos acabaram" e o aceite do crédito geral: um cartão, não texto solto no meio da tela */
+.centro > .sem-credito { text-align: left; background: var(--card); padding: 28px 30px; border-radius: 18px; box-shadow: 0 0 0 1px var(--borda), var(--sombra-alta); width: min(640px, 100%); max-width: 640px; }
+.sem-credito .acoes-linha { display: flex; flex-wrap: wrap; gap: 10px; }
+.cr-aceite .acoes-linha .principal { margin-left: auto; }
+.cr-aceite p { margin: 0; }
+@media (max-width: 720px) {
+  .centro > .sem-credito { padding: 22px 18px; }
+  .sem-credito .acoes-linha > button { flex: 1 1 100%; }
+  .cr-aceite .acoes-linha .principal { margin-left: 0; order: -1; }
+}
+.cr-nota { margin: 0; font-size: 12.5px; }
+.creditos-resumo .cr-linha { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+.cr-pilula { display: inline-flex; gap: 4px; align-items: baseline; padding: 2px 10px; border-radius: 999px; background: #fff; box-shadow: 0 0 0 1px var(--borda); font-size: 13px; }
+.creditos-resumo.alerta .cr-pilula { background: #fffdf8; }
+.cr-renova { font-size: 12.5px; color: var(--texto-3); }
+.cr-pago { display: grid; gap: 2px; padding: 12px 14px; border-radius: 12px; background: var(--primaria-clara); color: var(--primaria-escura); font-size: 13.5px; animation: fadeUp 0.2s ease both; }
+.cr-escolha { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.cr-escolha button { all: unset; box-sizing: border-box; cursor: pointer; display: grid; gap: 3px; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--borda); background: #fff; transition: border-color 0.15s ease, background 0.15s ease; }
+.cr-escolha button:hover { border-color: var(--borda-forte); }
+.cr-escolha button.ativo { border-color: var(--primaria); background: var(--primaria-clara); }
+.cr-escolha button:focus-visible { outline: 2px solid var(--primaria); outline-offset: 2px; }
+.cr-escolha b { font-size: 14px; }
+.cr-escolha small { font-size: 12px; color: var(--texto-2); line-height: 1.35; }
+.cr-escolha .cr-tem { color: var(--primaria-escura); font-weight: 600; }
+.cr-compra { display: grid; gap: 14px; padding: 16px; border-radius: 14px; border: 1px solid var(--borda); }
+.cr-qtd { display: grid; gap: 6px; }
+.cr-qtd label { font-size: 13px; font-weight: 600; color: var(--texto-2); }
+.cr-passo { display: grid; grid-template-columns: 44px 1fr 44px; gap: 8px; max-width: 240px; }
+.cr-passo button { height: 44px; padding: 0; font-size: 20px; font-weight: 600; border-radius: 12px; }
+.cr-passo input { height: 44px; text-align: center; font-size: 20px; font-weight: 700; border-radius: 12px; -moz-appearance: textfield; appearance: textfield; }
+.cr-passo input::-webkit-outer-spin-button, .cr-passo input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.cr-faixas { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.cr-faixas li .link { padding: 4px 10px; border-radius: 999px; font-size: 12.5px; color: var(--texto-2); background: #F3F5F4; text-decoration: none; }
+.cr-faixas li.atual .link { background: var(--floresta); color: #fff; font-weight: 600; }
+.cr-unit { margin: 0; font-size: 13px; }
+.cr-total { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 2px 12px; padding: 12px 14px; border-radius: 12px; background: #F4F7F5; }
+.cr-total > span { font-size: 13px; color: var(--texto-2); }
+.cr-total > b { font-family: var(--fonte-titulo); font-size: 28px; letter-spacing: -0.02em; color: var(--floresta); text-align: right; }
+.cr-total > small { grid-column: 1 / -1; text-align: right; color: var(--texto-3); font-size: 12px; }
+.cr-total > small.cr-dica { color: var(--primaria-escura); font-weight: 600; }
+.cr-pagar { height: 46px; font-size: 15px; }
+.cr-pix { display: grid; gap: 12px; justify-items: center; text-align: center; padding: 16px; border-radius: 14px; border: 1px solid var(--borda); }
+.cr-pix-topo { width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13.5px; }
+.cr-pix-topo b { font-family: var(--fonte-titulo); font-size: 22px; color: var(--floresta); }
+.cr-pix img { width: 208px; height: 208px; image-rendering: pixelated; border-radius: 10px; box-shadow: 0 0 0 1px var(--borda); }
+.cr-pix > .principal { width: 100%; max-width: 300px; height: 44px; }
+.cr-pix .botao-download { font-size: 13px; }
+.cr-esperando { display: flex; gap: 8px; align-items: center; justify-content: center; margin: 0; font-size: 12.5px; color: var(--texto-2); }
+.cr-pix > .link { font-size: 13px; padding: 0; }
+.botao-download.principal { background: var(--primaria); border-color: var(--primaria); color: #fff; }
+.botao-download.principal:hover { background: var(--primaria-escura); border-color: var(--primaria-escura); color: #fff; }
+.login-box.mens-box { width: 460px; background: var(--card); padding: 30px 32px; border-radius: 20px; box-shadow: 0 0 0 1px var(--borda), var(--sombra-alta); }
+.mens-box h2 { line-height: 1.2; }
+.mens-box .mens-cobranca .botao-download { height: 46px; font-size: 15px; }
+.mens-cobranca { display: grid; gap: 12px; margin: 14px 0; padding: 16px; border-radius: 14px; background: #F4F7F5; }
+.mens-cobranca > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.mens-cobranca > div span { font-size: 13px; color: var(--texto-2); }
+.mens-cobranca > div b { font-family: var(--fonte-titulo); font-size: 26px; color: var(--floresta); }
+.mens-cobranca > div small { font-size: 12.5px; color: var(--texto-3); }
+.mens-cobranca .botao-download { text-align: center; justify-content: center; }
+.mens-aviso { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; margin-bottom: 12px; padding: 10px 16px; border-radius: 12px; background: var(--alerta-claro); color: var(--alerta-escuro); font-size: 13.5px; }
+.mens-aviso.atrasada { background: var(--perigo-claro); color: var(--perigo); }
+.mens-aviso .link { padding: 0; font-weight: 700; color: inherit; }
+.pu-mensalidade { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
+.pu-mensalidade > div { display: grid; gap: 2px; padding: 10px 16px; border-radius: 12px; background: #F4F7F5; min-width: 150px; }
+.pu-mensalidade > div span { font-size: 12px; color: var(--texto-3); }
+.pu-mensalidade > div b { font-size: 16px; }
+.pu-mensalidade > .botao-download { align-self: center; margin-left: auto; }
+.pu-sit.em_dia { color: var(--primaria-escura); }
+.pu-sit.atrasada { color: var(--perigo); }
+.pu-sit.aguardando { color: var(--alerta-escuro); }
+.pu-precos { display: grid; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--linha); font-size: 13px; }
+.pu-precos > div { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.pu-precos span { color: var(--texto-2); }
+@media (max-width: 720px) {
+  .cr-passo { max-width: none; }
+  .pu-mensalidade > .botao-download { margin-left: 0; width: 100%; text-align: center; }
+}

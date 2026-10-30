@@ -33,9 +33,12 @@ import { servicoLiberado } from "./lib/recursos";
 import { definirPermissoes } from "./lib/permissoes";
 import { Equipe } from "./components/Equipe";
 import { TrocarSenhaObrigatoria } from "./components/TrocarSenha";
-import { SemCreditos } from "./components/Creditos";
-import { avisarConsumo, carregarCreditos, temCredito } from "./lib/creditos";
+import { AceiteCreditoGeral, SemCreditos } from "./components/Creditos";
+import { AguardandoPagamento } from "./components/Mensalidade";
+import { avisarConsumo, carregarCreditos, precisaAceite, temCredito } from "./lib/creditos";
 import type { Creditos } from "./lib/creditos";
+import { minhaCobranca } from "./lib/cobranca";
+import type { MinhaCobranca } from "./lib/cobranca";
 import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
 import { camposDoPedido, sincronizarGprol, useSincronismoPeriodico } from "./lib/gprol";
 import type { DadosPedido } from "./lib/gprol";
@@ -72,6 +75,10 @@ export default function App() {
   // créditos de serviço do mês (null = banco sem a 0027 ou ainda carregando: nada bloqueia)
   const [creditos, setCreditos] = useState<Creditos | null>(null);
   const atualizarCreditos = () => { carregarCreditos().then(setCreditos).catch(() => setCreditos(null)); };
+  // CAR sem crédito de CAR: a pessoa aceitou usar 1 crédito geral neste envio
+  const [aceiteGeral, setAceiteGeral] = useState<string | null>(null);
+  // mensalidade em aberto ou vencida (aviso no Início; null = sem cobrança ou banco sem a 0034)
+  const [cobranca, setCobranca] = useState<MinhaCobranca | null>(null);
 
   useEffect(() => {
     if (!configOk) return;
@@ -129,6 +136,12 @@ export default function App() {
     if (!logado || (rota.t !== "novo" && rota.t !== "inicio")) return;
     atualizarCreditos();
   }, [logado, rota.t]);
+  // o aceite vale para um envio: sair da tela de novo serviço esquece
+  useEffect(() => { if (rota.t !== "novo") setAceiteGeral(null); }, [rota.t]);
+  useEffect(() => {
+    if (!escritorioOk || rota.t !== "inicio") return;
+    minhaCobranca().then(setCobranca).catch(() => setCobranca(null));
+  }, [escritorioOk, rota.t]);
 
   // A rota é a fonte da verdade da navegação: o serviço da URL é carregado aqui,
   // e não empurrado por quem clicou. É isso que faz atualizar a página (F5) e o
@@ -209,6 +222,9 @@ export default function App() {
     );
   }
   if (escritorio.estado === "sem-escritorio") return <SemEscritorio email={usuario} />;
+  if (empresaBloqueada && escritorio.estado === "ok" && escritorio.escritorio.status === "aguardando_pagamento") {
+    return <AguardandoPagamento nome={escritorio.escritorio.nome} />;
+  }
   if (empresaBloqueada && escritorio.estado === "ok") return <EmpresaBloqueada nome={escritorio.escritorio.nome} status={escritorio.escritorio.status!} />;
   if (escritorio.estado === "ok" && escritorio.escritorio.ativo === false) return <EmpresaBloqueada nome={escritorio.escritorio.nome} status="desativado" />;
 
@@ -299,6 +315,16 @@ export default function App() {
           </AppShell>
         );
       }
+      // só o crédito geral paga (os de CAR acabaram): pergunta antes de abrir o envio
+      const usarGeral = aceiteGeral === def.chave;
+      if (precisaAceite(creditos, def.chave) && !usarGeral && def.entradaKml) {
+        return (
+          <AppShell {...casca}>
+            <AceiteCreditoGeral def={def} creditos={creditos!} onAceitar={() => setAceiteGeral(def.chave)}
+              onVoltar={() => ir(voltarDoNovo(rota).rota)} voltarPara={voltarDoNovo(rota).rotulo} onAtualizar={atualizarCreditos} />
+          </AppShell>
+        );
+      }
       // pedido do GPROL: se há um esperando esta modalidade, pergunta antes de criar
       const comPedido = (conteudo: ReactNode) => rota.pedidoId ? conteudo : (
         <EscolherPedido chave={def.chave} clienteId={rota.clienteId}
@@ -319,10 +345,10 @@ export default function App() {
         return (
           <AppShell {...casca}>
             {/* voltar leva à tela de origem (cliente, Início ou serviços) */}
-            {comPedido(<CarNovo definicao={def} clienteId={rota.clienteId} pedidoId={rota.pedidoId}
+            {comPedido(<CarNovo definicao={def} clienteId={rota.clienteId} pedidoId={rota.pedidoId} usarCreditoGeral={usarGeral}
               onVoltar={() => ir(voltarDoNovo(rota).rota)} voltarPara={voltarDoNovo(rota).rotulo}
-              onCriado={(servico) => {
-                void avisarConsumo(def.chave);
+              onCriado={(servico, usouGeral) => {
+                void avisarConsumo(def.chave, usouGeral);
                 setAberto({ servico, vertices: [], trechos: [], preview: previewVazio(servico) });
                 sincronizarGprol(1200, true);
                 substituir({ t: "servico", id: servico.id });
@@ -411,7 +437,7 @@ export default function App() {
         <AppShell {...casca}>
           <Inicio onNovo={(chave) => ir({ t: "novo", chave })} onAbrir={abrirServico}
             onVerServicos={() => ir({ t: "servicos" })} nome={usuario ?? undefined}
-            creditos={creditos} onAtualizarCreditos={atualizarCreditos}
+            creditos={creditos} onAtualizarCreditos={atualizarCreditos} cobranca={cobranca}
             onExecutarPedido={(p, chave) => ir({ t: "novo", chave, clienteId: p.cliente_id ?? undefined, pedidoId: p.id })}
             onConfigurarGprol={() => { guardar("config.aba", "integracoes"); ir({ t: "config" }); }} />
         </AppShell>

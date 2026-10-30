@@ -11,6 +11,7 @@ import { definirPermissoes } from "../lib/permissoes";
 import { definirRecursos } from "../lib/recursos";
 import type { Rota } from "../lib/rota";
 import type { Creditos } from "../lib/creditos";
+import { cobrancaDeExemplo, creditosDeExemplo, instalarCobrancaFalsa } from "./laboratorioCreditos";
 import { AppShell } from "./AppShell";
 import { Inicio } from "./Inicio";
 import { Equipe } from "./Equipe";
@@ -59,11 +60,8 @@ const USO = [
   { user_id: "u3", nome: "Paulo Sena", email: "paulo@dprol.com.br", ativo: true, sessoes: 3, minutos: 25, ultimo_acesso: dia(2), servicos_criados: 2, documentos: 0, alteracoes: 4, clientes: 0 },
   { user_id: "u4", nome: "Ana Lúcia", email: "ana@dprol.com.br", ativo: false, sessoes: 0, minutos: 0, ultimo_acesso: dia(32), servicos_criados: 0, documentos: 0, alteracoes: 0, clientes: 0 },
 ];
-const CREDITOS: Creditos = {
-  mes: "2026-10-01", total: { limite: 30, usado: 24, extra: 0 },
-  servicos: { "servico.completo": { limite: 20, usado: 17, extra: 0, disponivel: true }, "servico.car": { limite: 4, usado: 4, extra: 0, disponivel: false } },
-  sou_dono: true, pacotes: [], pedidos: [],
-};
+const CREDITOS: Creditos = creditosDeExemplo();
+instalarCobrancaFalsa(CREDITOS);
 const CHAMADOS = [
   { id: "ch1", numero: 128, assunto: "A planta A1 não gera no serviço Lagoa Seca", categoria: "erro", prioridade: "alta", status: "aguardando_cliente", criado_em: min(180), ultima_mensagem_em: min(12), ultima_mensagem_de: "suporte", nao_lidas: 1, autor: "Marta Ribeiro", meu: true, avaliacao: null, previa: "Corrigimos o limite do servidor. Pode gerar de novo?" },
   { id: "ch2", numero: 121, assunto: "Como separar a fazenda em duas glebas?", categoria: "duvida", prioridade: "normal", status: "aberto", criado_em: dia(1), ultima_mensagem_em: dia(1), ultima_mensagem_de: "cliente", nao_lidas: 0, autor: "Paulo Sena", meu: false, avaliacao: null, previa: "Tenho o TXT com os dois blocos e não sei por onde começar." },
@@ -93,7 +91,7 @@ const TUTORIAIS = [
 ].map(([modulo, titulo, descricao, duracao], i) => ({ id: `t${i}`, modulo, titulo, descricao, video_url: "https://youtu.be/dQw4w9WgXcQ", duracao, ordem: i, publicado: true }));
 
 const RPC: Record<string, unknown> = {
-  meus_creditos: CREDITOS, listar_membros: MEMBROS, listar_atividades: ATIVIDADES,
+  meus_creditos: CREDITOS, minha_cobranca: cobrancaDeExemplo("em_dia"), listar_membros: MEMBROS, listar_atividades: ATIVIDADES,
   pode_adicionar_membro: { ok: true, limite: 5, ativos: 3, sou_dono: true },
   listar_acessos: ACESSOS, uso_da_equipe: USO, meus_chamados: CHAMADOS, abrir_chamado: "ch2",
 };

@@ -3,8 +3,10 @@
 // usuários, pelas RPCs sa_* e pela edge function.
 import { chamarFuncao, supabase } from "./supabase";
 import { RECURSOS } from "./recursos";
+import type { SituacaoCobranca } from "./cobranca";
+import type { Carteira, Faixa } from "./creditos";
 
-export type StatusEmpresa = "ativo" | "suspenso" | "cancelado";
+export type StatusEmpresa = "ativo" | "aguardando_pagamento" | "suspenso" | "cancelado";
 
 export interface Empresa {
   id: string; nome: string; cnpj: string | null; responsavel: string | null;
@@ -12,13 +14,20 @@ export interface Empresa {
   plano_id: string | null; plano: string | null; observacoes: string | null; created_at: string;
   usuarios: number; servicos: number; servicos_30d: number;
   ultimo_servico: string | null; ultimo_acesso: string | null; excecoes: number;
+  /** a mensalidade que vale (da empresa, senão do plano; 0034) */
+  mensalidade?: number | null;
+  /** situação da assinatura no Asaas (null = sem cobrança) */
+  cobranca?: SituacaoCobranca | null;
+  vencimento?: string | null;
 }
 
 export interface Plano {
   id: string; nome: string; descricao: string | null; cor: string; ordem: number; ativo: boolean;
   limite_usuarios?: number | null;
-  /** teto de serviços no mês, somando todos (0027; null = sem teto) */
-  limite_servicos_mes?: number | null;
+  /** mensalidade (0034; null = não definida) */
+  preco_mensal?: number | null;
+  /** false: recurso novo do catálogo nasce bloqueado neste plano */
+  libera_recursos_novos?: boolean;
 }
 export interface RecursoBanco {
   chave: string; nome: string; grupo: string; descricao: string | null;
@@ -65,7 +74,7 @@ export const listarPlanos = async (): Promise<Plano[]> =>
   ok(await supabase.from("planos").select().order("ordem").order("nome")) ?? [];
 export const listarRecursos = async (): Promise<RecursoBanco[]> =>
   ok(await supabase.from("recursos").select().order("ordem").order("chave")) ?? [];
-export const matrizPlanos = async (): Promise<{ plano_id: string; recurso_chave: string; liberado: boolean; limite_mes?: number | null }[]> =>
+export const matrizPlanos = async (): Promise<{ plano_id: string; recurso_chave: string; liberado: boolean }[]> =>
   ok(await supabase.from("plano_recursos").select()) ?? [];
 export const usuariosDaEmpresa = async (id: string): Promise<UsuarioEmpresa[]> =>
   ok(await supabase.rpc("sa_empresa_usuarios", { p_escritorio: id })) ?? [];
@@ -76,7 +85,7 @@ export const usoModalidades = async (id: string | null, dias = 30): Promise<{ ch
 export const serieServicos = async (dias = 30): Promise<{ dia: string; total: number }[]> =>
   ok(await supabase.rpc("sa_serie_servicos", { p_dias: dias })) ?? [];
 
-export async function atualizarEmpresa(id: string, dados: Partial<Pick<Empresa, "nome" | "cnpj" | "responsavel" | "telefone" | "email" | "plano_id" | "status" | "observacoes">>): Promise<void> {
+export async function atualizarEmpresa(id: string, dados: Partial<Pick<Empresa, "nome" | "cnpj" | "responsavel" | "telefone" | "email" | "plano_id" | "status" | "observacoes" | "mensalidade">>): Promise<void> {
   ok(await supabase.rpc("sa_atualizar_empresa", { p_escritorio: id, p_dados: dados }));
 }
 
@@ -88,7 +97,8 @@ export async function salvarPlano(p: Partial<Plano> & { nome: string }): Promise
   const linha = {
     nome: p.nome.trim(), descricao: p.descricao ?? null, cor: p.cor ?? "#178552", ordem: p.ordem ?? 0, ativo: p.ativo ?? true,
     ...(p.limite_usuarios !== undefined ? { limite_usuarios: p.limite_usuarios || null } : {}),
-    ...(p.limite_servicos_mes !== undefined ? { limite_servicos_mes: p.limite_servicos_mes ?? null } : {}),
+    ...(p.preco_mensal !== undefined ? { preco_mensal: p.preco_mensal ?? null } : {}),
+    ...(p.libera_recursos_novos !== undefined ? { libera_recursos_novos: p.libera_recursos_novos } : {}),
   };
   const r = p.id
     ? await supabase.from("planos").update(linha).eq("id", p.id).select().single()
@@ -106,54 +116,92 @@ export async function salvarMatrizPlano(planoId: string, valores: Record<string,
   if (linhas.length) ok(await supabase.from("plano_recursos").upsert(linhas, { onConflict: "plano_id,recurso_chave" }));
 }
 
-/** Teto mensal de cada serviço no plano (null = sem teto). `liberado` vai junto: a linha pode não existir. */
-export async function salvarLimitesPlano(planoId: string, linhas: { recurso_chave: string; liberado: boolean; limite_mes: number | null }[]): Promise<void> {
-  if (linhas.length) ok(await supabase.from("plano_recursos").upsert(linhas.map((l) => ({ plano_id: planoId, ...l })), { onConflict: "plano_id,recurso_chave" }));
+// ---- créditos em carteiras e cobrança (0027 + 0034)
+export interface TipoCredito { chave: string; nome: string; descricao: string | null; servicos: string[] | null; ordem: number; ativo: boolean }
+export const listarTiposCredito = async (): Promise<TipoCredito[]> =>
+  ok(await supabase.from("tipos_credito").select().eq("ativo", true).order("ordem")) ?? [];
+/** plano → carteira → créditos por mês (null = sem limite; sem linha = 0) */
+export async function creditosDosPlanos(): Promise<Record<string, Record<string, number | null>>> {
+  const linhas = (ok(await supabase.from("plano_creditos").select()) ?? []) as { plano_id: string; tipo: string; por_mes: number | null }[];
+  const m: Record<string, Record<string, number | null>> = {};
+  for (const l of linhas) (m[l.plano_id] ??= {})[l.tipo] = l.por_mes;
+  return m;
+}
+/** plano → carteira → faixas de preço */
+export async function precosDosPlanos(): Promise<Record<string, Record<string, Faixa[]>>> {
+  const linhas = (ok(await supabase.from("precos_credito").select().not("plano_id", "is", null)) ?? []) as { plano_id: string; tipo: string; a_partir_de: number; preco: number }[];
+  const m: Record<string, Record<string, Faixa[]>> = {};
+  for (const l of linhas) ((m[l.plano_id] ??= {})[l.tipo] ??= []).push({ a_partir_de: l.a_partir_de, preco: Number(l.preco) });
+  for (const p of Object.values(m)) for (const f of Object.values(p)) f.sort((a, b) => a.a_partir_de - b.a_partir_de);
+  return m;
+}
+export async function salvarCreditosPlano(planoId: string, tipo: string, porMes: number | null): Promise<void> {
+  ok(await supabase.from("plano_creditos").upsert({ plano_id: planoId, tipo, por_mes: porMes }, { onConflict: "plano_id,tipo" }));
+}
+/** Tabela de preço de um plano (lista vazia = não vende) ou de uma empresa (null = volta à do plano). */
+export async function salvarPrecos(alvo: { plano: string } | { empresa: string }, tipo: string, faixas: Faixa[] | null): Promise<void> {
+  ok(await supabase.rpc("sa_definir_precos", {
+    p_plano: "plano" in alvo ? alvo.plano : null, p_escritorio: "empresa" in alvo ? alvo.empresa : null, p_tipo: tipo, p_faixas: faixas,
+  }));
 }
 
-// ---- créditos de serviço (0027)
-export interface PacoteCredito {
-  id: string; escritorio_id: string; nome: string; chave: string; quantidade: number;
-  preco: number | null; ativo: boolean; ordem: number;
-}
 export interface CreditoExtra {
-  id: string; chave: string; quantidade: number; preco: number | null; descricao: string | null;
-  origem: "pedido" | "manual"; status: "pendente" | "aprovado" | "recusado" | "cancelado";
+  id: string; tipo: string; quantidade: number; preco: number | null; valor_unitario: number | null; descricao: string | null;
+  origem: "pedido" | "manual" | "compra"; status: "pendente" | "aprovado" | "recusado" | "cancelado";
   observacao: string | null; created_at: string; resolvido_em: string | null; quem: string | null;
+  link: string | null; pagamento: string | null; forma: string | null;
 }
-export interface Saldo { limite: number | null; usado: number; extra: number }
 export interface CreditosEmpresa {
-  mes: string;
-  total: Saldo;
-  servicos: Record<string, Saldo & { disponivel: boolean }>;
-  /** tetos do plano (null quando a empresa está sem plano) */
-  plano: { total: number | null; servicos: Record<string, number | null> } | null;
-  /** tetos negociados com a empresa: chave presente = troca o do plano (valor null = sem teto) */
-  negociado: Record<string, number | null>;
-  pacotes: PacoteCredito[];
+  periodo: { inicio: string; renova_em: string; dia: number };
+  carteiras: Carteira[];
+  servicos: Record<string, { disponivel: boolean; carteira: string | null; precisa_aceite: boolean }>;
+  /** o que o plano dá e cobra (null quando a empresa está sem plano) */
+  plano: {
+    id: string; nome: string; preco_mensal: number | null;
+    por_mes: Record<string, number | null>; tem_carteira: Record<string, boolean>; precos: Record<string, Faixa[]>;
+  } | null;
+  /** o que vale só para ela: chave presente = vence o plano */
+  empresa: { mensalidade: number | null; por_mes: Record<string, number | null>; precos: Record<string, Faixa[]> };
+  /** a mensalidade que vale */
+  mensalidade: number | null;
   extras: CreditoExtra[];
-  historico: { mes: string; total: number }[];
+  historico: { mes: string; por_tipo: Record<string, number>; total: number }[];
 }
-export interface PedidoPendente { id: string; escritorio_id: string; empresa: string; chave: string; quantidade: number; preco: number | null; descricao: string | null; created_at: string }
+export interface PedidoPendente {
+  id: string; escritorio_id: string; empresa: string; tipo: string; quantidade: number; preco: number | null;
+  descricao: string | null; origem: "pedido" | "compra"; link: string | null; created_at: string;
+}
 
 export const creditosDaEmpresa = async (id: string): Promise<CreditosEmpresa> =>
   ok(await supabase.rpc("sa_creditos_empresa", { p_escritorio: id }));
-export async function definirLimiteEmpresa(id: string, chave: string, limite: number | null, seguirPlano = false): Promise<void> {
-  ok(await supabase.rpc("sa_definir_limite_empresa", { p_escritorio: id, p_chave: chave, p_limite: limite, p_seguir_plano: seguirPlano }));
-}
-export async function salvarPacote(p: Partial<PacoteCredito> & { escritorio_id: string; nome: string; quantidade: number }): Promise<void> {
-  const linha = { escritorio_id: p.escritorio_id, nome: p.nome.trim(), chave: p.chave ?? "total", quantidade: p.quantidade, preco: p.preco ?? null, ativo: p.ativo ?? true, ordem: p.ordem ?? 0 };
-  ok(p.id ? await supabase.from("pacotes_credito").update(linha).eq("id", p.id) : await supabase.from("pacotes_credito").insert(linha));
-}
-export async function excluirPacote(id: string): Promise<void> {
-  ok(await supabase.from("pacotes_credito").delete().eq("id", id));
+/** Créditos por mês só desta empresa (seguirPlano = volta ao plano; porMes null = sem limite). */
+export async function definirCreditosEmpresa(id: string, tipo: string, porMes: number | null, seguirPlano = false): Promise<void> {
+  ok(await supabase.rpc("sa_definir_creditos_empresa", { p_escritorio: id, p_tipo: tipo, p_por_mes: porMes, p_seguir_plano: seguirPlano }));
 }
 export async function resolverPedidoCredito(id: string, aprovar: boolean, observacao?: string): Promise<void> {
   ok(await supabase.rpc("sa_resolver_pedido_credito", { p_id: id, p_aprovar: aprovar, p_observacao: observacao ?? null }));
 }
-export async function adicionarCreditos(id: string, chave: string, quantidade: number, descricao?: string, preco?: number | null): Promise<void> {
-  ok(await supabase.rpc("sa_adicionar_creditos", { p_escritorio: id, p_chave: chave, p_quantidade: quantidade, p_descricao: descricao ?? null, p_preco: preco ?? null }));
+export async function adicionarCreditos(id: string, tipo: string, quantidade: number, descricao?: string, preco?: number | null): Promise<void> {
+  ok(await supabase.rpc("sa_adicionar_creditos", { p_escritorio: id, p_tipo: tipo, p_quantidade: quantidade, p_descricao: descricao ?? null, p_preco: preco ?? null }));
 }
+
+export interface PagamentoEmpresa {
+  id: string; finalidade: "mensalidade" | "creditos"; asaas_id: string | null; valor: number; status: string;
+  forma: string | null; link: string | null; vencimento: string | null; pago_em: string | null; criado_em: string;
+  erro: string | null; descricao: string | null;
+}
+export interface CobrancaEmpresa {
+  mensalidade: number | null;
+  pagamento_online: boolean;
+  assinatura: {
+    asaas_cliente_id: string | null; asaas_assinatura_id: string | null; valor: number | null; situacao: SituacaoCobranca;
+    link_pagamento: string | null; proximo_vencimento: string | null; ultimo_pagamento_em: string | null;
+    whatsapp_em: string | null; whatsapp_erro: string | null;
+  } | null;
+  pagamentos: PagamentoEmpresa[];
+}
+export const cobrancaDaEmpresa = async (id: string): Promise<CobrancaEmpresa> =>
+  ok(await supabase.rpc("sa_cobranca_empresa", { p_escritorio: id }));
 /** Pedidos esperando aprovação, de todas as empresas. Banco sem a 0027: lista vazia. */
 export async function pedidosPendentes(): Promise<PedidoPendente[]> {
   const r = await supabase.rpc("sa_pedidos_credito_pendentes");
@@ -175,7 +223,11 @@ export async function mudarStatusContato(id: string, status: Contato["status"]):
 }
 
 // ---- edge function
-export interface NovaEmpresa { cnpj: string; nome: string; responsavel: string; telefone: string; email: string; senha: string; plano_id: string | null }
+export interface NovaEmpresa {
+  cnpj: string; nome: string; responsavel: string; telefone: string; email: string; senha: string; plano_id: string | null;
+  /** nasce sem acesso até pagar a 1ª mensalidade (0034) */
+  aguardando_pagamento?: boolean;
+}
 export const criarEmpresa = (d: NovaEmpresa) =>
   chamarFuncao<{ ok: true; escritorio_id: string; user_id: string; login: string }>("superadmin", { acao: "criar_empresa", ...d });
 export const adicionarUsuario = (escritorio_id: string, email: string, senha: string, papel: "dono" | "membro") =>

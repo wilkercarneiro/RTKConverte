@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { pedidosPendentes, serieServicos, usoModalidades } from "../../lib/admin";
 import type { PedidoPendente } from "../../lib/admin";
-import { fmtPreco, nomeDaChave } from "../../lib/creditos";
+import { fmtPreco } from "../../lib/creditos";
 import { recursoDe } from "../../lib/recursos";
 import type { DadosAdmin } from "./PainelAdmin";
 import { Dica } from "../ui";
@@ -31,6 +31,11 @@ export function VisaoGeral({ d }: { d: DadosAdmin }) {
   ].filter((x) => x.n > 0 || x.id);
   const maxPlano = Math.max(1, ...porPlano.map((p) => p.n));
   const recentes = [...d.empresas].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 5);
+  // sem o Asaas, alguém aprova; com ele, a compra só espera o pagamento (não pede ação)
+  const aprovar = pedidos.filter((p) => p.origem === "pedido");
+  const nomeTipo = (t: string) => d.tipos.find((x) => x.chave === t)?.nome ?? t;
+  // cobrança que pede atenção: empresa esperando a 1ª mensalidade ou com a mensalidade vencida
+  const cobranca = d.empresas.filter((e) => e.status === "aguardando_pagamento" || e.cobranca === "atrasada");
 
   return (
     <>
@@ -52,15 +57,35 @@ export function VisaoGeral({ d }: { d: DadosAdmin }) {
           onClick={() => d.ir({ t: "admin", aba: "suporte" })} />
       </section>
 
-      {pedidos.length > 0 && (
+      {aprovar.length > 0 && (
         <section className="sa-card" style={{ marginBottom: 18 }}>
-          <header><h3>Pedidos de créditos aguardando<Dica>aprove na página da empresa, aba Créditos, depois de combinar o pagamento</Dica></h3></header>
+          <header><h3>Pedidos de créditos aguardando<Dica>feitos sem o pagamento online: aprove na página da empresa, aba Créditos extras, depois de combinar o pagamento</Dica></h3></header>
           <div className="sa-lista">
-            {pedidos.map((p) => (
+            {aprovar.map((p) => (
               <button type="button" key={p.id} className="sa-item" onClick={() => d.ir({ t: "admin", aba: "empresas", id: p.escritorio_id })}>
                 <span className="av">{iniciais(p.empresa)}</span>
                 <span style={{ flex: 1, textAlign: "left" }}><b>{p.empresa}</b>
-                  <span className="sub" style={{ display: "block", fontSize: 12 }}>{p.quantidade} · {nomeDaChave(p.chave)} · {fmtPreco(p.preco)} · {quando(p.created_at)}</span>
+                  <span className="sub" style={{ display: "block", fontSize: 12 }}>{p.quantidade} · {nomeTipo(p.tipo)} · {fmtPreco(p.preco)} · {quando(p.created_at)}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {cobranca.length > 0 && (
+        <section className="sa-card" style={{ marginBottom: 18 }}>
+          <header><h3>Mensalidades que pedem atenção<Dica>empresas esperando a 1ª mensalidade (sem acesso até pagar) ou com a mensalidade vencida</Dica></h3></header>
+          <div className="sa-lista">
+            {cobranca.map((e) => (
+              <button type="button" key={e.id} className="sa-item" onClick={() => d.ir({ t: "admin", aba: "empresas", id: e.id })}>
+                <span className="av">{iniciais(e.nome)}</span>
+                <span style={{ flex: 1, textAlign: "left" }}><b>{e.nome}</b>
+                  <span className="sub" style={{ display: "block", fontSize: 12 }}>
+                    {e.status === "aguardando_pagamento" ? "esperando a 1ª mensalidade" : "mensalidade vencida"}
+                    {e.mensalidade != null && ` · ${fmtPreco(Number(e.mensalidade))}`}
+                    {e.vencimento && ` · vencimento ${new Date(`${e.vencimento}T12:00:00`).toLocaleDateString("pt-BR")}`}
+                  </span>
                 </span>
               </button>
             ))}

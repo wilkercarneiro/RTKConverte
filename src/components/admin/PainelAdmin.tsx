@@ -7,9 +7,9 @@ import { useCallback, useEffect, useState } from "react";
 import "./admin.css";
 import { supabase } from "../../lib/supabase";
 import {
-  listarContatos, listarEmpresas, listarPlanos, listarRecursos, sincronizarRecursos,
+  listarContatos, listarEmpresas, listarPlanos, listarRecursos, listarTiposCredito, sincronizarRecursos,
 } from "../../lib/admin";
-import type { Contato, Empresa, Plano, RecursoBanco } from "../../lib/admin";
+import type { Contato, Empresa, Plano, RecursoBanco, TipoCredito } from "../../lib/admin";
 import type { Rota } from "../../lib/rota";
 import { Logo } from "../Logo";
 import { Carregando, ICO, Ico } from "./comum";
@@ -34,6 +34,8 @@ export interface DadosAdmin {
   planos: Plano[];
   recursos: RecursoBanco[];
   contatos: Contato[];
+  /** carteiras de crédito (0034; vazio = banco sem a migração) */
+  tipos: TipoCredito[];
   /** recursos que entraram no catálogo nesta abertura do painel */
   novosRecursos: number;
   /** central de suporte (0029); null = banco sem a migração */
@@ -90,8 +92,10 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
 
   const recarregar = useCallback(async () => {
     try {
-      const [empresas, planos, recursos, contatos] = await Promise.all([listarEmpresas(), listarPlanos(), listarRecursos(), listarContatos()]);
-      setDados((d) => ({ empresas, planos, recursos, contatos, novosRecursos: d?.novosRecursos ?? 0 }));
+      const [empresas, planos, recursos, contatos, tipos] = await Promise.all([
+        listarEmpresas(), listarPlanos(), listarRecursos(), listarContatos(), listarTiposCredito().catch(() => []),
+      ]);
+      setDados((d) => ({ empresas, planos, recursos, contatos, tipos, novosRecursos: d?.novosRecursos ?? 0 }));
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
     }
@@ -102,8 +106,10 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
       let novos = 0;
       try { novos = await sincronizarRecursos(); } catch (e) { setErro(`Não foi possível sincronizar os recursos: ${e instanceof Error ? e.message : e}`); }
       try {
-        const [empresas, planos, recursos, contatos] = await Promise.all([listarEmpresas(), listarPlanos(), listarRecursos(), listarContatos()]);
-        setDados({ empresas, planos, recursos, contatos, novosRecursos: novos });
+        const [empresas, planos, recursos, contatos, tipos] = await Promise.all([
+          listarEmpresas(), listarPlanos(), listarRecursos(), listarContatos(), listarTiposCredito().catch(() => []),
+        ]);
+        setDados({ empresas, planos, recursos, contatos, tipos, novosRecursos: novos });
       } catch (e) {
         setErro(e instanceof Error ? e.message : String(e));
       }

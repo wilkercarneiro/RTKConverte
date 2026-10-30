@@ -3,7 +3,9 @@
 // exemplo, sem banco. Troca o `rpc`/`from`/`auth` do cliente do Supabase por
 // respostas fixas — nada sai do navegador.
 //   #/lab/casca/inicio · #/lab/casca/clientes · #/lab/casca/cliente[/<id>]
-//   #/lab/casca/equipe · #/lab/casca/creditos
+//   #/lab/casca/equipe · #/lab/casca/creditos (CAR sem crédito) · #/lab/casca/aceite (CAR com o geral)
+//   #/lab/casca/socar (plano Só CAR) · #/lab/casca/pagamento (empresa esperando a 1ª mensalidade)
+//   ?semasaas: compra de créditos sem o pagamento online
 //   ?operador na URL: entra como membro sem permissões de gestão
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
@@ -15,10 +17,12 @@ import { Inicio } from "./Inicio";
 import { Clientes } from "./Clientes";
 import { ClientePage } from "./ClientePage";
 import { Equipe } from "./Equipe";
-import { SemCreditos } from "./Creditos";
+import { AceiteCreditoGeral, SemCreditos } from "./Creditos";
+import { AguardandoPagamento } from "./Mensalidade";
 import { avisarConsumo } from "../lib/creditos";
 import type { Creditos } from "../lib/creditos";
-import { definicaoDe } from "../lib/modalidades";
+import { definicaoDe, SERVICOS as SERVICOS_CATALOGO } from "../lib/modalidades";
+import { cobrancaDeExemplo, creditosDeExemplo, instalarCobrancaFalsa } from "./laboratorioCreditos";
 
 type Linha = Record<string, unknown>;
 const dia = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
@@ -136,24 +140,19 @@ const HISTORICO: Record<string, Linha[]> = {
   ],
 };
 
-// créditos (0027): CAR esgotado, o resto com folga
-const CREDITOS: Creditos = {
-  mes: "2026-10-01",
-  total: { limite: 30, usado: 27, extra: 0 },
-  servicos: {
-    "servico.completo": { limite: 20, usado: 18, extra: 0, disponivel: true },
-    "servico.car": { limite: 4, usado: 4, extra: 0, disponivel: false },
-  },
-  sou_dono: true,
-  pacotes: [
-    { id: "p1", nome: "10 serviços extras", chave: "total", quantidade: 10, preco: 900 },
-    { id: "p2", nome: "CAR 10", chave: "servico.car", quantidade: 10, preco: 450 },
-  ],
-  pedidos: [{ id: "x1", chave: "total", quantidade: 5, preco: null, descricao: "Pedido avulso", status: "aprovado", created_at: "2026-10-12T12:00:00Z" }],
-};
+// créditos em carteiras (0034): o cenário vem da tela
+//   creditos = CAR e geral esgotados · aceite = CAR esgotado, geral sobrando
+//   socar = plano Só CAR · inicio = folga, com a mensalidade vencida
+const TELA = location.hash.replace(/^#\/lab\/casca\/?/, "").split(/[/?]/)[0] || "inicio";
+const CREDITOS: Creditos = creditosDeExemplo({
+  carEsgotado: TELA === "creditos" || TELA === "aceite", geralEsgotado: TELA === "creditos", soCar: TELA === "socar",
+  semAsaas: location.hash.includes("semasaas"),
+});
 
 const RPC: Record<string, unknown> = {
   meus_creditos: CREDITOS,
+  minha_cobranca: TELA === "pagamento" ? { ...cobrancaDeExemplo("aguardando", "aguardando_pagamento"), vencimento: "2026-10-30" }
+    : TELA === "inicio" ? cobrancaDeExemplo("atrasada") : cobrancaDeExemplo("em_dia"),
   listar_membros: MEMBROS,
   listar_atividades: ATIVIDADES,
   pode_adicionar_membro: { ok: true, limite: 5, ativos: 3, sou_dono: true },
@@ -233,8 +232,10 @@ function instalar(operador: boolean) {
     }
     return r({ ok: true, enviados: 0, recebidos: 0 });
   };
-  definirRecursos(null);
+  // Só CAR: o plano libera só o CAR
+  definirRecursos(TELA === "socar" ? Object.fromEntries(SERVICOS_CATALOGO.map((s) => [`servico.${s.chave}`, s.chave === "car"])) : null);
   definirPermissoes(operador ? { dono: false, lista: ["servicos.criar"] } : { dono: true, lista: [] });
+  instalarCobrancaFalsa(CREDITOS);
 }
 
 export function LaboratorioCasca() {
@@ -243,10 +244,14 @@ export function LaboratorioCasca() {
   const [caminho] = location.hash.replace(/^#\/lab\/casca\/?/, "").split("?");
   const [tela = "inicio", idCliente] = caminho.split("/").filter(Boolean);
   const [, forcar] = useState(0);
+  // a compra "paga" muda o objeto dos créditos: uma cópia nova redesenha a gaveta
+  const [cred, setCred] = useState<Creditos>(CREDITOS);
+  const atualizar = () => setCred({ ...CREDITOS, carteiras: CREDITOS.carteiras.map((k) => ({ ...k })), compras: [...CREDITOS.compras] });
   if (tela === "creditos" && !(window as { _avisou?: boolean })._avisou) {
     (window as { _avisou?: boolean })._avisou = true;
     setTimeout(() => void avisarConsumo("completo"), 300);
   }
+  if (tela === "pagamento") return <AguardandoPagamento nome="D'Prol Georreferenciamento" />;
   const rota: Rota = tela === "equipe" ? { t: "equipe" }
     : tela === "cliente" ? { t: "cliente", id: idCliente || "c1" }
       : tela === "clientes" ? { t: "clientes" } : { t: "inicio" };
@@ -259,11 +264,13 @@ export function LaboratorioCasca() {
   return (
     <AppShell rota={rota} ir={ir} usuario={{ nome: operador ? "Paulo Sena" : "Daniel Nascimento", papel: operador ? "Equipe · D'Prol" : "Dono · D'Prol" }} superadmin={!operador}>
       {tela === "equipe" ? <Equipe escritorio={escritorio} />
-        : tela === "creditos" ? <SemCreditos def={definicaoDe("car")} creditos={CREDITOS} onVoltar={() => ir({ t: "inicio" })} onAtualizar={() => {}} />
+        : tela === "creditos" ? <SemCreditos def={definicaoDe("car")} creditos={cred} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizar} />
+        : tela === "aceite" ? <AceiteCreditoGeral def={definicaoDe("car")} creditos={cred} onAceitar={() => {}} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizar} />
         : tela === "clientes" ? <Clientes onAbrir={(id) => ir({ t: "cliente", id })} />
         : tela === "cliente" ? <ClientePage key={idCliente || "c1"} clienteId={idCliente || "c1"} onVoltar={() => ir({ t: "clientes" })}
             onAbrirServico={() => {}} onNovoServico={() => {}} onExecutarPedido={() => {}} />
-          : <Inicio onNovo={() => {}} onAbrir={() => {}} onVerServicos={() => {}} nome="Daniel Nascimento" creditos={CREDITOS} />}
+          : <Inicio onNovo={() => {}} onAbrir={() => {}} onVerServicos={() => {}} nome="Daniel Nascimento" creditos={cred} onAtualizarCreditos={atualizar}
+              cobranca={RPC.minha_cobranca as ReturnType<typeof cobrancaDeExemplo>} />}
     </AppShell>
   );
 }

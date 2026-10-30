@@ -27,6 +27,8 @@ export async function criarServicoCar(dados: {
   arquivo: string; projeto: ProjetoCar; uf: string | null; municipio: string | null; clienteId?: string;
   /** pedido do GPROL que este CAR executa */
   pedidoId?: string;
+  /** os créditos de CAR acabaram e a pessoa aceitou pagar com 1 crédito geral (0034) */
+  usarCreditoGeral?: boolean;
 }): Promise<Servico> {
   if (!(await carDisponivel())) {
     throw new Error("O banco ainda não tem a atualização do CAR (migração 0023_car). Peça para aplicá-la e tente de novo.");
@@ -43,6 +45,7 @@ export async function criarServicoCar(dados: {
     uf: dados.uf, municipio: dados.municipio,
     ...cliente,
     ...(dados.pedidoId ? { pedido_externo_id: dados.pedidoId } : {}),
+    ...(dados.usarCreditoGeral ? { usar_credito_geral: true } : {}),
   }).select().single();
   if (error) throw new Error(error.message);
   const servico = data as Servico;

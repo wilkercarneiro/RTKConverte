@@ -646,3 +646,68 @@ button.sa-kpi:hover, button.sa-kpi:focus-visible { transform: translateY(-2px); 
 
 /* acessos recentes (página da empresa, aba Uso) */
 .sa-acessos td { vertical-align: top; }
+
+/* ===== Planos, carteiras de crédito e cobrança (0034) ===== */
+.sa-planos { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+.sa-plano-cartao { border-top: 4px solid var(--primaria); display: grid; gap: 12px; align-content: start; }
+.sa-plano-cartao > header { display: flex; flex-wrap: nowrap; justify-content: space-between; align-items: flex-start; gap: 10px; margin: 0; }
+.sa-plano-cartao > header > div { flex: 1; min-width: 0; }
+.sa-plano-cartao > header > button { flex: none; }
+.sa-plano-cartao h3 { margin: 0; font-size: 18px; }
+.sa-plano-cartao header button { height: 30px; font-size: 12.5px; padding: 0 12px; }
+.sa-plano-preco { display: flex; align-items: baseline; gap: 4px; }
+.sa-plano-preco b { font-family: var(--fonte-titulo); font-size: 28px; letter-spacing: -0.02em; color: var(--floresta); }
+.sa-plano-preco span { color: var(--texto-3); font-size: 13px; }
+.sa-plano-preco .sa-falta { font-size: 13px; font-weight: 600; color: var(--alerta-escuro); background: var(--alerta-claro); padding: 3px 10px; border-radius: 999px; }
+.sa-plano-creditos { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 13.5px; }
+.sa-plano-creditos li { display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; background: #F4F7F5; }
+.sa-plano-creditos li b { font-size: 16px; color: var(--floresta); }
+.sa-plano-creditos small { color: var(--texto-3); font-size: 12px; }
+.sa-planos-fora { margin-top: 16px; }
+.sa-planos-fora > summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--texto-2); padding: 6px 2px; }
+.sa-planos-fora .sa-planos { margin-top: 12px; opacity: 0.8; }
+.sa-carteiras-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-top: 18px; }
+.sa-carteiras-form fieldset { margin: 0; border: 1px solid var(--borda); border-radius: 14px; padding: 12px 16px 14px; display: grid; gap: 10px; align-content: start; }
+.sa-carteiras-form legend { font-weight: 700; font-size: 14px; padding: 0 6px; color: var(--floresta); }
+.sa-carteiras-form label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; color: var(--texto-2); }
+.sa-carteiras-form input { height: 38px; border-radius: 10px; }
+.sa-rotulo-faixas { font-size: 13px; font-weight: 600; color: var(--texto-2); }
+.sa-faixas { display: grid; gap: 8px; }
+.sa-faixa { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+.sa-faixa label { display: grid; gap: 3px; font-size: 11.5px; font-weight: 600; color: var(--texto-3); }
+.sa-faixa input { height: 34px; border-radius: 9px; font-size: 13px; width: 100%; min-width: 0; }
+.sa-faixa > button { height: 34px; width: 34px; padding: 0; }
+.sa-faixas > .link { justify-self: start; padding: 0; font-size: 13px; }
+.sa-faixas small { font-size: 12px; }
+.sa-limites .sa-faixas { margin-top: 8px; min-width: 240px; }
+.sa-faixas-texto { display: block; margin-top: 6px; font-size: 12px; }
+.sa-cobranca { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.sa-cobranca > div { display: grid; gap: 3px; padding: 12px 14px; border-radius: 12px; background: #F4F7F5; }
+.sa-cobranca span { font-size: 12px; color: var(--texto-3); }
+.sa-cobranca b { font-size: 15.5px; }
+.sa-cobranca small { font-size: 11.5px; }
+.sa-fatura { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; padding: 10px 14px; border-radius: 12px; border: 1px dashed var(--borda-forte); font-size: 13px; }
+.sa-fatura > span { font-weight: 600; color: var(--texto-2); }
+.sa-fatura a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12.5px; }
+.sa-fatura button { height: 30px; font-size: 12.5px; }
+.sa-link { font-size: 13px; font-weight: 600; }
+.sa-pre { white-space: pre-wrap; margin: 0; font-family: var(--fonte); font-size: 13.5px; line-height: 1.5; background: #F4F7F5; border-radius: 12px; padding: 14px 16px; color: var(--texto); }
+.sa-msg-cobranca { box-shadow: 0 0 0 2px var(--primaria-clara), var(--sa-anel); }
+.sa-gaveta .sa-msg-cobranca { margin-top: 16px; box-shadow: 0 0 0 1px var(--borda); }
+.sa-config { display: grid; gap: 18px; max-width: 920px; }
+.sa-teste-zap { display: flex; gap: 8px; margin-right: auto; }
+.sa-teste-zap input { width: 170px; height: 38px; }
+.sa-cobranca-nova { margin: 18px 0 0; border: 1px solid var(--borda); border-radius: 14px; padding: 10px 14px 12px; display: grid; gap: 8px; }
+.sa-cobranca-nova legend { font-weight: 700; font-size: 13.5px; padding: 0 6px; color: var(--floresta); }
+.sa-opcao { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; cursor: pointer; }
+.sa-opcao:has(input:checked) { background: var(--primaria-clara); }
+.sa-opcao:has(input:disabled) { cursor: default; opacity: 0.75; }
+.sa-opcao input { margin-top: 3px; accent-color: var(--primaria); }
+.sa-opcao span { display: grid; gap: 2px; font-size: 13.5px; }
+.sa-opcao small { color: var(--texto-2); font-size: 12.5px; }
+.sa-credenciais .linha b a { color: #fff; }
+@media (max-width: 720px) {
+  .sa-faixa { grid-template-columns: 1fr 1fr 34px; }
+  .sa-teste-zap { width: 100%; }
+  .sa-teste-zap input { flex: 1; width: auto; }
+}

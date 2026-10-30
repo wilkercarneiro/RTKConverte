@@ -63,9 +63,12 @@ export function Kpi({ rotulo, valor, detalhe, icone, tom, onClick }: {
     : <div className={`sa-kpi ${tom ?? ""}`}>{corpo}</div>;
 }
 
-export const ROTULO_STATUS: Record<StatusEmpresa, string> = { ativo: "Ativa", suspenso: "Suspensa", cancelado: "Cancelada" };
+export const ROTULO_STATUS: Record<StatusEmpresa, string> = {
+  ativo: "Ativa", aguardando_pagamento: "Esperando pagamento", suspenso: "Suspensa", cancelado: "Cancelada",
+};
+// aguardando_pagamento usa o amarelo do "suspenso": é acesso parado, mas por pagamento
 export const StatusPill = ({ status }: { status: StatusEmpresa }) =>
-  <span className={`sa-pill ${status}`}>{ROTULO_STATUS[status]}</span>;
+  <span className={`sa-pill ${status === "aguardando_pagamento" ? "suspenso" : status}`}>{ROTULO_STATUS[status]}</span>;
 
 export function PlanoTag({ planoId, planos }: { planoId: string | null; planos: Plano[] }) {
   const p = planos.find((x) => x.id === planoId);

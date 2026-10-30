@@ -16,7 +16,7 @@ export interface Escritorio {
   /** true = escritório que já existia: logo/modelos na raiz de `templates` */
   modelos_compartilhados: boolean;
   /** situação da empresa no SaaS (0024); ausente antes dela */
-  status?: "ativo" | "suspenso" | "cancelado";
+  status?: "ativo" | "aguardando_pagamento" | "suspenso" | "cancelado";
   plano?: string | null;
   /** equipe (0025): desativado perde o acesso; permissões do membro; nome dele */
   ativo?: boolean;
