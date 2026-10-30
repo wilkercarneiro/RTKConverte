@@ -6,6 +6,7 @@
 //   mover    — seleciona reserva ou rio, arrasta vértice, arrasta o fundo (pan)
 //   lado     — clica num lado do perímetro: a reserva vira a faixa encostada nele
 //   reserva  — desenha um polígono de reserva (o que sair do imóvel é cortado)
+//   vegetacao — desenha a vegetação nativa cedida (o que cair na reserva é cortado)
 //   rio      — traça a linha do rio; a APP é a faixa dos dois lados
 // Duplo clique numa aresta do item selecionado insere vértice; num vértice, apaga.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -16,8 +17,8 @@ import type { ProjetoCar, ResultadoCar } from "../../lib/car/motor.ts";
 import { fmtNum } from "../../lib/car/motor.ts";
 import type { LonLat } from "../../lib/car/kml.ts";
 
-export type FerramentaCar = "mover" | "lado" | "reserva" | "rio";
-export type SelecaoCar = { tipo: "reserva"; i: number } | { tipo: "rio"; id: string } | null;
+export type FerramentaCar = "mover" | "lado" | "reserva" | "vegetacao" | "rio";
+export type SelecaoCar = { tipo: "reserva"; i: number } | { tipo: "vegetacao"; i: number } | { tipo: "rio"; id: string } | null;
 
 interface Props {
   projeto: ProjetoCar;
@@ -30,6 +31,8 @@ interface Props {
   onMudar: (pr: ProjetoCar, transiente?: boolean) => void;
   onFimArraste: () => void;
   onLado: (lado: number) => void;
+  /** o que a ferramenta "lado" encosta (só muda a dica) */
+  alvoLado?: "reserva" | "vegetacao";
   satelite: boolean;
   onMsg: (m: string) => void;
   /** controle que flutua sobre o desenho (ex.: o giro das divisas) */
@@ -42,10 +45,13 @@ type Arraste =
   | { tipo: "pan"; x0: number; y0: number; v0: Vista; moveu: boolean }
   | { tipo: "vertice"; alvo: Alvo; j: number };
 
-/** O que tem vértice editável: um polígono da reserva ou um rio. */
-type Alvo = { tipo: "reserva"; i: number } | { tipo: "rio"; id: string };
+/** O que tem vértice editável: um polígono da reserva ou da vegetação, ou um rio. */
+type Alvo = { tipo: "reserva"; i: number } | { tipo: "vegetacao"; i: number } | { tipo: "rio"; id: string };
 
-export const COR = { imovel: "#F5C542", reserva: "#2E9E5B", produtiva: "#E8A33D", app: "#3B8BD9", rio: "#1565C0" };
+export const COR = { imovel: "#F5C542", reserva: "#2E9E5B", vegetacao: "#6B8E23", produtiva: "#E8A33D", app: "#3B8BD9", rio: "#1565C0" };
+
+/** Ferramentas que desenham polígono (clique no 1º ponto fecha). */
+const fechaPoligono = (f: FerramentaCar) => f === "reserva" || f === "vegetacao";
 
 const TOL = 10; // px
 
@@ -55,7 +61,7 @@ function pathPol(p: Poligono): string {
 }
 const pathLinha = (l: Pt[]) => "M" + l.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join("L");
 
-export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, onMudar, onFimArraste, onLado, satelite, onMsg, sobreposto }: Props) {
+export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, onMudar, onFimArraste, onLado, alvoLado = "reserva", satelite, onMsg, sobreposto }: Props) {
   const caixaRef = useRef<HTMLDivElement>(null);
   const [tam, setTam] = useState({ w: 900, h: 600 });
   const [v, setV] = useState<Vista | null>(null);
@@ -119,11 +125,13 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
 
   // ---------------- geometria editável no plano ----------------
   const reservasPlano = useMemo(() => projeto.reserva.poligonos.map((p) => p.ext.map(pl.para)), [projeto.reserva.poligonos, pl]);
+  const vegetacaoPlano = useMemo(() => projeto.vegetacao.poligonos.map((p) => p.ext.map(pl.para)), [projeto.vegetacao.poligonos, pl]);
   const riosPlano = useMemo(() => projeto.rios.map((r) => ({ id: r.id, nome: r.nome, faixa: r.faixa, l: r.linha.map(pl.para) })), [projeto.rios, pl]);
 
   const pontosDe = useCallback((a: Alvo): Pt[] =>
-    a.tipo === "reserva" ? reservasPlano[a.i] ?? [] : riosPlano.find((r) => r.id === a.id)?.l ?? [], [reservasPlano, riosPlano]);
-  const fechadoDe = (a: Alvo) => a.tipo === "reserva";
+    a.tipo === "reserva" ? reservasPlano[a.i] ?? [] : a.tipo === "vegetacao" ? vegetacaoPlano[a.i] ?? [] : riosPlano.find((r) => r.id === a.id)?.l ?? [],
+  [reservasPlano, vegetacaoPlano, riosPlano]);
+  const fechadoDe = (a: Alvo) => a.tipo !== "rio";
 
   /** grava os pontos (plano) de volta no projeto, em grau */
   const gravar = useCallback((a: Alvo, pts: Pt[], transiente = false) => {
@@ -131,6 +139,9 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
     if (a.tipo === "reserva") {
       const poligonos = projeto.reserva.poligonos.map((p, i) => (i === a.i ? { ext: geo, furos: [] } : p));
       onMudar({ ...projeto, reserva: { ...projeto.reserva, poligonos, lado: null } }, transiente);
+    } else if (a.tipo === "vegetacao") {
+      const poligonos = projeto.vegetacao.poligonos.map((p, i) => (i === a.i ? { ext: geo, furos: [] } : p));
+      onMudar({ ...projeto, vegetacao: { ...projeto.vegetacao, poligonos, lado: null } }, transiente);
     } else {
       onMudar({ ...projeto, rios: projeto.rios.map((r) => (r.id === a.id ? { ...r, linha: geo } : r)) }, transiente);
     }
@@ -144,6 +155,7 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
     const testar = (q: Pt) => { if (ignorar && dist(q, ignorar) < 1e-6) return; const d = dist(p, q); if (d < dm) { dm = d; melhor = q; } };
     for (const q of res.imovel.ext) testar(q);
     for (const r of reservasPlano) for (const q of r) testar(q);
+    for (const r of vegetacaoPlano) for (const q of r) testar(q);
     for (const r of riosPlano) for (const q of r.l) testar(q);
     for (const q of desenho) testar(q);
     if (melhor) return melhor;
@@ -156,7 +168,7 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
       if (d < dl) { dl = d; lado = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
     }
     return lado ?? p;
-  }, [vv.s, res.imovel, reservasPlano, riosPlano, desenho]);
+  }, [vv.s, res.imovel, reservasPlano, vegetacaoPlano, riosPlano, desenho]);
 
   const ladoPerto = useCallback((p: Pt): number | null => {
     const anel = res.imovel.ext;
@@ -181,11 +193,14 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
   const itemEm = useCallback((p: Pt): SelecaoCar => {
     const tolM = TOL / vv.s;
     for (const r of riosPlano) if (r.l.length >= 2 && distPolilinha(p, r.l) < tolM) return { tipo: "rio", id: r.id };
+    for (let i = vegetacaoPlano.length - 1; i >= 0; i--) {
+      if (vegetacaoPlano[i].length >= 3 && dentroPol(p, { ext: vegetacaoPlano[i], furos: [] })) return { tipo: "vegetacao", i };
+    }
     for (let i = reservasPlano.length - 1; i >= 0; i--) {
       if (reservasPlano[i].length >= 3 && dentroPol(p, { ext: reservasPlano[i], furos: [] })) return { tipo: "reserva", i };
     }
     return null;
-  }, [riosPlano, reservasPlano, vv.s]);
+  }, [riosPlano, reservasPlano, vegetacaoPlano, vv.s]);
 
   // ---------------- desenho ----------------
   const concluir = useCallback((brutos: Pt[]) => {
@@ -197,6 +212,14 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
       onMudar({ ...projeto, reserva: { ...projeto.reserva, poligonos, lado: null } });
       onSel({ tipo: "reserva", i: poligonos.length - 1 });
       onMsg("Reserva desenhada. O que passou do imóvel foi cortado. Use “Ajustar à %” para chegar à porcentagem exata.");
+    } else if (ferramenta === "vegetacao") {
+      if (pts.length < 3) { onMsg("A vegetação nativa precisa de ao menos 3 pontos."); return; }
+      const poligonos = [...projeto.vegetacao.poligonos, { ext: pts.map(pl.de) as LonLat[], furos: [] }];
+      onMudar({ ...projeto, vegetacao: { ...projeto.vegetacao, poligonos, lado: null } });
+      onSel({ tipo: "vegetacao", i: poligonos.length - 1 });
+      onMsg(projeto.vegetacao.alvoHa
+        ? "Vegetação nativa desenhada (o que passou do imóvel ou caiu na reserva foi cortado). Use “Ajustar” para chegar à área pedida."
+        : "Vegetação nativa desenhada. O que passou do imóvel ou caiu na reserva foi cortado.");
     } else if (ferramenta === "rio") {
       if (pts.length < 2) { onMsg("O rio precisa de ao menos 2 pontos."); return; }
       const n = projeto.rios.length + 1;
@@ -235,10 +258,10 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
     const p = mundo(x, y);
     (e.target as Element).setPointerCapture?.(e.pointerId);
     if (e.button === 1 || e.button === 2) { arraste.current = { tipo: "pan", x0: x, y0: y, v0: vv, moveu: false }; return; }
-    if (ferramenta === "reserva" || ferramenta === "rio") {
+    if (fechaPoligono(ferramenta) || ferramenta === "rio") {
       const q = encaixar(p);
-      // clicar no 1º ponto fecha o polígono da reserva
-      if (ferramenta === "reserva" && desenho.length >= 3 && dist(q, desenho[0]) < TOL / vv.s) { concluir(desenho); return; }
+      // clicar no 1º ponto fecha o polígono (reserva ou vegetação)
+      if (fechaPoligono(ferramenta) && desenho.length >= 3 && dist(q, desenho[0]) < TOL / vv.s) { concluir(desenho); return; }
       setDesenho([...desenho, q]);
       return;
     }
@@ -281,7 +304,7 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
 
   function onDbl(e: React.MouseEvent) {
     const p = mundo(...pos(e));
-    if (ferramenta === "reserva" || ferramenta === "rio") {
+    if (fechaPoligono(ferramenta) || ferramenta === "rio") {
       // os dois cliques do duplo clique já marcaram o ponto uma vez
       concluir(desenho);
       return;
@@ -323,17 +346,29 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
       onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onDoubleClick={onDbl}
       onWheel={onWheel} onContextMenu={(e) => e.preventDefault()} onPointerLeave={() => setMouse(null)}>
       <svg width={W} height={H}>
+        <defs>
+          {/* mata nativa: hachura diagonal por cima da cor (a reserva é lisa) */}
+          <pattern id="car-hachura-veg" width={9} height={9} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1={0} y1={0} x2={0} y2={9} stroke="#2F4A0E" strokeWidth={2.2} strokeOpacity={0.55} />
+          </pattern>
+        </defs>
         {tiles.map((t) => <image key={t.k} href={t.href} width={1} height={1} preserveAspectRatio="none" transform={t.m} />)}
         <g transform={matriz}>
           <path d={pathPol(res.imovel)} fill={satelite ? "rgba(255,255,255,0.06)" : "#F3F1EA"} stroke="none" />
           {res.produtiva.map((p, i) => <path key={`p${i}`} d={pathPol(p)} fill={COR.produtiva} fillOpacity={0.28} stroke="none" />)}
           {res.reserva.map((p, i) => <path key={`r${i}`} d={pathPol(p)} fill={COR.reserva} fillOpacity={0.5} stroke={COR.reserva} strokeWidth={2} vectorEffect="non-scaling-stroke" />)}
+          {res.vegetacao.map((p, i) => <path key={`v${i}`} d={pathPol(p)} fill={COR.vegetacao} fillOpacity={0.45} stroke={COR.vegetacao} strokeWidth={2} vectorEffect="non-scaling-stroke" />)}
+          {res.vegetacao.map((p, i) => <path key={`vh${i}`} d={pathPol(p)} fill="url(#car-hachura-veg)" stroke="none" />)}
           {res.app.map((p, i) => <path key={`a${i}`} d={pathPol(p)} fill={COR.app} fillOpacity={0.45} stroke={COR.app} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />)}
           <path d={pathPol(res.imovel)} fill="none" stroke={COR.imovel} strokeWidth={2.5} vectorEffect="non-scaling-stroke" />
           {/* contorno dos polígonos de reserva como foram desenhados (podem passar do imóvel) */}
           {reservasPlano.map((r, i) => r.length >= 3 && (
             <path key={`rd${i}`} d={pathLinha(r) + "Z"} fill="none" stroke={sel?.tipo === "reserva" && sel.i === i ? "#fff" : COR.reserva}
               strokeDasharray="6 4" strokeWidth={sel?.tipo === "reserva" && sel.i === i ? 2 : 1} vectorEffect="non-scaling-stroke" opacity={0.9} />
+          ))}
+          {vegetacaoPlano.map((r, i) => r.length >= 3 && (
+            <path key={`vd${i}`} d={pathLinha(r) + "Z"} fill="none" stroke={sel?.tipo === "vegetacao" && sel.i === i ? "#fff" : COR.vegetacao}
+              strokeDasharray="6 4" strokeWidth={sel?.tipo === "vegetacao" && sel.i === i ? 2 : 1} vectorEffect="non-scaling-stroke" opacity={0.9} />
           ))}
           {riosPlano.map((r) => r.l.length >= 2 && (
             <path key={r.id} d={pathLinha(r.l)} fill="none" stroke={sel?.tipo === "rio" && sel.id === r.id ? "#fff" : COR.rio}
@@ -343,9 +378,9 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
             <path d={pathLinha([anel[ladoHover], anel[(ladoHover + 1) % anel.length]])} stroke="#fff" strokeWidth={6} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
           )}
           {previa.length > 0 && (
-            <path d={pathLinha(previa) + (ferramenta === "reserva" && previa.length > 2 ? "Z" : "")}
-              fill={ferramenta === "reserva" ? COR.reserva : "none"} fillOpacity={0.25}
-              stroke={ferramenta === "reserva" ? "#fff" : COR.rio} strokeWidth={ferramenta === "rio" ? 3 : 2} strokeDasharray={ferramenta === "reserva" ? "5 4" : undefined}
+            <path d={pathLinha(previa) + (fechaPoligono(ferramenta) && previa.length > 2 ? "Z" : "")}
+              fill={ferramenta === "reserva" ? COR.reserva : ferramenta === "vegetacao" ? COR.vegetacao : "none"} fillOpacity={0.25}
+              stroke={fechaPoligono(ferramenta) ? "#fff" : COR.rio} strokeWidth={ferramenta === "rio" ? 3 : 2} strokeDasharray={fechaPoligono(ferramenta) ? "5 4" : undefined}
               vectorEffect="non-scaling-stroke" />
           )}
         </g>
@@ -355,6 +390,18 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
           const m = tela(r.l[Math.floor((r.l.length - 1) / 2)]);
           return <text key={`t${r.id}`} x={m[0]} y={m[1] - 8} className="car-rotulo">{r.nome} · APP {fmtNum(r.faixa, 0)} m</text>;
         })}
+        {/* nome dos pontos do GPS nos vértices do imóvel (quando os lados têm espaço na tela) */}
+        {projeto.nomesVertices && (vv.s * Math.sqrt(Math.max(1, res.area.imovel))) / Math.max(1, anel.length) > 9 && projeto.perimetro.map((g, k) => {
+          const nome = projeto.nomesVertices?.[k];
+          if (!nome) return null;
+          const t = tela(pl.para(g));
+          return (
+            <g key={`n${k}`} className="car-vertice">
+              <circle cx={t[0]} cy={t[1]} r={3.2} />
+              <text x={t[0] + 6} y={t[1] - 6}>{nome}</text>
+            </g>
+          );
+        })}
         {selPts.map((q, k) => { const t = tela(q); return <circle key={k} cx={t[0]} cy={t[1]} r={5} className="car-alca" />; })}
         {desenho.map((q, k) => { const t = tela(q); return <circle key={`d${k}`} cx={t[0]} cy={t[1]} r={k === 0 ? 6 : 4} className="car-alca desenho" />; })}
       </svg>
@@ -362,8 +409,9 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
       <div className="car-escala">
         {ferramenta === "reserva" && "Clique para marcar os pontos da reserva · clique no 1º ponto, Enter ou duplo clique fecha · Backspace volta · Shift solta o encaixe"}
         {ferramenta === "rio" && "Clique ao longo do rio · Enter ou duplo clique termina · Backspace volta · Esc cancela"}
-        {ferramenta === "lado" && "Clique no lado do imóvel onde a reserva vai encostar"}
-        {ferramenta === "mover" && (sel ? "Arraste os vértices · duplo clique na linha insere vértice, no vértice apaga" : "Clique na reserva ou num rio para editar · arraste para mover o mapa · roda do mouse aproxima")}
+        {ferramenta === "vegetacao" && "Clique para marcar os pontos da vegetação nativa · clique no 1º ponto, Enter ou duplo clique fecha · o que cair na reserva é cortado"}
+        {ferramenta === "lado" && `Clique no lado do imóvel onde a ${alvoLado === "vegetacao" ? "vegetação nativa" : "reserva"} vai encostar`}
+        {ferramenta === "mover" && (sel ? "Arraste os vértices · duplo clique na linha insere vértice, no vértice apaga" : "Clique na reserva, na vegetação ou num rio para editar · arraste para mover o mapa · roda do mouse aproxima")}
       </div>
       <button className="car-enquadrar" title="Enquadrar o imóvel" onPointerDown={(e) => e.stopPropagation()} onClick={enquadrar}>⤢</button>
     </div>

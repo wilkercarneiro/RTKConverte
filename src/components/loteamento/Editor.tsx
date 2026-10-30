@@ -20,6 +20,8 @@ import { adicionarArea, adicionarRua, chaveDoLote, editarRua, lotesDaSelecao, qu
 import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
 import { alcasDoLote, cortarLotes, definirFrente, desenharLote, ladosRetos, moverDivisa, moverQuina, posicaoNoDesenho } from "../../lib/loteamento/edicao.ts";
 import { alternarAcesso } from "../../lib/loteamento/acoes.ts";
+import type { Rede, ResultadoInfra } from "../../lib/loteamento/infra/index.ts";
+import { DefsRedes, RedesGeo, RedesSimbolos } from "./Redes";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
 
@@ -46,6 +48,8 @@ interface Props {
   onMsg: (m: string) => void;
   /** controle que flutua sobre o desenho (ex.: o giro das divisas) */
   sobreposto?: ReactNode;
+  /** redes de infraestrutura por cima dos lotes (água, esgoto, drenagem, energia, iluminação) */
+  redes?: { r: ResultadoInfra; camadas: Set<Rede> } | null;
 }
 
 interface Vista { cx: number; cy: number; s: number }
@@ -80,7 +84,7 @@ function corPorArea(a: number, min: number, max: number): string {
   return `hsl(${h} 85% ${l}%)`;
 }
 
-export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerramenta, onMudar, onFimArraste, vista, focar, onMsg, sobreposto }: Props) {
+export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerramenta, onMudar, onFimArraste, vista, focar, onMsg, sobreposto, redes }: Props) {
   // divisão de imóvel: o contorno não recua (ver Parametros.bordaFixa)
   const bordaFixa = !!projeto.params.bordaFixa;
   const caixaRef = useRef<HTMLDivElement>(null);
@@ -642,6 +646,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onWheel={onWheel} onDoubleClick={onDuplo}
       onContextMenu={(e) => e.preventDefault()} onPointerLeave={() => { setMouse(null); setHover(null); }}>
       <svg width={W} height={H}>
+        {redes && <defs><DefsRedes /></defs>}
         {tiles.map((t) => <image key={t.k} href={t.href} width={1} height={1} preserveAspectRatio="none" transform={t.m} opacity={0.9} />)}
         <g transform={matriz}>
           {/* a gleba inteira na cor da rua: o que sobra entre quadras e áreas É o viário */}
@@ -689,6 +694,9 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
               stroke={l.tipo === "via" ? "#C0262D" : l.tipo === "rio" ? "#1D5FD1" : l.tipo === "divisa" ? "#12201A" : "#8A4B00"}
               strokeWidth={l.tipo === "divisa" ? 2 : 3.5} vectorEffect="non-scaling-stroke" />
           ))}
+          {/* redes por cima dos lotes: os lotes ficam de fundo, mais claros */}
+          {redes && <path d={pathPol(res.gleba)} fill="#FFFFFF" fillOpacity={0.38} stroke="none" pointerEvents="none" />}
+          {redes && <RedesGeo r={redes.r} camadas={redes.camadas} s={vv.s} />}
         </g>
 
         {/* nomes das quadras (zoom afastado) */}
@@ -728,6 +736,8 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
           if (ang > 90) ang -= 180; if (ang < -90) ang += 180;
           return <text key={r.id} x={m[0]} y={m[1]} transform={`rotate(${ang} ${m[0]} ${m[1]})`} className="lot-rua-nome" dy="0.35em">{r.nome} · {fmt(r.largura, r.largura % 1 ? 2 : 0)} m</text>;
         })}
+
+        {redes && <RedesSimbolos r={redes.r} camadas={redes.camadas} tela={tela} s={vv.s} dentro={dentroTela} />}
 
         {/* alças */}
         {/* divisas primeiro: a quina fica por cima */}

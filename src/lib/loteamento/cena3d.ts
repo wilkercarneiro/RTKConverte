@@ -10,7 +10,7 @@
 // Tudo no plano do desenho (metros; x leste, y norte). As cotas são as reais:
 // o exagero vertical é só da visualização.
 import {
-  antiHorario, areaPol, caixa, centroide, dentroPol, diferenca, dist, distAnel, dot, esquerda, intersecao,
+  antiHorario, areaPol, caixa, centroide, dentroPol, diferenca, dist, distAnel, distSegmento, dot, esquerda, intersecao,
   lerp, offsetPols, pontoNaPolilinha, comprimento, sub, uniao, unit,
 } from "./geom.ts";
 import type { Poligono, Pt } from "./geom.ts";
@@ -18,6 +18,9 @@ import type { Lote, Resultado } from "./calculo.ts";
 import type { Parametros } from "./modelo.ts";
 import type { GradeTerreno } from "./terreno.ts";
 import { paraUtm } from "./plano.ts";
+import type { ResultadoInfra } from "./infra/index.ts";
+import type { Infra3D } from "./infra/cena.ts";
+import { infra3d, postesDoProjeto } from "./infra/cena.ts";
 
 export interface Grade3D {
   /** canto sudoeste (plano) e espaçamento dos nós */
@@ -84,11 +87,16 @@ export interface Arvore {
   cor: number;
 }
 
-/** Poste de iluminação na calçada: o braço aponta para a rua (`dir`). */
+/** Poste na calçada: o braço da luminária aponta para a rua (`dir`). */
 export interface Poste {
   p: Pt;
   z: number;
   dir: Pt;
+  /** poste do projeto elétrico: altura (m), média tensão, transformador (kVA) */
+  altura?: number;
+  mt?: boolean;
+  trafo?: number;
+  id?: string;
 }
 
 export interface InfoLote {
@@ -109,6 +117,8 @@ export interface Cena {
   /** linhas do meio-fio (beira da pista), densificadas a cada ~2 m */
   meioFio: Pt[][];
   postes: Poste[];
+  /** redes de infraestrutura projetadas (fios, hidrantes, tampas, reservatório…) */
+  infra?: Infra3D;
   /** largura da pista de rolamento (m) — mão de direção dos carros */
   larguraPista: number;
   volumes: { corte: number; aterro: number };
@@ -124,6 +134,8 @@ export interface OpcoesCena {
   /** células da grade (limite de memória/GPU) */
   maxCelulas?: number;
   margem?: number;
+  /** projetos de infraestrutura: os postes e as redes entram na maquete */
+  infra?: ResultadoInfra;
 }
 
 // ---------------------------------------------------------------------------
@@ -389,15 +401,25 @@ export function montarCena(res: Resultado, params: Parametros, terreno: GradeTer
     if (atual.length > 1) meioFio.push(atual);
   }
 
-  const casas = [...montarCasas(res, g), ...montarEquipamentos(res, g)];
-  const arvores = montarArvores(res, g, pista, calcada);
-  const postes = montarPostes(res, g, pista, calcada, arvores);
+  const rs = op.infra?.agua.reservatorio;
+  const casas = [...montarCasas(res, g), ...montarEquipamentos(res, g, rs ? { p: rs.p, r: Math.max(2.5, Math.sqrt(rs.volume / (Math.PI * 4))) } : null)];
+  let arvores = montarArvores(res, g, pista, calcada);
+  // com o projeto elétrico, os postes são os dele (na divisa dos lotes, vão de 35 m)
+  const projetados = op.infra ? postesDoProjeto(op.infra).map((x) => ({ ...x, z: cotaFinal(g, x.p) })) : null;
+  if (projetados && op.infra) {
+    // a calçada dos postes fica sem árvore embaixo dos fios (DIS-NOR-012: poste no lado não arborizado)
+    const e = op.infra.eletrica;
+    const vaos = e.vaos.filter((v) => v.mt || v.bt).map((v) => [e.postes[v.a].p, e.postes[v.b].p] as const);
+    arvores = arvores.filter((a) => !projetados.some((x) => dist(x.p, a.p) < 2.6) && !vaos.some(([p, q]) => distSegmento(a.p, p, q).d < 2.4));
+  }
+  const postes = projetados ?? montarPostes(res, g, pista, calcada, arvores);
+  const infra = op.infra ? infra3d(op.infra, g) : undefined;
 
   let cotaMin = Infinity, cotaMax = -Infinity;
   for (let k = 0; k < n; k++) { cotaMin = Math.min(cotaMin, g.final[k]); cotaMax = Math.max(cotaMax, g.final[k]); }
   const centro: Pt = [(gb.min[0] + gb.max[0]) / 2, (gb.min[1] + gb.max[1]) / 2];
   return {
-    grade: g, casas, arvores, pista, ruas: caixaRuas, meioFio, postes, larguraPista: Math.max(4, params.ruaPista), volumes: { corte, aterro }, infoLotes,
+    grade: g, casas, arvores, pista, ruas: caixaRuas, meioFio, postes, infra, larguraPista: Math.max(4, params.ruaPista), volumes: { corte, aterro }, infoLotes,
     cotaMin, cotaMax, centro, raio: Math.hypot(larg, alt) / 2,
   };
 }
@@ -550,7 +572,7 @@ function montarCasas(res: Resultado, g: Grade3D): Casa[] {
  * Área institucional: um prédio público (escola, posto de saúde) de laje,
  * alinhado com o lado mais comprido da área, com folga de 5 m nas divisas.
  */
-function montarEquipamentos(res: Resultado, g: Grade3D): Casa[] {
+function montarEquipamentos(res: Resultado, g: Grade3D, evitar?: { p: Pt; r: number } | null): Casa[] {
   const out: Casa[] = [];
   for (const a of res.areas) {
     if (a.tipo !== "institucional") continue;
@@ -569,6 +591,11 @@ function montarEquipamentos(res: Resultado, g: Grade3D): Casa[] {
         const P = (x: number, y: number): Pt => [c[0] + u[0] * x + v[0] * y, c[1] + u[1] * x + v[1] * y];
         const cantos = [P(-larg / 2, -prof / 2), P(larg / 2, -prof / 2), P(larg / 2, prof / 2), P(-larg / 2, prof / 2)];
         if (!cantos.every(cabe)) continue;
+        // o reservatório de água fica na mesma área: o prédio não pode passar por ele
+        if (evitar) {
+          const rel = sub(evitar.p, c);
+          if (Math.abs(dot(rel, u)) < larg / 2 + evitar.r + 2 && Math.abs(dot(rel, v)) < prof / 2 + evitar.r + 2) continue;
+        }
         const hs = cantos.map((p) => cotaFinal(g, p));
         out.push({
           lote: -1, c, u, larg, prof, piso: Math.max(...hs) + 0.3, fundacao: Math.min(...hs) - 0.4,

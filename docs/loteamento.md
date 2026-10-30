@@ -54,6 +54,15 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
    - **Para o cliente:** foto em alta (PNG, 2× a tela), **vídeo de apresentação** (~70 s com trilha sonora, MP4 no Chrome/Edge, senão WebM: é o roteiro do Apresentar gravado, com faixas de cinema, legendas e cartelas) e **modelo GLB** em escala real (sem o exagero da tela; terreno com até ~90 mil nós, casas, meio-fio e árvores mescladas com cor por vértice, sem extensão obrigatória) para SketchUp, Blender, Twinmotion ou Lumion.
    - **Como é calculado:** `cena3d.ts` (sem three.js, testado em node) monta a grade (até 300 mil nós; bicúbica sobre o modelo de elevação, buscado de novo cobrindo a margem da maquete), o greide das ruas por convolução normalizada (o terreno suavizado só com os nós da rua, raio ~9 m — o cruzamento sai contínuo), o talude 1:1,5 até o terreno natural, os volumes, a estatística de cada lote, as casas e as árvores. `textura3d.ts` pinta o chão (o desenho É a textura: sem tremido). `maquete3d.ts` (three.js) eleva tudo no shader a partir da cota real, então exagero, transição e crescimento são só uniforms. É uma estimativa de estudo: não substitui o projeto geométrico das vias nem a terraplenagem executiva.
 
+7. **Projetos de infraestrutura.** O sistema gera, a partir do traçado e do relevo, as redes de:
+   - água (malha resolvida como no EPANET, com reservatório);
+   - esgoto (por gravidade até a estação de tratamento ou elevatória);
+   - drenagem (método racional, bocas de lobo e galerias);
+   - energia (postes, transformadores e média/baixa tensão);
+   - iluminação pública.
+
+   Elas aparecem em três lugares: na prancheta (botão **Redes**), na maquete 3D (postes, fios, hidrantes, PVs, reservatório e o modo **Infraestrutura**) e nas Entregas (pranchas PDF, memorial de cálculo, planilhas com quantitativos e DXF). Detalhes, critérios e fontes em [infraestrutura.md](infraestrutura.md).
+
 ## Regras de projeto que o gerador segue
 
 - **Acesso.**

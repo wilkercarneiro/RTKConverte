@@ -12,11 +12,12 @@ import type { Resultado } from "./calculo.ts";
 import type { Cena, Grade3D } from "./cena3d.ts";
 import { livreDaGleba } from "./cena3d.ts";
 import { paraPlano, paraUtm } from "./plano.ts";
+import type { ResultadoInfra } from "./infra/index.ts";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
 const TILE = (z: number, x: number, y: number) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
 
-export type ModoChao = "projeto" | "declividade" | "terraplenagem" | "curvas";
+export type ModoChao = "projeto" | "declividade" | "terraplenagem" | "curvas" | "infra";
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -206,6 +207,8 @@ export interface DadosPintura {
   modo: ModoChao;
   /** lote destacado (índice) — fica com contorno dourado na textura */
   destaque?: number;
+  /** redes de infraestrutura (modo "infra": pintadas no chão, como raio-x) */
+  infra?: ResultadoInfra | null;
 }
 
 /**
@@ -301,6 +304,12 @@ export function pintarProjeto(ctx: Ctx, q: Quadro, d: DadosPintura): void {
   ctx.lineJoin = "round";
   caminho(ctx, q, res.lotes.map((l) => l.pol));
   ctx.stroke();
+  if (modo === "infra") {
+    // o projeto clareia e as redes enterradas aparecem por cima, como raio-x
+    ctx.fillStyle = "rgba(250,248,240,0.55)";
+    caminho(ctx, q, [res.gleba]);
+    ctx.fill("evenodd");
+  }
   if (modo === "curvas") {
     // o desenho do projeto clareia para as curvas aparecerem
     ctx.fillStyle = "rgba(250,248,240,0.45)";
@@ -337,6 +346,7 @@ export function pintarProjeto(ctx: Ctx, q: Quadro, d: DadosPintura): void {
 
   // curvas de nível no terreno todo (no satélite em volta, mais claras)
   if (modo === "curvas") pintarCurvas(ctx, q, cena.grade, res);
+  if (modo === "infra" && d.infra) pintarRedes(ctx, q, d.infra);
 
   // divisa da gleba
   ctx.strokeStyle = COR.gleba;
@@ -479,4 +489,72 @@ function desenharCurvas(ctx: Ctx, q: Quadro, g: Grade3D, min: number, max: numbe
       ctx.restore();
     }
   }
+}
+
+/**
+ * As redes no chão da maquete (modo Infraestrutura): água em azul (traço pelo
+ * diâmetro), esgoto em marrom com os PVs, galerias de drenagem tracejadas em
+ * verde-água com as bocas de lobo, média tensão em vermelho e baixa em laranja.
+ */
+export function pintarRedes(ctx: Ctx, q: Quadro, r: ResultadoInfra): void {
+  const k = escala(q);
+  const traco = (pts: Pt[], cor: string, larg: number, tracejado?: number[]) => {
+    ctx.strokeStyle = cor;
+    ctx.lineWidth = Math.max(1, larg * k);
+    ctx.setLineDash(tracejado ? tracejado.map((x) => x * k) : []);
+    linha(ctx, q, pts);
+    ctx.stroke();
+  };
+  const bola = (p: Pt, raio: number, fundo: string, borda: string) => {
+    const [x, y] = px(q, p);
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(2, raio * k), 0, Math.PI * 2);
+    ctx.fillStyle = fundo; ctx.fill();
+    ctx.lineWidth = Math.max(1, 0.25 * k); ctx.strokeStyle = borda; ctx.stroke();
+  };
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const t of r.drenagem.trechos) traco(t.linha, "rgba(19,163,163,0.95)", t.dn >= 800 ? 1.3 : 0.9, [3, 1.6]);
+  for (const rm of r.drenagem.ramais) traco([rm.de, rm.ate], "rgba(19,163,163,0.85)", 0.35);
+  for (const t of r.esgoto.trechos) traco(t.linha, "rgba(138,90,43,0.95)", 0.8);
+  if (r.esgoto.elevatoria) traco(r.esgoto.elevatoria.recalque, "rgba(138,90,43,0.95)", 0.6, [0.6, 1.4]);
+  for (const t of r.agua.tubos) for (const l of [t.linha, ...(t.linha2 ? [t.linha2] : [])]) traco(l, "rgba(30,111,217,0.95)", t.dn <= 50 ? 0.45 : t.dn <= 100 ? 0.7 : 1.0, t.adutora ? [2, 1] : undefined);
+  for (const lg of r.agua.ligacoes) traco([lg.de, lg.ate], "rgba(30,111,217,0.55)", 0.18);
+  const e = r.eletrica;
+  for (const v of e.vaos) {
+    if (v.bt) traco([e.postes[v.a].p, e.postes[v.b].p], "rgba(240,138,36,0.95)", 0.4);
+    if (v.mt) traco([e.postes[v.a].p, e.postes[v.b].p], "rgba(226,59,46,0.95)", 0.55, [1.6, 0.9]);
+  }
+  ctx.setLineDash([]);
+  for (const b of r.drenagem.bocas) bola(b.p, 0.5, "rgba(19,163,163,1)", "#ffffff");
+  for (const pv of r.drenagem.pvs) bola(pv.p, 0.75, "#ffffff", "rgba(19,163,163,1)");
+  for (const pv of r.esgoto.pvs) bola(pv.p, 0.75, "#ffffff", "rgba(138,90,43,1)");
+  for (const h of r.agua.hidrantes) bola(h.p, 1.1, "#d32f2f", "#ffffff");
+  for (const p of e.postes) bola(p.p, p.trafo !== null ? 1.2 : 0.55, p.trafo !== null ? "#e23b2e" : "#ffffff", "#5b6168");
+  // diâmetros no meio dos trechos mais longos de água e esgoto
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = `700 ${Math.round(1.25 * k)}px Inter, system-ui, sans-serif`;
+  const rotulo = (linhaPts: Pt[], texto: string, cor: string, desl: number) => {
+    const L = comprimento(linhaPts);
+    if (L < 40) return;
+    const { pt, dir } = pontoNaPolilinha(linhaPts, L / 2);
+    const [x, y] = px(q, [pt[0] - dir[1] * desl, pt[1] + dir[0] * desl]);
+    let ang = Math.atan2(-dir[1], dir[0]);
+    if (ang > Math.PI / 2) ang -= Math.PI;
+    if (ang < -Math.PI / 2) ang += Math.PI;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(ang);
+    ctx.lineWidth = 0.35 * k;
+    ctx.strokeStyle = "rgba(255,255,255,0.95)";
+    ctx.strokeText(texto, 0, 0);
+    ctx.fillStyle = cor;
+    ctx.fillText(texto, 0, 0);
+    ctx.restore();
+  };
+  for (const t of r.agua.tubos) if (!t.adutora) rotulo(t.linha, `DN${t.dn}`, "#0f3e7a", 1.4);
+  for (const t of r.esgoto.trechos) rotulo(t.linha, `${t.dn} · ${(t.I * 100).toFixed(1).replace(".", ",")}%`, "#5a3a1a", -1.4);
+  ctx.restore();
 }

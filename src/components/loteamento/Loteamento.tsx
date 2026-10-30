@@ -27,6 +27,9 @@ import type { OpcoesVista } from "./Editor";
 import { Painel } from "./Painel";
 import { Avisos } from "./Avisos";
 import { Entregas } from "./Entregas";
+import { PainelRedes } from "./Redes";
+import { calcularInfra } from "../../lib/loteamento/infra/index.ts";
+import type { Rede, ResultadoInfra } from "../../lib/loteamento/infra/index.ts";
 import { temRecurso } from "../../lib/recursos";
 import "./loteamento.css";
 
@@ -123,6 +126,10 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   const [historicoCmd, setHistoricoCmd] = useState<string[]>([]);
   const [ajuda, setAjuda] = useState(false);
   const [verAvisos, setVerAvisos] = useState(true);
+  // redes de infraestrutura (água, esgoto, drenagem, energia, iluminação) por cima dos lotes
+  const [verRedes, setVerRedes] = useState(false);
+  const [camadasRedes, setCamadasRedes] = useState<Set<Rede>>(() => new Set<Rede>(["agua", "esgoto", "energia"]));
+  const [infra, setInfra] = useState<ResultadoInfra | null>(null);
   const cmdRef = useRef<HTMLInputElement>(null);
 
   // carga
@@ -156,6 +163,16 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     return r;
   }, [perimetro]);
   const res: Resultado | null = useMemo(() => (projeto ? calc(projeto) : null), [projeto, calc]);
+  // as redes acompanham o projeto, mas com folga: durante o arraste não recalcula a cada quadro
+  const infraEntrada = projeto ? { infra: projeto.infra, terreno: projeto.terreno, params: projeto.params } : null;
+  useEffect(() => {
+    if (!verRedes || !res || !infraEntrada) return;
+    const t = setTimeout(() => {
+      try { setInfra(calcularInfra(res, infraEntrada)); } catch (e) { console.error(e); }
+    }, 180);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verRedes, res, projeto?.infra, projeto?.terreno, projeto?.params]);
 
   // aviso da última edição: a mensagem de sucesso que o painel mostra logo em
   // seguida o leva junto (e ele vale só para essa edição)
@@ -344,6 +361,9 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
             <button title="Imagem de satélite" className={vista.satelite ? "ativo" : ""} onClick={() => setVista({ ...vista, satelite: !vista.satelite })}>🛰</button>
             <button title="Medidas dos lados" className={vista.medidas ? "ativo" : ""} onClick={() => setVista({ ...vista, medidas: !vista.medidas })}>↔</button>
             <button title="Colorir pelo tamanho do lote" className={vista.cores === "area" ? "ativo" : ""} onClick={() => setVista({ ...vista, cores: vista.cores === "area" ? "situacao" : "area" })}>▦</button>
+            <button title="Redes de infraestrutura: água, esgoto, drenagem, energia e iluminação pública, geradas pelo sistema" className={`lot-btn-redes${verRedes ? " ativo" : ""}`} onClick={() => setVerRedes(!verRedes)}>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7h8a3 3 0 0 1 3 3v7M14 17h7M18 14v6M7 4v6M13 3l-3 5h4l-3 5" /></svg>
+            </button>
             {temRecurso("loteamento.maquete3d") && <button title="Maquete 3D: o loteamento no relevo real, com casas, árvores e voo de drone" className="lot-btn-3d" onClick={() => setVer3d(true)}>3D</button>}
             <button title={projeto.terreno ? "Colorir pelo relevo (cota)" : "Relevo ainda não lido (gere pelas Perguntas)"} disabled={!projeto.terreno}
               className={vista.cores === "relevo" ? "ativo" : ""} onClick={() => setVista({ ...vista, cores: vista.cores === "relevo" ? "situacao" : "relevo" })}>⛰</button>
@@ -358,7 +378,12 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
 
           <div className="lot-centro">
             <Editor projeto={projeto} res={res} fuso={fuso} sel={sel} onSel={setSel} ferramenta={ferramenta} onFerramenta={setFerramenta}
-              onMudar={mudar} onFimArraste={fimArraste} vista={vista} focar={focar} onMsg={(m) => mostrar(m)} />
+              onMudar={mudar} onFimArraste={fimArraste} vista={vista} focar={focar} onMsg={(m) => mostrar(m)}
+              redes={verRedes && infra ? { r: infra, camadas: camadasRedes } : null} />
+            {verRedes && (
+              <PainelRedes r={infra} camadas={camadasRedes} onCamadas={setCamadasRedes} onFechar={() => setVerRedes(false)}
+                onParametros={() => { setEtapa("entregas"); setTimeout(() => document.getElementById("lot-infra")?.scrollIntoView({ behavior: "smooth" }), 80); }} />
+            )}
             <form className="lot-comando" onSubmit={(e) => { e.preventDefault(); rodarComando(cmd); setCmd(""); }}>
               <div className="lot-cmd-linha">
                 <span className="lot-cmd-prompt">Comando{sel && (sel.tipo !== "lotes" || qtdSel) ? ` · ${sel.tipo === "lotes" ? (qtdSel > 1 ? `${qtdSel} lotes` : `lote ${lotesDaSelecao(res, sel)[0]?.id ?? ""}`) : sel.tipo === "quadra" ? `quadra ${sel.nome}` : sel.tipo}` : ""}:</span>
@@ -391,7 +416,8 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
 
       {etapa === "entregas" && res && (
         <div className="conferencia-corpo fade">
-          <Entregas servico={servico} projeto={projeto} res={res} perimetro={perimetro} onExportou={marcarExportado} onAbrir3D={temRecurso("loteamento.maquete3d") ? () => setVer3d(true) : undefined} />
+          <Entregas servico={servico} projeto={projeto} res={res} perimetro={perimetro} onExportou={marcarExportado} onAbrir3D={temRecurso("loteamento.maquete3d") ? () => setVer3d(true) : undefined}
+            onMudarInfra={(infra) => mudar({ ...projeto, infra })} />
           <div><button onClick={() => setEtapa("projeto")}>← Voltar ao projeto</button></div>
         </div>
       )}

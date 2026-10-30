@@ -245,3 +245,74 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 .lot-3d-chamada-arte svg { width: 100%; height: auto; filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.35)); }
 .lot-3d-carregando { position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; background: #141a22; color: #eef2f5; font-size: 15px; }
 @media (max-width: 760px) { .lot-3d-chamada { grid-template-columns: 1fr; } .lot-3d-chamada-arte { display: none; } }
+
+/* Redes de infraestrutura na prancheta (água, esgoto, drenagem, energia, iluminação) */
+.lot-ferramentas .lot-btn-redes.ativo { background: #E7F0FD; color: #1E6FD9; border-color: #1E6FD9; }
+.lot-redes {
+  position: absolute; right: 12px; top: 56px; z-index: 6; width: 330px; max-height: calc(100% - 140px); overflow-y: auto;
+  background: var(--card); border: 1px solid var(--borda); border-radius: 12px; box-shadow: 0 10px 28px rgb(0 0 0 / 14%);
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px;
+}
+.lot-redes header { display: flex; align-items: center; gap: 8px; }
+.lot-redes header b { font-size: 14px; }
+.lot-redes header button { margin-left: auto; height: 26px; padding: 0 8px; }
+.lot-redes-pop { font-size: 12px; color: var(--texto-3); }
+.lot-redes-calc { margin: 4px 0; color: var(--texto-3); display: flex; gap: 8px; align-items: center; }
+.lot-redes-item { display: grid; grid-template-columns: 16px 12px minmax(0, 1fr); gap: 8px; align-items: center; padding: 6px 8px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; }
+.lot-redes-item.ativo { background: #F6F8F7; border-color: var(--borda); }
+.lot-redes-item input { width: 16px; height: 16px; margin: 0; accent-color: var(--primaria); }
+.lot-redes-item i { width: 12px; height: 12px; border-radius: 3px; }
+.lot-redes-item span { display: flex; flex-direction: column; min-width: 0; }
+.lot-redes-item small { color: var(--texto-3); font-size: 11.5px; line-height: 1.35; }
+.lot-redes-avisos { font-size: 12px; color: var(--alerta-escuro); }
+.lot-redes-avisos summary { cursor: pointer; font-weight: 600; }
+.lot-redes-avisos p { margin: 4px 0 0; line-height: 1.4; }
+.lot-redes footer { display: flex; gap: 8px; align-items: center; justify-content: space-between; border-top: 1px solid var(--borda); padding-top: 8px; }
+.lot-redes footer span { font-size: 11.5px; color: var(--texto-3); }
+.lot-redes footer button { height: 28px; padding: 0 10px; font-size: 12.5px; white-space: nowrap; }
+
+.lot-rede-pv { fill: #fff; stroke: #8A5A2B; stroke-width: 2; }
+.lot-rede-pv.saida { fill: #8A5A2B; }
+.lot-rede-til { fill: #fff; stroke: #8A5A2B; stroke-width: 1.6; }
+.lot-rede-pvd { fill: #fff; stroke: #13A3A3; stroke-width: 2; }
+.lot-rede-bl { fill: #13A3A3; stroke: #0B5E5E; stroke-width: 1; }
+.lot-rede-reg { fill: #1E6FD9; stroke: #fff; stroke-width: 0.8; }
+.lot-rede-desc { fill: #fff; stroke: #1E6FD9; stroke-width: 1.5; }
+.lot-rede-vent { fill: #fff; stroke: #1E6FD9; stroke-width: 1.5; }
+.lot-rede-vrp rect { fill: #fff; stroke: #1E6FD9; stroke-width: 1.5; }
+.lot-rede-vrp text, .lot-rede-hid text, .lot-rede-res text, .lot-rede-saida text, .lot-rede-entrada text { font: 700 9px var(--fonte); text-anchor: middle; pointer-events: none; }
+.lot-rede-vrp text { fill: #1E6FD9; }
+.lot-rede-hid circle { fill: #D32F2F; stroke: #fff; stroke-width: 1.5; }
+.lot-rede-hid text { fill: #fff; }
+.lot-rede-res circle { fill: #1E6FD9; stroke: #fff; stroke-width: 2; }
+.lot-rede-res text { fill: #fff; font-size: 11px; }
+.lot-rede-res text.rot { fill: #0F3E7A; paint-order: stroke; stroke: #fff; stroke-width: 3px; font-size: 10.5px; }
+.lot-rede-pressao { font: 600 9.5px var(--fonte); fill: #0F3E7A; paint-order: stroke; stroke: #fff; stroke-width: 3px; pointer-events: none; }
+.lot-rede-saida path, .lot-rede-saida rect { stroke: #fff; stroke-width: 1.5; }
+.lot-rede-saida.drenagem path { fill: #13A3A3; }
+.lot-rede-saida.esgoto rect { fill: #8A5A2B; }
+.lot-rede-saida text { fill: #fff; }
+.lot-rede-poste { fill: #fff; stroke: #5B6168; stroke-width: 1.6; }
+.lot-rede-poste.mt { stroke: #E23B2E; stroke-width: 2; }
+.lot-rede-poste.ip { fill: #FFD54A; stroke: #A07800; }
+.lot-rede-trafo path { fill: #E23B2E; stroke: #fff; stroke-width: 1.5; }
+.lot-rede-trafo text { font: 700 10px var(--fonte); fill: #8E1B12; paint-order: stroke; stroke: #fff; stroke-width: 3px; pointer-events: none; }
+.lot-rede-entrada path { fill: #E23B2E; stroke: #fff; stroke-width: 1.5; }
+.lot-rede-entrada text { fill: #8E1B12; paint-order: stroke; stroke: #fff; stroke-width: 3px; font-size: 9.5px; }
+.lot-centro { position: relative; }
+
+/* Entregas: projetos de infraestrutura */
+.lot-entrega-infra header .desc { margin-left: auto; }
+.lot-infra-cartoes { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.lot-infra-cartao { border: 1px solid var(--borda); border-top: 4px solid; border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--texto-2); }
+.lot-infra-cartao b { font-size: 14px; color: var(--texto); }
+.lot-infra-param h4 { margin: 0 0 10px; font-size: 14px; }
+.lot-infra-param label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--texto-2); }
+.lot-infra-param label input, .lot-infra-param label select { height: 36px; }
+.lot-infra-avisos { margin-top: 12px; font-size: 12.5px; color: var(--alerta-escuro); }
+.lot-infra-avisos summary { cursor: pointer; font-weight: 600; }
+.lot-infra-avisos p { margin: 6px 0 0; line-height: 1.45; }
+@media (max-width: 1100px) { .lot-infra-cartoes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lot-entrega-grade.lot-infra-corpo { grid-template-columns: minmax(0, 470px) minmax(0, 1fr); }
+.lot-infra-param .grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+@media (max-width: 900px) { .lot-entrega-grade.lot-infra-corpo { grid-template-columns: 1fr; } }

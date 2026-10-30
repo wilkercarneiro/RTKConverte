@@ -1,5 +1,6 @@
-// Serviço de CAR: o imóvel do KML na prancheta, com a reserva legal, a APP dos
-// rios e a área produtiva, e os shapefiles para o SICAR.
+// Serviço de CAR: o imóvel do KML/GPX na prancheta, com a reserva legal, a
+// vegetação nativa cedida a outro imóvel, a APP dos rios e a área produtiva, e
+// os shapefiles para o SICAR (mais o KML da vegetação para a compensação).
 //
 // O projeto é só intenção e mora em `car_projetos`; as camadas saem de
 // `calcularCar` a cada mudança. Tudo roda no navegador.
@@ -8,10 +9,11 @@ import { rotuloCurto } from "../../lib/modalidades";
 import { useAutosave } from "../../lib/ux";
 import type { Servico } from "../../lib/types";
 import {
-  FAIXAS_APP, ajustarReserva, calcularCar, fmtHa, fmtNum, fmtPct, normalizarProjetoCar, projetoNovo, reservaPorLado,
+  FAIXAS_APP, ajustarReserva, ajustarVegetacao, calcularCar, fmtHa, fmtNum, fmtPct, normalizarProjetoCar, projetoNovo, reservaPorLado,
+  vegetacaoPorLado,
 } from "../../lib/car/motor.ts";
 import type { ProjetoCar, ResultadoCar } from "../../lib/car/motor.ts";
-import { CAMADAS, baixar, gerarKmlCar, nomeArquivo, zipCompleto, zipDaCamada } from "../../lib/car/saidas.ts";
+import { CAMADAS, baixar, gerarKmlCar, gerarKmlVegetacao, nomeArquivo, zipCompleto, zipDaCamada } from "../../lib/car/saidas.ts";
 import type { CamadaCar } from "../../lib/car/saidas.ts";
 import { carregarProjetoCar, marcarCarExportado, salvarProjetoCar } from "../../lib/car/persistencia.ts";
 import { Dica, GiroMapa, StatusSalvamento } from "../ui";
@@ -42,6 +44,8 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
   const [h, setH] = useState<Historico>({ passado: [], atual: null, futuro: [], base: null });
   const [erroCarga, setErroCarga] = useState<string | null>(null);
   const [ferramenta, setFerramenta] = useState<FerramentaCar>("mover");
+  /** o que a ferramenta "lado" encosta: a reserva ou a vegetação nativa */
+  const [alvoLado, setAlvoLado] = useState<"reserva" | "vegetacao">("reserva");
   const [sel, setSel] = useState<SelecaoCar>(null);
   const [satelite, setSatelite] = useState(true);
   const [msg, setMsg] = useState<{ t: string; erro?: boolean } | null>(null);
@@ -97,7 +101,11 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
   });
 
   // ---------------- ações da reserva ----------------
-  function porLado(lado: number, giro = projeto?.reserva.giro ?? 0) {
+  function porLado(lado: number) {
+    if (alvoLado === "vegetacao") vegetacaoNoLado(lado);
+    else reservaNoLado(lado);
+  }
+  function reservaNoLado(lado: number, giro = projeto?.reserva.giro ?? 0) {
     if (!projeto) return;
     try {
       const poligonos = reservaPorLado(projeto, lado, giro);
@@ -125,10 +133,49 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
     }
     mudar(p);
   }
+  // ---------------- ações da vegetação nativa ----------------
+  function vegetacaoNoLado(lado: number, giro = projeto?.vegetacao.giro ?? 0) {
+    if (!projeto) return;
+    try {
+      const poligonos = vegetacaoPorLado(projeto, lado, giro);
+      mudar({ ...projeto, vegetacao: { ...projeto.vegetacao, poligonos, lado, giro } });
+      setSel(null);
+      setFerramenta("mover");
+      mostrar(`Vegetação nativa encostada no lado ${lado + 1}, com ${fmtHa((projeto.vegetacao.alvoHa ?? 0) * 1e4)}, fora da reserva. Gire a divisa ou arraste os vértices para ajustar.`);
+    } catch (e) { mostrar(e instanceof Error ? e.message : String(e), true); }
+  }
+  function ajustarVeg() {
+    if (!projeto) return;
+    try {
+      const poligonos = ajustarVegetacao(projeto);
+      mudar({ ...projeto, vegetacao: { ...projeto.vegetacao, poligonos } });
+      setSel(null);
+      mostrar(`Vegetação nativa ajustada a ${fmtHa((projeto.vegetacao.alvoHa ?? 0) * 1e4)} sem sair do lugar.`);
+    } catch (e) { mostrar(e instanceof Error ? e.message : String(e), true); }
+  }
+  function mudarAlvoVeg(ha: number) {
+    if (!projeto) return;
+    const p = { ...projeto, vegetacao: { ...projeto.vegetacao, alvoHa: Number.isFinite(ha) && ha > 0 ? ha : null } };
+    // faixa automática acompanha a área; desenho à mão espera o "Ajustar"
+    if (p.vegetacao.alvoHa && p.vegetacao.lado !== null && p.vegetacao.poligonos.length) {
+      try { p.vegetacao.poligonos = vegetacaoPorLado(p, p.vegetacao.lado, p.vegetacao.giro); } catch { /* fica como estava */ }
+    }
+    mudar(p);
+  }
+  const mudarBeneficiado = (patch: Partial<ProjetoCar["vegetacao"]["beneficiado"]>) => projeto &&
+    mudar({ ...projeto, vegetacao: { ...projeto.vegetacao, beneficiado: { ...projeto.vegetacao.beneficiado, ...patch } } });
+  function encostar(alvo: "reserva" | "vegetacao") {
+    if (alvo === "vegetacao" && !projeto?.vegetacao.alvoHa) { mostrar("Informe primeiro a área a ceder (ha) — é o que o imóvel beneficiado precisa compensar.", true); return; }
+    setAlvoLado(alvo);
+    setFerramenta("lado");
+  }
+
   function apagarSelecionado() {
     if (!projeto || !sel) return;
     if (sel.tipo === "reserva") {
       mudar({ ...projeto, reserva: { ...projeto.reserva, poligonos: projeto.reserva.poligonos.filter((_, i) => i !== sel.i), lado: null } });
+    } else if (sel.tipo === "vegetacao") {
+      mudar({ ...projeto, vegetacao: { ...projeto.vegetacao, poligonos: projeto.vegetacao.poligonos.filter((_, i) => i !== sel.i), lado: null } });
     } else {
       mudar({ ...projeto, rios: projeto.rios.filter((r) => r.id !== sel.id) });
     }
@@ -138,13 +185,15 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
     mudar({ ...projeto, rios: projeto.rios.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
 
   // ---------------- downloads ----------------
-  async function exportar(qual: CamadaCar | "tudo" | "kml") {
+  async function exportar(qual: CamadaCar | "tudo" | "kml" | "kml-vegetacao") {
     if (!projeto || !res) return;
     setBaixando(qual);
     try {
       const base = nomeArquivo(projeto.nome);
+      const dados = { municipio: servico.municipio, uf: servico.uf, proprietario: servico.detentor_nome };
       if (qual === "kml") baixar(gerarKmlCar(projeto, res), `${base}_CAR.kml`, "application/vnd.google-earth.kml+xml");
-      else if (qual === "tudo") baixar(await zipCompleto(projeto, res), `${base}_CAR.zip`);
+      else if (qual === "kml-vegetacao") baixar(gerarKmlVegetacao(projeto, res, dados), `${base}_VEGETACAO_NATIVA.kml`, "application/vnd.google-earth.kml+xml");
+      else if (qual === "tudo") baixar(await zipCompleto(projeto, res, dados), `${base}_CAR.zip`);
       else baixar(await zipDaCamada(projeto, res, qual), `${base}_${CAMADAS.find((c) => c.id === qual)!.arquivo}.zip`);
       if (servico.status !== "gerado") {
         await armazenamento.marcarExportado?.(servico.id);
@@ -164,13 +213,19 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
   if (!projeto || !res) return <div className="centro"><span className="spinner" />&nbsp; Abrindo o CAR…</div>;
 
   const a = res.area;
-  const vazia: Record<CamadaCar, boolean> = { imovel: false, reserva: !res.reserva.length, produtiva: !res.produtiva.length, app: !res.app.length };
+  const vazia: Record<CamadaCar, boolean> = { imovel: false, reserva: !res.reserva.length, vegetacao: !res.vegetacao.length, produtiva: !res.produtiva.length, app: !res.app.length };
   const ferramentas: [FerramentaCar, string, string][] = [
     ["mover", "↖", "Selecionar e mover (arraste vértices; o fundo move o mapa)"],
     ["lado", "⊟", "Reserva encostada num lado do imóvel, na porcentagem exata"],
     ["reserva", "⬠", "Desenhar a reserva à mão"],
+    ["vegetacao", "🌳", "Desenhar a vegetação nativa cedida a outro imóvel"],
     ["rio", "〰", "Traçar um rio (APP dos dois lados)"],
   ];
+  const veg = projeto.vegetacao;
+  // a régua do giro fica com quem foi encostado por último
+  const giroDe: "reserva" | "vegetacao" | null = alvoLado === "vegetacao" && veg.lado !== null && veg.poligonos.length ? "vegetacao"
+    : projeto.reserva.lado !== null && projeto.reserva.poligonos.length ? "reserva"
+    : veg.lado !== null && veg.poligonos.length ? "vegetacao" : null;
   const rioSel = sel?.tipo === "rio" ? projeto.rios.find((r) => r.id === sel.id) : undefined;
 
   return (
@@ -192,7 +247,8 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
       <div className="car-area-trabalho">
         <nav className="car-ferramentas" aria-label="Ferramentas">
           {ferramentas.map(([f, i, t]) => (
-            <button key={f} title={t} aria-label={t} className={ferramenta === f ? "ativo" : ""} onClick={() => setFerramenta(f)}>{i}</button>
+            <button key={f} title={t} aria-label={t} className={ferramenta === f && (f !== "lado" || alvoLado === "reserva") ? "ativo" : ""}
+              onClick={() => (f === "lado" ? encostar("reserva") : setFerramenta(f))}>{i}</button>
           ))}
           <span className="sep" />
           <button title="Desfazer (Ctrl+Z)" aria-label="Desfazer" disabled={!h.passado.length} onClick={desfazer}>↶</button>
@@ -203,8 +259,8 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
 
         <div className="car-centro">
           <CarEditor projeto={projeto} res={res} ferramenta={ferramenta} onFerramenta={setFerramenta} sel={sel} onSel={setSel}
-            onMudar={mudar} onFimArraste={fimArraste} onLado={(l) => porLado(l)} satelite={satelite} onMsg={(t) => mostrar(t)}
-            sobreposto={projeto.reserva.lado !== null && projeto.reserva.poligonos.length > 0 && (
+            onMudar={mudar} onFimArraste={fimArraste} onLado={(l) => porLado(l)} alvoLado={alvoLado} satelite={satelite} onMsg={(t) => mostrar(t)}
+            sobreposto={giroDe === "reserva" ? (
               // o giro da divisa da reserva mexe no desenho: a régua fica nele
               <GiroMapa rotulo="Giro da reserva" valor={projeto.reserva.giro} min={-60} max={60} passo={1} onFim={fimArraste}
                 onGiro={(giro) => {
@@ -213,7 +269,15 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
                     mudar({ ...projeto, reserva: { ...projeto.reserva, poligonos, giro } }, true);
                   } catch { /* giro sem solução: fica o anterior */ }
                 }} />
-            )} />
+            ) : giroDe === "vegetacao" ? (
+              <GiroMapa rotulo="Giro da vegetação" valor={veg.giro} min={-60} max={60} passo={1} onFim={fimArraste}
+                onGiro={(giro) => {
+                  try {
+                    const poligonos = vegetacaoPorLado(projeto, veg.lado!, giro);
+                    mudar({ ...projeto, vegetacao: { ...veg, poligonos, giro } }, true);
+                  } catch { /* giro sem solução: fica o anterior */ }
+                }} />
+            ) : null} />
           {msg && (
             <div className={`car-msg${msg.erro ? " erro" : ""}`} role="status">
               <span>{msg.t}</span>
@@ -230,6 +294,9 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
                 <tr><td><i style={{ background: COR.imovel }} />Área total</td><td>{fmtHa(a.imovel)}</td><td>100%</td></tr>
                 <tr><td><i style={{ background: COR.reserva }} />Reserva legal</td><td>{fmtHa(a.reserva)}</td>
                   <td className={res.reservaOk ? "" : "car-falta"}>{fmtPct(res.pctReserva)}</td></tr>
+                {(veg.poligonos.length > 0 || a.vegetacao > 0) && (
+                  <tr><td><i style={{ background: COR.vegetacao }} />Vegetação nativa</td><td>{fmtHa(a.vegetacao)}</td><td>{fmtPct((100 * a.vegetacao) / a.imovel)}</td></tr>
+                )}
                 <tr><td><i style={{ background: COR.produtiva }} />Área produtiva</td><td>{fmtHa(a.produtiva)}</td><td>{fmtPct((100 * a.produtiva) / a.imovel)}</td></tr>
                 <tr><td><i style={{ background: COR.app }} />APP</td><td>{fmtHa(a.app)}</td><td>{fmtPct((100 * a.app) / a.imovel)}</td></tr>
               </tbody>
@@ -237,7 +304,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
             {a.appNaReserva > 0.01 && <p className="car-dica">{fmtHa(a.appNaReserva)} da APP estão dentro da reserva legal.</p>}
             <label className="car-check">
               <input type="checkbox" checked={projeto.produtivaSemApp} onChange={(e) => mudar({ ...projeto, produtivaSemApp: e.target.checked })} />
-              <span>Tirar a APP da área produtiva<Dica>Padrão: produtiva = total − reserva.</Dica></span>
+              <span>Tirar a APP da área produtiva<Dica>Padrão: produtiva = total − reserva − vegetação nativa cedida.</Dica></span>
             </label>
           </section>
 
@@ -250,7 +317,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
                   onChange={(e) => mudarPct(Number(e.target.value))} aria-label="Porcentagem da reserva legal" />
                 <span>%</span>
               </label>
-              <button className={ferramenta === "lado" ? "ativo" : ""} onClick={() => setFerramenta("lado")} title="Encostar a reserva num lado do imóvel">⊟ Encostar</button>
+              <button className={ferramenta === "lado" && alvoLado === "reserva" ? "ativo" : ""} onClick={() => encostar("reserva")} title="Encostar a reserva num lado do imóvel">⊟ Encostar</button>
               <button className={ferramenta === "reserva" ? "ativo" : ""} onClick={() => setFerramenta("reserva")} title="Desenhar a reserva à mão">⬠ Desenhar</button>
             </div>
             {projeto.reserva.poligonos.length > 0 && (
@@ -262,6 +329,43 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
               </div>
             )}
             {sel?.tipo === "reserva" && (
+              <p className="car-dica">Polígono {sel.i + 1} selecionado · arraste os vértices · Delete apaga só este polígono.</p>
+            )}
+          </section>
+
+          <section className="car-cartao car-vegetacao">
+            <header>
+              <h3>Vegetação nativa<Dica>Mata excedente deste imóvel que vai servir de reserva legal de OUTRO imóvel (compensação, Código Florestal art. 66, §5º, IV — mesmo bioma). Só pode ser excedente: o que cair na reserva legal deste imóvel fica de fora. Sai num shapefile próprio (VEGETACAO_NATIVA) e num KML com a área e o imóvel beneficiado.</Dica></h3>
+              {veg.poligonos.length > 0 && (res.vegetacaoOk ? <span className="car-ok">✓ {fmtHa(a.vegetacao)}</span> : <span className="car-falta">abaixo da área</span>)}
+            </header>
+            <div className="car-reserva-linha">
+              <label className="car-entrada car-ha" title="Área que o imóvel beneficiado precisa compensar">
+                <input type="number" min={0} step={0.01} value={veg.alvoHa ?? ""} placeholder="0,00"
+                  onChange={(e) => mudarAlvoVeg(e.target.value === "" ? NaN : Number(e.target.value))} aria-label="Área a ceder em hectares" />
+                <span>ha</span>
+              </label>
+              <button className={ferramenta === "lado" && alvoLado === "vegetacao" ? "ativo" : ""} onClick={() => encostar("vegetacao")} title="Encostar a vegetação num lado do imóvel, com a área pedida, fora da reserva">⊟ Encostar</button>
+              <button className={ferramenta === "vegetacao" ? "ativo" : ""} onClick={() => setFerramenta("vegetacao")} title="Desenhar a vegetação à mão">⬠ Desenhar</button>
+            </div>
+            <div className="car-beneficiado">
+              <label className="car-campo"><span>Imóvel beneficiado</span>
+                <input value={veg.beneficiado.nome} placeholder="Fazenda que vai usar a área" onChange={(e) => mudarBeneficiado({ nome: e.target.value })} />
+              </label>
+              <label className="car-campo"><span>CAR do beneficiado</span>
+                <input value={veg.beneficiado.car} placeholder="BA-0000000-…" onChange={(e) => mudarBeneficiado({ car: e.target.value })} />
+              </label>
+            </div>
+            {veg.poligonos.length > 0 && (
+              <div className="car-botoes">
+                <button className="principal" onClick={ajustarVeg} disabled={!veg.alvoHa || (res.vegetacaoOk && Math.abs(a.vegetacao - veg.alvoHa * 1e4) < 2)}
+                  title={veg.alvoHa ? undefined : "Informe a área a ceder"}>
+                  {veg.alvoHa ? `Ajustar a ${fmtHa(veg.alvoHa * 1e4)}` : "Ajustar à área"}
+                </button>
+                <button onClick={() => exportar("kml-vegetacao")} disabled={!res.vegetacao.length || !!baixando}>{baixando === "kml-vegetacao" ? "…" : "KML da vegetação"}</button>
+                <button className="fantasma" onClick={() => { mudar({ ...projeto, vegetacao: { ...veg, poligonos: [], lado: null } }); setSel(null); }}>Apagar</button>
+              </div>
+            )}
+            {sel?.tipo === "vegetacao" && (
               <p className="car-dica">Polígono {sel.i + 1} selecionado · arraste os vértices · Delete apaga só este polígono.</p>
             )}
           </section>
@@ -306,8 +410,15 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
               <button className="principal" disabled={!!baixando} onClick={() => exportar("tudo")}>{baixando === "tudo" ? "Gerando…" : "Baixar tudo (zip)"}</button>
               <button disabled={!!baixando} onClick={() => exportar("kml")}>KML de conferência</button>
             </div>
+            {res.vegetacao.length > 0 && (
+              <div className="car-baixar">
+                <i style={{ background: COR.vegetacao }} />
+                <span>KML da vegetação nativa<small>{nomeArquivo(projeto.nome)}_VEGETACAO_NATIVA.kml</small></span>
+                <button disabled={!!baixando} onClick={() => exportar("kml-vegetacao")}>{baixando === "kml-vegetacao" ? "…" : "Baixar"}</button>
+              </div>
+            )}
             {!res.reservaOk && <p className="car-falta" style={{ fontSize: 12.5, margin: 0 }}>A reserva ainda não chega a {fmtPct(projeto.reserva.pct)} — o SICAR vai acusar.</p>}
-            <p className="car-dica">Área total {fmtNum(a.imovel, 2)} m² · reserva {fmtNum(a.reserva, 2)} m² · produtiva {fmtNum(a.produtiva, 2)} m² · APP {fmtNum(a.app, 2)} m²</p>
+            <p className="car-dica">Área total {fmtNum(a.imovel, 2)} m² · reserva {fmtNum(a.reserva, 2)} m²{a.vegetacao > 0 ? ` · vegetação nativa ${fmtNum(a.vegetacao, 2)} m²` : ""} · produtiva {fmtNum(a.produtiva, 2)} m² · APP {fmtNum(a.app, 2)} m²</p>
           </section>
         </aside>
       </div>

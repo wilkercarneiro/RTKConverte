@@ -23,6 +23,10 @@ import { dist } from "../../lib/loteamento/geom.ts";
 import { Dica } from "../ui";
 import type { RT, Servico } from "../../lib/types";
 import { Miniatura } from "./Assistente";
+import { EntregasInfra } from "./EntregasInfra";
+import { calcularInfra } from "../../lib/loteamento/infra/index.ts";
+import type { ParametrosInfra } from "../../lib/loteamento/infra/index.ts";
+import { pontosDasRedes } from "../../lib/loteamento/infra/saidas.ts";
 
 interface Props {
   servico: Servico;
@@ -32,6 +36,8 @@ interface Props {
   onExportou: () => void;
   /** abre a maquete 3D */
   onAbrir3D?: () => void;
+  /** muda os parâmetros dos projetos de infraestrutura */
+  onMudarInfra?: (p: Partial<ParametrosInfra>) => void;
 }
 
 function baixar(dados: BlobPart, nome: string, tipo: string) {
@@ -81,7 +87,7 @@ async function lerCarimbo(s: Servico): Promise<DadosCarimbo> {
   };
 }
 
-export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir3D }: Props) {
+export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir3D, onMudarInfra }: Props) {
   const [folha, setFolha] = useState<Folha>("A1");
   const [formato, setFormato] = useState<FormatoLocacao>("csv-nome-e-n");
   const [op, setOp] = useState<OpcoesLocacao>(LOCACAO_PADRAO);
@@ -92,7 +98,13 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
   useEffect(() => { carregarCarimbo(servico).then(setCarimbo).catch(() => setCarimbo(null)); }, [servico]);
 
   const fuso = servico.fuso_utm ?? 24;
-  const pontos = useMemo(() => pontosDeLocacao(res, perimetro, op), [res, perimetro, op]);
+  // PVs, postes, hidrantes e o reservatório também vão para a coletora, se pedido
+  const [locarRedes, setLocarRedes] = useState(false);
+  const pontos = useMemo(() => {
+    const base0 = pontosDeLocacao(res, perimetro, op);
+    if (!locarRedes) return base0;
+    try { return [...base0, ...pontosDasRedes(res, calcularInfra(res, projeto))]; } catch { return base0; }
+  }, [res, perimetro, op, locarRedes, projeto]);
   const nomes = useMemo(() => nomesDosPontos(pontosDeLocacao(res, perimetro, LOCACAO_PADRAO)), [res, perimetro]);
   const base = nomeArquivo(projeto.nome);
   const erros = res.problemas.filter((p) => p.nivel === "erro").length;
@@ -226,7 +238,7 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
           <div className="lot-3d-chamada-texto">
             <span className="lot-3d-selo">NOVO · MAQUETE 3D</span>
             <h3>Veja o loteamento pronto, no relevo real</h3>
-            <p>O terreno de hoje vira o projeto: ruas terraplenadas, {res.lotes.length} lotes com casas simuladas, áreas verdes arborizadas, sol e sombras. Declividade, corte e aterro, curvas de nível, voo de drone em vídeo e modelo 3D para Twinmotion/SketchUp.</p>
+            <p>O terreno de hoje vira o projeto: ruas terraplenadas, {res.lotes.length} lotes com casas simuladas, áreas verdes arborizadas, a rede elétrica com postes, fios e transformadores, hidrantes, PVs e o reservatório. Declividade, corte e aterro, curvas de nível, as redes enterradas, voo de drone em vídeo e modelo 3D para Twinmotion/SketchUp.</p>
             <span className="lot-3d-botao">Abrir a maquete 3D →</span>
           </div>
           <div className="lot-3d-chamada-arte" aria-hidden>
@@ -289,6 +301,9 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
         </div>
       </section>
 
+      <EntregasInfra servico={servico} projeto={projeto} res={res} base={base} onExportou={onExportou} onMudarInfra={onMudarInfra}
+        obterCarimbo={async () => carimbo ?? await carregarCarimbo(servico)} />
+
       <section className="bloco lot-entrega-campo">
         <header><h3>Para o técnico de campo (coletora GNSS)<Dica>Pontos em UTM SIRGAS 2000 fuso {fuso}S, com o mesmo nome da planta e dos memoriais.</Dica></h3></header>
         <div className="lot-campo-grade">
@@ -311,6 +326,7 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
               <label><input type="checkbox" checked={op.eixos} onChange={(e) => setOp({ ...op, eixos: e.target.checked })} /> Eixo das ruas, estaca a cada
                 <input type="number" className="lot-estaca" value={op.estaca} min={5} step={5} onChange={(e) => setOp({ ...op, estaca: Math.max(5, Number(e.target.value) || 20) })} /> m</label>
               <label><input type="checkbox" checked={op.perimetro} onChange={(e) => setOp({ ...op, perimetro: e.target.checked })} /> Marcos do perímetro (conferência)</label>
+              <label><input type="checkbox" checked={locarRedes} onChange={(e) => setLocarRedes(e.target.checked)} /> PVs, bocas de lobo, postes, hidrantes e reservatório (redes)</label>
             </div>
             <p className="lot-dica">
               <b>{pontos.length} pontos</b> — {pontos.filter((p) => p.tipo === "lote").length} de lote, {pontos.filter((p) => p.tipo === "curva").length} de curva,{" "}

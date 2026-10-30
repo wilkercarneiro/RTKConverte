@@ -103,3 +103,18 @@
 .car-pct { gap: 3px; }
 .car-pct input { width: 48px; height: 34px; padding: 0 6px; text-align: right; }
 .car-pct .dica { margin-left: 2px; }
+
+/* Vegetação nativa: área (ha) + Encostar + Desenhar na linha; beneficiado em duas colunas */
+.car-ha { gap: 3px; }
+.car-ha input { width: 72px; height: 34px; padding: 0 6px; text-align: right; }
+.car-beneficiado { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.car-beneficiado input { min-width: 0; }
+.car-vegetacao .car-botoes button { flex: 1 1 auto; }
+
+/* nome dos pontos do GPS nos vértices do imóvel */
+.car-vertice circle { fill: #fff; stroke: #C99A12; stroke-width: 1.5; }
+.car-vertice text { font: 600 11px var(--fonte); fill: #fff; paint-order: stroke; stroke: rgb(20 24 20 / 80%); stroke-width: 3px; pointer-events: none; }
+.car-novo-previa .car-ponto { cursor: pointer; }
+.car-novo-previa .car-ponto text { font: 600 10px var(--fonte); fill: #12201A; paint-order: stroke; stroke: #F6F7F4; stroke-width: 3px; }
+.car-novo-previa .car-ponto.fora circle { fill: #fff; stroke: #B5B5B5; }
+.car-novo-previa .car-ponto.fora text { fill: #9A9A9A; text-decoration: line-through; }

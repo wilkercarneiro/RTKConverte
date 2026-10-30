@@ -7,6 +7,8 @@
 //
 // Sem DOMParser de propósito: o mesmo código roda no navegador e nos testes
 // do node, e o KML que importa aqui é sempre plano (Placemark → geometria).
+import { avisosDosPontos, perimetroDosPontos } from "./gpx.ts";
+import type { PontoGps } from "./gpx.ts";
 
 export type LonLat = [number, number];
 
@@ -17,6 +19,8 @@ export interface KmlLido {
   nome: string | null;
   /** anel aberto (sem repetir o primeiro ponto), na ordem do arquivo */
   perimetro: LonLat[];
+  /** nome de cada vértice do perímetro, quando o arquivo traz (pontos do GPS: 218, 219…) */
+  nomes?: (string | null)[];
   rios: LinhaKml[];
   avisos: string[];
 }
@@ -83,6 +87,20 @@ export function lerKml(texto: string): KmlLido {
   const validos = aneis
     .map((a) => ({ ...a, anel: fechada(a.anel) ? a.anel.slice(0, -1) : a.anel }))
     .filter((a) => a.anel.length >= 3);
+  // KML só de pontos (o GPX dos pontos de passagem aberto no Google Earth e salvo):
+  // os pontos marcados na divisa viram o perímetro, como no GPX
+  const pontos: PontoGps[] = [];
+  if (!validos.length) {
+    for (const pm of placemarks) {
+      const m = /<Point[^>]*>[\s\S]*?<coordinates>([\s\S]*?)<\/coordinates>/i.exec(pm);
+      const c = m ? coordenadas(m[1])[0] : undefined;
+      if (c) pontos.push({ lon: c[0], lat: c[1], nome: nomeDe(pm), tempo: null });
+    }
+  }
+  if (!validos.length && pontos.length >= 3) {
+    const r = perimetroDosPontos(pontos);
+    return { nome: nomeDoc, perimetro: r.anel, nomes: r.nomes, rios: linhas, avisos: [...avisosDosPontos(r, pontos.length), ...(linhas.length ? [`${linhas.length} linha(s) aberta(s) entraram como rio — confira a faixa de APP de cada uma.`] : [])] };
+  }
   if (!validos.length) {
     throw new Error(linhas.length
       ? "O KML só tem linhas abertas. O perímetro do imóvel precisa ser um polígono (ou uma linha fechada, com o último ponto igual ao primeiro)."

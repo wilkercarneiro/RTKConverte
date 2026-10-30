@@ -14,6 +14,8 @@ import type { ModoChao } from "../../lib/loteamento/textura3d.ts";
 import { desnivelDaGleba, intervaloCurvas, pintarCampo, pintarDivisa, pintarMateriais, pintarProjeto, pintarSatelite, quadroDaGrade } from "../../lib/loteamento/textura3d.ts";
 import type { Quadro } from "../../lib/loteamento/textura3d.ts";
 import { paraUtm } from "../../lib/loteamento/plano.ts";
+import { calcularInfra } from "../../lib/loteamento/infra/index.ts";
+import type { ResultadoInfra } from "../../lib/loteamento/infra/index.ts";
 import { Maquete } from "./maquete3d.ts";
 import { Trilha } from "./trilha.ts";
 import type { Legenda } from "../../lib/loteamento/cinema3d.ts";
@@ -37,6 +39,7 @@ const MODOS: { modo: ModoChao; rotulo: string; icone: string }[] = [
   { modo: "declividade", rotulo: "Declividade", icone: "M3 20h18L3 6z" },
   { modo: "terraplenagem", rotulo: "Corte e aterro", icone: "M3 15c3-4 6-4 9 0s6 4 9 0M3 9h18" },
   { modo: "curvas", rotulo: "Curvas de nível", icone: "M4 16c4-6 12-6 16 0M7 16c2.5-3 7.5-3 10 0M10 16c1-1 3-1 4 0" },
+  { modo: "infra", rotulo: "Infraestrutura", icone: "M3 7h8a3 3 0 0 1 3 3v7M14 17h7M18 14v6M13 3l-3 5h4l-3 5" },
 ];
 
 function baixar(blob: Blob, nome: string) {
@@ -104,7 +107,7 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
   const telas = useRef<{ projeto: HTMLCanvasElement; antes: HTMLCanvasElement; q: Quadro } | null>(null);
   const [etapas, setEtapas] = useState<Etapa[]>([
     { texto: "Lendo o relevo do terreno (modelo digital de elevação)", feito: false },
-    { texto: "Terraplenagem das ruas e simulação das casas", feito: false },
+    { texto: "Terraplenagem das ruas, redes de água, esgoto, drenagem e energia, e as casas", feito: false },
     { texto: "Imagem de satélite da vizinhança", feito: false },
     { texto: "Montando a maquete", feito: false },
   ]);
@@ -112,7 +115,8 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
   const [cena, setCena] = useState<Cena | null>(null);
   const [pronto, setPronto] = useState(false);
   const [modo, setModo] = useState<ModoChao>("projeto");
-  const [camadas, setCamadas] = useState({ casas: true, arvores: true, meioFio: true, sombras: true, paisagem: true, maquete: false });
+  const [camadas, setCamadas] = useState({ casas: true, arvores: true, meioFio: true, redes: true, sombras: true, paisagem: true, maquete: false });
+  const [infra, setInfra] = useState<ResultadoInfra | null>(null);
   const [exag, setExag] = useState(1);
   const [hora, setHora] = useState(9.5);
   const [depois, setDepois] = useState(true);
@@ -144,7 +148,11 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
         setTerrenoFonte(terreno?.fonte ?? "plano");
         marcar(0);
         await new Promise((r) => setTimeout(r, 30));
-        const c = montarCena(res, projeto.params, terreno);
+        // as redes do projeto (postes, fios, hidrantes, PVs, reservatório) entram na maquete
+        let inf: ResultadoInfra | null = null;
+        try { inf = calcularInfra(res, projeto); } catch (e) { console.error(e); }
+        setInfra(inf);
+        const c = montarCena(res, projeto.params, terreno, inf ? { infra: inf } : {});
         if (!vivo) return;
         marcar(1);
         await new Promise((r) => setTimeout(r, 30));
@@ -170,7 +178,7 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
         marcar(2);
         const tela = Object.assign(document.createElement("canvas"), { width: q.largura, height: q.altura });
         telas.current = { projeto: tela, antes, q };
-        pintar(tela, antes, q, c, "projeto");
+        pintar(tela, antes, q, c, "projeto", inf);
         await new Promise((r) => setTimeout(r, 30));
         if (!vivo || !caixa.current) return;
         const lat = proj(utmDef(fuso), GEO_DEF, paraUtm(res.plano, c.centro))[1];
@@ -236,12 +244,12 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function pintar(tela: HTMLCanvasElement, antes: HTMLCanvasElement, q: Quadro, c: Cena, m: ModoChao) {
+  function pintar(tela: HTMLCanvasElement, antes: HTMLCanvasElement, q: Quadro, c: Cena, m: ModoChao, inf: ResultadoInfra | null = infra) {
     const ctx = tela.getContext("2d")!;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(antes, 0, 0, q.largura, q.altura);
-    pintarProjeto(ctx, q, { res, cena: c, modo: m });
+    pintarProjeto(ctx, q, { res, cena: c, modo: m, infra: inf });
   }
 
   // ---- reações aos controles
@@ -254,7 +262,7 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
   }, [modo, pronto]);
   useEffect(() => { maq.current?.setExagero(exag); }, [exag]);
   useEffect(() => { maq.current?.setHora(hora); }, [hora]);
-  useEffect(() => { maq.current?.setVisivel("casas", camadas.casas); maq.current?.setVisivel("arvores", camadas.arvores); maq.current?.setVisivel("meioFio", camadas.meioFio); }, [camadas.casas, camadas.arvores, camadas.meioFio]);
+  useEffect(() => { maq.current?.setVisivel("casas", camadas.casas); maq.current?.setVisivel("arvores", camadas.arvores); maq.current?.setVisivel("meioFio", camadas.meioFio); maq.current?.setVisivel("redes", camadas.redes); }, [camadas.casas, camadas.arvores, camadas.meioFio, camadas.redes]);
   useEffect(() => { maq.current?.setSombras(camadas.sombras); }, [camadas.sombras]);
   useEffect(() => { if (pronto) maq.current?.setPaisagem(camadas.paisagem); }, [camadas.paisagem, pronto]);
   useEffect(() => { maq.current?.setTilt(camadas.maquete ? 0.85 : 0); }, [camadas.maquete]);
@@ -403,10 +411,27 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
                 <p>Greide das ruas pelo terreno suavizado (raio ~9 m), taludes 1:1,5 até o terreno natural. Estimativa para estudo — não substitui o projeto geométrico.</p>
               </>
             )}
+            {modo === "infra" && infra && (
+              <>
+                <ul>
+                  <li><i className="linha" style={{ borderColor: "#1e6fd9" }} />Água<em>{fmt(Object.values(infra.agua.resumo.extensao).reduce((a, b) => a + b, 0), 0)} m</em></li>
+                  <li><i className="linha" style={{ borderColor: "#8a5a2b" }} />Esgoto<em>{infra.esgoto.resumo.nPv + infra.esgoto.resumo.nTil} PV/TIL</em></li>
+                  <li><i className="linha tracejada" style={{ borderColor: "#13a3a3" }} />Drenagem<em>{infra.drenagem.resumo.nBocas} bocas de lobo</em></li>
+                  <li><i className="linha tracejada" style={{ borderColor: "#e23b2e" }} />Média tensão<em>{fmt(infra.eletrica.resumo.extensaoMT, 0)} m</em></li>
+                  <li><i className="linha" style={{ borderColor: "#f08a24" }} />Baixa tensão<em>{infra.eletrica.trafos.length} trafos · {fmt(infra.eletrica.resumo.kvaInstalado, 1)} kVA</em></li>
+                  <li><i style={{ background: "#d32f2f", borderRadius: 6 }} />Hidrantes<em>{infra.agua.hidrantes.length}</em></li>
+                </ul>
+                <p>
+                  {infra.agua.reservatorio ? `Reservatório ${infra.agua.reservatorio.tipo} de ${infra.agua.reservatorio.volume} m³${infra.agua.reservatorio.tipo === "elevado" ? ` (torre de ${infra.agua.reservatorio.altura} m)` : ""}; ` : ""}
+                  {infra.eletrica.resumo.nPostes} postes com LED de {infra.eletrica.ip.potencia} W ({fmt(infra.eletrica.ip.eMedia, 1)} lux médios, classe {infra.eletrica.ip.classe}).
+                  Redes geradas pelo sistema a partir do traçado — os fios, postes, hidrantes e tampas aparecem na maquete.
+                </p>
+              </>
+            )}
             {modo === "curvas" && <p>Curvas a cada {fmt(resumo.intervalo, resumo.intervalo < 1 ? 2 : 0)} m (mestras a cada {fmt(resumo.intervalo * 5, resumo.intervalo < 1 ? 2 : 0)} m), do terreno já com as ruas. Desnível na gleba: {fmt(resumo.desnivel, 1)} m.</p>}
           </div>
           <div className="m3d-camadas">
-            {([["casas", "Casas", ""], ["arvores", "Árvores", ""], ["meioFio", "Meio-fio", ""], ["sombras", "Sombras", ""],
+            {([["casas", "Casas", ""], ["arvores", "Árvores", ""], ["meioFio", "Meio-fio", ""], ["redes", "Redes", "Postes do projeto elétrico com fios e transformadores, hidrantes, tampas de PV, bocas de lobo, reservatório e estação de esgoto"], ["sombras", "Sombras", ""],
               ["paisagem", "Paisagem", "Céu de verdade, a vizinhança por satélite até o horizonte e névoa de distância (o voo e a apresentação usam sempre)"],
               ["maquete", "Efeito maquete", "Desfoca acima e abaixo do centro da tela, como foto de maquete (tilt-shift)"]] as const).map(([k, r, dica]) => (
               <label key={k} title={dica || undefined}><input type="checkbox" checked={camadas[k]} onChange={(e) => setCamadas({ ...camadas, [k]: e.target.checked })} />{r}</label>

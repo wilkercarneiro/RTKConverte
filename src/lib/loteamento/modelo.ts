@@ -10,6 +10,7 @@
 // escala, e um projeto salvo não pode andar se o operador trocar essa opção.
 import type { Pt } from "./geom.ts";
 import type { GradeTerreno } from "./terreno.ts";
+import type { ParametrosInfra } from "./infra/parametros.ts";
 
 export type ModoDivisao = "frente" | "area" | "quantidade";
 /** Para onde vai o que sobra quando a fileira não dá um número inteiro de lotes. */
@@ -401,6 +402,8 @@ export interface Projeto {
    * dentro deles — sem redesenhar nada, para não mexer nas quadras vizinhas.
    */
   sobrasPublicas?: { ponto: Pt; tipo: TipoArea }[];
+  /** parâmetros dos projetos de água, esgoto, drenagem, energia e iluminação (as redes são recalculadas) */
+  infra?: Partial<ParametrosInfra>;
 }
 
 export function projetoNovo(nome: string, ladosPerimetro: number): Projeto {

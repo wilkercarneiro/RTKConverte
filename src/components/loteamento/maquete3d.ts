@@ -16,6 +16,7 @@ import { Pos } from "./pos3d.ts";
 import { Ceu } from "./ceu3d.ts";
 import type { Cena, Casa } from "../../lib/loteamento/cena3d.ts";
 import { cotaFinal, loteNoPonto, PLATIBANDA } from "../../lib/loteamento/cena3d.ts";
+import { alturaLuminaria } from "../../lib/loteamento/infra/cena.ts";
 import type { Resultado } from "../../lib/loteamento/calculo.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { centroide, comprimento, dist, esquerda, pontoNaPolilinha } from "../../lib/loteamento/geom.ts";
@@ -333,6 +334,8 @@ export class Maquete {
   private grupoCasas = new THREE.Group();
   private grupoArvores = new THREE.Group();
   private grupoPostes = new THREE.Group();
+  /** redes de infraestrutura projetadas (fios, hidrantes, tampas, reservatório, estação) */
+  private grupoInfra = new THREE.Group();
   private ambienteAlvo = 0.09;
   private meioFio: THREE.Mesh | null = null;
   private cortina: THREE.Mesh | null = null;
@@ -469,8 +472,9 @@ export class Maquete {
     this.montarArvores();
     this.montarMeioFio();
     this.montarPostes();
+    this.montarInfra();
     this.montarCarros();
-    this.scene.add(this.grupoCasas, this.grupoArvores, this.grupoPostes);
+    this.scene.add(this.grupoCasas, this.grupoArvores, this.grupoPostes, this.grupoInfra);
 
     this.rotulosQuadra = res.quadras.map((q) => ({ texto: q.nome, p: q.centro ?? centroide(q.pol.ext) }));
     // a névoa existe sempre (no estúdio fica longe demais para aparecer): ligar/desligar recompilaria os shaders
@@ -1391,8 +1395,8 @@ export class Maquete {
   /** Exagero vertical (a cortina de seleção usa os mesmos uniforms e acompanha sozinha). */
   setExagero(e: number): void { this.U.uExag.value = e; this.sombraSuja = true; this.sujo = 3; }
 
-  setVisivel(camada: "casas" | "arvores" | "meioFio", v: boolean): void {
-    const o = camada === "casas" ? this.grupoCasas : camada === "arvores" ? this.grupoArvores : this.meioFio;
+  setVisivel(camada: "casas" | "arvores" | "meioFio" | "redes", v: boolean): void {
+    const o = camada === "casas" ? this.grupoCasas : camada === "arvores" ? this.grupoArvores : camada === "redes" ? this.grupoInfra : this.meioFio;
     if (o) o.visible = v;
     this.sombraSuja = true;
     this.sujo = 3;
@@ -1961,11 +1965,14 @@ export class Maquete {
   private montarPostes(): void {
     const ps = this.cena.postes;
     if (!ps.length) return;
-    const poste = mergeGeometries([
-      new THREE.CylinderGeometry(0.07, 0.11, 7, 6).translate(0, 3.5, 0).toNonIndexed(),
-      new THREE.BoxGeometry(1.7, 0.08, 0.08).translate(0.8, 6.95, 0).toNonIndexed(),
-    ])!;
-    const cabeca = new THREE.BoxGeometry(0.62, 0.14, 0.32).translate(1.55, 6.86, 0);
+    // com o projeto elétrico: poste de concreto duplo T de 9 ou 12 m, luminária na altura do
+    // projeto, cruzeta na média tensão e o transformador; sem ele, o poste de iluminação de 7 m
+    const projeto = ps.some((p) => p.altura);
+    const fuste = projeto
+      ? new THREE.CylinderGeometry(0.09, 0.15, 1, 4, 1).rotateY(Math.PI / 4).translate(0, 0.5, 0)
+      : new THREE.CylinderGeometry(0.07, 0.11, 7, 6).translate(0, 3.5, 0);
+    const braco = new THREE.BoxGeometry(1.7, 0.08, 0.08).translate(0.8, 0.09, 0);
+    const cabeca = new THREE.BoxGeometry(0.62, 0.14, 0.32).translate(1.55, 0, 0);
     // poça de luz no chão (mancha quente, aditiva) — acende com a noite
     const poca = new THREE.PlaneGeometry(12, 12).rotateX(-Math.PI / 2).translate(1.8, 0.18, 0);
     const pc = document.createElement("canvas");
@@ -1980,16 +1987,40 @@ export class Maquete {
       map: tPoca, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
       polygonOffset: true, polygonOffsetFactor: -4,
     }), "instancia", this.U);
-    const matPoste = elevar(new THREE.MeshStandardMaterial({ color: 0x6f747a, roughness: 0.6, metalness: 0.5 }), "instancia", this.U);
+    const matPoste = elevar(new THREE.MeshStandardMaterial(projeto ? { color: 0xaaa79f, roughness: 0.88 } : { color: 0x6f747a, roughness: 0.6, metalness: 0.5 }), "instancia", this.U);
+    const matMetal = elevar(new THREE.MeshStandardMaterial({ color: 0x6f747a, roughness: 0.55, metalness: 0.5 }), "instancia", this.U);
     this.matLampada = elevar(new THREE.MeshStandardMaterial({ color: 0xdedede, emissive: 0xffc98a, emissiveIntensity: 0.3, roughness: 0.4 }), "instancia", this.U);
-    const eixoY = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), m4 = new THREE.Matrix4(), um = new THREE.Vector3(1, 1, 1);
-    for (const [geo, mat] of [[poste, matPoste], [cabeca, this.matLampada], [poca, this.matPoca]] as const) {
-      const im = new THREE.InstancedMesh(geo, mat, ps.length);
-      const base = new Float32Array(ps.length), atraso = new Float32Array(ps.length);
-      ps.forEach((p, i) => {
+    const cruzeta = mergeGeometries([
+      new THREE.BoxGeometry(1.15, 0.1, 0.1).toNonIndexed(),
+      ...[-0.28, 0, 0.28].map((x) => new THREE.CylinderGeometry(0.05, 0.06, 0.2, 6).translate(x, 0.15, 0).toNonIndexed()),
+    ])!;
+    const trafo = mergeGeometries([
+      new THREE.CylinderGeometry(0.4, 0.4, 1.15, 14).translate(-0.62, 0, 0).toNonIndexed(),
+      new THREE.BoxGeometry(0.5, 0.12, 0.5).translate(-0.62, 0.64, 0).toNonIndexed(),
+      ...[-0.18, 0, 0.18].map((z) => new THREE.CylinderGeometry(0.035, 0.045, 0.32, 6).translate(-0.62, 0.86, z).toNonIndexed()),
+      new THREE.BoxGeometry(0.5, 0.12, 0.16).translate(-0.3, -0.2, 0).toNonIndexed(),
+    ])!;
+    const matTrafo = elevar(new THREE.MeshStandardMaterial({ color: 0x7c8a93, roughness: 0.45, metalness: 0.55 }), "instancia", this.U);
+    const eixoY = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), m4 = new THREE.Matrix4();
+    const lum = (p: (typeof ps)[number]) => (p.altura ? alturaLuminaria(p.altura) : 6.86);
+    const partes: [THREE.BufferGeometry, THREE.Material, typeof ps, (p: (typeof ps)[number]) => [number, number]][] = [
+      // [geometria, material, quais postes, (altura da peça, escala vertical)]
+      [fuste, matPoste, ps, (p) => [0, projeto ? p.altura ?? 9 : 1]],
+      [braco, projeto ? matMetal : matPoste, ps, (p) => [lum(p), 1]],
+      [cabeca, this.matLampada, ps, (p) => [lum(p), 1]],
+      [poca, this.matPoca, ps, () => [0, 1]],
+      [cruzeta, matMetal, ps.filter((p) => p.mt), (p) => [(p.altura ?? 12) - 0.62, 1]],
+      [trafo, matTrafo, ps.filter((p) => p.trafo), () => [7.4, 1]],
+    ];
+    for (const [geo, mat, lista, alt] of partes) {
+      if (!lista.length) continue;
+      const im = new THREE.InstancedMesh(geo, mat, lista.length);
+      const base = new Float32Array(lista.length), atraso = new Float32Array(lista.length);
+      lista.forEach((p, i) => {
         const [x, z] = this.xz(p.p);
+        const [y, ey] = alt(p);
         q.setFromAxisAngle(eixoY, Math.atan2(p.dir[1], p.dir[0]));
-        m4.compose(new THREE.Vector3(x, 0, z), q, um);
+        m4.compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(1, ey, 1));
         im.setMatrixAt(i, m4);
         base[i] = p.z;
         atraso[i] = Math.min(1, dist(p.p, this.centro) / this.raio) * 0.8;
@@ -2001,6 +2032,130 @@ export class Maquete {
       im.frustumCulled = false;
       if (mat === this.matPoca) im.renderOrder = 2;
       this.grupoPostes.add(im);
+    }
+  }
+
+  /**
+   * Redes de infraestrutura projetadas: os fios (média tensão, baixa tensão e os
+   * ramais até os lotes, em catenária), hidrantes, tampas de PV, bocas de lobo,
+   * o reservatório (torre ou apoiado) e a estação de esgoto.
+   */
+  private montarInfra(): void {
+    const inf = this.cena.infra;
+    if (!inf) return;
+    const atrasoDe = (p: Pt) => Math.min(1, dist(p, this.centro) / this.raio) * 0.8;
+    // ---- fios: segmentos de reta numa parábola de flecha
+    const porTipo = { mt: [] as number[], bt: [] as number[], ramal: [] as number[] };
+    const basePorTipo = { mt: [] as number[], bt: [] as number[], ramal: [] as number[] };
+    const atrPorTipo = { mt: [] as number[], bt: [] as number[], ramal: [] as number[] };
+    for (const f of inf.fios) {
+      const n = f.tipo === "ramal" ? 4 : 10;
+      const P = porTipo[f.tipo], B = basePorTipo[f.tipo], A = atrPorTipo[f.tipo];
+      const ponto = (t: number) => {
+        const p: Pt = [f.a[0] + (f.b[0] - f.a[0]) * t, f.a[1] + (f.b[1] - f.a[1]) * t];
+        const [x, z] = this.xz(p);
+        return { x, z, h: f.ha + (f.hb - f.ha) * t - 4 * f.flecha * t * (1 - t), b: f.za + (f.zb - f.za) * t, at: atrasoDe(p) };
+      };
+      for (let k = 0; k < n; k++) {
+        const u = ponto(k / n), v = ponto((k + 1) / n);
+        P.push(u.x, u.h, u.z, v.x, v.h, v.z);
+        B.push(u.b, v.b);
+        A.push(u.at, v.at);
+      }
+    }
+    const cores = { mt: 0x2b2b2b, bt: 0x161616, ramal: 0x3a3a3a };
+    for (const t of ["mt", "bt", "ramal"] as const) {
+      if (!porTipo[t].length) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(porTipo[t], 3));
+      geo.setAttribute("aBase", new THREE.Float32BufferAttribute(basePorTipo[t], 1));
+      geo.setAttribute("aAtraso", new THREE.Float32BufferAttribute(atrPorTipo[t], 1));
+      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+      const linhas = new THREE.LineSegments(geo, elevar(new THREE.LineBasicMaterial({ color: cores[t], transparent: t === "ramal", opacity: t === "ramal" ? 0.75 : 1 }), "objeto", this.U));
+      linhas.frustumCulled = false;
+      this.grupoInfra.add(linhas);
+    }
+    // ---- peças pequenas, instanciadas
+    const eixoY = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), m4 = new THREE.Matrix4(), um = new THREE.Vector3(1, 1, 1);
+    const instancias = (geo: THREE.BufferGeometry, mat: THREE.Material, lista: { p: Pt; z: number; dir?: Pt }[], sombra = true) => {
+      if (!lista.length) return;
+      const im = new THREE.InstancedMesh(geo, mat, lista.length);
+      const base = new Float32Array(lista.length), atraso = new Float32Array(lista.length);
+      lista.forEach((it, i) => {
+        const [x, z] = this.xz(it.p);
+        q.setFromAxisAngle(eixoY, it.dir ? Math.atan2(it.dir[1], it.dir[0]) : 0);
+        m4.compose(new THREE.Vector3(x, 0, z), q, um);
+        im.setMatrixAt(i, m4);
+        base[i] = it.z;
+        atraso[i] = atrasoDe(it.p);
+      });
+      geo.setAttribute("aBase", new THREE.InstancedBufferAttribute(base, 1));
+      geo.setAttribute("aAtraso", new THREE.InstancedBufferAttribute(atraso, 1));
+      im.castShadow = sombra;
+      if (sombra) im.customDepthMaterial = sombraDe("instancia", this.U);
+      im.receiveShadow = true;
+      im.frustumCulled = false;
+      this.grupoInfra.add(im);
+    };
+    const hidrante = mergeGeometries([
+      new THREE.CylinderGeometry(0.12, 0.15, 0.72, 12).translate(0, 0.36, 0).toNonIndexed(),
+      new THREE.SphereGeometry(0.13, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 0.72, 0).toNonIndexed(),
+      new THREE.CylinderGeometry(0.06, 0.06, 0.42, 8).rotateZ(Math.PI / 2).translate(0, 0.5, 0).toNonIndexed(),
+      new THREE.CylinderGeometry(0.2, 0.2, 0.06, 12).translate(0, 0.03, 0).toNonIndexed(),
+    ])!;
+    instancias(hidrante, elevar(new THREE.MeshStandardMaterial({ color: 0xc62828, roughness: 0.45, metalness: 0.2 }), "instancia", this.U), inf.hidrantes);
+    const matFerro = elevar(new THREE.MeshStandardMaterial({ color: 0x3b3b3b, roughness: 0.6, metalness: 0.65, polygonOffset: true, polygonOffsetFactor: -2 }), "instancia", this.U);
+    instancias(new THREE.CylinderGeometry(0.34, 0.34, 0.05, 18).translate(0, 0.03, 0), matFerro, inf.tampas, false);
+    instancias(new THREE.BoxGeometry(0.95, 0.05, 0.4).translate(0, 0.03, 0), matFerro, inf.bocas.map((b) => ({ ...b, dir: b.dir })), false);
+    // ---- reservatório e estação: malhas "objeto" com a cota do lugar
+    const objeto = (partes: THREE.BufferGeometry[], p: Pt, z: number, cor: number, rough = 0.8) => {
+      const geo = mergeGeometries(partes.map((g) => g.toNonIndexed()))!;
+      const [x, zz] = this.xz(p);
+      geo.translate(x, 0, zz);
+      const n = geo.getAttribute("position").count;
+      geo.setAttribute("aBase", new THREE.Float32BufferAttribute(new Float32Array(n).fill(z), 1));
+      geo.setAttribute("aAtraso", new THREE.Float32BufferAttribute(new Float32Array(n).fill(atrasoDe(p)), 1));
+      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+      const m = new THREE.Mesh(geo, elevar(new THREE.MeshStandardMaterial({ color: cor, roughness: rough }), "objeto", this.U));
+      m.castShadow = m.receiveShadow = true;
+      m.customDepthMaterial = sombraDe("objeto", this.U);
+      m.frustumCulled = false;
+      this.grupoInfra.add(m);
+    };
+    const rs = inf.reservatorio;
+    if (rs) {
+      const R = rs.raio, H = rs.lamina;
+      if (rs.elevado) {
+        const A = Math.max(4, rs.altura);
+        objeto([
+          new THREE.CylinderGeometry(1.0, 1.35, A, 20).translate(0, A / 2, 0),
+          new THREE.CylinderGeometry(R, 1.0, 1.4, 28).translate(0, A + 0.7, 0),
+          new THREE.CylinderGeometry(R, R, H, 32).translate(0, A + 1.4 + H / 2, 0),
+          new THREE.CylinderGeometry(0.35, R + 0.15, 0.7, 32).translate(0, A + 1.4 + H + 0.35, 0),
+          new THREE.CylinderGeometry(1.8, 1.8, 0.3, 20).translate(0, 0.15, 0),
+        ], rs.p, rs.z, 0xe9e7e1, 0.7);
+        objeto([new THREE.CylinderGeometry(R + 0.03, R + 0.03, 0.55, 32).translate(0, A + 1.4 + H * 0.62, 0)], rs.p, rs.z, 0x2f6fb5, 0.5);
+      } else {
+        objeto([
+          new THREE.CylinderGeometry(R, R, H, 32).translate(0, H / 2, 0),
+          new THREE.CylinderGeometry(0.35, R + 0.15, 0.7, 32).translate(0, H + 0.35, 0),
+        ], rs.p, rs.z, 0xe9e7e1, 0.7);
+        objeto([new THREE.CylinderGeometry(R + 0.03, R + 0.03, 0.45, 32).translate(0, H * 0.7, 0)], rs.p, rs.z, 0x2f6fb5, 0.5);
+      }
+    }
+    const es = inf.estacao;
+    if (es) {
+      if (es.tipo === "ete") {
+        objeto([
+          new THREE.CylinderGeometry(2.3, 2.3, 2.6, 28).translate(-3.2, 1.3, 0),
+          new THREE.CylinderGeometry(2.3, 2.3, 2.6, 28).translate(3.2, 1.3, 0),
+          new THREE.BoxGeometry(3.6, 2.8, 3).translate(0, 1.4, 4.2),
+        ], es.p, es.z, 0xc9cdd0, 0.75);
+        objeto([new THREE.BoxGeometry(4, 0.25, 3.4).translate(0, 2.9, 4.2)], es.p, es.z, 0x5b6770, 0.6);
+      } else {
+        objeto([new THREE.BoxGeometry(3.2, 2.6, 2.8).translate(0, 1.3, 0), new THREE.CylinderGeometry(1.1, 1.1, 0.5, 20).translate(3, 0.25, 0)], es.p, es.z, 0xc9cdd0, 0.75);
+        objeto([new THREE.BoxGeometry(3.6, 0.25, 3.2).translate(0, 2.7, 0)], es.p, es.z, 0x5b6770, 0.6);
+      }
     }
   }
 
