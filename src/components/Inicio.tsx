@@ -142,11 +142,11 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
         );
       })()}
 
-      {onExecutarPedido && <PedidosGprol onExecutar={onExecutarPedido} />}
-
       {criar ? <NovoServico onNovo={onNovo} /> : (
         <p className="nota-permissao">Para abrir um serviço novo, peça a permissão “Criar serviços” a quem gerencia a equipe.</p>
       )}
+
+      {onExecutarPedido && <PedidosGprol onExecutar={onExecutarPedido} />}
 
       <div>
         <div className="secao-cabeca">
