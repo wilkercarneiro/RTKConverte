@@ -139,6 +139,7 @@ const ROTULOS: Record<string, string> = {
   "creditos.pedido": "pediu créditos:",
   "creditos.pagos": "pagou créditos:",
   "empresa.ativada": "acesso liberado:",
+  "empresa.suspensa": "acesso suspenso:",
 };
 export const rotuloAtividade = (acao: string): string => ROTULOS[acao] ?? acao;
 

@@ -4,8 +4,8 @@
 //
 // Webhook do Asaas (sem login; vale o token do header asaas-access-token):
 //   registra o evento (o mesmo id duas vezes = ignora), aplica a cobrança no
-//   banco (aplicar_pagamento_asaas) e avisa no WhatsApp quando a empresa ativou
-//   ou os créditos entraram. Responde 200 até para erro interno: o Asaas
+//   banco (aplicar_pagamento_asaas) e avisa no WhatsApp quando a empresa ativou,
+//   foi suspensa (mensalidade vencida) ou os créditos entraram. Responde 200 até para erro interno: o Asaas
 //   interrompe a fila depois de falhas seguidas, e a conferência pega o resto.
 //
 // Ações com login (POST { acao, ... }):
@@ -19,7 +19,7 @@ import { ambienteValido, clienteAsaas, cobrancaPaga, ErroAsaas, garantirWebhook 
 import type { ClienteAsaas, CobrancaAsaas } from "../_shared/asaas.ts";
 import { enviarWhatsApp, estadoWhatsApp, whatsappConfigurado } from "../_shared/whatsapp.ts";
 import type { ConfigWhatsApp } from "../_shared/whatsapp.ts";
-import { mensagemAcessoLiberado, mensagemCobranca, mensagemCreditosPagos, textoCreditos } from "../_shared/mensagens_cobranca.ts";
+import { mensagemAcessoLiberado, mensagemAcessoSuspenso, mensagemCobranca, mensagemCreditosPagos, textoCreditos } from "../_shared/mensagens_cobranca.ts";
 import type { CarteiraDoPlano } from "../_shared/mensagens_cobranca.ts";
 
 export const URL_APP_PADRAO = "https://vertces.com.br/app/";
@@ -162,12 +162,17 @@ async function aplicarEAvisar(d: Deps, cfg: Record<string, string>, evento: stri
   Promise<ResultadoPagamento & { aviso?: string }> {
   const r = await d.banco.aplicarPagamento(evento, pagamento);
   const zap = zapDe(cfg);
-  if (!zap || !r.escritorio_id || (r.acao !== "ativou" && r.acao !== "creditos")) return r;
+  if (!zap || !r.escritorio_id || (r.acao !== "ativou" && r.acao !== "creditos" && r.acao !== "suspendeu")) return r;
   const e = await d.banco.empresa(r.escritorio_id);
   if (!e?.telefone) return { ...r, aviso: "sem telefone para o WhatsApp" };
   const texto = r.acao === "ativou"
     ? mensagemAcessoLiberado({ responsavel: e.responsavel, empresa: e.nome, url: urlApp(cfg), login: e.login, creditos: textoCreditos(e.creditos) })
-    : mensagemCreditosPagos({ responsavel: e.responsavel, empresa: e.nome, descricao: (await d.banco.descricaoCredito(r.credito_id)) ?? "os créditos" });
+    : r.acao === "suspendeu"
+      ? mensagemAcessoSuspenso({
+        responsavel: e.responsavel, empresa: e.nome, valor: pagamento.value ?? e.cobranca?.valor ?? e.mensalidade,
+        link: pagamento.invoiceUrl ?? e.cobranca?.link_pagamento ?? null, vencimento: pagamento.dueDate || e.cobranca?.proximo_vencimento,
+      })
+      : mensagemCreditosPagos({ responsavel: e.responsavel, empresa: e.nome, descricao: (await d.banco.descricaoCredito(r.credito_id)) ?? "os créditos" });
   const env = await enviarWhatsApp(zap, e.telefone, texto, d.fetch);
   return { ...r, aviso: env.ok ? "WhatsApp enviado" : `WhatsApp: ${env.erro}` };
 }

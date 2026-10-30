@@ -151,7 +151,9 @@ const CREDITOS: Creditos = creditosDeExemplo({
 
 const RPC: Record<string, unknown> = {
   meus_creditos: CREDITOS,
-  minha_cobranca: TELA === "pagamento" ? { ...cobrancaDeExemplo("aguardando", "aguardando_pagamento"), vencimento: "2026-10-30" }
+  minha_cobranca: TELA === "pagamento" ? (location.hash.includes("vencida")
+    ? cobrancaDeExemplo("atrasada", "aguardando_pagamento")
+    : { ...cobrancaDeExemplo("aguardando", "aguardando_pagamento"), vencimento: "2026-10-30" })
     : TELA === "inicio" ? cobrancaDeExemplo("atrasada") : cobrancaDeExemplo("em_dia"),
   listar_membros: MEMBROS,
   listar_atividades: ATIVIDADES,

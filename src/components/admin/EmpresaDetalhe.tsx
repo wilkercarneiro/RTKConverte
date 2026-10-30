@@ -109,7 +109,8 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
           tom={pendentes ? "alerta" : undefined} onClick={() => setAba("creditos")} />
         <Kpi rotulo="Mensalidade" icone={ICO.contatos} tom={e.cobranca === "atrasada" || e.status === "aguardando_pagamento" ? "alerta" : undefined}
           valor={e.mensalidade == null ? "—" : fmtPreco(Number(e.mensalidade))}
-          detalhe={e.status === "aguardando_pagamento" ? "esperando a 1ª mensalidade" : e.cobranca ? ROTULO_SITUACAO[e.cobranca] : "sem cobrança no Asaas"}
+          detalhe={e.cobranca === "atrasada" ? (e.status === "aguardando_pagamento" ? "vencida · acesso suspenso" : "vencida")
+            : e.status === "aguardando_pagamento" ? "esperando a 1ª mensalidade" : e.cobranca ? ROTULO_SITUACAO[e.cobranca] : "sem cobrança no Asaas"}
           onClick={() => setAba("cobranca")} />
         <Kpi rotulo="Usuários" valor={fmtNum(e.usuarios)} icone={ICO.usuarios} detalhe={`último acesso: ${quando(e.ultimo_acesso)}`} onClick={() => setAba("usuarios")} />
       </div>

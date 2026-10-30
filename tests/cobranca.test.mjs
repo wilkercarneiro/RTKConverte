@@ -239,6 +239,17 @@ test("webhook: empresa ativada recebe o aviso de acesso liberado", async () => {
   assert.match(texto, /12 créditos gerais e 25 créditos de CAR por mês/);
 });
 
+test("webhook: mensalidade vencida suspende e o WhatsApp manda o link para pagar", async () => {
+  const { asaas, banco, deps } = cenario({ cfg: { ...ASAAS_OK, ...ZAP, asaas_webhook_token: "x".repeat(48) } });
+  banco.respostaAplicar = { acao: "suspendeu", escritorio_id: EMPRESA.id };
+  await tratarWebhook(deps, "x".repeat(48), JSON.stringify({ id: "evt_5", event: "PAYMENT_OVERDUE",
+    payment: { id: "pay_m2", subscription: "sub_1", status: "OVERDUE", value: 599.9, dueDate: "2026-11-30", invoiceUrl: "https://sandbox.asaas.com/i/m2" } }));
+  const texto = asaas.chamadas.find((c) => c.whatsapp).corpo.text;
+  assert.match(texto, /mensalidade do Vertces da Pagante Topografia \(R\$\s599,90\), com vencimento em 30\/11\/2026, não foi paga e o acesso foi suspenso/);
+  assert.ok(texto.includes("https://sandbox.asaas.com/i/m2"));
+  assert.equal(banco.eventos[0].resultado, "suspendeu · WhatsApp enviado");
+});
+
 test("webhook: erro interno responde 200 (o Asaas não desliga a fila) e fica no registro", async () => {
   const { banco, deps } = cenario({ cfg: { ...ASAAS_OK, asaas_webhook_token: "x".repeat(48) } });
   banco.respostaAplicar = new Error("banco fora do ar");

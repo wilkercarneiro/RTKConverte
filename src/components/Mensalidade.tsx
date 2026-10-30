@@ -38,17 +38,21 @@ export function AguardandoPagamento({ nome }: { nome: string }) {
     if (atual?.status !== "ativo") setNota("O pagamento ainda não apareceu. Pix confirma em segundos; boleto pode levar até 3 dias úteis. Esta tela entra sozinha quando confirmar.");
   }
 
+  // vencida = empresa que já usava e foi suspensa; senão, a empresa nova esperando a 1ª
+  const vencida = c?.situacao === "atrasada";
   return (
     <div className="centro">
       <div className="login-box mens-box" style={{ textAlign: "left" }}>
         <Logo size={28} />
-        <h2 style={{ marginTop: 14 }}>Falta o pagamento para liberar o acesso</h2>
+        <h2 style={{ marginTop: 14 }}>{vencida ? "Acesso suspenso: a mensalidade venceu" : "Falta o pagamento para liberar o acesso"}</h2>
         {c === undefined ? <p className="sub">Carregando a cobrança…</p> : (
           <>
-            <p>A conta da <b>{c?.empresa ?? nome}</b> está pronta{c?.plano ? <> no plano <b>{c.plano}</b></> : null}. O acesso é liberado assim que a primeira mensalidade for paga.</p>
+            {vencida
+              ? <p>A mensalidade da <b>{c?.empresa ?? nome}</b> não foi paga e o acesso ao Vertces está suspenso. Os seus dados continuam guardados: pagou, o acesso volta na hora.</p>
+              : <p>A conta da <b>{c?.empresa ?? nome}</b> está pronta{c?.plano ? <> no plano <b>{c.plano}</b></> : null}. O acesso é liberado assim que a primeira mensalidade for paga.</p>}
             {c?.link ? (
               <div className="mens-cobranca">
-                <div><span>Mensalidade</span><b>{c.valor !== null ? fmtPreco(Number(c.valor)) : "—"}</b>{c.vencimento && <small>vence em {dataBr(c.vencimento)}</small>}</div>
+                <div><span>Mensalidade</span><b>{c.valor !== null ? fmtPreco(Number(c.valor)) : "—"}</b>{c.vencimento && <small>{vencida ? "venceu" : "vence"} em {dataBr(c.vencimento)}</small>}</div>
                 <a className="botao-download principal" href={c.link} target="_blank" rel="noreferrer">Pagar agora (Pix, boleto ou cartão)</a>
               </div>
             ) : (

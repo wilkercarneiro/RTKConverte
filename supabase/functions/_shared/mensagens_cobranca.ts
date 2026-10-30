@@ -68,6 +68,19 @@ export function mensagemAcessoLiberado(o: { responsavel: string | null; empresa:
   ].join("\n");
 }
 
+export function mensagemAcessoSuspenso(o: {
+  responsavel: string | null; empresa: string; valor: number | null; link: string | null; vencimento?: string | null;
+}): string {
+  return [
+    ola(o.responsavel),
+    "",
+    `A mensalidade do Vertces da ${o.empresa}${o.valor ? ` (${fmtReais(o.valor)})` : ""}${o.vencimento ? `, com vencimento em ${dataBr(o.vencimento)},` : ""} não foi paga e o acesso foi suspenso.`,
+    ...(o.link ? ["", "Pague por Pix, boleto ou cartão para liberar na hora:", o.link] : []),
+    "",
+    "Os seus dados continuam guardados.",
+  ].join("\n");
+}
+
 export function mensagemCreditosPagos(o: { responsavel: string | null; descricao: string; empresa: string }): string {
   return [
     ola(o.responsavel),

@@ -60,6 +60,8 @@ select pg_temp.ok((select count(*) from precos_credito where tipo = 'car' and pr
 select pg_temp.ok((select array_agg(a_partir_de || ':' || preco order by a_partir_de) from precos_credito where plano_id = :'pl_car')
                   = array['2:19.90', '10:15.00', '51:10.00'], 'Só CAR: 19,90 até 9; 15,00 de 10 a 50; 10,00 acima de 50');
 select pg_temp.ok(not exists (select 1 from precos_credito where plano_id = :'pl_car' and tipo = 'geral'), 'Só CAR não vende crédito geral');
+select pg_temp.ok((select array_agg(preco_mensal order by ordem) from planos where id in (:'pl_autonomo', :'pl_prof', :'pl_emp', :'pl_car'))
+                  = array[299.90, 599.90, 999.90, 49.90]::numeric[], 'mensalidades: 299,90 · 599,90 · 999,90 · Só CAR 49,90');
 select pg_temp.ok((select count(*) from creditos_extras where escritorio_id = :'esc_b' and tipo = 'geral') > 0
                   and not exists (select 1 from creditos_extras where tipo is null), 'créditos extras de antes viraram carteira geral');
 select pg_temp.ok(not exists (select 1 from consumos_credito where tipo is null), 'consumos de antes ganharam a carteira');
@@ -287,18 +289,34 @@ select pg_temp.ok((select link_pagamento from cobranca_empresas where escritorio
                   'a fatura nova da assinatura vira a fatura aberta');
 select pg_temp.ok((select finalidade || ':' || valor from pagamentos where asaas_id = 'pay_m2') = 'mensalidade:199.90', 'e entra nos pagamentos');
 set role service_role;
+select pg_temp.ok((aplicar_pagamento_asaas('PAYMENT_OVERDUE', '{"id": "pay_m2", "subscription": "sub_1", "status": "OVERDUE"}') ->> 'acao') = 'suspendeu',
+                  'mensalidade vencida suspende o acesso');
 select pg_temp.ok((aplicar_pagamento_asaas('PAYMENT_OVERDUE', '{"id": "pay_m2", "subscription": "sub_1", "status": "OVERDUE"}') ->> 'acao') = 'atrasou',
-                  'vencida: a assinatura fica atrasada');
+                  'o aviso repetido não suspende de novo');
 reset role;
+select pg_temp.ok((select status from escritorios where id = 'd0000000-0000-0000-0000-00000000000d') = 'aguardando_pagamento', 'empresa fora do ar');
 select set_config('request.jwt.claim.sub', 'd1000000-0000-0000-0000-000000000001', false);
 set role authenticated;
-select pg_temp.ok((minha_cobranca() ->> 'situacao') = 'atrasada', 'a empresa vê a mensalidade atrasada');
+select pg_temp.ok(escritorio_atual() is null, 'suspensa, a empresa não vê os dados');
+select pg_temp.ok((minha_cobranca() ->> 'situacao') = 'atrasada' and (minha_cobranca() ->> 'link') = 'https://sandbox.asaas.com/i/m2',
+                  'mas vê a mensalidade vencida e o link para pagar');
 reset role;
 set role service_role;
-select pg_temp.ok((aplicar_pagamento_asaas('PAYMENT_RECEIVED', '{"id": "pay_m2", "subscription": "sub_1", "status": "RECEIVED"}') ->> 'acao') = 'renovou',
-                  'pagou: em dia de novo');
+select pg_temp.ok((aplicar_pagamento_asaas('PAYMENT_RECEIVED', '{"id": "pay_m2", "subscription": "sub_1", "status": "RECEIVED"}') ->> 'acao') = 'ativou',
+                  'pagou a vencida: o acesso volta sozinho');
 reset role;
-select pg_temp.ok((select situacao from cobranca_empresas where escritorio_id = 'd0000000-0000-0000-0000-00000000000d') = 'em_dia', 'situação em dia');
+select pg_temp.ok((select situacao from cobranca_empresas where escritorio_id = 'd0000000-0000-0000-0000-00000000000d') = 'em_dia'
+                  and (select status from escritorios where id = 'd0000000-0000-0000-0000-00000000000d') = 'ativo', 'em dia e ativa');
+-- suspensão manual do superadmin não é desfeita por pagamento
+insert into pagamentos (escritorio_id, finalidade, asaas_id, valor, status, vencimento)
+values ('d0000000-0000-0000-0000-00000000000d', 'mensalidade', 'pay_m3', 199.90, 'PENDING', hoje_brasil());
+update escritorios set status = 'suspenso' where id = 'd0000000-0000-0000-0000-00000000000d';
+set role service_role;
+select pg_temp.ok((aplicar_pagamento_asaas('PAYMENT_OVERDUE', '{"id": "pay_m3", "status": "OVERDUE"}') ->> 'acao') = 'atrasou', 'suspensa à mão: vencer não muda o status');
+select pg_temp.ok((aplicar_pagamento_asaas('PAYMENT_RECEIVED', '{"id": "pay_m3", "status": "RECEIVED"}') ->> 'acao') = 'renovou', 'e pagar não reativa');
+reset role;
+select pg_temp.ok((select status from escritorios where id = 'd0000000-0000-0000-0000-00000000000d') = 'suspenso', 'continua suspensa à mão');
+update escritorios set status = 'ativo' where id = 'd0000000-0000-0000-0000-00000000000d';
 
 -- ---------------------------------------------------------------- o mês do crédito segue o dia da renovação
 select pg_temp.ok(ancora_mes(31, '2027-02-10') = '2027-02-28' and ancora_mes(31, '2026-04-03') = '2026-04-30'
@@ -315,7 +333,7 @@ select pg_temp.ok(uso_credito('d0000000-0000-0000-0000-00000000000d', 'geral') =
 select set_config('request.jwt.claim.sub', 'a1000000-0000-0000-0000-000000000001', false);
 set role authenticated;
 select pg_temp.ok((select cobranca from sa_empresas() where id = 'd0000000-0000-0000-0000-00000000000d') = 'em_dia', 'lista de empresas mostra a cobrança');
-select pg_temp.ok(jsonb_array_length(sa_cobranca_empresa('d0000000-0000-0000-0000-00000000000d') -> 'pagamentos') = 2, 'aba Cobrança lista as mensalidades');
+select pg_temp.ok(jsonb_array_length(sa_cobranca_empresa('d0000000-0000-0000-0000-00000000000d') -> 'pagamentos') = 3, 'aba Cobrança lista as mensalidades');
 select sa_atualizar_empresa('d0000000-0000-0000-0000-00000000000d', '{"mensalidade": 149.9}');
 select pg_temp.ok((select mensalidade from sa_empresas() where id = 'd0000000-0000-0000-0000-00000000000d') = 149.90, 'mensalidade só desta empresa');
 select sa_atualizar_empresa('d0000000-0000-0000-0000-00000000000d', '{"status": "aguardando_pagamento"}');

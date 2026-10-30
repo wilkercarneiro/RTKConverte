@@ -34,7 +34,9 @@
 --   asaas_eventos        — tudo o que o webhook recebeu (e o que fez com isso)
 --
 -- A empresa nova que paga pelo Asaas nasce 'aguardando_pagamento': não vê nada
--- até o webhook (ou a conferência) confirmar a 1ª mensalidade.
+-- até o webhook (ou a conferência) confirmar a 1ª mensalidade. Mensalidade
+-- vencida devolve a empresa ativa a 'aguardando_pagamento' (acesso suspenso);
+-- pagou, volta sozinha.
 --
 -- Teste local: `npm run test:rls` (tests/rls/planos_cobranca.sql).
 
@@ -688,7 +690,17 @@ begin
       update cobranca_empresas set situacao = case when situacao = 'aguardando' then situacao else 'atrasada' end,
              link_pagamento = coalesce(p_pagamento ->> 'invoiceUrl', link_pagamento), atualizado_em = now()
        where escritorio_id = v_pag.escritorio_id;
-      v_acao := 'atrasou';
+      -- mensalidade vencida suspende o acesso (pedido do Wilker, 2026-10-30): a
+      -- empresa volta a "aguardando pagamento" e o pagamento a reativa sozinho.
+      -- Suspensão manual ('suspenso') não é tocada aqui nem pelo pagamento.
+      select * into v_esc from escritorios where id = v_pag.escritorio_id for update;
+      if v_esc.status = 'ativo' then
+        update escritorios set status = 'aguardando_pagamento', atualizado_em = now() where id = v_esc.id;
+        perform registrar_atividade(v_esc.id, 'empresa.suspensa', 'mensalidade vencida');
+        v_acao := 'suspendeu';
+      else
+        v_acao := 'atrasou';
+      end if;
     elsif v_status = 'PENDING' and v_cob.escritorio_id is not null then
       -- fatura nova do mês: é ela que a empresa precisa pagar agora
       update cobranca_empresas set link_pagamento = coalesce(p_pagamento ->> 'invoiceUrl', link_pagamento),
@@ -950,7 +962,7 @@ end $$;
 -- Autônomo, Profissional e Empresarial liberam todos os serviços; o Só CAR libera
 -- só o CAR (e a equipe e a integração com o GPROL). Os planos de antes saem do
 -- cadastro de empresa nova, mas quem está neles continua igual (sem limite).
--- A mensalidade fica em branco: o superadmin define em Planos.
+-- Mensalidades definidas pelo Wilker em 2026-10-30.
 do $$
 declare
   r record;
@@ -958,17 +970,18 @@ declare
 begin
   if exists (select 1 from saas_config where key = 'planos_0034') then return; end if;
   for r in select * from (values
-      ('Autônomo', 'Todos os serviços, para quem trabalha sozinho.', '#5B6B63', 10, 6, 12, 70.00, false),
-      ('Profissional', 'Todos os serviços, para o escritório que cresce.', '#178552', 20, 12, 25, 60.00, false),
-      ('Empresarial', 'Todos os serviços, para o escritório de volume alto.', '#0E3B2B', 30, 25, 50, 50.00, false),
-      ('Só CAR', 'Só o Cadastro Ambiental Rural (CAR); os outros serviços ficam bloqueados.', '#C99A12', 40, 0, 5, null, true)
-    ) as t(nome, descricao, cor, ordem, geral, car, preco_geral, so_car) loop
+      ('Autônomo', 'Todos os serviços, para quem trabalha sozinho.', '#5B6B63', 10, 6, 12, 70.00, false, 299.90),
+      ('Profissional', 'Todos os serviços, para o escritório que cresce.', '#178552', 20, 12, 25, 60.00, false, 599.90),
+      ('Empresarial', 'Todos os serviços, para o escritório de volume alto.', '#0E3B2B', 30, 25, 50, 50.00, false, 999.90),
+      ('Só CAR', 'Só o Cadastro Ambiental Rural (CAR); os outros serviços ficam bloqueados.', '#C99A12', 40, 0, 5, null, true, 49.90)
+    ) as t(nome, descricao, cor, ordem, geral, car, preco_geral, so_car, mensal) loop
     select id into v_id from planos where lower(nome) = lower(r.nome);
     if v_id is null then
       insert into planos (nome, descricao, cor, ordem) values (r.nome, r.descricao, r.cor, r.ordem) returning id into v_id;
     else
       update planos set descricao = r.descricao, cor = r.cor, ordem = r.ordem, ativo = true where id = v_id;
     end if;
+    update planos set preco_mensal = r.mensal where id = v_id;
     update planos set libera_recursos_novos = not r.so_car where id = v_id;
     insert into plano_creditos (plano_id, tipo, por_mes) values (v_id, 'geral', r.geral), (v_id, 'car', r.car)
     on conflict (plano_id, tipo) do update set por_mes = excluded.por_mes;

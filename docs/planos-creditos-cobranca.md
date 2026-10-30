@@ -14,14 +14,14 @@ acabaram → Usar 1 crédito geral"; o banco recusa sem `servicos.usar_credito_g
 Dentro de cada carteira: primeiro o crédito do mês, depois o extra (que não vence).
 Carteira nova = uma linha em `tipos_credito`; as telas percorrem a lista.
 
-**Planos** (semeados pela migração; a mensalidade fica em branco):
+**Planos** (semeados pela migração):
 
-| Plano | Gerais/mês | CAR/mês | Crédito geral extra | Crédito de CAR extra |
-|---|---|---|---|---|
-| Autônomo | 6 | 12 | R$ 70,00 (mín. 2) | R$ 9,90 (mín. 2) |
-| Profissional | 12 | 25 | R$ 60,00 (mín. 2) | R$ 9,90 (mín. 2) |
-| Empresarial | 25 | 50 | R$ 50,00 (mín. 2) | R$ 9,90 (mín. 2) |
-| Só CAR | 0 | 5 | não vende | 2–9: R$ 19,90 · 10–50: R$ 15,00 · 51+: R$ 10,00 |
+| Plano | Mensalidade | Gerais/mês | CAR/mês | Crédito geral extra | Crédito de CAR extra |
+|---|---|---|---|---|---|
+| Autônomo | R$ 299,90 | 6 | 12 | R$ 70,00 (mín. 2) | R$ 9,90 (mín. 2) |
+| Profissional | R$ 599,90 | 12 | 25 | R$ 60,00 (mín. 2) | R$ 9,90 (mín. 2) |
+| Empresarial | R$ 999,90 | 25 | 50 | R$ 50,00 (mín. 2) | R$ 9,90 (mín. 2) |
+| Só CAR | R$ 49,90 | 0 | 5 | não vende | 2–9: R$ 19,90 · 10–50: R$ 15,00 · 51+: R$ 10,00 |
 
 O Só CAR libera só o CAR (mais Equipe e GPROL) e não libera recurso que entrar
 depois (`planos.libera_recursos_novos = false`). Os planos de antes (Essencial,
@@ -60,9 +60,8 @@ calendário). A empresa que nasce pagando renova no dia do vencimento da mensali
    Função `superadmin` atualizada (`aguardando_pagamento`). Reiniciar
    `sb_rtkconverte_functions`.
 3. Merge da branch `planos-creditos-asaas` na `main` (push = Vercel).
-4. No painel: Planos → definir a mensalidade de cada plano; Configurações →
-   Pagamentos → colar a chave do Asaas (sandbox primeiro) e, se for usar,
-   WhatsApp (URL, instância e chave da Evolution).
+4. No painel: Configurações → Pagamentos → colar a chave do Asaas (sandbox
+   primeiro) e, se for usar, WhatsApp (URL, instância e chave da Evolution).
 
 O front sem a 0034 não quebra o envio de arquivo (`meus_creditos` antigo → nada
 bloqueia), mas as telas de plano/crédito do painel precisam dela: por isso o push
@@ -72,7 +71,10 @@ vem depois da migração.
 
 - "Acima de 50" no Só CAR = a partir de 51 créditos.
 - Compra máxima de 1000 créditos por vez; até 5 compras esperando pagamento.
-- Mensalidade vencida: aviso no Início e no painel; **não suspende sozinha**.
+- Mensalidade vencida (aviso PAYMENT_OVERDUE do Asaas, no dia seguinte ao vencimento,
+  ou a conferência): **suspende o acesso** (pedido do Wilker) — a empresa volta a
+  `aguardando_pagamento`, vê a fatura vencida e recebe o aviso no WhatsApp; pagou,
+  volta sozinha. Suspensão feita à mão no painel não é desfeita por pagamento.
 - Mensalidade nova da empresa com assinatura viva vai para o Asaas ao salvar
   (inclusive as cobranças em aberto).
 - Trocar a conta ou o ambiente do Asaas esquece os clientes da conta antiga.

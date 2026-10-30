@@ -82,7 +82,9 @@ export function VisaoGeral({ d }: { d: DadosAdmin }) {
                 <span className="av">{iniciais(e.nome)}</span>
                 <span style={{ flex: 1, textAlign: "left" }}><b>{e.nome}</b>
                   <span className="sub" style={{ display: "block", fontSize: 12 }}>
-                    {e.status === "aguardando_pagamento" ? "esperando a 1ª mensalidade" : "mensalidade vencida"}
+                    {e.cobranca === "atrasada"
+                      ? (e.status === "aguardando_pagamento" ? "mensalidade vencida · acesso suspenso" : "mensalidade vencida")
+                      : "esperando a 1ª mensalidade"}
                     {e.mensalidade != null && ` · ${fmtPreco(Number(e.mensalidade))}`}
                     {e.vencimento && ` · vencimento ${new Date(`${e.vencimento}T12:00:00`).toLocaleDateString("pt-BR")}`}
                   </span>
