@@ -17,6 +17,25 @@ export const ICO = {
   pausa: "M10 15V9M14 15V9M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z",
   mais: "M12 5v14M5 12h14",
   marca: "M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5",
+  // central de suporte e tutoriais (0029)
+  suporte: "M3 14v-2a9 9 0 0 1 18 0v2M21 14v3a2 2 0 0 1-2 2h-2v-6h4M3 14v3a2 2 0 0 0 2 2h2v-6H3M19 19a3 3 0 0 1-3 3h-3",
+  tutoriais: "M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM10 9.2v5.6l4.6-2.8z",
+  caixa: "M22 12h-6l-2 3h-4l-2-3H2M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z",
+  relogio: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2",
+  estrela: "M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z",
+  anexo: "M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5",
+  arquivo: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6",
+  baixar: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3",
+  info: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 16v-4M12 8h.01",
+  cadeado: "M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1zM8 11V7a4 4 0 0 1 8 0v4",
+  voltar: "M19 12H5M12 19l-7-7 7-7",
+  baixo: "M6 9l6 6 6-6",
+  fechar: "M18 6 6 18M6 6l12 12",
+  editar: "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z",
+  lixeira: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6",
+  atualizar: "M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6",
+  enviar: "M22 2 11 13M22 2l-7 20-4-9-9-4z",
+  externo: "M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
 };
 
 export function Ico({ d }: { d: string }) {
@@ -69,6 +88,31 @@ export function quando(d: string | null): string {
   const meses = Math.floor(dias / 30);
   return meses < 12 ? `há ${meses} ${meses === 1 ? "mês" : "meses"}` : `há ${Math.floor(meses / 12)} ano(s)`;
 }
+
+/** Relativo e curto, para listas: "agora", "12 min", "3 h", "2 d", "12 de out.". */
+export function haQuanto(d: string | null): string {
+  if (!d) return "—";
+  const s = (Date.now() - new Date(d).getTime()) / 1000;
+  if (s < 60) return "agora";
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  if (s < 86_400) return `${Math.floor(s / 3600)} h`;
+  if (s < 7 * 86_400) return `${Math.floor(s / 86_400)} d`;
+  return new Date(d).toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
+}
+
+/** Duração legível: "< 1 min", "35 min", "2 h 10 min", "1 d 4 h". */
+export function duracao(ms: number): string {
+  const min = Math.round(ms / 60_000);
+  if (min < 1) return "< 1 min";
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h < 24) return m ? `${h} h ${m} min` : `${h} h`;
+  const dd = Math.floor(h / 24), hh = h % 24;
+  return hh ? `${dd} d ${hh} h` : `${dd} d`;
+}
+
+export const fmtDataHora = (d: string | null) =>
+  (d ? new Date(d).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
 
 export const iniciais = (nome: string) =>
   nome.split(/\s+/).filter(Boolean).filter((_, i, a) => i === 0 || i === a.length - 1).map((w) => w[0]?.toUpperCase()).join("") || "?";

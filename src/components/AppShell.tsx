@@ -13,6 +13,8 @@ import { temRecurso } from "../lib/recursos";
 import { Logo } from "./Logo";
 import { AvisosGlobais, DialogosGlobais } from "./ui";
 import { AvisoCreditoGlobal } from "./Creditos";
+import { abrirSuporte, SuporteChat, useNaoLidasSuporte } from "./suporte/SuporteChat";
+import { contagemSuporte } from "../lib/suporte";
 import "./casca.css";
 
 const I = {
@@ -22,14 +24,16 @@ const I = {
   equipe: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1M19 8v6M22 11h-6",
   config: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
   ajuda: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01",
+  chat: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2zM8 9h8M8 13h5",
   painel: "M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z",
   sair: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
   menu: "M3 6h18M3 12h18M3 18h18",
 };
 
-interface Item { t: Rota["t"]; rotulo: string; icone: string; destino?: Rota }
+/** `acao`: item que não navega (o suporte abre o painel do chat). */
+interface Item { t: Rota["t"]; rotulo: string; icone: string; destino?: Rota; acao?: () => void; selo?: number | null }
 
-function grupos(superadmin: boolean): { titulo: string; itens: Item[] }[] {
+function grupos(superadmin: boolean, suporte: number | null, esperando: number | null): { titulo: string; itens: Item[] }[] {
   const g: { titulo: string; itens: Item[] }[] = [
     {
       titulo: "Trabalho",
@@ -49,11 +53,13 @@ function grupos(superadmin: boolean): { titulo: string; itens: Item[] }[] {
     {
       titulo: "Suporte",
       itens: [
-        { t: "ajuda", rotulo: "Ajuda", icone: I.ajuda },
+        { t: "ajuda", rotulo: "Ajuda e tutoriais", icone: I.ajuda },
+        // null = banco sem a central de suporte: o item some
+        ...(suporte !== null ? [{ t: "ajuda" as const, rotulo: "Falar com o suporte", icone: I.chat, acao: () => abrirSuporte(), selo: suporte }] : []),
       ],
     },
   ];
-  if (superadmin) g.push({ titulo: "Vertces", itens: [{ t: "admin", rotulo: "Painel SaaS", icone: I.painel, destino: { t: "admin", aba: "visao" } }] });
+  if (superadmin) g.push({ titulo: "Vertces", itens: [{ t: "admin", rotulo: "Painel SaaS", icone: I.painel, destino: { t: "admin", aba: esperando ? "suporte" : "visao" }, selo: esperando }] });
   return g;
 }
 
@@ -61,13 +67,25 @@ const Ico = ({ d }: { d: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
 );
 
-export function AppShell({ rota, ir, children, usuario, superadmin }: {
+export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId }: {
   rota: Rota; ir: (r: Rota) => void; children: ReactNode;
   /** nome exibido no rodapé da barra (ex.: e-mail ou nome do RT) */
   usuario?: { nome: string; papel?: string };
   /** mostra o atalho para o painel do SaaS */
   superadmin?: boolean;
+  /** empresa do usuário: liga a central de suporte (anexos vão para a pasta dela) */
+  escritorioId?: string;
 }) {
+  const naoLidas = useNaoLidasSuporte();
+  // superadmin trabalhando numa empresa: chamados esperando o suporte, no item do painel
+  const [esperando, setEsperando] = useState<number | null>(null);
+  useEffect(() => {
+    if (!superadmin) return;
+    const ler = () => { void contagemSuporte().then((c) => setEsperando(c?.esperando ?? null)); };
+    ler();
+    const t = window.setInterval(ler, 60_000);
+    return () => window.clearInterval(t);
+  }, [superadmin]);
   // A página de um cliente pertence a "Clientes", e a de um serviço a
   // "Serviços": sem isso a barra não marcaria nada enquanto o operador está
   // justamente dentro do trabalho.
@@ -90,7 +108,11 @@ export function AppShell({ rota, ir, children, usuario, superadmin }: {
   // trocar de tela fecha a gaveta do celular
   useEffect(() => { setGaveta(false); }, [rota]);
 
-  const ir2 = (it: Item) => { fechar(); ir(it.destino ?? ({ t: it.t } as Rota)); };
+  const ir2 = (it: Item) => {
+    fechar();
+    if (it.acao) { setGaveta(false); it.acao(); return; }
+    ir(it.destino ?? ({ t: it.t } as Rota));
+  };
 
   const conteudoTrilho = (
     <>
@@ -99,16 +121,17 @@ export function AppShell({ rota, ir, children, usuario, superadmin }: {
         <span className="tr-rotulo tr-nome">Vertces</span>
       </button>
       <nav className="tr-nav" aria-label="Navegação principal">
-        {grupos(!!superadmin).map((g) => g.itens.length > 0 && (
+        {grupos(!!superadmin, escritorioId ? naoLidas : null, esperando).map((g) => g.itens.length > 0 && (
           <div className="tr-grupo" key={g.titulo}>
             <div className="tr-titulo" aria-hidden="true"><span className="tr-rotulo">{g.titulo}</span></div>
             {g.itens.map((it) => (
-              <button key={it.rotulo} className={ativa === it.t ? "tr-item ativo" : "tr-item"}
-                aria-current={ativa === it.t ? "page" : undefined}
-                aria-label={it.rotulo} data-dica={it.rotulo}
+              <button key={it.rotulo} className={ativa === it.t && !it.acao ? "tr-item ativo" : "tr-item"}
+                aria-current={ativa === it.t && !it.acao ? "page" : undefined}
+                aria-label={it.selo ? `${it.rotulo} (${it.selo} nova(s))` : it.rotulo} data-dica={it.rotulo}
                 onClick={() => ir2(it)}>
                 <Ico d={it.icone} />
                 <span className="tr-rotulo">{it.rotulo}</span>
+                {!!it.selo && <span className="tr-selo">{it.selo}</span>}
               </button>
             ))}
           </div>
@@ -151,6 +174,7 @@ export function AppShell({ rota, ir, children, usuario, superadmin }: {
       )}
 
       <main className="app-conteudo" key={rota.t}>{children}</main>
+      {escritorioId && <SuporteChat escritorioId={escritorioId} nome={usuario?.nome} />}
       <AvisosGlobais />
       <AvisoCreditoGlobal />
       <DialogosGlobais />

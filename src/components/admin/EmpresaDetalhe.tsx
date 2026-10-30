@@ -5,10 +5,10 @@
 //   Usuários, Uso, Histórico
 import { useCallback, useEffect, useState } from "react";
 import {
-  adicionarUsuario, atividadesDaEmpresa, atualizarEmpresa, creditosDaEmpresa, lerSenhaPadrao, mensagemDeAcesso,
+  acessosDaEmpresa, adicionarUsuario, atividadesDaEmpresa, atualizarEmpresa, creditosDaEmpresa, lerSenhaPadrao, mensagemDeAcesso,
   redefinirSenha, removerUsuario, usoModalidades, usuariosDaEmpresa,
 } from "../../lib/admin";
-import type { AtividadeEmpresa, CreditosEmpresa as DadosCreditos, Empresa, StatusEmpresa, UsuarioEmpresa } from "../../lib/admin";
+import type { AcessoEmpresa, AtividadeEmpresa, CreditosEmpresa as DadosCreditos, Empresa, StatusEmpresa, UsuarioEmpresa } from "../../lib/admin";
 import { rotuloAtividade } from "../../lib/equipe";
 import { recursoDe } from "../../lib/recursos";
 import {
@@ -19,7 +19,7 @@ import { CreditosEmpresa } from "./CreditosEmpresa";
 import { PlanoLimites } from "./PlanoLimites";
 import { confirmar, Dica, Rotulo } from "../ui";
 import {
-  Carregando, ICO, Kpi, PlanoTag, StatusPill, Topo, copiar, fmtCnpj, fmtData, fmtNum, fmtTel, iniciais, quando,
+  Carregando, ICO, Kpi, PlanoTag, StatusPill, Topo, copiar, duracao, fmtCnpj, fmtData, fmtNum, fmtTel, haQuanto, iniciais, quando,
 } from "./comum";
 
 type Aba = "plano" | "creditos" | "cadastro" | "usuarios" | "uso" | "historico";
@@ -271,22 +271,65 @@ function Uso({ e }: { e: Empresa }) {
   useEffect(() => { setUso(null); usoModalidades(e.id, dias).then(setUso).catch(() => setUso([])); }, [e.id, dias]);
   const max = Math.max(1, ...(uso ?? []).map((u) => u.total));
   return (
-    <section className="sa-card">
+    <>
+      <section className="sa-card">
+        <header>
+          <h3>Serviços abertos por tipo<Dica>{fmtNum(e.servicos)} no total · último em {quando(e.ultimo_servico)}</Dica></h3>
+          <div className="sa-segmento" style={{ marginLeft: "auto" }}>
+            {[30, 90, 365].map((n) => <button key={n} type="button" className={dias === n ? "ativo" : ""} onClick={() => setDias(n)}>{n === 365 ? "12 meses" : `${n} dias`}</button>)}
+          </div>
+        </header>
+        {!uso ? <Carregando /> : uso.length === 0 ? <div className="sa-vazio">Nenhum serviço no período.</div> : (
+          <div className="sa-barras">
+            {uso.map((u) => (
+              <div className="sa-barra" key={u.chave}>
+                <span>{recursoDe(u.chave)?.nome ?? u.chave}</span>
+                <span className="trilho" title={`${u.total}`}><i style={{ width: `${(u.total / max) * 100}%` }} /></span>
+                <b>{u.total}</b>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+      <AcessosRecentes e={e} />
+    </>
+  );
+}
+
+/** Sessões de uso (0029). Banco sem a migração: a seção não aparece. */
+function AcessosRecentes({ e }: { e: Empresa }) {
+  const [itens, setItens] = useState<AcessoEmpresa[] | null | undefined>(undefined);
+  useEffect(() => { acessosDaEmpresa(e.id).then(setItens).catch(() => setItens(null)); }, [e.id]);
+  if (itens === null) return null;
+  const pessoas = new Set((itens ?? []).map((a) => a.user_id)).size;
+  const dataHora = (s: string) => new Date(s).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return (
+    <section className="sa-card" style={{ marginTop: 18 }}>
       <header>
-        <h3>Serviços abertos por tipo<Dica>{fmtNum(e.servicos)} no total · último em {quando(e.ultimo_servico)}</Dica></h3>
-        <div className="sa-segmento" style={{ marginLeft: "auto" }}>
-          {[30, 90, 365].map((n) => <button key={n} type="button" className={dias === n ? "ativo" : ""} onClick={() => setDias(n)}>{n === 365 ? "12 meses" : `${n} dias`}</button>)}
-        </div>
+        <h3>Acessos recentes<Dica>cada linha é uma sessão: começa ao entrar e fecha depois de 30 min sem atividade</Dica></h3>
+        {itens && itens.length > 0 && <span className="sub">{itens.length} sessão(ões) · {pessoas} pessoa(s)</span>}
       </header>
-      {!uso ? <Carregando /> : uso.length === 0 ? <div className="sa-vazio">Nenhum serviço no período.</div> : (
-        <div className="sa-barras">
-          {uso.map((u) => (
-            <div className="sa-barra" key={u.chave}>
-              <span>{recursoDe(u.chave)?.nome ?? u.chave}</span>
-              <span className="trilho" title={`${u.total}`}><i style={{ width: `${(u.total / max) * 100}%` }} /></span>
-              <b>{u.total}</b>
-            </div>
-          ))}
+      {itens === undefined ? <Carregando /> : itens.length === 0 ? (
+        <div className="sa-vazio">Nenhum acesso registrado ainda.</div>
+      ) : (
+        <div className="sa-tabela-wrap">
+          <table className="sa-tabela sa-acessos">
+            <thead><tr><th>Pessoa</th><th>Início</th><th>Último sinal</th><th>IP</th><th>Navegador · sistema</th><th>Dispositivo</th><th className="num">Telas</th></tr></thead>
+            <tbody>
+              {itens.map((a) => (
+                <tr key={a.id}>
+                  <td><b>{a.quem}</b>{a.ultima_tela && <div className="sub mono" style={{ fontSize: 11.5 }} title="última tela aberta">{a.ultima_tela}</div>}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{dataHora(a.em)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{haQuanto(a.ultimo_em) === "agora" ? "agora" : `há ${haQuanto(a.ultimo_em)}`}
+                    <div className="sub" style={{ fontSize: 12 }}>{duracao(new Date(a.ultimo_em).getTime() - new Date(a.em).getTime())} de uso</div></td>
+                  <td className="mono" style={{ fontSize: 12.5 }}>{a.ip ?? "—"}</td>
+                  <td>{[a.navegador, a.sistema].filter(Boolean).join(" · ") || "—"}</td>
+                  <td style={{ textTransform: "capitalize" }}>{a.dispositivo ?? "—"}</td>
+                  <td className="num">{a.telas}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>

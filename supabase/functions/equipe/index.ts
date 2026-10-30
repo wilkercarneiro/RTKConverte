@@ -7,9 +7,12 @@
 // auth.uid() do JWT). O resto usa a service_role.
 //
 // Ações (POST { acao, ... }):
-//   criar            { email, nome, cargo, permissoes[] } → conta nova com senha
-//                    provisória ALEATÓRIA (devolvida uma vez, para a pessoa passar)
-//   redefinir_senha  { user_id } → senha provisória nova
+//   criar            { email, nome, cargo, descricao?, telefone?, permissoes[],
+//                      senha?, trocar? } → conta nova. Sem `senha`, o sistema
+//                    sorteia uma; com `senha`, vale a que o gestor escolheu.
+//                    `trocar` (padrão true) obriga a pessoa a criar a própria
+//                    senha no primeiro acesso. A senha volta UMA vez, para passar.
+//   redefinir_senha  { user_id, senha?, trocar? } → senha nova (sorteada ou a escolhida)
 //   remover          { user_id } → apaga a conta (não o dono, não a si mesmo)
 //
 // Permissão de gerenciar a equipe só o dono concede (o banco também confere).
@@ -35,6 +38,22 @@ const doUsuario = (req: Request) => createClient(URL_, Deno.env.get("SUPABASE_AN
 
 const VALIDAS = new Set(["servicos.criar", "servicos.excluir", "clientes.editar", "clientes.excluir",
   "documentos.gerar", "cadastros.editar", "empresa.configurar", "equipe.gerenciar"]);
+
+/** Senha escolhida pelo gestor: 8+ caracteres, com letra e número. Devolve o motivo da recusa. */
+export function senhaFraca(s: string): string | null {
+  if (s.length < 8) return "A senha precisa ter pelo menos 8 caracteres.";
+  if (s.length > 72) return "A senha pode ter no máximo 72 caracteres.";
+  if (!/[A-Za-zÀ-ÿ]/.test(s) || !/\d/.test(s)) return "A senha precisa ter letras e números.";
+  return null;
+}
+
+/** `senha` do corpo: a escolhida (validada) ou uma sorteada. */
+function senhaDoPedido(b: Record<string, unknown>): { senha: string; erro?: string } {
+  const escolhida = typeof b.senha === "string" ? b.senha : "";
+  if (!escolhida) return { senha: senhaProvisoria() };
+  const erro = senhaFraca(escolhida);
+  return erro ? { senha: "", erro } : { senha: escolhida };
+}
 
 /** Senha provisória legível: sem 0/O/1/l/I, com letras e números (12 caracteres). */
 export function senhaProvisoria(): string {
@@ -88,12 +107,16 @@ Deno.serve(async (req) => {
         const email = String(b.email ?? "").trim().toLowerCase();
         const nome = String(b.nome ?? "").trim();
         const cargo = String(b.cargo ?? "").trim();
+        const descricao = String(b.descricao ?? "").trim().slice(0, 500);
+        const telefone = String(b.telefone ?? "").trim().slice(0, 30);
+        const trocar = b.trocar !== false;
         let permissoes = (Array.isArray(b.permissoes) ? b.permissoes : []).map(String).filter((x) => VALIDAS.has(x));
         if (!souDono) permissoes = permissoes.filter((x) => x !== "equipe.gerenciar");
         if (!emailValido(email)) return json({ erro: "E-mail inválido." }, 400);
         if (nome.length < 2) return json({ erro: "Informe o nome da pessoa." }, 400);
 
-        const senha = senhaProvisoria();
+        const { senha, erro: eSenha } = senhaDoPedido(b);
+        if (eSenha) return json({ erro: eSenha }, 400);
         const { data: criado, error } = await svc.auth.admin.createUser({
           email, password: senha, email_confirm: true, user_metadata: { nome },
         });
@@ -106,28 +129,32 @@ Deno.serve(async (req) => {
         const novo = criado.user.id;
         const { error: eMem } = await svc.from("membros_escritorio").insert({
           escritorio_id: escId, user_id: novo, papel: "membro", nome, cargo: cargo || null, permissoes,
+          descricao: descricao || null, telefone: telefone || null,
         });
         if (eMem) {
           await svc.auth.admin.deleteUser(novo);
           const msg = /limite|permite/i.test(eMem.message) ? eMem.message : `Não foi possível adicionar: ${eMem.message}`;
           return json({ erro: msg }, 409);
         }
-        await svc.from("senhas_provisorias").insert({ user_id: novo });
+        if (trocar) await svc.from("senhas_provisorias").insert({ user_id: novo });
         await registrar("membro.adicionado", nome);
-        return json({ ok: true, user_id: novo, login: email, senha });
+        return json({ ok: true, user_id: novo, login: email, senha, trocar });
       }
 
       case "redefinir_senha": {
         const m = await alvoDaEquipe(String(b.user_id ?? ""));
         if (!m) return json({ erro: "Pessoa não encontrada na sua equipe." }, 404);
         if (m.papel === "dono" && m.user_id !== eu) return json({ erro: "A senha do dono só ele mesmo troca." }, 403);
-        const senha = senhaProvisoria();
+        const { senha, erro: eSenha } = senhaDoPedido(b);
+        if (eSenha) return json({ erro: eSenha }, 400);
+        const trocar = b.trocar !== false;
         const { data: au } = await svc.auth.admin.getUserById(m.user_id);
         const { error } = await svc.auth.admin.updateUserById(m.user_id, { password: senha });
         if (error) return json({ erro: error.message }, 400);
-        await svc.from("senhas_provisorias").upsert({ user_id: m.user_id, definida_em: new Date().toISOString() });
+        if (trocar) await svc.from("senhas_provisorias").upsert({ user_id: m.user_id, definida_em: new Date().toISOString() });
+        else await svc.from("senhas_provisorias").delete().eq("user_id", m.user_id);
         await registrar("membro.senha", m.nome ?? au?.user?.email ?? "");
-        return json({ ok: true, login: au?.user?.email ?? "", senha });
+        return json({ ok: true, login: au?.user?.email ?? "", senha, trocar });
       }
 
       case "remover": {

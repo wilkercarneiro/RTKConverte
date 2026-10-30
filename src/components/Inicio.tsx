@@ -18,6 +18,7 @@ import { CreditosResumo } from "./Creditos";
 import type { Creditos } from "../lib/creditos";
 import { PedidosGprol } from "./gprol/PedidosGprol";
 import type { PedidoGprol } from "../lib/gprol";
+import { GprolCartao } from "./gprol/GprolCartao";
 
 interface Props {
   onNovo: (chave: ChaveServico) => void;
@@ -30,6 +31,8 @@ interface Props {
   onAtualizarCreditos?: () => void;
   /** executar um pedido do GPROL */
   onExecutarPedido?: (p: PedidoGprol, chave: ChaveServico) => void;
+  /** abre Configurações → Integrações */
+  onConfigurarGprol?: () => void;
 }
 
 function saudacao(): string {
@@ -52,7 +55,7 @@ function primeiroNome(nome?: string): string | null {
   return base.charAt(0).toUpperCase() + base.slice(1).toLowerCase();
 }
 
-export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, onExecutarPedido }: Props) {
+export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, onExecutarPedido, onConfigurarGprol }: Props) {
   // null = carregando; erro separado: falha nunca aparece como "nenhum serviço"
   const [servicos, setServicos] = useState<Servico[] | null>(null);
   const [docs, setDocs] = useState<Record<string, DocsDoServico>>({});
@@ -106,6 +109,8 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
           <div><b>{servicos === null ? "–" : servicos.length >= 200 ? "200+" : servicos.length}</b><span>serviços no total</span></div>
         </div>
       </div>
+
+      {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} />}
 
       {creditos && <CreditosResumo creditos={creditos} onAtualizar={onAtualizarCreditos ?? (() => {})} />}
 

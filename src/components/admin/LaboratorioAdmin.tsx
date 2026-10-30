@@ -1,12 +1,14 @@
 // Laboratório do painel do superadmin (só no `npm run dev`, #/lab/admin):
 // desenha o painel com dados de exemplo, sem banco. Troca o `rpc`/`from` do
 // cliente do Supabase por respostas fixas — nada sai do navegador.
+// Abas: #/lab/admin/<aba>[/<id>] — ex.: #/lab/admin/suporte/ch1, #/lab/admin/tutoriais.
 import { useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { RECURSOS } from "../../lib/recursos";
 import { hashParaRota, useRota } from "../../lib/rota";
 import { PainelAdmin } from "./PainelAdmin";
 import type { AbaAdmin } from "./PainelAdmin";
+import { MENSAGENS, RPC_SUPORTE, STORAGE_SUPORTE, TUTORIAIS } from "./laboratorioSuporte";
 
 const dia = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 const PLANOS = [
@@ -82,14 +84,55 @@ const RPC: Record<string, (a: Record<string, unknown>) => unknown> = {
   })),
 };
 
-/** Resposta que aceita qualquer encadeamento do supabase-js e resolve com a tabela. */
-function consulta(linhas: unknown[]) {
-  const r = { data: linhas, error: null };
+// central de suporte, tutoriais e acessos (0029): ver laboratorioSuporte.ts
+Object.assign(RPC, RPC_SUPORTE);
+BANCO.chamado_mensagens = MENSAGENS;
+BANCO.tutoriais = TUTORIAIS;
+
+type Linha = Record<string, unknown>;
+/**
+ * Resposta que aceita qualquer encadeamento do supabase-js e resolve com a
+ * tabela. `eq` filtra, `order` ordena; insert/update/delete mexem na lista em
+ * memória (os cadastros do laboratório funcionam até recarregar a página).
+ */
+function consulta(t: string) {
+  const filtros: [string, unknown][] = [];
+  const ordem: [string, boolean][] = [];
+  let op: "select" | "insert" | "update" | "upsert" | "delete" = "select";
+  let carga: unknown = null;
+  let feito: Linha[] | null = null;
+  const casa = (l: Linha) => filtros.every(([c, v]) => l[c] === v);
+  const executar = (): Linha[] => {
+    if (feito) return feito;
+    const tab = (BANCO[t] ??= []) as Linha[];
+    if (op === "insert") {
+      const novas = (Array.isArray(carga) ? carga : [carga]).map((x) => ({ id: crypto.randomUUID(), created_at: new Date().toISOString(), ...(x as Linha) }));
+      tab.push(...novas);
+      return (feito = novas);
+    }
+    if (op === "update") { tab.filter(casa).forEach((l) => Object.assign(l, carga as Linha)); return (feito = tab.filter(casa)); }
+    if (op === "delete") { const fica = tab.filter((l) => !casa(l)); tab.splice(0, tab.length, ...fica); return (feito = []); }
+    if (op === "upsert") return (feito = (Array.isArray(carga) ? carga : [carga]) as Linha[]);
+    const linhas = tab.filter(casa);
+    for (const [c, asc] of [...ordem].reverse()) {
+      linhas.sort((a, b) => {
+        const x = a[c], y = b[c];
+        const r = typeof x === "number" && typeof y === "number" ? x - y : String(x ?? "").localeCompare(String(y ?? ""));
+        return asc ? r : -r;
+      });
+    }
+    return (feito = linhas);
+  };
   const cadeia: Record<string, unknown> = {};
-  for (const m of ["select", "order", "eq", "in", "limit", "insert", "update", "upsert", "delete"]) cadeia[m] = () => cadeia;
-  cadeia.single = () => Promise.resolve({ data: linhas[0] ?? null, error: null });
-  cadeia.maybeSingle = () => Promise.resolve({ data: linhas[0] ?? null, error: null });
-  cadeia.then = (ok: (v: unknown) => unknown) => Promise.resolve(r).then(ok);
+  for (const m of ["select", "in", "limit"]) cadeia[m] = () => cadeia;
+  cadeia.eq = (c: string, v: unknown) => { filtros.push([c, v]); return cadeia; };
+  cadeia.order = (c: string, o?: { ascending?: boolean }) => { ordem.push([c, o?.ascending !== false]); return cadeia; };
+  for (const m of ["insert", "update", "upsert"] as const) cadeia[m] = (x: unknown) => { op = m; carga = x; return cadeia; };
+  cadeia.delete = () => { op = "delete"; return cadeia; };
+  cadeia.single = () => Promise.resolve({ data: executar()[0] ?? null, error: null });
+  cadeia.maybeSingle = () => Promise.resolve({ data: executar()[0] ?? null, error: null });
+  cadeia.then = (ok: (v: unknown) => unknown, falha?: (e: unknown) => unknown) =>
+    Promise.resolve().then(() => ({ data: executar(), error: null })).then(ok, falha);
   return cadeia;
 }
 
@@ -99,7 +142,9 @@ function instalar() {
   instalado = true;
   const s = supabase as unknown as Record<string, unknown>;
   s.rpc = (nome: string, args: Record<string, unknown>) => Promise.resolve({ data: RPC[nome]?.(args ?? {}) ?? null, error: null });
-  s.from = (t: string) => consulta(BANCO[t] ?? []);
+  s.from = (t: string) => consulta(t);
+  // `storage` é getter no supabase-js: sobrescreve na própria instância
+  Object.defineProperty(supabase, "storage", { value: STORAGE_SUPORTE, configurable: true });
 }
 
 export function LaboratorioAdmin() {

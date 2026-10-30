@@ -33,6 +33,16 @@ export interface UsuarioEmpresa {
 export interface AtividadeEmpresa { id: number; acao: string; alvo: string | null; detalhe: Record<string, unknown> | null; created_at: string; quem: string }
 export const atividadesDaEmpresa = async (id: string): Promise<AtividadeEmpresa[]> =>
   ok(await supabase.rpc("sa_atividades", { p_escritorio: id, p_limite: 200 })) ?? [];
+/** Sessão de uso (0029): abre ao entrar, fecha depois de 30 min sem sinal. */
+export interface AcessoEmpresa {
+  id: number; user_id: string; quem: string; em: string; ultimo_em: string; ip: string | null;
+  navegador: string | null; sistema: string | null; dispositivo: string | null; telas: number; ultima_tela: string | null;
+}
+/** Acessos recentes de uma empresa. Banco sem a 0029 (ou qualquer falha): null, e a seção some. */
+export async function acessosDaEmpresa(id: string, limite = 50): Promise<AcessoEmpresa[] | null> {
+  const r = await supabase.rpc("sa_acessos", { p_escritorio: id, p_limite: limite });
+  return r.error ? null : ((r.data as AcessoEmpresa[]) ?? []);
+}
 export interface RecursoEmpresa { chave: string; liberado: boolean; origem: "excecao" | "plano" | "padrao"; excecao: boolean | null }
 export interface Contato {
   id: string; nome: string; empresa: string | null; telefone: string; email: string | null;

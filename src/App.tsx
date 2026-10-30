@@ -44,6 +44,7 @@ import { EscolherPedido } from "./components/gprol/EscolherPedido";
 import { ServicoGprol } from "./components/gprol/ServicoGprol";
 import { avisar } from "./components/ui";
 import { guardar } from "./lib/ux";
+import { useRegistroDeAcesso } from "./lib/acessos";
 
 // só no `npm run dev`: fica num pedaço à parte que o build nunca carrega
 const LaboratorioPlanta = lazy(() => import("./components/planta/LaboratorioPlanta").then((m) => ({ default: m.LaboratorioPlanta })));
@@ -51,6 +52,7 @@ const LaboratorioDivisao = lazy(() => import("./components/LaboratorioDivisao").
 const LaboratorioCar = lazy(() => import("./components/car/Laboratorio").then((m) => ({ default: m.LaboratorioCar })));
 const LaboratorioAdmin = lazy(() => import("./components/admin/LaboratorioAdmin").then((m) => ({ default: m.LaboratorioAdmin })));
 const LaboratorioCasca = lazy(() => import("./components/LaboratorioCasca").then((m) => ({ default: m.LaboratorioCasca })));
+const LaboratorioSistema = lazy(() => import("./components/LaboratorioSistema").then((m) => ({ default: m.LaboratorioSistema })));
 // painel do superadmin: só quem administra o SaaS baixa este pedaço
 const PainelAdmin = lazy(() => import("./components/admin/PainelAdmin").then((m) => ({ default: m.PainelAdmin })));
 
@@ -98,6 +100,8 @@ export default function App() {
   // Integração com o GPROL: sincroniza com o app aberto e ao trocar de tela
   const escritorioOk = logado === true && escritorio?.estado === "ok";
   useSincronismoPeriodico(escritorioOk);
+  // auditoria de uso: sessão, telas e último sinal (0029)
+  useRegistroDeAcesso(logado === true && escritorio !== null, rota.t);
   useEffect(() => {
     if (!escritorioOk) return;
     if (rota.t === "inicio" || rota.t === "servicos" || rota.t === "cliente" || rota.t === "servico") sincronizarGprol();
@@ -158,6 +162,7 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/car")) return <Suspense fallback={null}><LaboratorioCar /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/admin")) return <Suspense fallback={null}><LaboratorioAdmin /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/casca")) return <Suspense fallback={null}><LaboratorioCasca /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/sistema")) return <Suspense fallback={null}><LaboratorioSistema /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vertces", href: "#/" }} />;
@@ -209,6 +214,7 @@ export default function App() {
       cliente_id: cli.id,
       detentor_nome: cli.nome,
       detentor_cpf: cli.cpf_cnpj,
+      ...(cli.rg ? { detentor_rg: cli.rg } : {}),
       detentor_genero: cli.genero,
       endereco_detentor: cli.endereco,
       is_espolio: cli.is_espolio ?? false,
@@ -256,7 +262,10 @@ export default function App() {
     ? `${escritorio.escritorio.papel === "dono" ? "Dono" : "Equipe"} · ${escritorio.escritorio.nome}`
     : "Operador";
   const nomeUsuario = (escritorio.estado === "ok" && escritorio.escritorio.meu_nome) || usuario;
-  const casca = { rota, ir, usuario: nomeUsuario ? { nome: nomeUsuario, papel } : undefined, superadmin: conta.superadmin };
+  const casca = {
+    rota, ir, usuario: nomeUsuario ? { nome: nomeUsuario, papel } : undefined, superadmin: conta.superadmin,
+    escritorioId: escritorio.estado === "ok" ? escritorio.escritorio.id : undefined,
+  };
 
   switch (rota.t) {
     case "novo": {
@@ -391,7 +400,8 @@ export default function App() {
           <Inicio onNovo={(chave) => ir({ t: "novo", chave })} onAbrir={abrirServico}
             onVerServicos={() => ir({ t: "servicos" })} nome={usuario ?? undefined}
             creditos={creditos} onAtualizarCreditos={atualizarCreditos}
-            onExecutarPedido={(p, chave) => ir({ t: "novo", chave, clienteId: p.cliente_id ?? undefined, pedidoId: p.id })} />
+            onExecutarPedido={(p, chave) => ir({ t: "novo", chave, clienteId: p.cliente_id ?? undefined, pedidoId: p.id })}
+            onConfigurarGprol={() => { guardar("config.aba", "integracoes"); ir({ t: "config" }); }} />
         </AppShell>
       );
   }

@@ -12,6 +12,27 @@ export interface Cliente {
   inventariante_nome?: string | null;
   inventariante_cpf?: string | null;
   inventariante_rg?: string | null;
+  // qualificação completa (0029)
+  tipo_pessoa?: "PF" | "PJ" | null;
+  rg?: string | null;
+  rg_orgao?: string | null;
+  data_nascimento?: string | null;
+  nacionalidade?: string | null;
+  estado_civil?: string | null;
+  regime_bens?: string | null;
+  profissao?: string | null;
+  conjuge_nome?: string | null;
+  conjuge_cpf?: string | null;
+  telefone2?: string | null;
+  cep?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+  representante_nome?: string | null;
+  representante_cpf?: string | null;
+  origem?: string | null;
+  criado_por?: string | null;
+  atualizado_por?: string | null;
+  atualizado_em?: string | null;
 }
 
 export interface DocumentoGerado {

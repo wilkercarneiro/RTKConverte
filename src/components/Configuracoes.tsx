@@ -16,25 +16,29 @@ import type { Credenciado, RT } from "../lib/types";
 import { pastaDoEscritorio, salvarConfigEmpresa } from "../lib/escritorio";
 import type { EstadoEscritorio } from "../lib/escritorio";
 import { temPermissao } from "../lib/permissoes";
-import { TrocarSenhaCartao } from "./TrocarSenha";
 import { IntegracaoGprol } from "./gprol/IntegracaoGprol";
 import { temRecurso } from "../lib/recursos";
+import { MinhaConta } from "./config/MinhaConta";
+import { PlanoUso } from "./config/PlanoUso";
 
 /** Chaves gravadas em config_empresa (key/value). `desenhista` é lida pela planta;
- *  `rt_padrao` e `credenciado_padrao` pré-preenchem serviços novos. */
-const CHAVES = ["razao_social", "cnpj", "desenhista", "rt_padrao", "credenciado_padrao"] as const;
+ *  `rt_padrao` e `credenciado_padrao` pré-preenchem serviços novos; contato e
+ *  endereço identificam a empresa (suporte, documentos, integração). */
+const CHAVES = ["razao_social", "cnpj", "desenhista", "rt_padrao", "credenciado_padrao",
+  "telefone_empresa", "email_empresa", "site", "cep_empresa", "endereco_empresa", "cidade_empresa", "uf_empresa"] as const;
 type Chave = typeof CHAVES[number];
 type Config = Record<Chave, string>;
-const VAZIA: Config = { razao_social: "", cnpj: "", desenhista: "", rt_padrao: "", credenciado_padrao: "" };
+const VAZIA = Object.fromEntries(CHAVES.map((k) => [k, ""])) as Config;
 
-type Aba = "empresa" | "cadastros" | "modelos" | "integracoes" | "senha";
+type Aba = "empresa" | "cadastros" | "modelos" | "integracoes" | "plano" | "conta";
 const SEM_PERMISSAO = "Só quem tem a permissão \"Dados da empresa\" altera isto.";
 
 /** A aba vem do endereço (`/app/?aba=modelos#/configuracoes`) ou da última visita. */
 function abaInicial(validas: Aba[]): Aba {
   let pedida: string | null = null;
   try { pedida = new URLSearchParams(location.search).get("aba"); } catch { /* sem URL */ }
-  const escolha = (pedida ?? lembrar("config.aba")) as Aba | null;
+  // "senha" era o nome antigo de "Minha conta"
+  const escolha = ((pedida ?? lembrar("config.aba")) === "senha" ? "conta" : pedida ?? lembrar("config.aba")) as Aba | null;
   return escolha && validas.includes(escolha) ? escolha : "empresa";
 }
 
@@ -45,7 +49,8 @@ export function Configuracoes({ escritorio = { estado: "legado" } }: { escritori
     { chave: "cadastros", rotulo: "Responsáveis e credenciados" },
     ...(temModelos ? [{ chave: "modelos" as const, rotulo: "Modelos" }] : []),
     ...(temRecurso("integracao.gprol") ? [{ chave: "integracoes" as const, rotulo: "Integrações" }] : []),
-    { chave: "senha", rotulo: "Minha senha" },
+    ...(escritorio.estado === "ok" ? [{ chave: "plano" as const, rotulo: "Plano e uso" }] : []),
+    { chave: "conta", rotulo: "Minha conta" },
   ];
   const [aba, setAba] = useState<Aba>(() => abaInicial(abas.map((a) => a.chave)));
   const pasta = pastaDoEscritorio(escritorio);
@@ -58,14 +63,15 @@ export function Configuracoes({ escritorio = { estado: "legado" } }: { escritori
   return (
     <div className="pagina fade">
       <CabecalhoPagina olho="Sistema" titulo="Configurações"
-        descricao="Identidade da empresa, quem assina os serviços, modelos dos documentos, integrações e a sua senha" />
+        descricao="Identidade da empresa, quem assina os serviços, modelos, integrações, plano e a sua conta" />
       <Abas rotulo="Seções das configurações" abas={abas} ativa={aba} onTrocar={trocar} />
       <div role="tabpanel" aria-label={abas.find((a) => a.chave === aba)?.rotulo} className="painel-aba">
         {aba === "empresa" && <Empresa pasta={pasta} />}
         {aba === "cadastros" && <Cadastros />}
         {aba === "modelos" && temModelos && <Modelos pasta={pasta} />}
         {aba === "integracoes" && <IntegracaoGprol />}
-        {aba === "senha" && <TrocarSenhaCartao />}
+        {aba === "plano" && <PlanoUso escritorio={escritorio} />}
+        {aba === "conta" && <MinhaConta />}
       </div>
     </div>
   );
@@ -175,6 +181,7 @@ function Empresa({ pasta }: { pasta: string }) {
 
       <form onSubmit={salvarConfig}>
         <fieldset className="sem-borda" disabled={!pode}>
+          <h4 className="config-sub">Identificação</h4>
           <div className="grade config-grade">
             <label>Razão social
               <input value={config.razao_social} onChange={(e) => campo("razao_social", e.target.value)} placeholder="ex.: GEO TOPOGRAFIA LTDA" />
@@ -185,6 +192,33 @@ function Empresa({ pasta }: { pasta: string }) {
             <label>Desenhista (rodapé da planta)
               <input value={config.desenhista} onChange={(e) => campo("desenhista", e.target.value)} placeholder="ex.: JANETE OLIVEIRA" />
             </label>
+          </div>
+          <h4 className="config-sub">Contato e endereço</h4>
+          <div className="grade config-grade">
+            <label>Telefone
+              <input value={config.telefone_empresa} onChange={(e) => campo("telefone_empresa", e.target.value)} placeholder="(00) 0000-0000" inputMode="tel" />
+            </label>
+            <label>E-mail
+              <input type="email" value={config.email_empresa} onChange={(e) => campo("email_empresa", e.target.value)} placeholder="contato@empresa.com.br" />
+            </label>
+            <label>Site
+              <input value={config.site} onChange={(e) => campo("site", e.target.value)} placeholder="www.empresa.com.br" />
+            </label>
+            <label className="largo">Endereço
+              <input value={config.endereco_empresa} onChange={(e) => campo("endereco_empresa", e.target.value)} placeholder="Rua, número, bairro" />
+            </label>
+            <label>Cidade
+              <input value={config.cidade_empresa} onChange={(e) => campo("cidade_empresa", e.target.value)} placeholder="ex.: Irecê" />
+            </label>
+            <label>UF
+              <input value={config.uf_empresa} maxLength={2} onChange={(e) => campo("uf_empresa", e.target.value.toUpperCase())} placeholder="BA" />
+            </label>
+            <label>CEP
+              <input className="mono" value={config.cep_empresa} onChange={(e) => campo("cep_empresa", e.target.value)} placeholder="00000-000" inputMode="numeric" />
+            </label>
+          </div>
+          <h4 className="config-sub">Padrões dos serviços novos</h4>
+          <div className="grade config-grade">
             <label><Rotulo dica="já vem selecionado em todo serviço novo">Responsável técnico padrão</Rotulo>
               <select value={config.rt_padrao} onChange={(e) => campo("rt_padrao", e.target.value)}>
                 <option value="">—</option>

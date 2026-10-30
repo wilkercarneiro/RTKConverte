@@ -1,0 +1,50 @@
+/* Página Ajuda e tutoriais (Ajuda.tsx). */
+
+.aj-suporte {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap;
+  padding: 22px 24px; border-radius: 18px; color: #fff;
+  background: radial-gradient(70% 120% at 100% 0%, rgb(123 211 166 / 20%), transparent 60%), linear-gradient(150deg, #0E3B2B, #0A2A1F);
+  box-shadow: 0 16px 34px -24px rgb(14 59 43 / 70%);
+}
+.aj-suporte h2 { margin: 0 0 4px; font: 700 22px var(--fonte-titulo); color: #fff; }
+.aj-suporte p { margin: 0; max-width: 60ch; font-size: 13.5px; color: var(--floresta-texto); }
+.aj-suporte-acoes { display: flex; gap: 8px; flex-wrap: wrap; }
+.aj-suporte-acoes .principal { background: var(--acento); border-color: var(--acento); color: var(--floresta); font-weight: 700; }
+.aj-suporte-acoes .principal:hover { background: #92dfb7; }
+.aj-suporte-acoes > button:not(.principal), .aj-suporte-acoes .botao-download { background: rgb(255 255 255 / 9%); border-color: rgb(255 255 255 / 18%); color: #fff; }
+
+.aj-filtros { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.aj-busca { max-width: 260px; height: 36px; border-radius: 10px; }
+.aj-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.aj-cartao {
+  all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 14px;
+  border-radius: 16px; background: #fff; box-shadow: var(--anel, 0 0 0 1px var(--borda)); transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.aj-cartao:hover { transform: translateY(-3px); box-shadow: var(--anel-alto, 0 0 0 1px var(--borda)); }
+.aj-cartao:focus-visible { outline: 2px solid var(--primaria); outline-offset: 2px; }
+.aj-cartao b { padding: 0 4px; font-size: 14px; line-height: 1.3; }
+.aj-cartao small { padding: 0 4px; font-size: 12.5px; line-height: 1.45; color: var(--texto-3); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.aj-capa {
+  position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; border-radius: 11px; margin-bottom: 4px;
+  background: radial-gradient(60% 80% at 30% 20%, rgb(123 211 166 / 30%), transparent 60%), linear-gradient(140deg, #134a36, #0A2A1F);
+}
+.aj-play { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 999px; background: rgb(255 255 255 / 92%); color: var(--floresta); box-shadow: 0 6px 18px -6px rgb(0 0 0 / 50%); transition: transform 0.18s ease; }
+.aj-play svg { width: 20px; height: 20px; margin-left: 3px; fill: currentColor; }
+.aj-cartao:hover .aj-play { transform: scale(1.08); }
+.aj-play.grande { width: 56px; height: 56px; background: var(--primaria-clara); color: var(--primaria); box-shadow: none; }
+.aj-duracao { position: absolute; right: 8px; bottom: 8px; padding: 2px 7px; border-radius: 6px; background: rgb(0 0 0 / 55%); color: #fff; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.aj-modulo { padding: 0 4px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--primaria); }
+.aj-esq { min-height: 220px; cursor: default; background: linear-gradient(90deg, #EEF2F0, #F7F9F8, #EEF2F0); background-size: 200% 100%; animation: casca-brilho 1.3s linear infinite; box-shadow: none; }
+.aj-vazio { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 16px; text-align: center; }
+.aj-vazio b { font-size: 15px; }
+.aj-vazio span:last-child { max-width: 52ch; font-size: 13.5px; color: var(--texto-3); }
+
+.aj-veu { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 20px; background: rgb(8 24 18 / 72%); backdrop-filter: blur(3px); }
+.aj-player { width: min(980px, 100%); display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 18px; background: #fff; }
+.aj-player header { display: flex; align-items: center; gap: 12px; }
+.aj-player header div { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.aj-player header .aj-modulo { padding: 0; }
+.aj-player header b { font-size: 16px; }
+.aj-player iframe { width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 12px; background: #000; }
+.aj-desc { margin: 0; font-size: 13.5px; color: var(--texto-2); }
+.aj-externo { padding: 30px; text-align: center; font-weight: 600; }

@@ -20,10 +20,14 @@ import { Planos } from "./Planos";
 import { RecursosAdmin } from "./RecursosAdmin";
 import { Contatos } from "./Contatos";
 import { ConfigAdmin } from "./ConfigAdmin";
+import { SuporteAdmin } from "./SuporteAdmin";
+import { TutoriaisAdmin } from "./TutoriaisAdmin";
 import { Marca } from "../Marca";
 import { AvisosGlobais, DialogosGlobais } from "../ui";
+import { contagemSuporte } from "../../lib/suporte";
+import type { ContagemSuporte } from "../../lib/suporte";
 
-export type AbaAdmin = "visao" | "empresas" | "planos" | "recursos" | "contatos" | "config" | "marca";
+export type AbaAdmin = "visao" | "empresas" | "suporte" | "planos" | "recursos" | "tutoriais" | "contatos" | "config" | "marca";
 
 export interface DadosAdmin {
   empresas: Empresa[];
@@ -32,6 +36,9 @@ export interface DadosAdmin {
   contatos: Contato[];
   /** recursos que entraram no catálogo nesta abertura do painel */
   novosRecursos: number;
+  /** central de suporte (0029); null = banco sem a migração */
+  suporte: ContagemSuporte | null;
+  recarregarSuporte: () => Promise<void>;
   recarregar: () => Promise<void>;
   ir: (r: Rota) => void;
 }
@@ -42,6 +49,7 @@ const MENU: { secao: string; itens: { aba: AbaAdmin; rotulo: string; icone: stri
     secao: "Clientes",
     itens: [
       { aba: "empresas", rotulo: "Empresas", icone: ICO.empresas },
+      { aba: "suporte", rotulo: "Suporte", icone: ICO.suporte },
       { aba: "contatos", rotulo: "Pedidos de reunião", icone: ICO.contatos },
     ],
   },
@@ -50,6 +58,7 @@ const MENU: { secao: string; itens: { aba: AbaAdmin; rotulo: string; icone: stri
     itens: [
       { aba: "planos", rotulo: "Planos", icone: ICO.planos },
       { aba: "recursos", rotulo: "Recursos", icone: ICO.recursos },
+      { aba: "tutoriais", rotulo: "Tutoriais", icone: ICO.tutoriais },
     ],
   },
   {
@@ -67,8 +76,17 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
   /** o superadmin também trabalha numa empresa: mostra o atalho de volta */
   temEscritorio: boolean;
 }) {
-  const [dados, setDados] = useState<Omit<DadosAdmin, "recarregar" | "ir"> | null>(null);
+  const [dados, setDados] = useState<Omit<DadosAdmin, "recarregar" | "ir" | "suporte" | "recarregarSuporte"> | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [suporte, setSuporte] = useState<ContagemSuporte | null>(null);
+
+  // chamados esperando o suporte (badge do menu): ao trocar de aba e a cada minuto
+  const recarregarSuporte = useCallback(async () => { setSuporte(await contagemSuporte().catch(() => null)); }, []);
+  useEffect(() => { recarregarSuporte(); }, [aba, recarregarSuporte]);
+  useEffect(() => {
+    const t = setInterval(recarregarSuporte, 60_000);
+    return () => clearInterval(t);
+  }, [recarregarSuporte]);
 
   const recarregar = useCallback(async () => {
     try {
@@ -93,7 +111,8 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
   }, []);
 
   const contatosNovos = dados?.contatos.filter((c) => c.status === "novo").length ?? 0;
-  const ctx: DadosAdmin | null = dados ? { ...dados, recarregar, ir } : null;
+  const esperando = suporte?.esperando ?? 0;
+  const ctx: DadosAdmin | null = dados ? { ...dados, suporte, recarregarSuporte, recarregar, ir } : null;
   const irAba = (a: AbaAdmin) => ir({ t: "admin", aba: a });
 
   let pagina = <Carregando />;
@@ -102,8 +121,10 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
       case "empresas":
         pagina = id ? <EmpresaDetalhe key={id} id={id} d={ctx} /> : <Empresas d={ctx} />;
         break;
+      case "suporte": pagina = <SuporteAdmin d={ctx} id={id} />; break;
       case "planos": pagina = <Planos d={ctx} />; break;
       case "recursos": pagina = <RecursosAdmin d={ctx} />; break;
+      case "tutoriais": pagina = <TutoriaisAdmin />; break;
       case "contatos": pagina = <Contatos d={ctx} />; break;
       case "config": pagina = <ConfigAdmin />; break;
       case "marca": pagina = <Marca />; break;
@@ -126,6 +147,9 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
                 aria-current={aba === it.aba ? "page" : undefined} onClick={() => irAba(it.aba)}>
                 <Ico d={it.icone} />{it.rotulo}
                 {it.aba === "contatos" && contatosNovos > 0 && <span className="sa-badge">{contatosNovos}</span>}
+                {it.aba === "suporte" && esperando > 0 && (
+                  <span className="sa-badge" title={`${esperando} chamado(s) esperando o suporte`}>{esperando}</span>
+                )}
                 {it.aba === "recursos" && (dados?.novosRecursos ?? 0) > 0 && <span className="sa-badge">{dados!.novosRecursos}</span>}
               </button>
             ))}

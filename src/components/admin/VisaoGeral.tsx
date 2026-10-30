@@ -36,7 +36,7 @@ export function VisaoGeral({ d }: { d: DadosAdmin }) {
     <>
       <Topo olho="Visão geral" titulo="Painel do Vertces" sub="Empresas, uso do sistema e o que pede atenção hoje." />
 
-      <section className="sa-kpis" aria-label="Indicadores">
+      <section className="sa-kpis sa-kpis-6" aria-label="Indicadores">
         <Kpi rotulo="Empresas ativas" valor={fmtNum(ativas.length)} icone={ICO.empresas}
           detalhe={`${d.empresas.length} cadastradas no total`} onClick={() => d.ir({ t: "admin", aba: "empresas" })} />
         <Kpi rotulo="Usuários" valor={fmtNum(usuarios)} icone={ICO.usuarios} tom="escuro" detalhe="contas ligadas às empresas" />
@@ -45,6 +45,11 @@ export function VisaoGeral({ d }: { d: DadosAdmin }) {
           detalhe="ativas, sem acesso nem serviço" />
         <Kpi rotulo="Pedidos de reunião" valor={fmtNum(novosContatos)} icone={ICO.contatos} tom={novosContatos ? "alerta" : undefined}
           detalhe={suspensas ? `${suspensas} empresa(s) suspensa(s)` : "novos, vindos do site"} onClick={() => d.ir({ t: "admin", aba: "contatos" })} />
+        <Kpi rotulo="Suporte" icone={ICO.suporte} valor={d.suporte ? fmtNum(d.suporte.esperando) : "—"}
+          tom={d.suporte?.esperando ? "alerta" : undefined}
+          detalhe={!d.suporte ? "central sem a migração 0029" : d.suporte.esperando
+            ? `esperando resposta · ${d.suporte.abertos} aberto(s)` : d.suporte.abertos ? `nenhum esperando · ${d.suporte.abertos} aberto(s)` : "nenhum chamado aberto"}
+          onClick={() => d.ir({ t: "admin", aba: "suporte" })} />
       </section>
 
       {pedidos.length > 0 && (

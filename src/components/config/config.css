@@ -1,0 +1,42 @@
+/* Configurações → Plano e uso (PlanoUso.tsx). */
+
+.pu-heroi {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 22px 24px; border-radius: 18px; color: #fff;
+  background: radial-gradient(70% 120% at 100% 0%, rgb(123 211 166 / 20%), transparent 60%), linear-gradient(150deg, #0E3B2B, #0A2A1F);
+  box-shadow: 0 16px 34px -24px rgb(14 59 43 / 70%);
+}
+.pu-olho { font-size: 11.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--acento); }
+.pu-heroi h2 { margin: 4px 0 2px; font: 700 26px var(--fonte-titulo); color: #fff; }
+.pu-heroi p { margin: 0; font-size: 13.5px; color: var(--floresta-texto); }
+.pu-cta { height: 40px; padding: 0 18px; border: 0; border-radius: 11px; background: var(--acento); color: var(--floresta); font-weight: 700; cursor: pointer; }
+.pu-cta:hover { background: #92dfb7; }
+
+.pu-medidores { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.pu-medidor { display: flex; flex-direction: column; gap: 7px; padding: 14px 16px; border-radius: 14px; background: #F7F9F8; box-shadow: inset 0 0 0 1px var(--borda); }
+.pu-medidor-topo { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--texto-2); }
+.pu-medidor-topo b { color: var(--texto); font-variant-numeric: tabular-nums; }
+.pu-trilho { height: 8px; border-radius: 4px; background: #E3E9E6; overflow: hidden; }
+.pu-trilho i { display: block; height: 100%; border-radius: 4px; background: var(--primaria); transition: width 0.4s ease; }
+.pu-medidor.livre .pu-trilho i { background: repeating-linear-gradient(45deg, #CFE7DA 0 8px, #E4F3EB 8px 16px); }
+.pu-medidor.quase .pu-trilho i { background: var(--alerta); }
+.pu-medidor.cheio .pu-trilho i { background: var(--perigo); }
+.pu-medidor small { font-size: 12px; color: var(--texto-3); }
+.pu-medidor.cheio small { color: var(--perigo); font-weight: 600; }
+
+.pu-grupos { columns: 3 260px; column-gap: 14px; }
+.pu-grupo { break-inside: avoid; margin-bottom: 14px; padding: 14px 16px; border-radius: 14px; background: #fff; box-shadow: inset 0 0 0 1px var(--borda); }
+.pu-grupo h4 { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--texto-3); }
+.pu-grupo ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pu-grupo li { display: flex; align-items: center; gap: 9px; font-size: 13.5px; min-height: 26px; }
+.pu-icone { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; }
+.pu-grupo li.tem .pu-icone { background: var(--primaria-clara); color: var(--primaria); }
+.pu-grupo li.nao .pu-icone { background: #EEF1EF; color: var(--texto-3); }
+.pu-grupo li.nao .pu-nome { color: var(--texto-3); }
+.pu-nome { flex: 1; min-width: 0; }
+.pu-grupo .link { font-size: 12.5px; }
+
+/* Configurações → Empresa: subtítulos dos grupos de campos */
+.config-sub { margin: 18px 0 10px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--texto-3); }
+.config-sub:first-of-type { margin-top: 4px; }
+.pu-heroi .pu-cta:hover:not(:disabled) { color: var(--floresta); border-color: transparent; }

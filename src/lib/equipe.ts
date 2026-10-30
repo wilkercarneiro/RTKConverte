@@ -7,6 +7,8 @@ export interface Membro {
   user_id: string; email: string; nome: string | null; cargo: string | null;
   papel: "dono" | "membro"; permissoes: string[]; ativo: boolean;
   desde: string; ultimo_acesso: string | null; senha_provisoria: boolean;
+  /** a partir da 0029: o que a pessoa faz na empresa, e um telefone de contato */
+  descricao?: string | null; telefone?: string | null;
 }
 
 export interface Atividade {
@@ -51,32 +53,58 @@ export async function autoriaServicos(ids: string[]): Promise<Record<string, Aut
   return Object.fromEntries((data as Autoria[]).map((a) => [a.servico_id, a]));
 }
 
-export async function salvarMembro(m: Pick<Membro, "user_id" | "nome" | "cargo" | "permissoes" | "ativo">): Promise<void> {
+export async function salvarMembro(m: Pick<Membro, "user_id" | "nome" | "cargo" | "permissoes" | "ativo" | "descricao" | "telefone">): Promise<void> {
   ok(await supabase.rpc("definir_membro", {
     p_user: m.user_id, p_nome: m.nome ?? "", p_cargo: m.cargo ?? "", p_permissoes: m.permissoes, p_ativo: m.ativo,
+    p_descricao: m.descricao ?? "", p_telefone: m.telefone ?? "",
   }));
 }
 
 export interface PodeAdicionar { ok: boolean; motivo?: string; limite?: number | null; ativos?: number; sou_dono?: boolean }
 export const podeAdicionar = async (): Promise<PodeAdicionar> => ok(await supabase.rpc("pode_adicionar_membro")) as PodeAdicionar;
 
-export interface Acesso { login: string; senha: string }
-export const criarMembro = (d: { email: string; nome: string; cargo: string; permissoes: string[] }) =>
+/** `trocar`: a pessoa cria a própria senha no primeiro acesso. */
+export interface Acesso { login: string; senha: string; trocar?: boolean }
+/** Senha em branco = o sistema sorteia uma. */
+export interface SenhaEscolhida { senha?: string; trocar: boolean }
+export const criarMembro = (d: { email: string; nome: string; cargo: string; descricao: string; telefone: string; permissoes: string[] } & SenhaEscolhida) =>
   chamarFuncao<{ ok: true; user_id: string } & Acesso>("equipe", { acao: "criar", ...d });
-export const novaSenha = (user_id: string) => chamarFuncao<{ ok: true } & Acesso>("equipe", { acao: "redefinir_senha", user_id });
+export const novaSenha = (user_id: string, s: SenhaEscolhida = { trocar: true }) =>
+  chamarFuncao<{ ok: true } & Acesso>("equipe", { acao: "redefinir_senha", user_id, ...s });
+
+/** Mesma regra da edge function (senhaFraca): 8+ caracteres, letras e números. */
+export function problemaDaSenha(s: string): string | null {
+  if (s.length < 8) return "Use pelo menos 8 caracteres.";
+  if (s.length > 72) return "Use no máximo 72 caracteres.";
+  if (!/[A-Za-zÀ-ÿ]/.test(s) || !/\d/.test(s)) return "Misture letras e números.";
+  return null;
+}
+
+/** 0 a 4, para a barrinha de força da senha. */
+export function forcaDaSenha(s: string): number {
+  if (!s) return 0;
+  let f = 0;
+  if (s.length >= 8) f++;
+  if (s.length >= 12) f++;
+  if (/[a-z]/.test(s) && /[A-Z]/.test(s)) f++;
+  if (/\d/.test(s) && /[^A-Za-z0-9]/.test(s)) f++;
+  return problemaDaSenha(s) ? Math.min(f, 1) : Math.max(f, 2);
+}
 export const apagarConta = (user_id: string) => chamarFuncao<{ ok: true }>("equipe", { acao: "remover", user_id });
 
 /** Texto pronto para passar o acesso a quem entrou na equipe. */
-export function mensagemDeAcesso(o: { nome: string; empresa: string; login: string; senha: string }): string {
+export function mensagemDeAcesso(o: { nome: string; empresa: string; login: string; senha: string; trocar?: boolean }): string {
   const primeiro = o.nome.split(/\s+/)[0] || "";
+  const trocar = o.trocar !== false;
   return [
     `Olá${primeiro ? `, ${primeiro}` : ""}! Seu acesso ao Vertces (${o.empresa}) está pronto.`,
     ``,
     `Endereço: ${location.origin}/app/`,
     `Login: ${o.login}`,
-    `Senha provisória: ${o.senha}`,
+    `${trocar ? "Senha provisória" : "Senha"}: ${o.senha}`,
     ``,
-    `No primeiro acesso o sistema pede para você criar a sua própria senha.`,
+    trocar ? `No primeiro acesso o sistema pede para você criar a sua própria senha.`
+      : `Guarde esta senha. Para trocá-la, use Configurações → Minha conta.`,
   ].join("\n");
 }
 
@@ -105,7 +133,7 @@ const ROTULOS: Record<string, string> = {
   "membro.desativado": "desativou o acesso de",
   "membro.reativado": "reativou o acesso de",
   "membro.removido": "removeu da equipe",
-  "membro.senha": "gerou uma senha nova para",
+  "membro.senha": "definiu uma senha nova para",
 };
 export const rotuloAtividade = (acao: string): string => ROTULOS[acao] ?? acao;
 
@@ -131,5 +159,14 @@ const CAMPOS: Record<string, string> = {
   lado: "lado", tem_glebas: "glebas", divisao: "divisão", modalidade: "modalidade", nome: "nome", cpf_cnpj: "CPF/CNPJ",
   telefone: "telefone", email: "e-mail", endereco: "endereço", crea: "CREA", cpf: "CPF", prefixo_vertice: "prefixo dos vértices",
   razao_social: "razão social", cnpj: "CNPJ", desenhista: "desenhista", rt_padrao: "RT padrão", credenciado_padrao: "credenciado padrão",
+  // cliente (0029)
+  rg: "RG", rg_orgao: "órgão emissor do RG", data_nascimento: "nascimento", nacionalidade: "nacionalidade",
+  estado_civil: "estado civil", regime_bens: "regime de bens", profissao: "profissão", conjuge_nome: "cônjuge",
+  conjuge_cpf: "CPF do cônjuge", telefone2: "segundo telefone", cep: "CEP", cidade: "cidade",
+  representante_nome: "representante", representante_cpf: "CPF do representante", origem: "origem do cliente",
+  observacoes: "observações", genero: "gênero",
+  // empresa (Configurações)
+  telefone_empresa: "telefone da empresa", email_empresa: "e-mail da empresa", site: "site",
+  endereco_empresa: "endereço da empresa", cidade_empresa: "cidade da empresa", uf_empresa: "UF da empresa", cep_empresa: "CEP da empresa",
 };
 export const rotuloCampo = (c: string): string => CAMPOS[c] ?? c.replace(/_/g, " ");
