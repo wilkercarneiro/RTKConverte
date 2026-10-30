@@ -1185,3 +1185,46 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .chip.st-pendente { background: var(--alerta-claro); color: var(--alerta-escuro); }
 .chip.st-aprovado { background: var(--primaria-clara); color: var(--primaria-escura); }
 .chip.st-recusado, .chip.st-cancelado { background: #EEF0EF; color: var(--texto-3); }
+
+/* ------------------------------------------------------------------ integração com o GPROL (0028) */
+.gp-pedidos { display: grid; gap: 10px; }
+.gp-lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.gp-pedido { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.4fr) auto; gap: 14px; align-items: center; padding: 12px 16px; border: 1px solid var(--borda); border-radius: 12px; background: var(--card); }
+.gp-pedido-info { display: grid; gap: 2px; min-width: 0; }
+.gp-pedido-info b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp-pedido-info .sub { font-size: 12.5px; }
+.gp-pedido-info .gp-obs { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gp-pedido-mods { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.gp-pedido-acoes { display: flex; gap: 10px; align-items: center; justify-content: flex-end; white-space: nowrap; }
+.gp-pedido-acoes .link { font-size: 13px; }
+.gp-descartar { color: var(--texto-2) !important; }
+button.gp-executar { height: 30px; padding: 0 12px; font-size: 13px; border-radius: 999px; border-color: var(--primaria); color: var(--primaria-escura); background: var(--primaria-clara); font-weight: 600; }
+button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #fff; }
+.chip.gp-st-pendente { background: var(--alerta-claro); color: var(--alerta-escuro); }
+.chip.gp-st-em_execucao { background: #EAF0FB; color: #1E40AF; }
+.chip.gp-st-entregue { background: var(--primaria-clara); color: var(--primaria-escura); }
+.chip.gp-st-cancelado, .chip.gp-st-descartado, .chip.gp-chip-off { background: #EEF0EF; color: var(--texto-3); }
+.gp-faixa { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 14px; border-radius: 12px; background: var(--primaria-clara); color: var(--floresta); font-size: 13.5px; margin-bottom: 14px; }
+.gp-faixa.alerta-faixa { background: var(--alerta-claro); color: var(--alerta-escuro); }
+.gp-faixa.gp-discreta { background: #F1F4F2; color: var(--texto-2); }
+.gp-faixa .gp-texto { flex: 1; min-width: 220px; }
+.gp-faixa .gp-botoes { display: flex; flex-wrap: wrap; gap: 8px; }
+.gp-faixa .gp-botoes button, .gp-abertos button { height: 30px; font-size: 13px; }
+.gp-marca { font-weight: 800; letter-spacing: 0.04em; font-size: 11px; padding: 2px 8px; border-radius: 6px; background: #178038; color: #fff; }
+.gp-abertos { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.gp-integracao .gp-dados { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 14px; }
+.gp-integracao .gp-dados div { display: grid; gap: 2px; }
+.gp-integracao .gp-dados dt { font-size: 12px; color: var(--texto-3); }
+.gp-integracao .gp-dados dd { margin: 0; font-weight: 600; }
+.gp-integracao .gp-resumo { margin: 0 0 12px; }
+.gp-integracao .gp-erros ul { margin: 6px 0 12px; padding-left: 18px; font-size: 13px; display: grid; gap: 4px; }
+.gp-integracao .gp-acoes { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.gp-como { margin: 14px 0 6px; padding-left: 18px; display: grid; gap: 6px; font-size: 13.5px; color: var(--texto-2); }
+.gp-escolher { max-width: 760px; }
+@media (max-width: 860px) {
+  .gp-pedido { grid-template-columns: 1fr; }
+  .gp-pedido-acoes { justify-content: flex-start; }
+  .gp-integracao .gp-dados { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* na página do serviço a faixa vem antes do conteúdo: mesma margem da página */
+.gp-faixa.gp-servico { margin: 14px var(--pad-x) 0; }

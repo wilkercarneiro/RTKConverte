@@ -23,9 +23,10 @@ async function textoDoArquivo(f: File): Promise<string> {
   return kml.async("string");
 }
 
-export function CarNovo({ definicao, clienteId, onCriado, onVoltar }: {
+export function CarNovo({ definicao, clienteId, pedidoId, onCriado, onVoltar }: {
   definicao: DefinicaoServico;
   clienteId?: string;
+  pedidoId?: string;
   onCriado: (s: Servico) => void;
   onVoltar?: () => void;
 }) {
@@ -74,7 +75,7 @@ export function CarNovo({ definicao, clienteId, onCriado, onVoltar }: {
     try {
       const s = await criarServicoCar({
         arquivo: lido.arquivo, projeto: { ...previa.pr, nome: nome.trim() || "Imóvel" },
-        uf: uf || null, municipio: municipio.trim() || null, clienteId,
+        uf: uf || null, municipio: municipio.trim() || null, clienteId, pedidoId,
       });
       onCriado(s);
     } catch (e) {

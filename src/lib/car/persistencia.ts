@@ -25,6 +25,8 @@ export async function salvarProjetoCar(servicoId: string, projeto: ProjetoCar): 
 /** Cria o serviço de CAR e grava o projeto inicial. Falhou o projeto, o serviço sai junto. */
 export async function criarServicoCar(dados: {
   arquivo: string; projeto: ProjetoCar; uf: string | null; municipio: string | null; clienteId?: string;
+  /** pedido do GPROL que este CAR executa */
+  pedidoId?: string;
 }): Promise<Servico> {
   if (!(await carDisponivel())) {
     throw new Error("O banco ainda não tem a atualização do CAR (migração 0023_car). Peça para aplicá-la e tente de novo.");
@@ -40,6 +42,7 @@ export async function criarServicoCar(dados: {
     denominacao: dados.projeto.nome || null,
     uf: dados.uf, municipio: dados.municipio,
     ...cliente,
+    ...(dados.pedidoId ? { pedido_externo_id: dados.pedidoId } : {}),
   }).select().single();
   if (error) throw new Error(error.message);
   const servico = data as Servico;

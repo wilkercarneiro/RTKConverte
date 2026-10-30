@@ -1,8 +1,8 @@
 # Integração Vertces ↔ GPROL
 
-Plano de arquitetura e implementação, escrito em 2026-10-29 depois da leitura dos dois repositórios (`D:\RTKConverte` e `D:\gprol`). Antes de fechar, um revisor independente comparou o plano com o código e as falhas que ele achou foram corrigidas aqui (seção 11).
+Plano de arquitetura e implementação, escrito em 2026-10-29 depois da leitura dos dois repositórios. Antes de fechar, um revisor independente comparou o plano com o código e as falhas que ele achou foram corrigidas aqui (seção 11).
 
-Pontos ainda não provados no banco de produção estão marcados com [?]. Todos entram na fase 0.
+**Implementado em 2026-10-29/30.** O que mudou durante a construção, onde está cada peça e como operar estão na **seção 12**; ela vale sobre o texto do plano quando os dois divergem. O repositório do GPROL em uso é `C:\prolum\dprol-61e44d52` (o `D:\gprol` está desatualizado).
 
 ## 1. O pedido
 
@@ -429,3 +429,70 @@ Cada lado é publicado do seu jeito de sempre e cada publicação pede o aval do
 | Última edição vence, registro inteiro | Perde edição simultânea em campos diferentes | Só os campos alterados |
 | Nada sobre o que já existia | O trabalho em andamento da D'Prol ficaria de fora | Importar pedidos abertos + "Vincular a serviço do GPROL" |
 | pg_cron, log, painel do superadmin na v1 | Mais coisa do que o pedido precisa | Sincronizar ao agir e ao abrir; pg_cron só se o piloto pedir |
+
+## 12. Como ficou implementado (vale sobre o plano)
+
+### Mudanças descobertas na construção
+
+| Plano | O que o banco/código mostrou | Como ficou |
+|---|---|---|
+| Ler `trg_pipeline_card_stage_change` | Esse trigger **não existe**; quem grava o histórico do card é o front do GPROL | `vertces_apply_milestones` grava o histórico (`moved_by` = quem conectou + nota "Vertces · Fulano · documentos gerados") |
+| Nunca tirar card de etapa `won` | No funil da D'Prol a primeira etapa ("PROPOSTAS FECHADAS") é `won` | Regra única: só para frente pela `display_order`, nunca para etapa arquivada |
+| `service_types.vertces_modalidade` (uma) | Tipos como "USUCAPIÃO + CAR" são duas coisas | O mapa tipo → **lista** de modalidades fica em `integrations.settings.types` (sem coluna nova em `service_types`) |
+| Serviço direto do Vertces vai ao GPROL ao nascer | O `servicos` nasce no upload, antes de ter detentor/denominação, e pode ser abandonado | Vai ao GPROL **ao gerar os primeiros documentos** |
+| Pedidos abertos importados na conexão | A D'Prol tem ~138 serviços abertos, muitos já entregues | Na tela de autorização há a opção (marcada) "enviar também os serviços abertos destes tipos"; no Vertces dá para descartar os já feitos. No GPROL, Integrações também tem "Enviar os serviços abertos" |
+| Documentos: o GPROL guarda a lista | — | O GPROL pede a lista na hora (proxy autenticado) e cada arquivo abre por URL de 5 min. A chamada GPROL → Vertces usa uma **segunda chave** (`callback_secret`; o Vertces guarda só o hash) |
+| — | O pedido já traz fazenda e município | Ao executar, denominação e município/UF vêm do pedido (sem sobrescrever) |
+
+### Onde está cada peça
+
+**GPROL** (`C:\prolum\dprol-61e44d52`):
+- Migração `supabase/migrations/20261029230000_integracao_vertces.sql`, aplicada na VPS em 2026-10-29 e provada por objeto: 5 tabelas, 16 funções e 6 triggers.
+- Edge function `supabase/functions/vertces/index.ts`, publicada em `/opt/supabase/dprol/volumes/functions/vertces/`. Não precisa de mapa de env: o JWT é checado dentro da função.
+- Telas em `src/features/integrations/vertces/`:
+  - autorização: `/integracoes/vertces/autorizar`;
+  - Integrações → Vertces;
+  - seção "Vertces" no serviço e no card.
+
+**Vertces** (`D:\RTKConverte`):
+- Migração `supabase/migrations/0028_integracao_gprol.sql`, aplicada em 2026-10-29. O backup anterior está em `/opt/supabase/rtkconverte/backup-banco-20261030-integracao/`.
+- Edge function `supabase/functions/gprol/index.ts` + `_shared/gprol.ts`, publicada. Entrou em `FUNCTIONS_IMPORT_MAPS`, com `verify_jwt=false` no mapa.
+- Front:
+  - `src/lib/gprol.ts`: conexão, sincronismo e pedidos;
+  - `src/lib/pedidoGprol.ts`: regra pura;
+  - `src/components/gprol/*`: Integrações, pedidos no Início e no cliente, faixa no serviço, pergunta "é deste pedido?";
+  - gancho em `chamarFuncao`;
+  - rota `#/novo/<chave>/<cliente|->/<pedido>`;
+  - recurso `integracao.gprol`.
+
+### Quando sincroniza
+- **Ao abrir as telas:** Início, Serviços, cliente e serviço.
+- **Depois de cada ação:** `parse-txt`, `gerar-documentos`, `gerar-pecas` e `gerar-planta`.
+- **Com o app aberto:** a cada 3 minutos.
+- **Ao entregar, vincular, conectar ou clicar em "Sincronizar agora".**
+
+Não há pg_cron. Se ninguém abrir o Vertces, os pedidos novos esperam até a próxima abertura.
+
+### QA feito
+- **SQL em transação desfeita, nos dois bancos:** 14 testes no GPROL e 19 no Vertces, com controles negativos (`authenticated` não executa as funções de escrita nem lê chaves).
+- **Ponta a ponta pela API**, nos servidores reais, com usuários de QA: 100 de 100 cenários.
+  - conexão e permissões;
+  - clientes (casamento por CPF, edição simultânea por campo, e-mail repetido, exclusão);
+  - venda "Geo + CAR" → um pedido com duas modalidades;
+  - `parse-txt` e `gerar-documentos` reais, consumo de 1 crédito;
+  - card andando e histórico;
+  - documento aberto pelo GPROL e URL adulterada recusada;
+  - cancelar/reabrir, descartar, excluir;
+  - serviço direto e glebas;
+  - trava, idempotência;
+  - desconectar e reconectar pelos dois lados.
+- **Telas do Vertces no navegador:** 22 de 22, com prints.
+- **Testes de unidade:** 9 em `tests/gprol.test.mjs`. A suíte inteira tem 405 testes.
+
+### Operar
+- **Conectar:** Vertces → Configurações → Integrações → Conectar GPROL. O admin do GPROL autoriza.
+- **Mudar etapas e tipos depois:** no GPROL, em Integrações → Vertces.
+- **Diagnóstico:**
+  - Vertces → Integrações mostra o último erro e o que está esperando, com "Tentar de novo";
+  - no banco: `integracao_saida` (Vertces) e `integration_outbox` (GPROL).
+- **Publicar mudança numa função:** é como as outras de cada stack. No GPROL, rode antes o boot local (CLAUDE.md de lá); no Vertces, compare o md5 com o repo.

@@ -101,6 +101,8 @@ export interface Servico {
   conf_exibir_denominacao: boolean;
   conf_exibir_trt: boolean;
   cliente_id?: string | null;
+  /** pedido do GPROL que este serviço executa (0028) */
+  pedido_externo_id?: string | null;
   status: "rascunho" | "gerado";
   nome_arquivo_txt: string | null;
   fuso_utm: number | null;

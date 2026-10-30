@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { configOk, supabase } from "./lib/supabase";
 import { Login } from "./components/Login";
 import { AppShell } from "./components/AppShell";
@@ -36,6 +37,13 @@ import { SemCreditos } from "./components/Creditos";
 import { avisarConsumo, carregarCreditos, temCredito } from "./lib/creditos";
 import type { Creditos } from "./lib/creditos";
 import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
+import { camposDoPedido, sincronizarGprol, useSincronismoPeriodico } from "./lib/gprol";
+import type { DadosPedido } from "./lib/gprol";
+import { concluirConexaoGprol } from "./components/gprol/IntegracaoGprol";
+import { EscolherPedido } from "./components/gprol/EscolherPedido";
+import { ServicoGprol } from "./components/gprol/ServicoGprol";
+import { avisar } from "./components/ui";
+import { guardar } from "./lib/ux";
 
 // só no `npm run dev`: fica num pedaço à parte que o build nunca carrega
 const LaboratorioPlanta = lazy(() => import("./components/planta/LaboratorioPlanta").then((m) => ({ default: m.LaboratorioPlanta })));
@@ -86,6 +94,23 @@ export default function App() {
     });
     return () => { cancelado = true; };
   }, [logado, usuario]);
+
+  // Integração com o GPROL: sincroniza com o app aberto e ao trocar de tela
+  const escritorioOk = logado === true && escritorio?.estado === "ok";
+  useSincronismoPeriodico(escritorioOk);
+  useEffect(() => {
+    if (!escritorioOk) return;
+    if (rota.t === "inicio" || rota.t === "servicos" || rota.t === "cliente" || rota.t === "servico") sincronizarGprol();
+  }, [escritorioOk, rota.t, rota.t === "cliente" || rota.t === "servico" ? rota.id : ""]);
+  // volta da autorização no GPROL (/app/?gprol_code=…&state=…): conclui a conexão
+  useEffect(() => {
+    if (!escritorioOk || !new URLSearchParams(location.search).get("gprol_code")) return;
+    guardar("config.aba", "integracoes");
+    concluirConexaoGprol()
+      .then((r) => { if (r) avisar("ok", `Conectado ao GPROL${r.empresa ? ` (${r.empresa})` : ""}.`); })
+      .catch((e: Error) => avisar("erro", `Não foi possível concluir a conexão com o GPROL: ${e.message}`))
+      .finally(() => substituir({ t: "config" }));
+  }, [escritorioOk]);
 
   // relido ao abrir um serviço novo e ao voltar ao início: o saldo muda a cada envio
   useEffect(() => {
@@ -195,6 +220,18 @@ export default function App() {
     return { ...parse, servico: { ...parse.servico, ...patch } as Servico };
   }
 
+  /** Serviço que executa um pedido do GPROL: liga ao pedido (o card de lá anda sozinho). */
+  async function vincularPedido(parse: ResultadoParse, pedidoId?: string): Promise<ResultadoParse> {
+    if (!pedidoId) return parse;
+    // o pedido já diz a fazenda e o município: preenche o que o TXT não trouxe
+    const { data: ped } = await supabase.from("pedidos_externos").select("dados").eq("id", pedidoId).maybeSingle();
+    const patch = { pedido_externo_id: pedidoId, ...camposDoPedido((ped as { dados?: DadosPedido } | null)?.dados, parse.servico) };
+    const { error } = await supabase.from("servicos").update(patch).eq("id", parse.servico.id);
+    if (error) { avisar("erro", `O serviço foi criado, mas não ficou ligado ao pedido do GPROL: ${error.message}`); return parse; }
+    sincronizarGprol(1200, true);
+    return { ...parse, servico: { ...parse.servico, ...patch } as Servico };
+  }
+
   /**
    * Grava a modalidade escolhida no cartão. O `parse-txt` cria o serviço com os
    * defaults do banco ('completo', sem glebas); quem escolheu outra coisa
@@ -244,33 +281,42 @@ export default function App() {
           </AppShell>
         );
       }
+      // pedido do GPROL: se há um esperando esta modalidade, pergunta antes de criar
+      const comPedido = (conteudo: ReactNode) => rota.pedidoId ? conteudo : (
+        <EscolherPedido chave={def.chave} clienteId={rota.clienteId}
+          onEscolher={(p) => substituir({ t: "novo", chave: def.chave, clienteId: p.cliente_id ?? rota.clienteId, pedidoId: p.id })}>
+          {conteudo}
+        </EscolherPedido>
+      );
       if (def.campos.tipo === "pecas") {
         return (
           <AppShell {...casca}>
-            <PecasServico servicoId={null} clienteId={rota.clienteId} onVoltar={() => ir({ t: "inicio" })}
-              onCriado={() => { void avisarConsumo("pecas"); }} />
+            {comPedido(<PecasServico servicoId={null} clienteId={rota.clienteId} pedidoId={rota.pedidoId} onVoltar={() => ir({ t: "inicio" })}
+              onCriado={() => { void avisarConsumo("pecas"); }} />)}
           </AppShell>
         );
       }
       if (def.entradaKml) {
         return (
           <AppShell {...casca}>
-            <CarNovo definicao={def} clienteId={rota.clienteId} onVoltar={() => ir({ t: "inicio" })}
+            {comPedido(<CarNovo definicao={def} clienteId={rota.clienteId} pedidoId={rota.pedidoId} onVoltar={() => ir({ t: "inicio" })}
               onCriado={(servico) => {
                 void avisarConsumo(def.chave);
                 setAberto({ servico, vertices: [], trechos: [], preview: previewVazio(servico) });
+                sincronizarGprol(1200, true);
                 substituir({ t: "servico", id: servico.id });
-              }} />
+              }} />)}
           </AppShell>
         );
       }
       return (
         <AppShell {...casca}>
-          <Upload
+          {comPedido(<Upload
             definicao={def}
             onParsed={async (parse) => {
               const comCliente = await vincularCliente(parse, rota.clienteId);
-              const pronto = await aplicarModalidade(comCliente, def.chave);
+              const comPedidoGprol = await vincularPedido(comCliente, rota.pedidoId);
+              const pronto = await aplicarModalidade(comPedidoGprol, def.chave);
               void avisarConsumo(def.chave);
               setAberto(pronto);
               // replace: voltar não pode retornar à tela de upload de um TXT
@@ -278,7 +324,7 @@ export default function App() {
               substituir({ t: "servico", id: pronto.servico.id });
             }}
             onVoltar={() => ir({ t: "inicio" })}
-          />
+          />)}
         </AppShell>
       );
     }
@@ -299,6 +345,7 @@ export default function App() {
       }
       return (
         <AppShell {...casca}>
+          <ServicoGprol key={aberto.servico.id} servico={aberto.servico} />
           {aberto.servico.tipo === "pecas"
             ? <PecasServico servicoId={aberto.servico.id} onVoltar={() => ir({ t: "servicos" })} />
             : aberto.servico.modalidade === "loteamento"
@@ -318,6 +365,7 @@ export default function App() {
             onVoltar={() => ir({ t: "clientes" })}
             onAbrirServico={abrirServico}
             onNovoServico={(chave) => ir({ t: "novo", chave, clienteId: rota.id })}
+            onExecutarPedido={(p, chave) => ir({ t: "novo", chave, clienteId: p.cliente_id ?? rota.id, pedidoId: p.id })}
           />
         </AppShell>
       );
@@ -342,7 +390,8 @@ export default function App() {
         <AppShell {...casca}>
           <Inicio onNovo={(chave) => ir({ t: "novo", chave })} onAbrir={abrirServico}
             onVerServicos={() => ir({ t: "servicos" })} nome={usuario ?? undefined}
-            creditos={creditos} onAtualizarCreditos={atualizarCreditos} />
+            creditos={creditos} onAtualizarCreditos={atualizarCreditos}
+            onExecutarPedido={(p, chave) => ir({ t: "novo", chave, clienteId: p.cliente_id ?? undefined, pedidoId: p.id })} />
         </AppShell>
       );
   }

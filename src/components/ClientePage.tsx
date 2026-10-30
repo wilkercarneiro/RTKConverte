@@ -11,6 +11,8 @@ import { temPermissao } from "../lib/permissoes";
 import type { Cliente, Servico } from "../lib/types";
 import { iniciais } from "./Clientes";
 import { NovoServico } from "./NovoServico";
+import { PedidosGprol } from "./gprol/PedidosGprol";
+import type { PedidoGprol } from "../lib/gprol";
 
 interface Props {
   clienteId: string;
@@ -18,9 +20,11 @@ interface Props {
   onAbrirServico: (s: Servico) => void;
   /** Uma porta só para todas as modalidades: elas saem de SERVICOS, não de props. */
   onNovoServico: (chave: ChaveServico) => void;
+  /** executar um pedido do GPROL deste cliente */
+  onExecutarPedido?: (p: PedidoGprol, chave: ChaveServico) => void;
 }
 
-export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico }: Props) {
+export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico, onExecutarPedido }: Props) {
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [servicos, setServicos] = useState<Servico[]>([]);
   const [erroCarga, setErroCarga] = useState<string | null>(null);
@@ -105,6 +109,7 @@ export function ClientePage({ clienteId, onVoltar, onAbrirServico, onNovoServico
       </div>
 
       {temPermissao("servicos.criar") && <NovoServico onNovo={onNovoServico} compacto titulo={`Novo serviço para ${cliente.nome.split(/\s+/)[0]}`} />}
+      {onExecutarPedido && <PedidosGprol clienteId={clienteId} onExecutar={onExecutarPedido} />}
 
       <section className="bloco">
         <header>

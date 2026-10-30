@@ -59,6 +59,13 @@ const EXTRAS = [
     descricao: "O dono adiciona e remove operadores do escritório.",
     padrao: true,
   },
+  {
+    chave: "integracao.gprol",
+    nome: "Integração com o GPROL",
+    grupo: "Integrações",
+    descricao: "Conectar ao GPROL: clientes, pedidos de serviço, etapas e documentos.",
+    padrao: true,
+  },
 ] as const;
 
 export type ChaveRecurso = `servico.${ChaveServico}` | (typeof EXTRAS)[number]["chave"];

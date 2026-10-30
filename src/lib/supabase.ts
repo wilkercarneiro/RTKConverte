@@ -13,6 +13,16 @@ export const supabase = configOk
 
 const SESSAO_EXPIRADA = "Sessão inválida ou expirada. Entre de novo.";
 
+// Quem quer saber que uma função terminou bem (a integração com o GPROL
+// sincroniza depois de criar serviço ou gerar documento). Sem import circular:
+// o interessado se registra aqui.
+type Ouvinte = (nome: string) => void;
+const ouvintes = new Set<Ouvinte>();
+export function aoChamarFuncao(f: Ouvinte): () => void {
+  ouvintes.add(f);
+  return () => { ouvintes.delete(f); };
+}
+
 export async function chamarFuncao<T>(nome: string, body: unknown): Promise<T> {
   const enviar = (token: string) => fetch(`${url}/functions/v1/${nome}`, {
     method: "POST",
@@ -52,5 +62,6 @@ export async function chamarFuncao<T>(nome: string, body: unknown): Promise<T> {
   }
   const dados = await resp.json();
   if (!resp.ok) throw new Error(dados.erro ?? `Erro ${resp.status}`);
+  for (const f of ouvintes) { try { f(nome); } catch { /* ouvinte nunca quebra a chamada */ } }
   return dados as T;
 }

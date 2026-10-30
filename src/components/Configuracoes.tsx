@@ -17,6 +17,8 @@ import { pastaDoEscritorio, salvarConfigEmpresa } from "../lib/escritorio";
 import type { EstadoEscritorio } from "../lib/escritorio";
 import { temPermissao } from "../lib/permissoes";
 import { TrocarSenhaCartao } from "./TrocarSenha";
+import { IntegracaoGprol } from "./gprol/IntegracaoGprol";
+import { temRecurso } from "../lib/recursos";
 
 /** Chaves gravadas em config_empresa (key/value). `desenhista` é lida pela planta;
  *  `rt_padrao` e `credenciado_padrao` pré-preenchem serviços novos. */
@@ -25,7 +27,7 @@ type Chave = typeof CHAVES[number];
 type Config = Record<Chave, string>;
 const VAZIA: Config = { razao_social: "", cnpj: "", desenhista: "", rt_padrao: "", credenciado_padrao: "" };
 
-type Aba = "empresa" | "cadastros" | "modelos" | "senha";
+type Aba = "empresa" | "cadastros" | "modelos" | "integracoes" | "senha";
 const SEM_PERMISSAO = "Só quem tem a permissão \"Dados da empresa\" altera isto.";
 
 /** A aba vem do endereço (`/app/?aba=modelos#/configuracoes`) ou da última visita. */
@@ -42,6 +44,7 @@ export function Configuracoes({ escritorio = { estado: "legado" } }: { escritori
     { chave: "empresa", rotulo: "Empresa" },
     { chave: "cadastros", rotulo: "Responsáveis e credenciados" },
     ...(temModelos ? [{ chave: "modelos" as const, rotulo: "Modelos" }] : []),
+    ...(temRecurso("integracao.gprol") ? [{ chave: "integracoes" as const, rotulo: "Integrações" }] : []),
     { chave: "senha", rotulo: "Minha senha" },
   ];
   const [aba, setAba] = useState<Aba>(() => abaInicial(abas.map((a) => a.chave)));
@@ -55,12 +58,13 @@ export function Configuracoes({ escritorio = { estado: "legado" } }: { escritori
   return (
     <div className="pagina fade">
       <CabecalhoPagina olho="Sistema" titulo="Configurações"
-        descricao="Identidade da empresa, quem assina os serviços, modelos dos documentos e a sua senha" />
+        descricao="Identidade da empresa, quem assina os serviços, modelos dos documentos, integrações e a sua senha" />
       <Abas rotulo="Seções das configurações" abas={abas} ativa={aba} onTrocar={trocar} />
       <div role="tabpanel" aria-label={abas.find((a) => a.chave === aba)?.rotulo} className="painel-aba">
         {aba === "empresa" && <Empresa pasta={pasta} />}
         {aba === "cadastros" && <Cadastros />}
         {aba === "modelos" && temModelos && <Modelos pasta={pasta} />}
+        {aba === "integracoes" && <IntegracaoGprol />}
         {aba === "senha" && <TrocarSenhaCartao />}
       </div>
     </div>

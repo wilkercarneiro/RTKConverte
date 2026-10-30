@@ -60,8 +60,10 @@ function bufParaBase64(buf: ArrayBuffer): string {
   return btoa(bin);
 }
 
-export function PecasServico({ servicoId, clienteId, onVoltar, onCriado }: {
+export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriado }: {
   servicoId: string | null; clienteId?: string; onVoltar: () => void;
+  /** pedido do GPROL que este serviço executa */
+  pedidoId?: string;
   /** o serviço nasceu do PDF (o crédito do mês foi gasto) */
   onCriado?: () => void;
 }) {
@@ -163,6 +165,7 @@ export function PecasServico({ servicoId, clienteId, onVoltar, onCriado }: {
       const { data: novo, error } = await supabase.from("servicos").insert({
         tipo: "pecas", status: "rascunho",
         cliente_id: cli?.id ?? null,
+        ...(pedidoId ? { pedido_externo_id: pedidoId } : {}),
         tipo_imovel: cab.matricula ? "matricula" : "posse",
         denominacao: (cab.denominacao ?? "").replace(/\s*-\s*Parte \d+$/i, "") || null,
         detentor_nome: cli?.nome ?? (cab.proprietario || null),

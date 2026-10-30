@@ -22,7 +22,8 @@ export type Rota =
   | { t: "privacidade" }
   | { t: "cliente"; id: string }
   | { t: "servico"; id: string }
-  | { t: "novo"; chave: string; clienteId?: string }
+  // pedidoId: serviço do GPROL que este vai executar (#/novo/<chave>/<cliente|->/<pedido>)
+  | { t: "novo"; chave: string; clienteId?: string; pedidoId?: string }
   // painel do superadmin (SaaS): #/admin/<aba>[/<id da empresa>]
   | { t: "admin"; aba: string; id?: string };
 
@@ -30,7 +31,7 @@ export function rotaParaHash(r: Rota): string {
   switch (r.t) {
     case "cliente": return `#/cliente/${r.id}`;
     case "servico": return `#/servico/${r.id}`;
-    case "novo": return `#/novo/${r.chave}${r.clienteId ? `/${r.clienteId}` : ""}`;
+    case "novo": return `#/novo/${r.chave}${r.clienteId || r.pedidoId ? `/${r.clienteId ?? "-"}` : ""}${r.pedidoId ? `/${r.pedidoId}` : ""}`;
     case "admin": return `#/admin/${r.aba}${r.id ? `/${r.id}` : ""}`;
     default: return `#/${r.t}`;
   }
@@ -53,7 +54,7 @@ export function hashParaRota(hash: string): Rota {
     case "servico": return p[1] ? { t: "servico", id: p[1] } : { t: "servicos" };
     // sem cliente na URL a chave nem aparece: um `clienteId: undefined`
     // explícito faria a rota deixar de ser igual à que a gerou
-    case "novo": return p[1] ? { t: "novo", chave: p[1], ...(p[2] ? { clienteId: p[2] } : {}) } : { t: "inicio" };
+    case "novo": return p[1] ? { t: "novo", chave: p[1], ...(p[2] && p[2] !== "-" ? { clienteId: p[2] } : {}), ...(p[3] ? { pedidoId: p[3] } : {}) } : { t: "inicio" };
     case "admin": return { t: "admin", aba: p[1] ?? "visao", ...(p[2] ? { id: p[2] } : {}) };
     default: return { t: "inicio" };
   }
