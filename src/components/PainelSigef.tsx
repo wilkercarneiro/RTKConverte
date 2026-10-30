@@ -150,7 +150,7 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
             <p className="sub">
               Área do imóvel dentro de parcela já certificada: <b>{fmtArea(somaSobre)}</b>
               {areaImovel > 0 && <> ({(100 * somaSobre / areaImovel).toFixed(2).replace(".", ",")}% do imóvel)</>}.
-              Use a correção de sobreposição (etapa Confrontantes) ou ajuste os vértices.
+              Use a correção de sobreposição (etapa Documentos) ou ajuste os vértices.
               <Dica>Clique numa parcela da lista para enquadrá-la no mapa.</Dica>
             </p>
             <ul className="sobreposicao-lista">

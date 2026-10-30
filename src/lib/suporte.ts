@@ -195,6 +195,14 @@ export async function excluirTutorial(id: string): Promise<void> {
 }
 
 /** Link de vídeo (YouTube, Vimeo, Loom, Drive) → endereço para o <iframe>. */
+/** Vídeo tocado direto no <video> (os tutoriais gravados moram no próprio site, em /tutoriais/NN.mp4,
+ *  com a capa .jpg ao lado). */
+export function videoDireto(url: string | null): { src: string; capa: string | null } | null {
+  const src = url?.trim();
+  if (!src || !/\.(mp4|webm)(\?.*)?$/i.test(src)) return null;
+  return { src, capa: src.startsWith("/tutoriais/") ? src.replace(/\.(mp4|webm)$/i, ".jpg") : null };
+}
+
 export function videoEmbutido(url: string | null): string | null {
   if (!url) return null;
   const yt = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{6,})/);

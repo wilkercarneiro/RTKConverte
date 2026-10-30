@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import guia from "../../docs/guia-primeiros-passos.md?raw";
 import { SUPORTE_EMAIL, SUPORTE_PRAZO, SUPORTE_WHATSAPP, TERMOS_PUBLICADOS } from "../lib/config";
-import { listarTutoriais, MODULOS, rotuloModulo, videoEmbutido } from "../lib/suporte";
+import { listarTutoriais, MODULOS, rotuloModulo, videoDireto, videoEmbutido } from "../lib/suporte";
 import type { Tutorial } from "../lib/suporte";
 import { Markdown } from "./Documento";
 import { abrirSuporte } from "./suporte/SuporteChat";
@@ -65,9 +65,9 @@ export function Ajuda() {
                 {tutoriais.length > 6 && <input type="search" className="aj-busca" placeholder="Buscar vídeo" value={busca} onChange={(e) => setBusca(e.target.value)} aria-label="Buscar vídeo" />}
               </div>
               <div className="aj-grade">
-                {visiveis.map((t) => (
+                {visiveis.map((t) => { const capa = videoDireto(t.video_url)?.capa; return (
                   <button type="button" key={t.id} className="aj-cartao" onClick={() => setAssistindo(t)}>
-                    <span className="aj-capa">
+                    <span className="aj-capa" style={capa ? { backgroundImage: `url(${capa})` } : undefined}>
                       <span className="aj-play"><svg viewBox="0 0 24 24" aria-hidden="true"><path d={PLAY} /></svg></span>
                       {t.duracao && <span className="aj-duracao">{t.duracao}</span>}
                     </span>
@@ -75,7 +75,7 @@ export function Ajuda() {
                     <b>{t.titulo}</b>
                     {t.descricao && <small>{t.descricao}</small>}
                   </button>
-                ))}
+                ); })}
                 {visiveis.length === 0 && <p className="sub">Nenhum vídeo com “{busca}”.</p>}
               </div>
             </>
@@ -99,6 +99,7 @@ export function Ajuda() {
 
 function Player({ t, onFechar }: { t: Tutorial; onFechar: () => void }) {
   const src = videoEmbutido(t.video_url);
+  const direto = videoDireto(t.video_url);
   useEffect(() => {
     const f = (e: KeyboardEvent) => { if (e.key === "Escape") onFechar(); };
     addEventListener("keydown", f);
@@ -111,7 +112,8 @@ function Player({ t, onFechar }: { t: Tutorial; onFechar: () => void }) {
           <div><span className="aj-modulo">{rotuloModulo(t.modulo)}</span><b>{t.titulo}</b></div>
           <button type="button" className="fantasma" onClick={onFechar} aria-label="Fechar">✕</button>
         </header>
-        {src ? <iframe src={src} title={t.titulo} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen />
+        {direto ? <video src={direto.src} poster={direto.capa ?? undefined} controls autoPlay playsInline preload="metadata" />
+          : src ? <iframe src={src} title={t.titulo} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen />
           : t.video_url ? <a className="aj-externo" href={t.video_url} target="_blank" rel="noreferrer">Abrir o vídeo em outra aba</a>
             : <p className="sub">Vídeo ainda não disponível.</p>}
         {t.descricao && <p className="aj-desc">{t.descricao}</p>}

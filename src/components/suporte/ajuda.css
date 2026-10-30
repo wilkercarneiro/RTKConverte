@@ -27,6 +27,7 @@
 .aj-capa {
   position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; border-radius: 11px; margin-bottom: 4px;
   background: radial-gradient(60% 80% at 30% 20%, rgb(123 211 166 / 30%), transparent 60%), linear-gradient(140deg, #134a36, #0A2A1F);
+  background-size: cover; background-position: center;
 }
 .aj-play { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 999px; background: rgb(255 255 255 / 92%); color: var(--floresta); box-shadow: 0 6px 18px -6px rgb(0 0 0 / 50%); transition: transform 0.18s ease; }
 .aj-play svg { width: 20px; height: 20px; margin-left: 3px; fill: currentColor; }
@@ -45,6 +46,6 @@
 .aj-player header div { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .aj-player header .aj-modulo { padding: 0; }
 .aj-player header b { font-size: 16px; }
-.aj-player iframe { width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 12px; background: #000; }
+.aj-player iframe, .aj-player video { width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 12px; background: #000; }
 .aj-desc { margin: 0; font-size: 13.5px; color: var(--texto-2); }
 .aj-externo { padding: 30px; text-align: center; font-weight: 600; }

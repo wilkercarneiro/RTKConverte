@@ -2,7 +2,7 @@
 // cadastra aqui, por módulo. A página Ajuda das empresas mostra só os
 // publicados; rascunho fica visível apenas no painel.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { MODULOS, excluirTutorial, listarTutoriais, rotuloModulo, salvarTutorial, videoEmbutido } from "../../lib/suporte";
+import { MODULOS, excluirTutorial, listarTutoriais, rotuloModulo, salvarTutorial, videoDireto, videoEmbutido } from "../../lib/suporte";
 import type { Tutorial } from "../../lib/suporte";
 import { avisar, confirmar, Dica, Rotulo } from "../ui";
 import { Carregando, ICO, Ico, Kpi, Topo } from "./comum";
@@ -21,6 +21,7 @@ function origem(url: string | null): string | null {
   if (/vimeo\.com/.test(url)) return "Vimeo";
   if (/loom\.com/.test(url)) return "Loom";
   if (/drive\.google\.com/.test(url)) return "Google Drive";
+  if (url.startsWith("/tutoriais/")) return "Vertces";
   return "Link";
 }
 
@@ -147,7 +148,8 @@ export function TutoriaisAdmin() {
                 {g.itens.map((t) => (
                   <div key={t.id} className={`sa-tut-item${t.publicado ? "" : " rascunho"}`}>
                     <button type="button" className="sa-tut-capa" onClick={() => setEditando({ ...t })} aria-label={`Editar ${t.titulo}`}
-                      data-sem={videoEmbutido(t.video_url) ? undefined : "1"}>
+                      data-sem={videoEmbutido(t.video_url) || videoDireto(t.video_url) ? undefined : "1"}
+                      style={videoDireto(t.video_url)?.capa ? { backgroundImage: `url(${videoDireto(t.video_url)!.capa})`, backgroundSize: "cover" } : undefined}>
                       <Ico d="M8 5.5v13l11-6.5z" />
                       {t.duracao && <span className="dur">{t.duracao}</span>}
                     </button>
@@ -202,7 +204,8 @@ function Editor({ t, onFechar, onSalvo, onExcluir }: {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const embutido = videoEmbutido(f.video_url ?? null);
-  const linkRuim = !!f.video_url?.trim() && !embutido;
+  const direto = videoDireto(f.video_url ?? null);
+  const linkRuim = !!f.video_url?.trim() && !embutido && !direto;
   const duracaoRuim = !!f.duracao?.trim() && !DURACAO.test(f.duracao.trim());
 
   useEffect(() => {
@@ -237,8 +240,10 @@ function Editor({ t, onFechar, onSalvo, onExcluir }: {
           <h2>{f.id ? "Editar tutorial" : "Novo tutorial"}</h2>
         </header>
         <div className="corpo">
-          <div className="sa-tut-previa" data-vazio={embutido ? undefined : "1"}>
-            {embutido ? (
+          <div className="sa-tut-previa" data-vazio={embutido || direto ? undefined : "1"}>
+            {direto ? (
+              <video src={direto.src} poster={direto.capa ?? undefined} controls preload="metadata" />
+            ) : embutido ? (
               <iframe src={embutido} title={`Prévia: ${f.titulo || "vídeo"}`} allow="encrypted-media; picture-in-picture; fullscreen" loading="lazy" />
             ) : (
               <span><Ico d={ICO.tutoriais} />{linkRuim ? "Link não reconhecido" : "Cole o link do vídeo para ver a prévia"}</span>
