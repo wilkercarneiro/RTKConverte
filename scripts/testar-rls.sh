@@ -37,7 +37,7 @@ PSQL=(psql -X -q -h localhost -p "$PORTA" -U postgres -d postgres -v ON_ERROR_ST
 "${PSQL[@]}" -f tests/rls/stubs.sql
 for f in supabase/migrations/*.sql; do
   case "$(basename "$f")" in
-    0018_*|0019_*|0030_*) continue ;;  # PostGIS (parcelas do SIGEF) — no fim, se houver PostGIS
+    0018_*|0019_*|0030_*|0032_*) continue ;;  # PostGIS (parcelas do SIGEF) — no fim, se houver PostGIS
     0020_escritorios.sql|0024_saas.sql|0025_equipe.sql|0026_auditoria.sql|0027_creditos.sql|0028_*|0029_*) continue ;;  # aplicadas abaixo, entre as etapas
     # usa servicos.tipo, que só nasce na 0005: em produção foi aplicada depois
     0002_confrontacao_no_vertice.sql) continue ;;
@@ -96,6 +96,10 @@ if [ "$("${PSQL[@]}" -tAc "select count(*) from pg_available_extensions where na
   "${PSQL[@]}" -f supabase/migrations/0030_sigef_parcelas_por_empresa.sql >/dev/null
   PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -v etapa=reaplicada -f tests/rls/sigef.sql 2>&1 >/dev/null | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
   echo "testes das parcelas do SIGEF por empresa (quarentena, isolamento, só o servidor grava oficial): todos passaram"
+  "${PSQL[@]}" -f supabase/migrations/0032_sigef_sincronizar_trava.sql >/dev/null
+  echo "migração aplicada: supabase/migrations/0032_sigef_sincronizar_trava.sql"
+  PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f tests/rls/sigef_trava.sql 2>&1 >/dev/null | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
+  echo "testes da trava contra apagar a cópia oficial em massa: todos passaram"
 else
   echo "PostGIS ausente: testes das parcelas do SIGEF (0018/0019/0030) pulados"
 fi

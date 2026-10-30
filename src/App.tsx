@@ -294,7 +294,8 @@ export default function App() {
       if (!temCredito(creditos, def.chave)) {
         return (
           <AppShell {...casca}>
-            <SemCreditos def={def} creditos={creditos!} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizarCreditos} />
+            <SemCreditos def={def} creditos={creditos!} onVoltar={() => ir(voltarDoNovo(rota).rota)} voltarPara={voltarDoNovo(rota).rotulo}
+              onAtualizar={atualizarCreditos} />
           </AppShell>
         );
       }
@@ -308,7 +309,8 @@ export default function App() {
       if (def.campos.tipo === "pecas") {
         return (
           <AppShell {...casca}>
-            {comPedido(<PecasServico servicoId={null} clienteId={rota.clienteId} pedidoId={rota.pedidoId} onVoltar={() => ir({ t: "inicio" })}
+            {comPedido(<PecasServico servicoId={null} clienteId={rota.clienteId} pedidoId={rota.pedidoId}
+              onVoltar={() => ir(voltarDoNovo(rota).rota)} voltarPara={voltarDoNovo(rota).rotulo}
               onCriado={() => { void avisarConsumo("pecas"); }} />)}
           </AppShell>
         );
@@ -316,7 +318,7 @@ export default function App() {
       if (def.entradaKml) {
         return (
           <AppShell {...casca}>
-            {/* aberto pela página do cliente (#/novo/car/<cliente>): voltar leva a ele */}
+            {/* voltar leva à tela de origem (cliente, Início ou serviços) */}
             {comPedido(<CarNovo definicao={def} clienteId={rota.clienteId} pedidoId={rota.pedidoId}
               onVoltar={() => ir(voltarDoNovo(rota).rota)} voltarPara={voltarDoNovo(rota).rotulo}
               onCriado={(servico) => {
@@ -342,7 +344,7 @@ export default function App() {
               // que já foi consumido e virou serviço.
               substituir({ t: "servico", id: pronto.servico.id });
             }}
-            onVoltar={() => ir({ t: "inicio" })}
+            onVoltar={() => ir(voltarDoNovo(rota).rota)} voltarPara={voltarDoNovo(rota).rotulo}
           />)}
         </AppShell>
       );

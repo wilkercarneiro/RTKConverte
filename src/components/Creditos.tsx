@@ -28,8 +28,10 @@ export function AvisoCreditoGlobal() {
 }
 
 /** No lugar do envio do arquivo, quando o serviço não tem mais crédito no mês. */
-export function SemCreditos({ def, creditos, onVoltar, onAtualizar }: {
+export function SemCreditos({ def, creditos, onVoltar, onAtualizar, voltarPara = "o Início" }: {
   def: DefinicaoServico; creditos: Creditos; onVoltar: () => void; onAtualizar: () => void;
+  /** "o cliente", "o Início"…: a tela de onde a pessoa veio */
+  voltarPara?: string;
 }) {
   const [comprando, setComprando] = useState(false);
   const s = creditos.servicos[`servico.${def.chave}`];
@@ -46,7 +48,7 @@ export function SemCreditos({ def, creditos, onVoltar, onAtualizar }: {
         </p>
         {pendentes > 0 && <p className="nota-permissao">{pendentes === 1 ? "Há 1 pedido" : `Há ${pendentes} pedidos`} de créditos esperando confirmação.</p>}
         <div className="acoes-linha">
-          <button onClick={onVoltar}>Voltar ao início</button>
+          <button onClick={onVoltar}>Voltar para {voltarPara}</button>
           <button className="principal" onClick={() => setComprando(true)}>Comprar mais créditos</button>
         </div>
       </div>

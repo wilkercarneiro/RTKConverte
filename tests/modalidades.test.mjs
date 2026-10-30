@@ -73,6 +73,17 @@ test("novo serviço aberto pelo cliente: o voltar leva ao cliente, não ao Iníc
   assert.deepEqual(voltarDoNovo(hashParaRota("#/novo/car/-/p-9")), { rota: { t: "inicio" }, rotulo: "o Início" });
 });
 
+test("voltar do novo serviço: a tela de origem vence o endereço", () => {
+  // pedido do GPROL com cliente, executado pelo Início: volta ao Início, não ao cliente
+  assert.deepEqual(voltarDoNovo(hashParaRota("#/novo/completo/c-123/p-9"), { t: "inicio" }), { rota: { t: "inicio" }, rotulo: "o Início" });
+  // aberto pela página do cliente: volta a ela
+  assert.deepEqual(voltarDoNovo(hashParaRota("#/novo/completo/c-123"), { t: "cliente", id: "c-123" }), { rota: { t: "cliente", id: "c-123" }, rotulo: "o cliente" });
+  // pela lista de serviços
+  assert.deepEqual(voltarDoNovo(hashParaRota("#/novo/completo"), { t: "servicos" }), { rota: { t: "servicos" }, rotulo: "os serviços" });
+  // origem que não é tela de partida (ex.: um serviço aberto): cai no endereço
+  assert.deepEqual(voltarDoNovo(hashParaRota("#/novo/completo/c-123"), { t: "servico", id: "s-1" }), { rota: { t: "cliente", id: "c-123" }, rotulo: "o cliente" });
+});
+
 // ---------------------------------------------------------------------------
 // Situação do imóvel na conferência: matrícula / posse / ainda sem documento
 // ---------------------------------------------------------------------------

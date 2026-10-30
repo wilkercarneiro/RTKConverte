@@ -10,7 +10,14 @@
 //
 // Corpo: { imovel: GeoJSON MultiPolygon|Polygon (lon/lat), uf: "BA", margem_m?: 300 }
 // Resposta: { ok, uf, caixa, camadas: [{ tema, parcelas, erro? }], guardadas, removidas, avisos }
+//
+// Quem chama precisa estar logado (a chave pública do app não basta): a função
+// grava, com service_role, na base que todas as empresas leem. E só APAGA da
+// cópia oficial o que sumiu do INCRA quando a resposta veio inteira — nunca
+// numa resposta cortada (pelo nosso limite ou pelo do GeoServer) nem vazia.
 import { createClient } from "@supabase/supabase-js";
+import { ehRecusa, exigirUsuario } from "../_shared/acesso.ts";
+import type { ClienteUsuario } from "../_shared/acesso.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -22,6 +29,8 @@ const json = (body: unknown, status = 200) =>
 const OWS = "https://geoportal.incra.gov.br/geoserver/ows";
 const CAMADA = "geonode:sigef_geo";
 const MAX_FEATURES = 2000;
+/** Lado máximo da caixa consultada (~55 km): um imóvel, não uma região. */
+const MAX_LADO_GRAUS = 0.5;
 const UFS = new Set("AC AL AM AP BA CE DF ES GO MA MG MS MT PA PB PE PI PR RJ RN RO RR RS SC SE SP TO".split(" "));
 // código IBGE da UF (uf_id da camada) → sigla
 const UF_IBGE: Record<number, string> = {
@@ -106,20 +115,45 @@ async function buscarCaixa(caixa: number[]): Promise<{ parcelas: ParcelaWfs[]; t
   const r = await fetch(`${OWS}?${q}`, { signal: AbortSignal.timeout(25000) });
   const txt = await r.text();
   if (!r.ok) throw new Error(`INCRA respondeu ${r.status}`);
-  let fc: { type?: string; features?: Feicao[] };
+  let fc: { type?: string; features?: Feicao[]; totalFeatures?: unknown; numberMatched?: unknown };
   try { fc = JSON.parse(txt); } catch { fc = {}; }
   if (fc.type !== "FeatureCollection") throw new Error(`resposta inesperada do INCRA: ${txt.slice(0, 160).replace(/\s+/g, " ")}`);
-  return { parcelas: lerGeoJson(fc), truncado: (fc.features?.length ?? 0) >= MAX_FEATURES };
+  return { parcelas: lerGeoJson(fc), truncado: respostaCortada(fc) };
 }
+
+/**
+ * A resposta veio cortada? Pelo nosso limite, ou pelo do GeoServer (que pode ser
+ * menor e não avisa no corpo, só nos totais quando os manda).
+ */
+export function respostaCortada(fc: { features?: unknown[]; totalFeatures?: unknown; numberMatched?: unknown }): boolean {
+  const n = fc.features?.length ?? 0;
+  if (n >= MAX_FEATURES) return true;
+  for (const total of [fc.totalFeatures, fc.numberMatched]) {
+    const t = Number(total);
+    if (total != null && total !== "unknown" && Number.isFinite(t) && t > n) return true;
+  }
+  return false;
+}
+
+const clienteDoUsuario = (req: Request) =>
+  createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+    global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  }) as unknown as ClienteUsuario;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
+    const quem = await exigirUsuario(clienteDoUsuario(req));
+    if (ehRecusa(quem)) return json({ erro: quem.erro }, quem.status);
     const { imovel, uf: ufBruta, margem_m } = await req.json();
     const uf = String(ufBruta ?? "").trim().toUpperCase();
     if (!UFS.has(uf)) return json({ erro: "Informe a UF do imóvel para consultar o SIGEF" }, 422);
     const caixa = caixaDe(imovel, Math.min(Math.max(Number(margem_m) || 300, 0), 3000));
     if (!caixa) return json({ erro: "Polígono do imóvel vazio" }, 422);
+    if (caixa[2] - caixa[0] > MAX_LADO_GRAUS || caixa[3] - caixa[1] > MAX_LADO_GRAUS) {
+      return json({ erro: "Área grande demais para consultar o SIGEF de uma vez (mais de ~55 km de lado)." }, 422);
+    }
 
     let parcelas: ParcelaWfs[] = [];
     let completo = true;
@@ -140,10 +174,14 @@ Deno.serve(async (req) => {
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     // parcela vizinha de outra UF (divisa de estado) fica com a UF dela
     const lote = parcelas.map((p) => ({ ...p, uf: p.uf ?? uf, fonte: "wfs" }));
+    // resposta vazia não apaga nada: um INCRA instável pareceria "todas sumiram"
     const { data, error } = await supa.rpc("sigef_sincronizar", {
-      parcelas: lote, x0: caixa[0], y0: caixa[1], x1: caixa[2], y1: caixa[3], remover: completo,
+      parcelas: lote, x0: caixa[0], y0: caixa[1], x1: caixa[2], y1: caixa[3], remover: completo && lote.length > 0,
     });
     if (error) return json({ ok: false, uf, caixa, camadas, guardadas: 0, removidas: 0, avisos: [...avisos, `base local: ${error.message}`] });
+    if (data?.remocao_suspensa > 0) {
+      avisos.push(`${data.remocao_suspensa} parcela(s) da cópia local não vieram nesta consulta e foram mantidas (resposta do INCRA possivelmente incompleta).`);
+    }
     return json({ ok, uf, caixa, camadas, guardadas: data?.guardadas ?? 0, removidas: data?.removidas ?? 0, avisos });
   } catch (e) {
     return json({ erro: e instanceof Error ? e.message : String(e) }, 500);

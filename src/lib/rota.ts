@@ -60,11 +60,20 @@ export function hashParaRota(hash: string): Rota {
   }
 }
 
+/** A última tela fora de "novo serviço": de onde a pessoa veio (useRota mantém). */
+let origemDoNovo: Rota | null = null;
+
 /**
- * Para onde o "← Voltar" de uma tela de novo serviço leva: aberta pela página
- * do cliente (#/novo/<chave>/<cliente>), de volta a ele; senão, o Início.
+ * Para onde o "← Voltar" de uma tela de novo serviço leva: para a tela de onde
+ * a pessoa veio — a página do cliente, o Início ou a lista de serviços (um
+ * pedido do GPROL com cliente, executado pelo Início, volta ao Início). Sem
+ * origem conhecida (link aberto direto, F5), pelo endereço: com cliente
+ * (#/novo/<chave>/<cliente>), ao cliente; senão, ao Início.
  */
-export function voltarDoNovo(r: { clienteId?: string }): { rota: Rota; rotulo: string } {
+export function voltarDoNovo(r: { clienteId?: string }, origem: Rota | null = origemDoNovo): { rota: Rota; rotulo: string } {
+  if (origem?.t === "cliente") return { rota: origem, rotulo: "o cliente" };
+  if (origem?.t === "inicio") return { rota: origem, rotulo: "o Início" };
+  if (origem?.t === "servicos") return { rota: origem, rotulo: "os serviços" };
   return r.clienteId ? { rota: { t: "cliente", id: r.clienteId }, rotulo: "o cliente" } : { rota: { t: "inicio" }, rotulo: "o Início" };
 }
 
@@ -77,6 +86,7 @@ export function useRota(): { rota: Rota; ir: (r: Rota) => void; substituir: (r: 
     addEventListener("hashchange", onHash);
     return () => removeEventListener("hashchange", onHash);
   }, []);
+  useEffect(() => { if (rota.t !== "novo") origemDoNovo = rota; }, [rota]);
 
   return {
     rota,
