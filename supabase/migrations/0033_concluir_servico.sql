@@ -12,6 +12,8 @@
 --
 -- Os serviços que a tela já mostrava como concluídos ganham a data do último
 -- documento, ANTES de o gatilho existir: nenhum pedido muda por causa disso.
+-- Exceção: serviço de pedido do GPROL ainda aberto fica para o clique em
+-- "Concluir serviço" — é ele que leva o card para a etapa de concluídos.
 --
 -- Idempotente.
 
@@ -35,6 +37,8 @@ update public.servicos s
           from public.servicos s2 left join docs d2 on d2.servico_id = s2.id) d
  where d.id = s.id
    and s.concluido_em is null
+   and not exists (select 1 from public.pedidos_externos p
+                    where p.id = s.pedido_externo_id and p.status in ('pendente', 'em_execucao'))
    and case
          when s.tipo = 'pecas' then coalesce(d.pecas, false) and coalesce(d.planta, false)
          when s.modalidade in ('loteamento', 'car') then s.status = 'gerado'
