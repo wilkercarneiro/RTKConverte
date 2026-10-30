@@ -40,6 +40,7 @@ import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { temRecurso } from "../lib/recursos";
 import { temPermissao } from "../lib/permissoes";
 import { Avisos, BarraEtapas, BotaoPerigo, Dica, ProximaAcao, Rotulo, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { BotaoConcluir, useConclusao } from "./ConcluirServico";
 import { AutoriaServico } from "./Auditoria";
 
 /** Etapas do serviço: uma por vez, como abas dentro do cabeçalho. */
@@ -663,7 +664,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
 
   // ------- persistência -------
   async function salvar(): Promise<void> {
-    const { id, status, ...campos } = servico;
+    // a conclusão só muda pelo botão "Concluir serviço": o autosave de uma aba
+    // antiga não pode reabrir (nem concluir) o serviço por tabela
+    const { id, status, concluido_em, concluido_por, ...campos } = servico;
+    void concluido_em; void concluido_por;
     const { error: e1 } = await supabase.from("servicos").update(campos).eq("id", id);
     if (e1) throw e1;
     // Grava por upsert com id estável, em vez de apagar e reinserir a tabela toda.
@@ -1230,6 +1234,30 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, as duas plantas e as peças gerados — tudo disponível no histórico abaixo" };
   }, [pendencias, docsProntos, temSigef, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia, temGlebas, glebasOrdens.length, verticesFora]);
 
+  // "Concluir serviço": tudo gerado → a próxima ação é fechar; concluído → o selo.
+  // A conferência termina nos documentos; o completo, nas peças.
+  const prontoParaConcluir = pendencias.length === 0 && docsProntos && (ehConferencia || (!!plantaUrl && pecasProntas));
+  const conclusao = useConclusao(servico, {
+    pronto: prontoParaConcluir,
+    falta: proxima.titulo.replace(/^\w/, (c) => c.toLowerCase()),
+    onMudou: (em) => setServico((s) => ({ ...s, concluido_em: em })),
+  });
+  const acaoTopo: Acao = conclusao.concluido && servico.concluido_em
+    ? {
+      tom: "pronto",
+      titulo: "Serviço concluído",
+      detalhe: `em ${new Date(servico.concluido_em).toLocaleDateString("pt-BR")}${servico.pedido_externo_id ? " — no GPROL, o card foi para a etapa de concluídos" : ""}; os documentos seguem no histórico abaixo`,
+    }
+    : prontoParaConcluir
+      ? {
+        tom: "pronto",
+        titulo: ehConferencia ? "Conferência pronta: conclua o serviço" : "Tudo gerado: conclua o serviço",
+        detalhe: `${proxima.detalhe ?? ""}${servico.pedido_externo_id ? " · no GPROL, o card vai para a etapa de concluídos" : ""}`,
+        rotuloBotao: "Concluir serviço",
+        onClick: () => void conclusao.concluir(),
+      }
+      : proxima;
+
   // selos das seções recolhidas: dizem o que há dentro sem precisar abrir.
   // Na conferência, matrícula e CNS saem daqui: quem manda neles é a escolha
   // "Matrícula ou posse" do bloco da conferência, e o mesmo campo em dois
@@ -1301,6 +1329,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
           <span className={`chip mod-${chave}`}>{rotuloCurto[chave]}</span>
           <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
           <span className="esticar" />
+          {(docsProntos || conclusao.concluido) && <BotaoConcluir servico={servico} conclusao={conclusao} pronto={prontoParaConcluir} />}
           {avisosTopo.length > 0 && (
             <button type="button" className={verAvisos ? "topo-selo ativo" : "topo-selo"} aria-expanded={verAvisos}
               onClick={() => setVerAvisos((v) => !v)}>
@@ -1348,7 +1377,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         onIr={(d) => trocarEtapa((d < 0 ? etapaAnterior : etapaSeguinte)!.chave)} />
 
       <div className="conferencia-corpo fade" key={etapa}>
-        <ProximaAcao acao={proxima} />
+        <ProximaAcao acao={acaoTopo} />
 
         {/* ================= Etapa · Dados ================= */}
         {etapa === "dados" && (

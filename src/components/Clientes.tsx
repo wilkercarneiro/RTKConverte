@@ -54,7 +54,7 @@ export function Clientes({ onAbrir }: { onAbrir: (clienteId: string) => void }) 
     setFalha(null);
     const [cs, ss, ds] = await Promise.all([
       supabase.from("clientes").select().order("nome"),
-      supabase.from("servicos").select("id, cliente_id, status, tipo, modalidade, tem_glebas, created_at"),
+      supabase.from("servicos").select("id, cliente_id, status, tipo, modalidade, tem_glebas, created_at, concluido_em"),
       supabase.from("documentos_gerados").select("servico_id, tipo"),
     ]);
     if (cs.error) { setFalha(cs.error.message); setCarregando(false); return; }

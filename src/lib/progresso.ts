@@ -43,8 +43,20 @@ export interface Progresso {
  * A conferência de área termina na etapa 1, então dizer que "falta gerar as
  * peças" a ela seria mentira. Quem decide isso é `vaiAoSigef`, a mesma função
  * que a tela do serviço usa para esconder os blocos do SIGEF.
+ *
+ * Concluído é uma decisão (botão "Concluir serviço", `concluido_em`, 0033), não
+ * só documentos prontos: com tudo gerado e sem concluir, falta "concluir o
+ * serviço"; concluído antes de gerar tudo (a equipe decidiu), está concluído.
  */
-export function progressoDe(s: Pick<Servico, "modalidade" | "tipo" | "status">, p?: DocsDoServico): Progresso {
+export function progressoDe(s: Pick<Servico, "modalidade" | "tipo" | "status" | "concluido_em">, p?: DocsDoServico): Progresso {
+  const base = progressoDosDocumentos(s, p);
+  if (s.concluido_em) return { ...base, atual: -1, concluido: true, falta: "concluído" };
+  if (base.concluido) return { ...base, atual: base.etapas.length, concluido: false, falta: "concluir o serviço" };
+  return base;
+}
+
+/** Só os documentos: tudo o que a modalidade gera já saiu? (o "pronto para concluir") */
+export function progressoDosDocumentos(s: Pick<Servico, "modalidade" | "tipo" | "status">, p?: DocsDoServico): Progresso {
   const d = p ?? { docs: false, planta: false, pecas: false };
   if (s.tipo === "pecas") {
     const etapas = [d.pecas, d.planta];

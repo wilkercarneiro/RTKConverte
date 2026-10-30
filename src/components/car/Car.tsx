@@ -15,6 +15,7 @@ import { CAMADAS, baixar, gerarKmlCar, nomeArquivo, zipCompleto, zipDaCamada } f
 import type { CamadaCar } from "../../lib/car/saidas.ts";
 import { carregarProjetoCar, marcarCarExportado, salvarProjetoCar } from "../../lib/car/persistencia.ts";
 import { Dica, GiroMapa, StatusSalvamento } from "../ui";
+import { BotaoConcluir, useConclusao } from "../ConcluirServico";
 import { CarEditor, COR } from "./CarEditor";
 import type { FerramentaCar, SelecaoCar } from "./CarEditor";
 import "./car.css";
@@ -33,6 +34,11 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
   servico: Servico; onVoltar: () => void; armazenamento?: ArmazenamentoCar;
 }) {
   const [servico, setServico] = useState(servicoInicial);
+  // pronto para concluir = os shapefiles já foram baixados (status "gerado")
+  const conclusao = useConclusao(servico, {
+    pronto: servico.status === "gerado", falta: "baixar os shapefiles do SICAR",
+    onMudou: (em) => setServico((s) => ({ ...s, concluido_em: em })),
+  });
   const [h, setH] = useState<Historico>({ passado: [], atual: null, futuro: [], base: null });
   const [erroCarga, setErroCarga] = useState<string | null>(null);
   const [ferramenta, setFerramenta] = useState<FerramentaCar>("mover");
@@ -177,6 +183,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
         {servico.nome_arquivo_txt && <span className="arquivo">{servico.nome_arquivo_txt}</span>}
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
         <span className="esticar" />
+        <BotaoConcluir servico={servico} conclusao={conclusao} pronto={servico.status === "gerado"} />
         <span className="car-resumo-topo">
           <b>{fmtHa(a.imovel)}</b> · reserva <b className={res.reservaOk ? "" : "car-falta"}>{fmtPct(res.pctReserva)}</b>
         </span>

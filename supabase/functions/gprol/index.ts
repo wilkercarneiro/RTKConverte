@@ -488,6 +488,10 @@ async function acaoDaTela(req: Request, db: SupabaseClient, acao: string, b: Rec
       if (!p) return erro("Pedido não encontrado.", 404);
       if (p.status !== "em_execucao" && p.status !== "pendente") return erro("Este pedido não está em execução.", 409);
       await db.from("pedidos_externos").update({ status: "entregue", entregue_em: new Date().toISOString(), atualizado_em: new Date().toISOString() }).eq("id", p.id);
+      // entregar o pedido conclui os serviços principais dele (0033): somem de
+      // "Em andamento" e o histórico registra quem concluiu
+      await db.from("servicos").update({ concluido_em: new Date().toISOString(), concluido_por: eu })
+        .eq("pedido_externo_id", p.id).is("origem_id", null).is("concluido_em", null);
       await rpc(db, "integracao_enfileirar", { p_escritorio: esc, p_tipo: "pedido", p_ref: p.id, p_campos: [] });
       return json({ ok: true, sincronizacao: await sincronizar(db, esc) });
     }
@@ -503,6 +507,10 @@ async function acaoDaTela(req: Request, db: SupabaseClient, acao: string, b: Rec
         if (p.status !== "descartado" && p.status !== "entregue") return erro("Este pedido já está aberto.", 409);
         const { count } = await db.from("servicos").select("id", { count: "exact", head: true }).eq("pedido_externo_id", p.id);
         await db.from("pedidos_externos").update({ status: count ? "em_execucao" : "pendente", entregue_em: null, atualizado_em: new Date().toISOString() }).eq("id", p.id);
+        // reabrir um pedido entregue reabre os serviços dele (o inverso de "entregar")
+        if (p.status === "entregue") {
+          await db.from("servicos").update({ concluido_em: null }).eq("pedido_externo_id", p.id).is("origem_id", null);
+        }
       }
       return json({ ok: true });
     }

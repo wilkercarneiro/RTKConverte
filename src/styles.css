@@ -1235,3 +1235,12 @@ button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #f
 }
 /* na página do serviço a faixa vem antes do conteúdo: mesma margem da página */
 .gp-faixa.gp-servico { margin: 14px var(--pad-x) 0; }
+
+/* "Concluir serviço" no cabeçalho do serviço (ConcluirServico.tsx) */
+.concluir-btn { height: 34px; padding: 0 14px; white-space: nowrap; font-weight: 600; }
+.concluido-selo { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.concluido-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 11px; border-radius: 999px;
+  background: var(--primaria-clara); color: var(--floresta); font-size: 12.5px; font-weight: 700;
+}
+.concluido-selo .link { font-size: 12.5px; }

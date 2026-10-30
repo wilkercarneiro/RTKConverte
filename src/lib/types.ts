@@ -124,6 +124,9 @@ export interface Servico {
   cliente_id?: string | null;
   /** pedido do GPROL que este serviço executa (0028) */
   pedido_externo_id?: string | null;
+  /** "Concluir serviço" (0033): quando e quem; nulo = em andamento */
+  concluido_em?: string | null;
+  concluido_por?: string | null;
   status: "rascunho" | "gerado";
   nome_arquivo_txt: string | null;
   fuso_utm: number | null;

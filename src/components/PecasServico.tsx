@@ -15,6 +15,7 @@ import { HistoricoDocs } from "./HistoricoDocs";
 import { avisarHistoricoAtualizado } from "../lib/historico";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { Avisos, BarraEtapas, Dica, Passos, Rotulo, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { BotaoConcluir, useConclusao } from "./ConcluirServico";
 import { AutoriaServico } from "./Auditoria";
 import { Icone, ICONE } from "./Icone";
 import { textoSemCredito } from "../lib/creditos";
@@ -82,6 +83,10 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
   // só revela os checkboxes; o que fica gravado é a marca por confrontante
   const [modoNumeracao, setModoNumeracao] = useState(false);
   const [pecas, setPecas] = useState<PecasGeradas | null>(null);
+  const conclusao = useConclusao(servico ?? { id: "", concluido_em: null, pedido_externo_id: null }, {
+    pronto: !!pecas, falta: "gerar as peças técnicas",
+    onMudou: (em) => setServico((s) => (s ? { ...s, concluido_em: em } : s)),
+  });
   const [plantaUrl, setPlantaUrl] = useState<string | null>(null);
   // Folha da planta (A1/A3): escolha do operador antes de gerar; sem escolha vale
   // a regra histórica (posse → A3, matrícula → A1). Não é gravada no serviço.
@@ -210,7 +215,9 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
 
   async function salvar() {
     if (!servico) return;
-    const { id, status, ...campos } = servico;
+    // a conclusão só muda pelo botão "Concluir serviço" (ver Conferencia.salvar)
+    const { id, status, concluido_em, concluido_por, ...campos } = servico;
+    void concluido_em; void concluido_por;
     const { error: e1 } = await supabase.from("servicos").update(campos).eq("id", id);
     if (e1) throw e1;
     const { error: e2 } = await supabase.from("trechos_confrontantes").delete().eq("servico_id", id);
@@ -405,6 +412,7 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
         <span className="chip mod-pecas">Peças</span>
         {(pdfNome ?? servico.nome_arquivo_txt) && <span className="arquivo">{pdfNome ?? servico.nome_arquivo_txt}</span>}
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
+        {servico.id && <BotaoConcluir servico={servico} conclusao={conclusao} pronto={!!pecas} />}
         {servicoId && (
           <div className="topo-meta">
             <AutoriaServico servicoId={servicoId} titulo={servico.denominacao || "Peças técnicas"} versao={auto.horaSalvo} />

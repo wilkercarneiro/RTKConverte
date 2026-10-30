@@ -19,6 +19,7 @@ import { pontoInterno } from "../../lib/loteamento/auto.ts";
 import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { Passos, StatusSalvamento } from "../ui";
+import { BotaoConcluir, useConclusao } from "../ConcluirServico";
 import type { Passo } from "../ui";
 import { Assistente } from "./Assistente";
 import { Editor } from "./Editor";
@@ -101,6 +102,11 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   servico: Servico; vertices: Vertice[]; onVoltar: () => void; armazenamento?: Armazenamento;
 }) {
   const [servico, setServico] = useState(servicoInicial);
+  // pronto para concluir = planta e locação já exportadas (status "gerado")
+  const conclusao = useConclusao(servico, {
+    pronto: servico.status === "gerado", falta: "exportar a planta e a locação",
+    onMudou: (em) => setServico((s) => ({ ...s, concluido_em: em })),
+  });
   const fuso = servico.fuso_utm ?? 24;
   const perimetro = useMemo(() => perimetroDoServico(vertices, fuso), [vertices, fuso]);
   const [ver3d, setVer3d] = useState(false);
@@ -299,6 +305,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
         {servico.nome_arquivo_txt && <span className="arquivo">{servico.nome_arquivo_txt}</span>}
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
         <span className="esticar" />
+        <BotaoConcluir servico={servico} conclusao={conclusao} pronto={servico.status === "gerado"} />
         {res && projeto.gerado && (
           <span className="lot-resumo-topo">
             <b>{res.lotes.length}</b> lotes · <b>{res.quadras.length}</b> quadras · {fmt((100 * res.quadro.lotes.area) / res.quadro.gleba, 1)}% vendável

@@ -10,7 +10,7 @@ const ROTULO_MARCO: Record<Marco, string> = {
   documentos: "documentos gerados",
   planta_sigef: "planta do SIGEF gerada",
   pecas: "peças técnicas geradas",
-  entregue: "serviço entregue",
+  entregue: "serviço concluído",
 };
 
 export type ChaveServico = "completo" | "conferencia" | "gleba" | "divisao" | "loteamento" | "car" | "pecas";

@@ -1,5 +1,6 @@
 // Faixa do GPROL na página do serviço.
-//  - ligado a um pedido: etapa no GPROL, "Entregar ao GPROL", aviso de cancelado;
+//  - ligado a um pedido: etapa no GPROL, aviso de cancelado (a entrega é o
+//    "Concluir serviço" do cabeçalho: ConcluirServico.tsx);
 //  - solto, com integração: oferece ligar ao pedido do cliente (evita o mesmo
 //    serviço nascer duas vezes no GPROL) ou a um serviço aberto de lá;
 //    sem nada para ligar, avisa que ele vai ao GPROL ao gerar os documentos.
@@ -89,21 +90,6 @@ export function ServicoGprol({ servico }: { servico: Servico }) {
     }
   }
 
-  async function entregar() {
-    if (!pedido) return;
-    if (!(await confirmar({ titulo: "Avisar o GPROL que o serviço foi entregue?", texto: "O card vai para a etapa de entrega no GPROL.", confirmar: "Entregar" }))) return;
-    setOcupado(true);
-    try {
-      await gprol("entregar", { pedido_id: pedido.id });
-      avisar("ok", "Entregue. O GPROL foi avisado.");
-      dispatchEvent(new Event(MUDOU));
-    } catch (e) {
-      avisar("erro", (e as Error).message);
-    } finally {
-      setOcupado(false);
-    }
-  }
-
   if (pedidoId && pedido) {
     return (
       <div className={`gp-faixa gp-servico${pedido.status === "cancelado" ? " alerta-faixa" : ""}`}>
@@ -115,7 +101,7 @@ export function ServicoGprol({ servico }: { servico: Servico }) {
         </span>
         <span className={`chip gp-st-${pedido.status}`}>{ROTULO_ETAPA_PEDIDO[pedido.status]}</span>
         {pedido.status === "em_execucao" && !servico.origem_id && (
-          <button className="link" disabled={ocupado} onClick={entregar}>Entregar ao GPROL</button>
+          <span className="sub gp-dica-concluir">ao concluir o serviço, o card vai para a etapa de concluídos</span>
         )}
       </div>
     );

@@ -173,6 +173,9 @@ function consulta(t: string) {
   cadeia.select = cadeia.upsert = () => cadeia;
   cadeia.eq = (c: string, v: unknown) => { linhas = linhas.filter((l) => l[c] === v); return cadeia; };
   cadeia.in = (c: string, vs: unknown[]) => { linhas = linhas.filter((l) => vs.includes(l[c])); return cadeia; };
+  cadeia.neq = (c: string, v: unknown) => { linhas = linhas.filter((l) => l[c] !== v); return cadeia; };
+  cadeia.is = (c: string, v: unknown) => { linhas = linhas.filter((l) => (l[c] ?? null) === v); return cadeia; };
+  cadeia.contains = cadeia.gte = cadeia.lte = cadeia.not = cadeia.or = cadeia.ilike = () => cadeia;
   cadeia.order = (c: string, o?: { ascending?: boolean }) => {
     const s = o?.ascending === false ? -1 : 1;
     linhas.sort((a, b) => String(a[c] ?? "").localeCompare(String(b[c] ?? ""), "pt-BR") * s);

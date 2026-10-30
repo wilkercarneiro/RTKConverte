@@ -111,6 +111,8 @@ export function mensagemDeAcesso(o: { nome: string; empresa: string; login: stri
 const ROTULOS: Record<string, string> = {
   "servico.criado": "criou o serviço",
   "servico.excluido": "excluiu o serviço",
+  "servico.concluido": "concluiu o serviço",
+  "servico.reaberto": "reabriu o serviço",
   "cliente.criado": "cadastrou o cliente",
   "cliente.excluido": "excluiu o cliente",
   "servico.alterado": "alterou o serviço",

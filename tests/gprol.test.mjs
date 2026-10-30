@@ -36,7 +36,7 @@ test("nota do card usa o marco mais adiantado e quem fez", () => {
   assert.equal(marcoMaisAdiantado([]), null);
   assert.equal(notaDoCard(["iniciado", "documentos"], "Maria"), "Vertces · Maria · documentos gerados");
   assert.equal(notaDoCard(["iniciado"], null), "Vertces · serviço iniciado");
-  assert.equal(notaDoCard(["entregue", "iniciado"], " "), "Vertces · serviço entregue");
+  assert.equal(notaDoCard(["entregue", "iniciado"], " "), "Vertces · serviço concluído");
 });
 
 test("cliente: só os campos que mudaram, com os nomes do GPROL", () => {

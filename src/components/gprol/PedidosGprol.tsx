@@ -40,13 +40,13 @@ export function PedidosGprol({ clienteId, onExecutar }: {
 
   async function acao(p: PedidoGprol, qual: "entregar" | "descartar") {
     const ok = await confirmar(qual === "entregar"
-      ? { titulo: "Avisar o GPROL que este serviço foi entregue?", texto: "O card vai para a etapa de entrega no GPROL.", confirmar: "Entregar" }
+      ? { titulo: "Concluir este pedido?", texto: "Os serviços dele feitos aqui ficam concluídos e, no GPROL, o card vai para a etapa de serviços concluídos.", confirmar: "Concluir" }
       : { titulo: "Descartar este pedido?", texto: "Ele sai da lista. Dá para reabrir depois, se precisar.", confirmar: "Descartar", perigo: true });
     if (!ok) return;
     setOcupado(p.id);
     try {
       await gprol(qual, { pedido_id: p.id });
-      avisar("ok", qual === "entregar" ? "Entregue. O GPROL foi avisado." : "Pedido descartado.");
+      avisar("ok", qual === "entregar" ? "Pedido concluído. O GPROL foi avisado." : "Pedido descartado.");
     } catch (e) {
       avisar("erro", (e as Error).message);
     } finally {
@@ -89,7 +89,7 @@ export function PedidosGprol({ clienteId, onExecutar }: {
               </div>
               <div className="gp-pedido-acoes">
                 <span className={`chip gp-st-${p.status}`}>{ROTULO_ETAPA_PEDIDO[p.status]}</span>
-                {p.status === "em_execucao" && <button className="link" disabled={ocupado === p.id} onClick={() => acao(p, "entregar")}>Entregar</button>}
+                {p.status === "em_execucao" && <button className="link" disabled={ocupado === p.id} onClick={() => acao(p, "entregar")}>Concluir</button>}
                 {p.status === "pendente" && <button className="link gp-descartar" disabled={ocupado === p.id} onClick={() => acao(p, "descartar")}>Descartar</button>}
               </div>
             </li>
