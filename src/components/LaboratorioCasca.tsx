@@ -39,7 +39,7 @@ const SERVICOS: Linha[] = ([
 ] as const).map(([den, mod, glebas, status, mun, det, d, cli], i) => ({
   id: `s${i}`, denominacao: den, modalidade: mod, tem_glebas: glebas, tipo: "geo", status, municipio: mun, uf: "BA",
   detentor_nome: det, nome_arquivo_txt: `${String(den).toLowerCase().replace(/\s+/g, "_")}.txt`, created_at: dia(d),
-  cliente_id: cli, pedido_externo_id: null, origem_id: null,
+  cliente_id: cli, pedido_externo_id: i === 8 ? "p2" : null, origem_id: null,
 }));
 
 const DOCS: Linha[] = [
@@ -93,7 +93,17 @@ const INTEGRACAO = { provedor: "gprol", status: "ativa", empresa_externa_nome: "
 const PEDIDOS: Linha[] = [
   { id: "p1", externo_id: "gp-p-77", origem: "gprol", cliente_id: "c1", titulo: "Georreferenciamento + CAR — Fazenda Lagoa Grande", nome_servico: "Georreferenciamento",
     modalidades: ["completo", "car"], dados: { local: "Santa Bárbara-BA" }, etapa: "Medição", status: "pendente", recebido_em: dia(2), atualizado_em: dia(2) },
+  // já atrelado ao serviço s8 (FAZENDA BOA ESPERANÇA)
+  { id: "p2", externo_id: "gp-p-61", origem: "gprol", cliente_id: "c1", titulo: "Georreferenciamento — Fazenda Boa Esperança", nome_servico: "Georreferenciamento",
+    modalidades: ["completo"], dados: { local: "Santa Bárbara-BA" }, etapa: "Certificação SIGEF", status: "em_execucao", recebido_em: dia(58), atualizado_em: dia(1) },
 ];
+// serviços do cliente no GPROL (ação servicos_gprol da função gprol)
+const SERVICOS_GPROL: Record<string, Linha[]> = {
+  c1: [
+    { id: "gs-1", nome: "Desmembramento", fazenda: "Sítio Riacho Fundo", titulo: "Desmembramento — Sítio Riacho Fundo", etapa: "Documentação", ligado: false, criado_em: dia(25) },
+    { id: "gs-2", nome: "Georreferenciamento", fazenda: "Fazenda Boa Esperança", titulo: "Georreferenciamento — Fazenda Boa Esperança", etapa: "Certificação SIGEF", ligado: true, criado_em: dia(58) },
+  ],
+};
 
 const MEMBROS = [
   { user_id: "u1", email: "suporte@dprol.com.br", nome: "Daniel Nascimento", cargo: null, papel: "dono", permissoes: [], ativo: true, desde: dia(120), ultimo_acesso: dia(0), senha_provisoria: false },
@@ -197,7 +207,29 @@ function instalar(operador: boolean) {
   s.from = (t: string) => consulta(t);
   const auth = supabase.auth as unknown as Record<string, unknown>;
   auth.getUser = () => Promise.resolve({ data: { user: { id: operador ? "u3" : "u1" } }, error: null });
+  auth.getSession = () => Promise.resolve({ data: { session: { access_token: "lab" } }, error: null });
   auth.signOut = () => Promise.resolve({ error: null });
+  // a função gprol (servicos_gprol, vincular, sincronizar) responde daqui
+  const fetchReal = window.fetch.bind(window);
+  window.fetch = async (entrada: RequestInfo | URL, init?: RequestInit) => {
+    const u = String(entrada instanceof Request ? entrada.url : entrada);
+    if (!u.includes("/functions/v1/gprol")) return fetchReal(entrada, init);
+    const b = JSON.parse(String(init?.body ?? "{}")) as { acao?: string; cliente_id?: string; servico_id?: string; servico_gprol_id?: string };
+    const r = (obj: unknown) => new Response(JSON.stringify(obj), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (b.acao === "servicos_gprol") return r({ itens: SERVICOS_GPROL[b.cliente_id ?? ""] ?? [], cliente_ligado: true });
+    if (b.acao === "vincular") {
+      const sg = Object.values(SERVICOS_GPROL).flat().find((x) => x.id === b.servico_gprol_id);
+      const sv = SERVICOS.find((x) => x.id === b.servico_id);
+      if (!sg || !sv) return r({ erro: "não encontrado" });
+      const id = `p${PEDIDOS.length + 1}`;
+      PEDIDOS.push({ id, externo_id: sg.id, origem: "gprol", cliente_id: sv.cliente_id, titulo: sg.titulo, nome_servico: sg.nome,
+        modalidades: [sv.modalidade], dados: { fazenda: sg.fazenda }, etapa: sg.etapa, status: "em_execucao", recebido_em: new Date().toISOString(), atualizado_em: new Date().toISOString() });
+      sv.pedido_externo_id = id;
+      sg.ligado = true;
+      return r({ ok: true, pedido_id: id });
+    }
+    return r({ ok: true, enviados: 0, recebidos: 0 });
+  };
   definirRecursos(null);
   definirPermissoes(operador ? { dono: false, lista: ["servicos.criar"] } : { dono: true, lista: [] });
 }

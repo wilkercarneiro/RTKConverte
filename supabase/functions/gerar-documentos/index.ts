@@ -10,7 +10,7 @@ import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import JSZip from "jszip";
 import { extractText, getDocumentProxy } from "unpdf";
-import { montarServico, validarConfrontacoes, montarPartes } from "../_shared/servico.ts";
+import { codigosPorLinha, montarServico, validarConfrontacoes, montarPartes } from "../_shared/servico.ts";
 import type { ServicoInput, VerticeServico } from "../_shared/servico.ts";
 import { ehCodigoDeConferencia } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
@@ -194,15 +194,28 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ---- PARTES: as glebas particionam os vértices? (TXT em blocos = anéis separados) ----
+    // Vem ANTES da alocação: num serviço em partes, o vértice que ficou fora de
+    // toda parte não entra em documento nenhum e por isso nunca recebe código.
+    // Contado em `precisaAlocar`, ele fazia TODA geração achar "vértice sem
+    // código" e realocar o serviço inteiro, queimando números novos a cada
+    // clique; contado no consumo, pulava números na sequência do credenciado.
+    const glebaRows = servico.tem_glebas
+      ? ((await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")).data ?? []) as GlebaRow[]
+      : [];
+    const partesOrdens = partesDasGlebas(glebaRows, vertRows);
+    const ordensNumeradas = partesOrdens ? new Set(partesOrdens.flatMap((pt) => pt.ordens)) : null;
+    const recebeCodigo = (v: { ordem: number }) => !ordensNumeradas || ordensNumeradas.has(v.ordem);
+
     // alocação de códigos: incrementa contadores apenas quando há vértice sem código
-    const precisaAlocar = vertRows.some((v: { codigo: string | null; inserido_manual: boolean }) => !v.codigo && !v.inserido_manual);
+    const precisaAlocar = vertRows.some((v: { ordem: number; codigo: string | null; inserido_manual: boolean }) => recebeCodigo(v) && !v.codigo && !v.inserido_manual);
     // Prévia: os contadores do credenciado não entram na conta — `alocarCodigos`
     // numera do 1 no estilo "conferencia". Duas conferências diferentes mostram
     // os mesmos números de propósito: o número é a posição no desenho.
     let contadores = { M: 0, P: 0, V: 0 };
     if (precisaAlocar && !conferencia) {
       const consumo = { M: 0, P: 0, V: 0 };
-      for (const v of vertRows) if (!v.inserido_manual || !v.codigo) consumo[v.tipo as "M" | "P" | "V"]++;
+      for (const v of vertRows) if (recebeCodigo(v) && (!v.inserido_manual || !v.codigo)) consumo[v.tipo as "M" | "P" | "V"]++;
       const { data: base, error: eA } = await supa.rpc("alocar_contadores", {
         p_credenciado: cred.id, dm: consumo.M, dp: consumo.P, dv: consumo.V,
       });
@@ -248,11 +261,7 @@ Deno.serve(async (req) => {
       estiloCodigo: conferencia ? "conferencia" : "oficial",
       vertices,
     };
-    // ---- PARTES: as glebas particionam os vértices? (TXT em blocos = anéis separados) ----
-    const glebaRows = servico.tem_glebas
-      ? ((await supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")).data ?? []) as GlebaRow[]
-      : [];
-    const partesOrdens = partesDasGlebas(glebaRows, vertRows);
+    // (partesOrdens: calculado antes da alocação, lá em cima)
     const calcPartes = partesOrdens ? montarPartes(input, partesOrdens, proj4) : null;
     // com partes, `calc` é a PRIMEIRA (o que os caminhos de anel único leem);
     // área, perímetro e códigos de todas saem de `calcPartes`
@@ -270,19 +279,25 @@ Deno.serve(async (req) => {
     // pelo operador, não tirado do contador, e apagá-lo na promoção obrigaria a
     // redigitar o que já estava certo.
     //
-    // A linha do banco é `v.conf.ordem`. `v.ordem` é a posição no anel calculado
-    // e, num serviço em PARTES, cada gleba conta do zero: gravar por ela punha o
-    // código da gleba 2 na linha da gleba 1 (a maior parte sobrescrevia todas
-    // as ordens baixas) e deixava sem código toda linha acima do tamanho da
-    // maior parte. O banco ficava com outros códigos que não os da planilha
-    // certificada, e as peças, que casam o memorial pelo código dos M, saíam
-    // com os confrontantes trocados — e cada regeração realocava tudo de novo.
+    // A linha do banco é `v.ordemBanco` (via `codigosPorLinha`). `v.ordem` é a
+    // posição no anel calculado e, num serviço em PARTES, cada gleba conta do
+    // zero: gravar por ela punha o código da gleba 2 na linha da gleba 1 (a
+    // maior parte sobrescrevia todas as ordens baixas) e deixava sem código toda
+    // linha acima do tamanho da maior parte. O banco ficava com outros códigos
+    // que não os da planilha certificada, e as peças, que casam o memorial pelo
+    // código dos M, saíam com os confrontantes trocados — e cada regeração
+    // realocava tudo de novo.
+    //
+    // Também NÃO é `v.conf.ordem`: num TXT anti-horário cada M carrega a
+    // confrontação do M seguinte, e gravar por ela punha o código de cada M na
+    // linha do vizinho. A 1ª geração saía certa e a 2ª, lendo do banco, saía com
+    // os M trocados — o vértice inicial M-0006 virava M-0011 (M-1 virava M-3 na
+    // conferência), sem nenhuma edição.
     const manuais = new Set(vertRows.filter((v) => v.inserido_manual).map((v) => v.ordem));
     if (precisaAlocar) {
-      for (const v of ringTodos) {
-        const ordemBanco = v.conf.ordem;
+      for (const [ordemBanco, codigo] of codigosPorLinha(ringTodos)) {
         await supa.from("vertices")
-          .update({ codigo: v.codigo, codigo_provisorio: conferencia && !manuais.has(ordemBanco) })
+          .update({ codigo, codigo_provisorio: conferencia && !manuais.has(ordemBanco) })
           .eq("servico_id", servico_id).eq("ordem", ordemBanco);
       }
     } else if (!conferencia) {
@@ -460,7 +475,9 @@ Deno.serve(async (req) => {
       if (!timbre) for (const [path, content] of buildDocxSkeleton(logo)) zipDocx.file(path, content);
       zipDocx.file("word/document.xml", buildDocumentXml(dadosMemorial, !timbre && !!logo, timbre));
       avisosGeracao.push(memorialPartes
-        ? `Imóvel em ${memorialPartes.length} ${calcPartes ? "partes" : "glebas"}: o memorial geral descreve cada anel em sequência, com o timbre básico; o memorial pelo modelo da empresa sai por gleba, na pasta de cada uma.`
+        // o memorial de cada gleba NÃO sai desta função (ver "por gleba" abaixo):
+        // é o jogo por gleba de gerar-pecas, depois do SIGEF
+        ? `Imóvel em ${memorialPartes.length} ${calcPartes ? "partes" : "glebas"}: o memorial geral descreve cada anel em sequência, com o timbre básico; o memorial de cada ${calcPartes ? "parte" : "gleba"} pelo modelo da empresa sai nas peças técnicas, depois do SIGEF.`
         : `Memorial gerado fora do modelo da empresa: templates/${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx não está no Storage.`);
     }
     const docxBuf = await zipDocx.generateAsync({ type: "uint8array", compression: "DEFLATE" });

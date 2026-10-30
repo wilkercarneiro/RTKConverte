@@ -80,12 +80,14 @@ export function calcularPreviewLocal(
     const tipo0 = ring[0].tipo as "M" | "P" | "V";
     // A conferência numera do 1 e sem prefixo: o vértice inicial é sempre o
     // primeiro do seu tipo no anel, então o preview acerta o código final.
+    // O contador do credenciado é o PRÓXIMO número a usar; 0 vale como 1 (a
+    // alocação nunca emite 0000 — 0031_contador_proximo_numero.sql).
     const codigo0 = v0.codigo ?? (estiloCodigo === "conferencia"
       ? codigoConferencia(tipo0, 1)
       : credenciado
-        ? codigoVertice(credenciado.prefixo_vertice, tipo0,
-            tipo0 === "M" ? credenciado.contador_m : tipo0 === "P" ? credenciado.contador_p : credenciado.contador_v)
-        : "????-M-0000");
+        ? codigoVertice(credenciado.prefixo_vertice, tipo0, Math.max(1,
+            tipo0 === "M" ? credenciado.contador_m : tipo0 === "P" ? credenciado.contador_p : credenciado.contador_v))
+        : "????-M-0001");
     const trechoInicial = trechos.find((t) => t.vertice_inicio_ordem === ring[0].ordem);
     const mcAbs = Math.abs(6 * fuso - 183);
     const desc = trechoInicial?.descritivo || trechoInicial?.apelido_txt || "(defina o trecho do vértice inicial)";

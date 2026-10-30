@@ -5,7 +5,7 @@
 // de confirmação (DialogosGlobais + confirmar), cabeçalho de página e estados
 // de lista (CabecalhoPagina, EstadoVazio, EstadoErro, Esqueleto), indicador de
 // autossalvamento (StatusSalvamento) e confirmação inline (BotaoPerigo).
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { AvisoItem, EstadoSalvamento } from "../lib/ux";
 import { assinarAvisos, avisarGlobal, avisosAtuais, fecharAviso } from "../lib/ux";
@@ -296,11 +296,78 @@ export function avisar(tipo: AvisoItem["tom"], texto: string): void {
   avisarGlobal(tipo, texto);
 }
 
+/**
+ * Painéis presos à direita com ações no pé: as gavetas (equipe, créditos,
+ * histórico, novo cliente, GPROL — `.eq-gaveta`), a gaveta do superadmin
+ * (`.sa-gaveta`) e o chat do suporte (`.sp-painel`). O aviso nasce no canto de
+ * baixo à direita, bem em cima do pé deles (o "Concluir" da equipe, o "Salvar",
+ * o "Enviar"…).
+ */
+const PAINEIS_COM_PE = ".eq-gaveta, .sa-gaveta, .sp-painel";
+const PES_DO_PAINEL = "footer, .sp-compositor, .sp-linha-acoes";
+const MARGEM_AVISOS = 18;
+/** abaixo disso, ao lado do painel o aviso fica estreito demais para ler */
+const LARGURA_MIN_AVISOS = 280;
+
+/**
+ * Onde a pilha de avisos fica com um painel aberto: ao lado dele (à esquerda),
+ * se couber; senão (celular, tela estreita), logo acima do pé do painel.
+ * null = nenhum painel aberto, vale o CSS.
+ */
+function lugarDosAvisos(): CSSProperties | null {
+  const paineis = [...document.querySelectorAll<HTMLElement>(PAINEIS_COM_PE)];
+  if (!paineis.length) return null;
+  const esquerda = Math.min(...paineis.map((p) => p.getBoundingClientRect().left));
+  const livre = esquerda - 2 * MARGEM_AVISOS;
+  if (livre >= LARGURA_MIN_AVISOS) {
+    return { left: "auto", right: innerWidth - esquerda + MARGEM_AVISOS, maxWidth: Math.min(420, livre) };
+  }
+  // só conta o pé que está mesmo no fundo do painel (não um rodapé no meio do conteúdo)
+  const topos = paineis.flatMap((p) => {
+    const fundo = p.getBoundingClientRect().bottom;
+    return [...p.querySelectorAll<HTMLElement>(PES_DO_PAINEL)]
+      .map((e) => e.getBoundingClientRect())
+      .filter((r) => r.height > 0 && fundo - r.bottom < 24)
+      .map((r) => r.top);
+  });
+  if (!topos.length) return null;
+  return { bottom: Math.max(innerHeight - Math.min(...topos) + 12, MARGEM_AVISOS) };
+}
+
+/** Recalcula o lugar dos avisos enquanto há aviso na tela: painel abrindo/fechando, animação, janela. */
+function useLugarDosAvisos(ativo: boolean): CSSProperties | undefined {
+  const [lugar, setLugar] = useState<CSSProperties | null>(null);
+  const trocar = (novo: CSSProperties | null) =>
+    setLugar((velho) => (JSON.stringify(velho) === JSON.stringify(novo) ? velho : novo));
+  // antes de pintar: o aviso já aparece no lugar certo, sem pular
+  useLayoutEffect(() => { if (ativo) trocar(lugarDosAvisos()); }, [ativo]);
+  useEffect(() => {
+    if (!ativo) return;
+    let quadro = 0;
+    const medir = () => {
+      cancelAnimationFrame(quadro);
+      quadro = requestAnimationFrame(() => trocar(lugarDosAvisos()));
+    };
+    const obs = new MutationObserver(medir);
+    obs.observe(document.body, { childList: true, subtree: true });
+    addEventListener("resize", medir);
+    document.addEventListener("animationend", medir, true);
+    return () => {
+      cancelAnimationFrame(quadro);
+      obs.disconnect();
+      removeEventListener("resize", medir);
+      document.removeEventListener("animationend", medir, true);
+    };
+  }, [ativo]);
+  return ativo && lugar ? lugar : undefined;
+}
+
 /** Pilha de avisos do sistema inteiro. Montar UMA vez (AppShell). */
 export function AvisosGlobais() {
   const avisos = useSyncExternalStore(assinarAvisos, avisosAtuais, avisosAtuais);
+  const lugar = useLugarDosAvisos(avisos.length > 0);
   return (
-    <div className="avisos avisos-globais" role="status" aria-live="polite" aria-relevant="additions">
+    <div className="avisos avisos-globais" role="status" aria-live="polite" aria-relevant="additions" style={lugar}>
       {avisos.map((a) => (
         <div key={a.id} className={`aviso ${a.tom}`} role={a.tom === "erro" ? "alert" : undefined}>
           <span className="aviso-icone" aria-hidden="true">{a.tom === "ok" ? "✓" : a.tom === "erro" ? "✕" : "!"}</span>

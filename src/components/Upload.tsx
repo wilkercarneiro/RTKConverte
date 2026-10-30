@@ -107,11 +107,12 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
       });
     }
     setErroCsv(erros.length ? erros.join("\n") : null);
-    // A parcela do vizinho entra na base local de parcelas certificadas: é ela
-    // que o mapa e a verificação de sobreposição da conferência consultam.
+    // A parcela do vizinho entra na base local de parcelas certificadas, só para
+    // esta empresa: é ela que o mapa e a verificação de sobreposição da
+    // conferência consultam (as outras empresas não a veem — migration 0030).
     if (lidos.length) {
       guardarParcelasSigef(lidos.map((g) => ({
-        codigo: codigoParcela(g), nome: nomeParcela(g), uf: uf || null, fonte: "csv",
+        codigo: codigoParcela(g), nome: nomeParcela(g), uf: uf || null,
         geometria: { type: "Polygon", coordinates: [[...g.vertices.map((v) => [v.lon, v.lat] as LonLat), [g.vertices[0].lon, g.vertices[0].lat]]] },
       }))).catch((e) => console.warn("parcela do CSV não foi guardada na base SIGEF:", e));
     }

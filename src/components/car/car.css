@@ -38,6 +38,10 @@
   background: var(--card); border: 1px solid var(--borda); box-shadow: 0 6px 20px rgb(0 0 0 / 12%); font-size: 13px;
 }
 .car-msg.erro { border-color: var(--perigo); color: var(--perigo); }
+/* com a régua do giro da reserva no alto do mapa (.giro-mapa, top 12px, z 5), a
+   mensagem desce para baixo dela — ficava escondida atrás */
+.car-msg { z-index: 6; }
+.car-centro:has(.giro-mapa) .car-msg { top: 62px; }
 .car-msg button { height: 22px; padding: 0 6px; }
 
 .car-painel { overflow-y: auto; border-left: 1px solid var(--borda); background: #FAFBFA; padding: 14px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }

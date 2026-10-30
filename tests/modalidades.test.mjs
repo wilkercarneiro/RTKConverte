@@ -10,7 +10,7 @@ import {
   SERVICOS, camposDaSituacao, chaveDoServico, definicaoDe, pedeMatricula,
   rotuloCurto, situacaoDoImovel, vaiAoSigef,
 } from "../src/lib/modalidades.ts";
-import { hashParaRota, rotaParaHash } from "../src/lib/rota.ts";
+import { hashParaRota, rotaParaHash, voltarDoNovo } from "../src/lib/rota.ts";
 
 test("ida e volta: os campos de cada cartão voltam ao mesmo cartão", () => {
   for (const d of SERVICOS) {
@@ -64,6 +64,13 @@ test("hash inválido ou vazio cai no início em vez de tela em branco", () => {
     const r = hashParaRota(h);
     assert.ok(["inicio", "clientes", "servicos"].includes(r.t), `${h} → ${r.t}`);
   }
+});
+
+test("novo serviço aberto pelo cliente: o voltar leva ao cliente, não ao Início", () => {
+  assert.deepEqual(voltarDoNovo(hashParaRota("#/novo/car/c-123")), { rota: { t: "cliente", id: "c-123" }, rotulo: "o cliente" });
+  assert.deepEqual(voltarDoNovo(hashParaRota("#/novo/car/c-123/p-9")), { rota: { t: "cliente", id: "c-123" }, rotulo: "o cliente" });
+  assert.deepEqual(voltarDoNovo(hashParaRota("#/novo/car")), { rota: { t: "inicio" }, rotulo: "o Início" });
+  assert.deepEqual(voltarDoNovo(hashParaRota("#/novo/car/-/p-9")), { rota: { t: "inicio" }, rotulo: "o Início" });
 });
 
 // ---------------------------------------------------------------------------

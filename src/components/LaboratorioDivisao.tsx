@@ -10,7 +10,7 @@ import { DivisaoEditor } from "./DivisaoEditor";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { Dica } from "./ui";
 import { servicoDaParte, verticesDaParte } from "../lib/divisao_servico";
-import { montarServico } from "../../supabase/functions/_shared/servico.ts";
+import { codigosPorLinha, montarServico } from "../../supabase/functions/_shared/servico.ts";
 import { calcularGleba, dadosDasPartes, geometriaDoCalculo, servicoDaGleba } from "../../supabase/functions/_shared/planta_dados.ts";
 import { gerarPlantaPdf } from "../../supabase/functions/_shared/planta.ts";
 // @ts-expect-error fixture em JS dos testes, sem declaração de tipos
@@ -72,7 +72,17 @@ export function LaboratorioDivisao() {
   return <LaboratorioDivisaoPartes />;
 }
 
+// o rascunho da prancheta fica no navegador, como no serviço: reabrir volta como estava
+const CHAVE_RASCUNHO = "vertice.lab.divisao";
+const servicoComRascunho = (): Servico => {
+  try {
+    const d = JSON.parse(localStorage.getItem(CHAVE_RASCUNHO) ?? "null") as Servico["divisao"] | null;
+    return d ? { ...servicoInicial, divisao: d } : servicoInicial;
+  } catch { return servicoInicial; }
+};
+
 function LaboratorioDivisaoPartes() {
+  const [servico] = useState<Servico>(servicoComRascunho);
   const [vertices, setVertices] = useState<Vertice[]>(verticesIniciais);
   const [glebas, setGlebas] = useState<Gleba[]>([]);
   const [erro, setErro] = useState<string | null>(null);
@@ -96,7 +106,7 @@ function LaboratorioDivisaoPartes() {
     try {
       // o GEO individual: códigos do total + vértices da parte, como o "Criar os GEOs" faz
       const calc = calcular(vertices);
-      const codigoDe = new Map(calc.ring.map((v) => [v.conf.ordem, v.codigo]));
+      const codigoDe = codigosPorLinha(calc.ring);
       const comCodigo = vertices.map((v) => ({ ...v, codigo: codigoDe.get(v.ordem) ?? null }));
       const vp = verticesDaParte(servicoInicial, comCodigo, glebas, k, "parte");
       const cab = servicoDaParte(servicoInicial, glebas[k]);
@@ -113,9 +123,10 @@ function LaboratorioDivisaoPartes() {
   return (
     <div style={{ padding: "28px 40px", display: "grid", gap: 16, maxWidth: 1280, margin: "0 auto" }}>
       <h2 style={{ margin: 0 }}>Laboratório · divisão em partes iguais<Dica>FAZENDA SALGADA VELHA (fixture) · espólio de José de Souza · estrada vicinal a leste</Dica></h2>
-      <DivisaoEditor servico={servicoInicial} vertices={vertices} glebas={glebas}
+      <DivisaoEditor servico={servico} vertices={vertices} glebas={glebas}
         onAplicar={(r) => { setVertices(r.vertices); setGlebas(r.glebas); setResumo(null); }}
-        onGlebas={setGlebas} />
+        onGlebas={setGlebas}
+        onRascunho={(d) => { try { localStorage.setItem(CHAVE_RASCUNHO, JSON.stringify(d)); } catch { /* sem armazenamento */ } }} />
       {glebas.length >= 2 && (
         <section className="bloco">
           <header><h3>Documentos<Dica>Gerados no navegador pelo caminho do servidor.</Dica></h3></header>

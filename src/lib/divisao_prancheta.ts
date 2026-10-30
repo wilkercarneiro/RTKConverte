@@ -17,6 +17,7 @@ import { projetoNovo, type Parametros, type Projeto } from "./loteamento/modelo.
 import type { Perimetro, Resultado } from "./loteamento/calculo.ts";
 import { pontoInterno } from "./loteamento/auto.ts";
 import { paraUtm } from "./loteamento/plano.ts";
+import { acertarAreas } from "./loteamento/acoes.ts";
 
 type Ent = EntradaDivisao & { base: Vertice[]; confrontantes: string[] };
 
@@ -109,6 +110,28 @@ const TOL = 0.02; // ponto a menos de 2 cm de um vértice é o vértice
 const TOL_LADO = 0.5;
 const arred = (v: number) => Math.round(v * 1000) / 1000;
 
+type NoPerimetro = { vertice: number } | { aresta: number; t: number; e: number; n: number };
+
+/** Onde um ponto do desenho cai no perímetro: um vértice (a menos de 2 cm) ou um ponto do lado, projetado nele e arredondado ao milímetro (null = dentro do imóvel). */
+function noPerimetro(P: Pt[], q: Pt): NoPerimetro | null {
+  const nV = P.length;
+  let mv = -1, dv = TOL;
+  for (let i = 0; i < nV; i++) { const d = dist(q, P[i]); if (d < dv) { dv = d; mv = i; } }
+  if (mv >= 0) return { vertice: mv };
+  let melhor: { aresta: number; t: number; d: number } | null = null;
+  for (let i = 0; i < nV; i++) {
+    const a = P[i], b = P[(i + 1) % nV];
+    const L2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 || 1;
+    const t = ((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / L2;
+    if (t <= 0 || t >= 1) continue;
+    const d = dist(q, [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    if (d < TOL_LADO && (!melhor || d < melhor.d)) melhor = { aresta: i, t, d };
+  }
+  if (!melhor) return null;
+  const A = P[melhor.aresta], B = P[(melhor.aresta + 1) % nV];
+  return { aresta: melhor.aresta, t: melhor.t, e: arred(A[0] + (B[0] - A[0]) * melhor.t), n: arred(A[1] + (B[1] - A[1]) * melhor.t) };
+}
+
 /**
  * Os lotes (UTM, como o operador deixou) de volta a um ResultadoDivisao.
  * Ponto sobre um vértice do levantamento é esse vértice; sobre um lado do
@@ -124,21 +147,10 @@ export function resultadoDosLotes(ent: Ent, aneis: Pt[][], fracoes?: number[], a
 
   const novosPorChave = new Map<string, PontoParte>();
   const casar = (q: Pt, k: number): PontoParte | string => {
-    let mv = -1, dv = TOL;
-    for (let i = 0; i < nV; i++) { const d = dist(q, P[i]); if (d < dv) { dv = d; mv = i; } }
-    if (mv >= 0) return { e: P[mv][0], n: P[mv][1], vertice: mv };
-    let melhor: { aresta: number; t: number; d: number } | null = null;
-    for (let i = 0; i < nV; i++) {
-      const a = P[i], b = P[(i + 1) % nV];
-      const L2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 || 1;
-      const t = ((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / L2;
-      if (t <= 0 || t >= 1) continue;
-      const d = dist(q, [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
-      if (d < TOL_LADO && (!melhor || d < melhor.d)) melhor = { aresta: i, t, d };
-    }
-    if (!melhor) return `a parte ${k + 1} tem um vértice dentro do imóvel (E ${q[0].toFixed(2)}, N ${q[1].toFixed(2)}): toda divisa precisa ir de um lado ao outro do perímetro`;
-    const A = P[melhor.aresta], B = P[(melhor.aresta + 1) % nV];
-    const e = arred(A[0] + (B[0] - A[0]) * melhor.t), n = arred(A[1] + (B[1] - A[1]) * melhor.t);
+    const c = noPerimetro(P, q);
+    if (!c) return `a parte ${k + 1} tem um vértice dentro do imóvel (E ${q[0].toFixed(2)}, N ${q[1].toFixed(2)}): toda divisa precisa ir de um lado ao outro do perímetro`;
+    if ("vertice" in c) return { e: P[c.vertice][0], n: P[c.vertice][1], vertice: c.vertice };
+    const melhor = c, e = c.e, n = c.n;
     const chave = `${melhor.aresta}|${e}|${n}`;
     let pt = novosPorChave.get(chave);
     if (!pt) { pt = { e, n, novo: { divisa: -1, aresta: melhor.aresta, t: melhor.t } }; novosPorChave.set(chave, pt); }
@@ -240,4 +252,298 @@ export function resultadoDosLotes(ent: Ent, aneis: Pt[][], fracoes?: number[], a
   const sf = fr.reduce((s, f) => s + f, 0);
   const erroAreaM2 = Math.max(...partes.map((p, k) => Math.abs(p.areaM2 - (fr[k] / sf) * soma)));
   return { ok: true, azimute, divisas, partes, novos, custo: 0, erroAreaM2 };
+}
+
+// ---------------------------------------------------------------------------
+// "Ajustar lotes": as áreas IMPRESSAS iguais, não as do desenho
+// ---------------------------------------------------------------------------
+
+/** Ponto novo de divisa (no lado `aresta`, hoje em `de`) e o lugar novo dele (`para`; sem `para`, fica). */
+export interface TrocaDePonto { aresta: number; de: Pt; para?: Pt }
+
+/**
+ * Acabamento das áreas como os documentos imprimem. O documento mede cada ponto
+ * arredondado a 0,001" (~3 cm) e a área da parte anda em degraus de alguns m²
+ * conforme a divisa desliza: igualar a área do desenho deixava as impressas até
+ * 7 m² longe uma da outra. Como no motor (divisao.ts), cada ponta de divisa é
+ * escolhida à parte entre as posições do próprio lado perto de onde está, e o
+ * par que deixa as partes mais perto da cota fica. A janela só cresce (30 cm,
+ * 1 m, 2 m) enquanto a maior diferença não chega ao centésimo de m². O limite
+ * é o próprio arredondamento: um passo da grade numa ponta muda a parte em
+ * ~0,5 × divisa × 3 cm, e o par das duas pontas chega a centésimos, não a zero.
+ * Devolve todos os pontos novos; os que mudam de lugar vêm com `para`.
+ */
+export function afinarImpressas(ent: Ent, aneis: Pt[][], fracoes?: number[], janelas = [0.3, 1, 2]): TrocaDePonto[] {
+  const pub = ent.publicar;
+  const rd = resultadoDosLotes(ent, aneis, fracoes);
+  if (!pub || !rd.ok || !rd.novos.length) return [];
+  const P = ent.base.map((v) => [Number(v.e), Number(v.n)] as Pt);
+  const nV = P.length;
+  const nP = rd.partes.length;
+  const fr = fracoes && fracoes.length === nP ? fracoes : rd.partes.map(() => 1);
+  const sf = fr.reduce((s, f) => s + f, 0);
+  const cota = fr.map((f) => f / sf);
+  const iguais = fr.every((f) => Math.abs(f - fr[0]) < 1e-9);
+  // o lado de dentro do imóvel (o ponto gravado fica 2 mm para dentro: o
+  // loteamento recorta pelo perímetro o que passa de fora, e o recorte, na
+  // reta da divisa, levaria o ponto para o lado — e o documento veria outro)
+  const anti = areaAssinada(P) > 0;
+  const dentro = (ar: number): Pt => {
+    const A = P[ar], B = P[(ar + 1) % nV], L = dist(A, B) || 1;
+    const u: Pt = [(B[0] - A[0]) / L, (B[1] - A[1]) / L];
+    return anti ? [-u[1], u[0]] : [u[1], -u[0]];
+  };
+
+  // o anel de cada parte: ponto fixo (já como o documento vê) ou o índice de um ponto novo
+  const vars = rd.novos;
+  const idx = new Map(vars.map((p, i) => [p, i]));
+  const aneisP: (number | Pt)[][] = rd.partes.map((pt) => pt.anel.map((q) => idx.get(q) ?? pub([q.e, q.n])));
+  const partesDe = vars.map((_, i) => aneisP.flatMap((a, k) => (a.includes(i) ? [k] : [])));
+  const ver: Pt[] = vars.map((p) => pub([p.e, p.n]));
+  const ver0 = ver.slice();
+  const gravado: Pt[] = vars.map((p) => [p.e, p.n]);
+
+  // posições possíveis de cada ponto novo: o lado do perímetro de cm em cm,
+  // gravadas como o desenho grava e vistas como o documento vê (o mesmo
+  // caminho de resultadoDosLotes: projeta no lado, mm, 0,001")
+  const cache = new Map<string, { para: Pt; ver: Pt } | null>();
+  const posicao = (i: number, m: number) => {
+    const ch = `${i}|${m}`;
+    if (cache.has(ch)) return cache.get(ch)!;
+    const p = vars[i], ar = p.novo!.aresta;
+    const A = P[ar], B = P[(ar + 1) % nV];
+    const t = p.novo!.t + (m * 0.01) / (dist(A, B) || 1);
+    let r: { para: Pt; ver: Pt } | null = null;
+    if (t > 0 && t < 1) {
+      const c = noPerimetro(P, [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t]);
+      if (c && !("vertice" in c) && c.aresta === ar) {
+        const n = dentro(ar);
+        const para: Pt = [c.e + 0.002 * n[0], c.n + 0.002 * n[1]];
+        const visto = noPerimetro(P, para);
+        if (visto && !("vertice" in visto) && visto.aresta === ar) r = { para, ver: pub([visto.e, visto.n]) };
+      }
+    }
+    cache.set(ch, r);
+    return r;
+  };
+  const opcoes = (i: number, janela: number) => {
+    const out = [{ para: gravado[i], ver: ver0[i] }];
+    const vistos = new Set([`${ver0[i][0]}|${ver0[i][1]}`]);
+    for (let m = 1; m <= Math.round(janela * 100); m++) {
+      for (const s of [m, -m]) {
+        const c = posicao(i, s);
+        if (!c || vistos.has(`${c.ver[0]}|${c.ver[1]}`)) continue;
+        vistos.add(`${c.ver[0]}|${c.ver[1]}`);
+        out.push(c);
+      }
+    }
+    return out;
+  };
+
+  const ponto = (s: number | Pt): Pt => (typeof s === "number" ? ver[s] : s);
+  const areaDa = (k: number) => {
+    const a = aneisP[k];
+    let s = 0;
+    for (let j = 0; j < a.length; j++) {
+      const p = ponto(a[j]), q = ponto(a[(j + 1) % a.length]);
+      s += p[0] * q[1] - p[1] * q[0];
+    }
+    return Math.abs(s) / 2;
+  };
+  const areas = rd.partes.map((_, k) => areaDa(k));
+  // Duas réguas, uma depois da outra: a soma dos quadrados das diferenças p/ a
+  // cota (cada divisa equilibra as duas partes dela; só a maior diferença
+  // travava a busca na parte de longe) e depois a maior diferença (ao milésimo
+  // de m²). Já perto (< 0,1 m²), vem antes que partes iguais saiam com o mesmo
+  // número nos documentos (ha com 4 casas = m² inteiro).
+  type Nota = { doc: number; max: number; sq: number };
+  const nota = (as: number[]): Nota => {
+    let T = 0;
+    for (let k = 0; k < nP; k++) T += as[k];
+    let max = 0, sq = 0;
+    for (let k = 0; k < nP; k++) { const e = as[k] - cota[k] * T; max = Math.max(max, Math.abs(e)); sq += e * e; }
+    // (o número dos documentos só importa já perto)
+    return { doc: iguais && max < 0.1 ? new Set(as.map((a) => Math.round(a))).size - 1 : 0, max, sq };
+  };
+  const doc = (a: Nota, b: Nota) => a.max < 0.1 && b.max < 0.1 && a.doc !== b.doc;
+  const porQuadrados = (a: Nota, b: Nota) => (doc(a, b) ? a.doc < b.doc : a.sq < b.sq * (1 - 1e-9) - 1e-12);
+  const porMaior = (a: Nota, b: Nota) => {
+    if (doc(a, b)) return a.doc < b.doc;
+    const ma = Math.round(a.max * 1000), mb = Math.round(b.max * 1000);
+    return ma < mb || (ma === mb && a.sq < b.sq * (1 - 1e-9) - 1e-12);
+  };
+
+  let atual = nota(areas);
+  // cada divisa: as duas pontas juntas (só a que é ponto novo, se a outra é vértice)
+  const grupos = rd.divisas.map((d) => [d.a, d.b].map((p) => idx.get(p)).filter((i): i is number => i !== undefined)).filter((g) => g.length);
+  const descer = (janela: number, melhorQue: (a: Nota, b: Nota) => boolean) => {
+    for (let passada = 0; passada < 8; passada++) {
+      let mudou = false;
+      for (const g of grupos) {
+        const afetadas = [...new Set(g.flatMap((i) => partesDe[i]))];
+        const listas = g.map((i) => opcoes(i, janela));
+        const antes = g.map((i) => ver[i]);
+        let melhor: Pt[] | null = null, nMelhor = atual;
+        const as = areas.slice();
+        const tenta = (escolha: Pt[]) => {
+          g.forEach((i, j) => { ver[i] = escolha[j]; });
+          for (const k of afetadas) as[k] = areaDa(k);
+          const nt = nota(as);
+          if (melhorQue(nt, nMelhor)) { nMelhor = nt; melhor = escolha.slice(); }
+        };
+        if (g.length === 1) for (const c of listas[0]) tenta([c.ver]);
+        else for (const c0 of listas[0]) for (const c1 of listas[1]) tenta([c0.ver, c1.ver]);
+        const fica: Pt[] = melhor ?? antes;
+        g.forEach((i, j) => { ver[i] = fica[j]; });
+        if (melhor) {
+          for (const k of afetadas) areas[k] = areaDa(k);
+          atual = nota(areas);
+          mudou = true;
+        }
+      }
+      if (!mudou) break;
+    }
+  };
+  // a melhor situação vista (pela maior diferença) é a que fica
+  let guardado = { ver: ver.slice(), nota: atual };
+  for (const janela of janelas) {
+    descer(janela, porQuadrados);
+    descer(janela, porMaior);
+    if (porMaior(atual, guardado.nota)) guardado = { ver: ver.slice(), nota: atual };
+    if (guardado.nota.max < 0.01 && !guardado.nota.doc) break;
+  }
+  guardado.ver.forEach((v, i) => { ver[i] = v; });
+
+  // de volta ao desenho: a posição gravada que dá o ponto escolhido
+  return vars.map((p, i) => {
+    const t: TrocaDePonto = { aresta: p.novo!.aresta, de: gravado[i] };
+    if (ver[i][0] === ver0[i][0] && ver[i][1] === ver0[i][1]) return t;
+    const c = opcoes(i, Math.max(...janelas)).find((x) => x.ver[0] === ver[i][0] && x.ver[1] === ver[i][1]);
+    return c ? { ...t, para: c.para } : t;
+  });
+}
+
+/**
+ * Leva os pontos trocados para o lugar novo em todos os anéis (UTM) que os têm.
+ * O ponto do desenho é o ponto novo mais perto no mesmo lado: o recorte do
+ * loteamento pode tê-lo deixado uns centímetros longe de onde o projeto guarda.
+ */
+export function trocarPontos(ent: Ent, aneis: Pt[][], trocas: TrocaDePonto[]): Pt[][] {
+  if (!trocas.some((x) => x.para)) return aneis;
+  const P = ent.base.map((v) => [Number(v.e), Number(v.n)] as Pt);
+  return aneis.map((anel) => anel.map((q) => {
+    const c = noPerimetro(P, q);
+    if (!c || "vertice" in c) return q;
+    let t: TrocaDePonto | null = null, dm = TOL_LADO;
+    for (const x of trocas) {
+      const d = x.aresta === c.aresta ? dist(x.de, [c.e, c.n]) : Infinity;
+      if (d < dm) { dm = d; t = x; }
+    }
+    return t?.para ?? q;
+  }));
+}
+
+/** O projeto da prancheta com os pontos trocados (o mesmo ponto em todas as partes que o dividem). */
+export function trocarNoProjeto(pr: Projeto, ent: Ent, trocas: TrocaDePonto[]): Projeto {
+  if (!trocas.some((x) => x.para)) return pr;
+  return {
+    ...pr,
+    quadras: pr.quadras.map((q) => (q.lotes ? {
+      ...q,
+      lotes: q.lotes.map((l) => ({
+        ...l,
+        anel: trocarPontos(ent, [l.anel], trocas)[0],
+        ...(l.frente ? { frente: trocarPontos(ent, [l.frente], trocas)[0] as [Pt, Pt] } : {}),
+      })),
+    } : q)),
+  };
+}
+
+/** Maior diferença p/ a cota aceita sem dividir de novo (o painel mostra "< 0,1" abaixo de 0,05). */
+export const TOL_AJUSTE_M2 = 0.05;
+
+export interface AjustePartes {
+  pr: Projeto;
+  /** as partes como o painel mostra e os documentos imprimem */
+  rd: ResultadoDivisao;
+  /** true = as divisas deslizaram (desenho mantido); false = o motor dividiu de novo */
+  manteve: boolean;
+}
+
+/**
+ * "Ajustar lotes" da prancheta: todas as partes com a mesma área IMPRESSA (ou na
+ * fração de cada uma) — a que o painel mostra e os documentos imprimem, medida
+ * nos pontos arredondados a 0,001", não a área do desenho.
+ *  1. as divisas deslizam (o "area" do loteamento), com o alvo de cada parte
+ *     corrigido pela diferença entre a área impressa e a do desenho; a relação
+ *     não é linear (degraus do arredondamento), então repete enquanto melhora;
+ *  2. acabamento: cada ponta de divisa vai para o ponto do lado que deixa as
+ *     áreas impressas mais perto da cota (afinarImpressas);
+ *  3. se o desenho não deixar (sem frente para deslizar, ou sobra diferença),
+ *     o motor divide de novo na direção atual, com o mesmo acabamento.
+ */
+export function ajustarPartes(
+  pr0: Projeto, entrada: Ent, calc: (p: Projeto) => Resultado | null, fracoes: number[] | undefined, motor: () => Projeto | null,
+): AjustePartes | null {
+  // o mesmo ponto é publicado muitas vezes nas rodadas: guarda (proj4 é o mais caro)
+  const pub = entrada.publicar;
+  const publicados = new Map<string, Pt>();
+  const ent: Ent = pub ? {
+    ...entrada,
+    publicar: (q: Pt) => {
+      const k = `${q[0]}|${q[1]}`;
+      let v = publicados.get(k);
+      if (!v) { v = pub(q); publicados.set(k, v); }
+      return v;
+    },
+  } : entrada;
+  type Medida = { p: Projeto; r: Resultado; d: ResultadoDivisao; fr?: number[] };
+  // melhor para quem recebe: partes iguais com o mesmo número nos documentos
+  // (ha com 4 casas = m² inteiro); depois, a menor diferença p/ a cota
+  const iguais = !fracoes || fracoes.every((f) => Math.abs(f - fracoes[0]) < 1e-9);
+  const noDoc = (d: ResultadoDivisao) => (iguais ? new Set(d.partes.map((p) => Math.round(p.areaM2))).size : 0);
+  const melhorAjuste = (a: ResultadoDivisao, b: ResultadoDivisao) =>
+    noDoc(a) < noDoc(b) || (noDoc(a) === noDoc(b) && a.erroAreaM2 < b.erroAreaM2 - 1e-6);
+  const medir = (p: Projeto): Medida | null => {
+    const r = calc(p);
+    if (!r || r.lotes.length < 2) return null;
+    const fr = fracoes && fracoes.length === r.lotes.length ? fracoes : undefined;
+    const d = resultadoDosLotes(ent, aneisDosLotes(r), fr);
+    return d.ok ? { p, r, d, fr } : null;
+  };
+  // o acabamento roda de novo sobre o que o loteamento devolveu (o recorte
+  // pode mexer um ponto alguns milímetros), enquanto melhora
+  const acabar = (m: Medida): Medida => {
+    for (let rodada = 0; rodada < 3; rodada++) {
+      const trocas = afinarImpressas(ent, aneisDosLotes(m.r), m.fr);
+      const m2 = trocas.some((x) => x.para) ? medir(trocarNoProjeto(m.p, ent, trocas)) : null;
+      if (!m2 || !melhorAjuste(m2.d, m.d)) break;
+      m = m2;
+    }
+    return m;
+  };
+
+  let m = medir(pr0);
+  if (m) {
+    for (let it = 0; it < 4 && m.d.erroAreaM2 > 0.5; it++) {
+      const ls = [...m.r.lotes].sort((a, b) => a.numero - b.numero);
+      const soma = m.d.partes.reduce((s, p) => s + p.areaM2, 0);
+      const fr = m.fr ?? ls.map(() => 1);
+      const sf = fr.reduce((s, f) => s + f, 0);
+      const d = m.d;
+      const alvos = ls.map((l, k) => l.area + (fr[k] / sf) * soma - d.partes[k].areaM2);
+      const ed = acertarAreas(m.p, m.r, ls.slice(0, -1), alvos.slice(0, -1));
+      if (!ed || ed.erro) break;
+      const m2 = medir(ed.pr);
+      if (!m2 || m2.d.erroAreaM2 >= m.d.erroAreaM2) break;
+      m = m2;
+    }
+    m = acabar(m);
+    if (m.d.erroAreaM2 <= TOL_AJUSTE_M2 && noDoc(m.d) <= 1) return { pr: m.p, rd: m.d, manteve: true };
+  }
+  const g = motor();
+  const mg = g ? medir(g) : null;
+  const mf = mg ? acabar(mg) : null;
+  if (mf && (!m || melhorAjuste(mf.d, m.d))) return { pr: mf.p, rd: mf.d, manteve: false };
+  return m ? { pr: m.p, rd: m.d, manteve: true } : null;
 }

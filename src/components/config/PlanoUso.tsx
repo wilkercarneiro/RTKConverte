@@ -1,6 +1,7 @@
 // Configurações → Plano e uso: o que o plano da empresa inclui, quanto já foi
-// usado no mês (créditos e usuários) e o caminho para pedir mais. Tudo que é
-// "pedir" abre um chamado no suporte já com o assunto escrito.
+// usado no mês (créditos e usuários) e o caminho para pedir mais. Comprar
+// créditos abre a mesma gaveta de pacotes e pedidos do Início (ComprarCreditos);
+// mudar de plano e liberar recurso abrem um chamado no suporte já com o assunto.
 import { useEffect, useMemo, useState } from "react";
 import type { EstadoEscritorio } from "../../lib/escritorio";
 import { carregarCreditos, nomeDaChave } from "../../lib/creditos";
@@ -10,6 +11,7 @@ import { RECURSOS, temRecurso } from "../../lib/recursos";
 import type { ChaveRecurso } from "../../lib/recursos";
 import { temPermissao } from "../../lib/permissoes";
 import { abrirSuporte } from "../suporte/SuporteChat";
+import { ComprarCreditos } from "../Creditos";
 import { Dica, Esqueleto } from "../ui";
 import "./config.css";
 
@@ -36,6 +38,9 @@ export function PlanoUso({ escritorio }: { escritorio: EstadoEscritorio }) {
   const empresa = escritorio.estado === "ok" ? escritorio.escritorio.nome : "";
   const [creditos, setCreditos] = useState<Creditos | null | undefined>(undefined);
   const [usuarios, setUsuarios] = useState<{ ativos: number; limite: number | null } | null>(null);
+  // gaveta de compra de créditos (a mesma do Início); o pedido feito nela recarrega o uso
+  const [comprando, setComprando] = useState(false);
+  const recarregarCreditos = () => carregarCreditos().then(setCreditos).catch(() => setCreditos(null));
 
   useEffect(() => {
     carregarCreditos().then(setCreditos).catch(() => setCreditos(null));
@@ -69,8 +74,9 @@ export function PlanoUso({ escritorio }: { escritorio: EstadoEscritorio }) {
       <section className="bloco">
         <header>
           <h3>Uso em {mes}<Dica>os créditos são gastos ao enviar o arquivo de um serviço novo; voltam a zero no dia 1º</Dica></h3>
-          {creditos?.sou_dono && <button type="button" className="link" onClick={() => pedir("Quero comprar créditos extras de serviço")}>Comprar créditos extras</button>}
+          {creditos?.sou_dono && <button type="button" className="link" onClick={() => setComprando(true)}>Comprar mais créditos</button>}
         </header>
+        {comprando && creditos && <ComprarCreditos creditos={creditos} onFechar={() => setComprando(false)} onPedido={recarregarCreditos} />}
         {creditos === undefined ? <Esqueleto linhas={2} rotulo="Carregando o uso do mês…" /> : (
           <div className="pu-medidores">
             {creditos && <Medidor rotulo="Serviços no mês (total)" usado={creditos.total.usado} limite={creditos.total.limite} />}

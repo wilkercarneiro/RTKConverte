@@ -43,7 +43,20 @@ export interface PedidoGprol {
 
 export const MUDOU = "gprol:mudou";
 
+/** Onde fica o GPROL (a conexão vem do servidor; a configuração abre direto). */
+export const GPROL_APP = "https://app.gprol.com.br";
 
+/**
+ * Tela do GPROL que reconfigura a sincronização (funil, marcos → etapas, tipos →
+ * modalidades): a mesma da conexão. Só o admin de lá salva; volta para cá com
+ * `?gprol_config=ok`.
+ */
+export function urlConfigurarGprol(escritorioId: string, escritorioNome: string): string {
+  const u = new URL("/integracoes/vertces/configurar", GPROL_APP);
+  u.searchParams.set("escritorio_id", escritorioId);
+  u.searchParams.set("escritorio", escritorioNome);
+  return u.toString();
+}
 
 /** Chama uma ação da função `gprol`. */
 export const gprol = <T = Record<string, unknown>>(acao: string, corpo: Record<string, unknown> = {}) =>

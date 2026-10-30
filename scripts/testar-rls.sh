@@ -37,7 +37,7 @@ PSQL=(psql -X -q -h localhost -p "$PORTA" -U postgres -d postgres -v ON_ERROR_ST
 "${PSQL[@]}" -f tests/rls/stubs.sql
 for f in supabase/migrations/*.sql; do
   case "$(basename "$f")" in
-    0018_*|0019_*) continue ;;  # PostGIS (parcelas do SIGEF) — fora deste teste
+    0018_*|0019_*|0030_*) continue ;;  # PostGIS (parcelas do SIGEF) — no fim, se houver PostGIS
     0020_escritorios.sql|0024_saas.sql|0025_equipe.sql|0026_auditoria.sql|0027_creditos.sql|0028_*|0029_*) continue ;;  # aplicadas abaixo, entre as etapas
     # usa servicos.tipo, que só nasce na 0005: em produção foi aplicada depois
     0002_confrontacao_no_vertice.sql) continue ;;
@@ -83,3 +83,19 @@ echo "migração aplicada: supabase/migrations/0028_integracao_gprol.sql"
 echo "migração aplicada: supabase/migrations/0029_suporte_equipe_clientes.sql"
 PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f tests/rls/suporte.sql 2>&1 >/dev/null   | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
 echo "testes do suporte, acessos, equipe e clientes: todos passaram"
+
+# Parcelas do SIGEF (0018/0019 → 0030): precisam do PostGIS. Sem a extensão no
+# Postgres local (ou no CI), o teste fica de fora e o script avisa.
+if [ "$("${PSQL[@]}" -tAc "select count(*) from pg_available_extensions where name = 'postgis'")" = "1" ]; then
+  "${PSQL[@]}" -f supabase/migrations/0018_parcelas_sigef.sql >/dev/null
+  "${PSQL[@]}" -f supabase/migrations/0019_sigef_online.sql >/dev/null
+  PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -v etapa=antes -f tests/rls/sigef.sql 2>&1 >/dev/null | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
+  "${PSQL[@]}" -f supabase/migrations/0030_sigef_parcelas_por_empresa.sql >/dev/null
+  echo "migração aplicada: supabase/migrations/0030_sigef_parcelas_por_empresa.sql"
+  PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -v etapa=depois -f tests/rls/sigef.sql 2>&1 >/dev/null | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
+  "${PSQL[@]}" -f supabase/migrations/0030_sigef_parcelas_por_empresa.sql >/dev/null
+  PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -v etapa=reaplicada -f tests/rls/sigef.sql 2>&1 >/dev/null | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
+  echo "testes das parcelas do SIGEF por empresa (quarentena, isolamento, só o servidor grava oficial): todos passaram"
+else
+  echo "PostGIS ausente: testes das parcelas do SIGEF (0018/0019/0030) pulados"
+fi

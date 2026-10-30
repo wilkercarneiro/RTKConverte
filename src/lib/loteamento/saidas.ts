@@ -10,7 +10,7 @@
 // (medidas de terreno) volta para UTM aqui, pelo fator de escala.
 import proj4mod from "proj4";
 import { GEO_DEF, fmtAzimute, utmDef } from "../../../supabase/functions/_shared/geo.ts";
-import { caixa, centroide, dist, dot, esquerda, sub, unit } from "./geom.ts";
+import { caixa, centroide, dist, dot, esquerda, pontoDoRotulo, sub, unit } from "./geom.ts";
 import type { Anel, Poligono, Pt } from "./geom.ts";
 import { fmt, viarioDe } from "./calculo.ts";
 import type { Lado, Lote, Perimetro, Quadra, Resultado } from "./calculo.ts";
@@ -326,7 +326,11 @@ export function gerarDxf(res: Resultado, pontos: PontoLocacao[], op: { textos: b
       if (ang > 90) ang -= 180; if (ang <= -90) ang += 180;
       texto([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], `${r.nome.toUpperCase()} (${fmt(r.largura, 2)} m)`, 2.2, "TEXTO_RUA", ang);
     }
-    for (const a of res.publicas) texto(centroide(a.pol.ext), `${a.nome} - ${fmt(a.area)} m2`, 2.5, camadaArea[a.tipo]);
+    // dentro da própria área (faixa em L: o centroide cai em cima dos lotes)
+    for (const a of res.publicas) {
+      const t = `${a.nome} - ${fmt(a.area)} m2`;
+      texto(pontoDoRotulo(a.pol, t.length * 0.6), t, 2.5, camadaArea[a.tipo]);
+    }
   }
   g(0, "ENDSEC"); g(0, "EOF");
   return o.join("\r\n") + "\r\n";

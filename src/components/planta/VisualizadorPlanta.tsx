@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { cenaParaPdf, lerCena, type Cena } from "../../../supabase/functions/_shared/planta_cena.ts";
 import { textoWinAnsi } from "../../../supabase/functions/_shared/texto.ts";
 import { supabase } from "../../lib/supabase";
+import { avisarHistoricoAtualizado, tituloPlantaEditada } from "../../lib/historico";
 import { EditorPlanta } from "./EditorPlanta";
 import { temRecurso } from "../../lib/recursos";
 
@@ -150,11 +151,14 @@ export function VisualizadorPlanta({ pedido, onFechar }: { pedido: PedidoPlanta;
           .order("versao", { ascending: false }).limit(1);
         versao = (data?.[0]?.versao as number | undefined) ?? 1;
       }
-      const titulo = `${pedido.titulo ?? "Planta"} · editada`;
+      // A versão já é coluna da linha: no título vai só o nome da planta e
+      // "editada", uma vez — reabrir do histórico e salvar de novo acumulava
+      // "· v6 · editada · v6 · editada".
+      const titulo = tituloPlantaEditada(pedido.titulo);
       const ins = await supabase.from("documentos_gerados").insert({ servico_id: pedido.servicoId, versao, tipo: "planta_pdf_editada", titulo, path });
       if (ins.error) throw ins.error;
       setSalvo(`Salva no histórico, na versão v${versao}.`);
-      window.dispatchEvent(new Event("rtk:historico-atualizado"));
+      avisarHistoricoAtualizado();
     } catch (e) {
       setErro(`Não foi possível salvar no histórico: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -176,7 +180,7 @@ export function VisualizadorPlanta({ pedido, onFechar }: { pedido: PedidoPlanta;
     <div className="vp" role="dialog" aria-label="Visualizar planta">
       <div className="vp-barra">
         <div className="vp-titulo">
-          <strong>{pedido.titulo ?? "Planta"}</strong>
+          <strong>{pedido.titulo ?? "Planta"}{pedido.versao != null ? ` · v${pedido.versao}` : ""}</strong>
           {editada && <span className="vp-chip">editada</span>}
           {cena?.nomeFolha && <span className="vp-folha">{cena.nomeFolha}</span>}
         </div>

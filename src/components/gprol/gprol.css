@@ -94,3 +94,48 @@
 /* a regra global de <button> não vale aqui */
 .gpc .gpc-principal:hover:not(:disabled) { color: var(--floresta); border-color: transparent; }
 .gpc .gpc-fechar:hover:not(:disabled) { color: #fff; border-color: transparent; }
+
+/* "Atrelar serviços" (AtrelarServicos.tsx): gaveta da página do cliente. */
+
+.eq-gaveta:has(.at-intro) { width: min(660px, 100vw); }
+.at-intro { margin: 0; font-size: 13.5px; line-height: 1.55; }
+
+.at-secao { display: grid; gap: 10px; }
+.at-secao h4 { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; font-size: 14px; }
+.at-vazio { margin: 0; padding: 12px 14px; border-radius: 12px; background: #F4F7F5; font-size: 13px; }
+.at-erro { background: var(--alerta-claro); color: var(--alerta-escuro); }
+
+.at-lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.at-linha {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; align-items: end;
+  padding: 12px 14px; border: 1px solid var(--borda); border-radius: 12px; background: var(--card, #fff);
+}
+.at-linha.at-feita { align-items: center; background: #FAFCFB; }
+.at-gprol { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.at-gprol b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.at-gprol .sub { flex-basis: 100%; font-size: 12.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.at-gprol .sub .chip { font-size: 11px; padding: 2px 8px; }
+.at-feita .at-gprol .sub:empty { display: none; }
+
+.at-daqui { display: grid; gap: 4px; min-width: 0; }
+.at-feita .at-daqui { display: flex; align-items: center; gap: 8px; }
+.at-rotulo { font-size: 12px; color: var(--texto-3); }
+.at-daqui select { width: 100%; height: 36px; }
+.at-nenhum { font-size: 12.5px; line-height: 1.45; }
+.at-seta { color: var(--primaria); font-weight: 700; }
+.at-nome { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+
+.at-acao { display: flex; align-items: center; gap: 10px; justify-content: flex-end; white-space: nowrap; }
+.at-acao button.principal { height: 36px; }
+.at-acao .link { font-size: 13px; }
+
+.at-rodape { margin: 0; font-size: 12.5px; }
+
+/* botão do cabeçalho do cliente */
+.cl-botao.gprol { color: var(--floresta); border-color: #BFE3CF; background: #F2FAF5; }
+.cl-botao.gprol:hover { background: #E4F4EA; border-color: var(--primaria); color: var(--primaria); }
+
+@media (max-width: 560px) {
+  .at-linha { grid-template-columns: 1fr; }
+  .at-acao { justify-content: flex-start; }
+}

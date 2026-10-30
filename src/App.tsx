@@ -26,7 +26,7 @@ import { carregarEscritorio } from "./lib/escritorio";
 import type { EstadoEscritorio } from "./lib/escritorio";
 import { definicaoDe } from "./lib/modalidades";
 import type { ChaveServico } from "./lib/modalidades";
-import { useRota } from "./lib/rota";
+import { useRota, voltarDoNovo } from "./lib/rota";
 import { carregarConta } from "./lib/conta";
 import type { Conta } from "./lib/conta";
 import { servicoLiberado } from "./lib/recursos";
@@ -39,7 +39,7 @@ import type { Creditos } from "./lib/creditos";
 import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
 import { camposDoPedido, sincronizarGprol, useSincronismoPeriodico } from "./lib/gprol";
 import type { DadosPedido } from "./lib/gprol";
-import { concluirConexaoGprol } from "./components/gprol/IntegracaoGprol";
+import { concluirConexaoGprol, voltaDaConfiguracaoGprol } from "./components/gprol/IntegracaoGprol";
 import { EscolherPedido } from "./components/gprol/EscolherPedido";
 import { ServicoGprol } from "./components/gprol/ServicoGprol";
 import { avisar } from "./components/ui";
@@ -114,6 +114,14 @@ export default function App() {
       .then((r) => { if (r) avisar("ok", `Conectado ao GPROL${r.empresa ? ` (${r.empresa})` : ""}.`); })
       .catch((e: Error) => avisar("erro", `Não foi possível concluir a conexão com o GPROL: ${e.message}`))
       .finally(() => substituir({ t: "config" }));
+  }, [escritorioOk]);
+  // volta da tela de configuração do GPROL (/app/?gprol_config=ok): aviso + sincronismo
+  useEffect(() => {
+    if (!escritorioOk || new URLSearchParams(location.search).get("gprol_config") !== "ok") return;
+    guardar("config.aba", "integracoes");
+    const msg = voltaDaConfiguracaoGprol();
+    if (msg) avisar("ok", msg);
+    substituir({ t: "config" });
   }, [escritorioOk]);
 
   // relido ao abrir um serviço novo e ao voltar ao início: o saldo muda a cada envio
@@ -308,7 +316,9 @@ export default function App() {
       if (def.entradaKml) {
         return (
           <AppShell {...casca}>
-            {comPedido(<CarNovo definicao={def} clienteId={rota.clienteId} pedidoId={rota.pedidoId} onVoltar={() => ir({ t: "inicio" })}
+            {/* aberto pela página do cliente (#/novo/car/<cliente>): voltar leva a ele */}
+            {comPedido(<CarNovo definicao={def} clienteId={rota.clienteId} pedidoId={rota.pedidoId}
+              onVoltar={() => ir(voltarDoNovo(rota).rota)} voltarPara={voltarDoNovo(rota).rotulo}
               onCriado={(servico) => {
                 void avisarConsumo(def.chave);
                 setAberto({ servico, vertices: [], trechos: [], preview: previewVazio(servico) });

@@ -64,16 +64,20 @@ export function CreditosResumo({ creditos, onAtualizar }: { creditos: Creditos; 
   // plano sem teto, sem extra e nada acabando: não há o que mostrar
   if (limite === null && extras === 0 && !acabou && !Object.values(creditos.servicos).some((x) => x.limite !== null)) return null;
   return (
-    <div className={`creditos-resumo${acabou ? " alerta" : ""}`}>
-      <span>
-        <b>Créditos do mês:</b>{" "}
-        {limite !== null ? `${usado} de ${limite} usados` : `${usado} usados`}
-        {extras > 0 && ` · ${extras} extra${extras === 1 ? "" : "s"}`}
-        {acabou && " · algum serviço chegou ao limite"}
-      </span>
-      <button type="button" className="link" onClick={() => setComprando(true)}>Comprar mais créditos</button>
+    <>
+      <div className={`creditos-resumo${acabou ? " alerta" : ""}`}>
+        <span>
+          <b>Créditos do mês:</b>{" "}
+          {limite !== null ? `${usado} de ${limite} usados` : `${usado} usados`}
+          {extras > 0 && ` · ${extras} extra${extras === 1 ? "" : "s"}`}
+          {acabou && " · algum serviço chegou ao limite"}
+        </span>
+        <button type="button" className="link" onClick={() => setComprando(true)}>Comprar mais créditos</button>
+      </div>
+      {/* fora da faixa: dentro dela a gaveta herdava a cor de alerta e a fonte menor
+          e ficava diferente da mesma gaveta aberta em Configurações → Plano e uso */}
       {comprando && <ComprarCreditos creditos={creditos} onFechar={() => setComprando(false)} onPedido={onAtualizar} />}
-    </div>
+    </>
   );
 }
 

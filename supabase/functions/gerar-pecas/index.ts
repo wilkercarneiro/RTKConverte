@@ -443,7 +443,21 @@ Deno.serve(async (req) => {
     const nomeBase = (servico.denominacao ?? "documento").replace(RE_NOME_ARQUIVO, "-").trim();
     const { data: vmax } = await supa.from("documentos_gerados").select("versao")
       .eq("servico_id", servico_id).order("versao", { ascending: false }).limit(1);
-    const versao = ((vmax?.[0]?.versao as number | undefined) ?? 0) + 1;
+    const vAtual = (vmax?.[0]?.versao as number | undefined) ?? 0;
+    // PRÉVIA (conferência de área): só o Memorial Tabular, do cálculo, pedido
+    // DEPOIS de gerar os documentos. Ele entra na versão deles (a última com
+    // memorial/planilha), com título legível, em vez de abrir uma versão só
+    // sua com o título cru da peça ("2 - Memorial Tabular"). Caminho e tipo
+    // são próprios — nunca sobrescreve a peça 2 de um jogo do SIGEF — e gerar
+    // de novo SUBSTITUI o da mesma versão (ver a limpeza antes do histórico).
+    const previa = doCalculo && filtro !== null;
+    let versao = vAtual + 1;
+    if (previa) {
+      const { data: vDocs } = await supa.from("documentos_gerados").select("versao")
+        .eq("servico_id", servico_id).in("tipo", ["memorial_docx", "planilha_ods"])
+        .order("versao", { ascending: false }).limit(1);
+      versao = (vDocs?.[0]?.versao as number | undefined) ?? Math.max(vAtual, 1);
+    }
     const historico: { servico_id: string; versao: number; tipo: string; titulo: string; path: string }[] = [];
     const arquivos: { titulo: string; url: string }[] = [];
 
@@ -460,17 +474,29 @@ Deno.serve(async (req) => {
         const zip = await JSZip.loadAsync(tplBytes[num]);
         zip.file("word/document.xml", xmls[num]!);
         const buf = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
-        const path = `${servico_id}/v${versao}/pecas${sufixo}/${arquivo}.docx`;
         const tituloCompleto = rotulo ? `${titulo} · ${rotulo}` : titulo;
         const chave = sufixo ? `_${sufixo.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "")}` : "";
-        historico.push({ servico_id, versao, tipo: `peca_${num}${chave}`, titulo: tituloCompleto, path });
+        // na prévia o título é o nome do documento, sem o número da peça
+        const nomePrevia = titulo.replace(/^\d+\s*-\s*/, "");
+        const path = previa
+          ? `${servico_id}/v${versao}/previa${sufixo}/${arquivo}.docx`
+          : `${servico_id}/v${versao}/pecas${sufixo}/${arquivo}.docx`;
+        historico.push(previa
+          ? {
+            servico_id, versao, path,
+            tipo: num === "2" && !chave ? "memorial_tabular" : `previa_peca_${num}${chave}`,
+            titulo: `${nomePrevia} (DOCX)${rotulo ? ` · ${rotulo}` : ""} · PRÉVIA`,
+          }
+          : { servico_id, versao, tipo: `peca_${num}${chave}`, titulo: tituloCompleto, path });
         const up = await supa.storage.from("gerados").upload(path, buf, {
           upsert: true, contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         });
         if (up.error) throw up.error;
-        const nomeDl = rotulo ? `${titulo} - ${nomeBase} - ${rotulo}.docx` : `${titulo} - ${nomeBase}.docx`;
+        const nomeDl = previa
+          ? `${nomePrevia} (prévia) - ${nomeBase}${rotulo ? ` - ${rotulo}` : ""}.docx`
+          : rotulo ? `${titulo} - ${nomeBase} - ${rotulo}.docx` : `${titulo} - ${nomeBase}.docx`;
         const s = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: nomeDl });
-        arquivos.push({ titulo: tituloCompleto, url: s.data?.signedUrl ?? "" });
+        arquivos.push({ titulo: historico[historico.length - 1].titulo, url: s.data?.signedUrl ?? "" });
       }
     };
 
@@ -506,6 +532,12 @@ Deno.serve(async (req) => {
     }
 
     await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
+    // A prévia substitui a da mesma versão (o arquivo já foi sobrescrito acima):
+    // sem isto, gerar o tabular duas vezes deixava duas linhas para um arquivo.
+    if (previa && historico.length) {
+      await supa.from("documentos_gerados").delete().eq("servico_id", servico_id).eq("versao", versao)
+        .in("tipo", historico.map((h) => h.tipo));
+    }
     await gravarHistoricoDocumentos(supa as unknown as ClienteHistorico, historico, autor);
 
     return json({

@@ -2,7 +2,8 @@
 // sincronismo e desconectar. A conexão começa aqui e é autorizada no GPROL
 // (o admin de lá entra com o login dele); a chave volta só para o servidor.
 import { useEffect, useState } from "react";
-import { esquecerConexaoGprol, gprol, MUDOU, sincronizarGprol } from "../../lib/gprol";
+import { carregarEscritorio } from "../../lib/escritorio";
+import { esquecerConexaoGprol, gprol, MUDOU, sincronizarGprol, urlConfigurarGprol } from "../../lib/gprol";
 import type { IntegracaoGprol as Integracao } from "../../lib/gprol";
 import { avisar, confirmar, Dica, EstadoErro, Esqueleto } from "../ui";
 
@@ -41,6 +42,19 @@ export function IntegracaoGprol() {
     try {
       const { url } = await gprol<{ url: string }>("conectar_iniciar");
       location.href = url;
+    } catch (e) {
+      avisar("erro", (e as Error).message);
+      setOcupado(null);
+    }
+  }
+
+  /** Abre no GPROL a mesma tela da conexão, agora para mudar a configuração. */
+  async function configurar() {
+    setOcupado("configurar");
+    try {
+      const e = await carregarEscritorio();
+      if (e.estado !== "ok") throw new Error("Não foi possível identificar a empresa.");
+      location.href = urlConfigurarGprol(e.escritorio.id, e.escritorio.nome);
     } catch (e) {
       avisar("erro", (e as Error).message);
       setOcupado(null);
@@ -124,6 +138,17 @@ export function IntegracaoGprol() {
               </ul>
             </div>
           )}
+          {st.pode_configurar && (
+            <div className="gp-configurar">
+              <div>
+                <b>Configuração da sincronização</b>
+                <span className="sub">Funil, etapas que o card percorre e quais tipos de serviço do GPROL viram qual serviço aqui. Abre no GPROL a mesma tela da conexão; o administrador de lá salva.</span>
+              </div>
+              <button className="principal" onClick={configurar} disabled={!!ocupado}>
+                {ocupado === "configurar" ? "Abrindo o GPROL…" : "Configurar sincronização"}
+              </button>
+            </div>
+          )}
           <div className="rodape-bloco gp-acoes">
             <button onClick={() => sincronizarAgora(st.erros.length ? "tentar_de_novo" : "sincronizar")} disabled={!!ocupado}>
               {ocupado === "sincronizar" || ocupado === "tentar_de_novo" ? "Sincronizando…" : st.erros.length ? "Tentar de novo agora" : "Sincronizar agora"}
@@ -169,6 +194,23 @@ function ComoFunciona() {
       <li><b>Serviço feito direto aqui</b> aparece no GPROL ao gerar os primeiros documentos.</li>
     </ul>
   );
+}
+
+/**
+ * Volta da tela de configuração do GPROL (`/app/?gprol_config=ok[&gprol_enviados=N]#/config`):
+ * tira o parâmetro da barra, sincroniza já com o mapeamento novo e diz o que aconteceu.
+ */
+export function voltaDaConfiguracaoGprol(): string | null {
+  const qs = new URLSearchParams(location.search);
+  if (qs.get("gprol_config") !== "ok") return null;
+  const enviados = qs.get("gprol_enviados");
+  history.replaceState(null, "", `${location.pathname}#/config`);
+  sincronizarGprol(0, true);
+  if (enviados === null) return "Sincronização configurada no GPROL.";
+  const n = Number(enviados) || 0;
+  return n === 0
+    ? "Sincronização configurada no GPROL. Nenhum serviço aberto novo para trazer."
+    : `Sincronização configurada no GPROL. ${n} serviço(s) aberto(s) a caminho de “A executar”.`;
 }
 
 /** Volta da autorização no GPROL (`/app/?gprol_code=…&state=…`): conclui a conexão. */

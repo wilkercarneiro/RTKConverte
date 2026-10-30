@@ -19,6 +19,8 @@ import type { DocsDoServico } from "../lib/progresso";
 import type { Cliente, Servico } from "../lib/types";
 import { NovoServico } from "./NovoServico";
 import { PedidosGprol } from "./gprol/PedidosGprol";
+import { AtrelarServicos } from "./gprol/AtrelarServicos";
+import { MUDOU, useIntegracaoGprol } from "../lib/gprol";
 import type { PedidoGprol } from "../lib/gprol";
 import { Icone, ICONE } from "./Icone";
 import { Avatar, Barrinha, IC, Pontos } from "./clientes/comum";
@@ -86,9 +88,21 @@ function FichaCliente({ clienteId, inicial, onVoltar, onAbrirServico, onNovoServ
   const [ligado, setLigado] = useState(false);
   const [aba, setAba] = useState<Aba>("visao");
   const [filtroServ, setFiltroServ] = useState<FiltroServ>("todos");
+  const [atrelando, setAtrelando] = useState(false);
+  const [vezServ, setVezServ] = useState(0);
   const editar = temPermissao("clientes.editar");
   const criar = temPermissao("servicos.criar");
   const historico = useHistoricoCliente(clienteId);
+  const { integracao } = useIntegracaoGprol();
+  // "Atrelar serviços": só para o cliente que existe também no GPROL, com a integração ativa
+  const podeAtrelar = ligado && integracao?.status === "ativa";
+
+  // um serviço atrelado (aqui ou pelo sincronismo) muda os pedidos e as etapas
+  useEffect(() => {
+    const f = () => setVezServ((v) => v + 1);
+    addEventListener(MUDOU, f);
+    return () => removeEventListener(MUDOU, f);
+  }, []);
 
   useEffect(() => {
     let vivo = true;
@@ -110,7 +124,7 @@ function FichaCliente({ clienteId, inicial, onVoltar, onAbrirServico, onNovoServ
     supabase.from("vinculos_externos").select("externo_id").eq("entidade", "cliente").eq("local_id", clienteId).maybeSingle()
       .then(({ data, error }) => { if (vivo) setLigado(!error && !!data); }, () => {});
     return () => { vivo = false; };
-  }, [clienteId]);
+  }, [clienteId, vezServ]);
 
   async function gravar(c: Cliente) {
     const { id, created_at, ...campos } = c;
@@ -218,9 +232,20 @@ function FichaCliente({ clienteId, inicial, onVoltar, onAbrirServico, onNovoServ
           <button type="button" className="cl-botao" onClick={copiarQualificacao} title="Copia o texto da qualificação, como sai no memorial e no requerimento">
             <Icone d={IC.copiar} size={16} />Copiar qualificação
           </button>
+          {podeAtrelar && (
+            <button type="button" className="cl-botao gprol" onClick={() => setAtrelando(true)}
+              title="Ligar os serviços que já existem aqui aos pedidos e serviços deste cliente no GPROL">
+              <Icone d={IC.elo} size={16} traco={2} />Atrelar serviços
+            </button>
+          )}
           {criar && <MenuNovoServico onNovo={onNovoServico} />}
         </div>
       </header>
+      {atrelando && (
+        <AtrelarServicos clienteId={clienteId} nomeCliente={c.nome || "este cliente"}
+          onFechar={() => setAtrelando(false)} onMudou={() => setVezServ((v) => v + 1)}
+          onExecutar={criar ? onExecutarPedido : undefined} />
+      )}
 
       <div className="cl-kpis" data-grade>
         <div className="cl-kpi"><span>Serviços</span><b>{servicos.length}</b></div>

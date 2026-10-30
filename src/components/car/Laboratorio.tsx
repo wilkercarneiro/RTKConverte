@@ -6,7 +6,10 @@ import { lerKml } from "../../lib/car/kml.ts";
 import { projetoNovo } from "../../lib/car/motor.ts";
 import type { ProjetoCar } from "../../lib/car/motor.ts";
 import kml from "../../../tests/fixtures/car/PLANTA.kml?raw";
+import { definicaoDe } from "../../lib/modalidades";
+import { rotaParaHash, voltarDoNovo } from "../../lib/rota";
 import { Car } from "./Car";
+import { CarNovo } from "./CarNovo";
 
 const servico = {
   id: "lab-car", tipo: "geo", modalidade: "car", tem_glebas: false, status: "rascunho",
@@ -16,6 +19,15 @@ const servico = {
 const CHAVE = "vertice.lab.car";
 
 export function LaboratorioCar() {
+  // #/lab/car/novo[/<cliente>]: a entrada do KML como o App monta (#/novo/car/<cliente>), sem criar nada
+  if (location.hash.startsWith("#/lab/car/novo")) {
+    const clienteId = location.hash.split("/")[4] || undefined;
+    const v = voltarDoNovo({ clienteId });
+    return (
+      <CarNovo definicao={definicaoDe("car")} clienteId={clienteId} voltarPara={v.rotulo}
+        onVoltar={() => { location.hash = rotaParaHash(v.rota); }} onCriado={() => {}} />
+    );
+  }
   return (
     <Car servico={servico} onVoltar={() => { location.hash = "#/"; }}
       armazenamento={{

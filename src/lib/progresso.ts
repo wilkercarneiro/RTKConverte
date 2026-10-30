@@ -4,12 +4,16 @@
 // recentes) e para a lista de Serviços: as duas telas mostram os mesmos pontos
 // e a mesma frase "falta …", e não podem discordar sobre o que está pronto.
 import type { Servico } from "./types";
-import { vaiAoSigef } from "./modalidades";
+// com extensão: os testes (node --test) importam este módulo direto
+import { vaiAoSigef } from "./modalidades.ts";
 
 export interface DocsDoServico { docs: boolean; planta: boolean; pecas: boolean }
 
-// a planta 'do sistema' sai junto do memorial e da planilha — é a mesma etapa
-const TIPOS_ETAPA1 = new Set(["memorial_docx", "planilha_ods", "planta_pdf_sistema"]);
+// a planta 'do sistema' sai junto do memorial e da planilha — é a mesma etapa;
+// a A3 de cada gleba e o Memorial Tabular de prévia (conferência) também
+const TIPOS_ETAPA1 = new Set(["memorial_docx", "planilha_ods", "planta_pdf_sistema", "gleba_planta_pdf", "memorial_tabular"]);
+// a planta editada no visualizador é derivada de uma planta que já contou
+const TIPOS_SEM_ETAPA = new Set(["planta_pdf_editada"]);
 
 /** Agrupa a tabela documentos_gerados por serviço, marcando as três etapas. */
 export function indexarDocumentos(ds: { servico_id: string; tipo: string }[]): Record<string, DocsDoServico> {
@@ -19,6 +23,7 @@ export function indexarDocumentos(ds: { servico_id: string; tipo: string }[]): R
     const p = mapa[d.servico_id];
     if (TIPOS_ETAPA1.has(d.tipo)) p.docs = true;
     else if (d.tipo === "planta_pdf") p.planta = true;
+    else if (TIPOS_SEM_ETAPA.has(d.tipo)) continue;
     else p.pecas = true;
   }
   return mapa;

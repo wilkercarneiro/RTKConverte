@@ -60,6 +60,14 @@ export function hashParaRota(hash: string): Rota {
   }
 }
 
+/**
+ * Para onde o "← Voltar" de uma tela de novo serviço leva: aberta pela página
+ * do cliente (#/novo/<chave>/<cliente>), de volta a ele; senão, o Início.
+ */
+export function voltarDoNovo(r: { clienteId?: string }): { rota: Rota; rotulo: string } {
+  return r.clienteId ? { rota: { t: "cliente", id: r.clienteId }, rotulo: "o cliente" } : { rota: { t: "inicio" }, rotulo: "o Início" };
+}
+
 /** Rota atual + navegação. `trocar` empilha no histórico; `substituir`, não. */
 export function useRota(): { rota: Rota; ir: (r: Rota) => void; substituir: (r: Rota) => void } {
   const [rota, setRota] = useState<Rota>(() => hashParaRota(location.hash));

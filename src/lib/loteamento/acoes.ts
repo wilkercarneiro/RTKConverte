@@ -536,6 +536,15 @@ function emSequencia(pr: Projeto, res: Resultado, lotes: Lote[], f: (pr: Projeto
   return { ...atual, sel: lotes.length > 1 ? sel : atual.sel, msg: falhas && lotes.length > 1 ? `${atual.msg} (${falhas} lote(s) não deu para acertar)` : atual.msg };
 }
 
+/**
+ * O "area" com um alvo para cada lote (na ordem da lista), numa operação só —
+ * o lote acertado antes não é mexido pelos seguintes. A divisão em partes usa
+ * para igualar as áreas IMPRESSAS, que diferem das do desenho parte a parte.
+ */
+export function acertarAreas(pr: Projeto, res: Resultado, lotes: Lote[], alvos: number[]): Edicao | null {
+  return emSequencia(pr, res, lotes, (p2, q, l, feitos) => acertarMedida(p2, res, q, l, "area", alvos[lotes.indexOf(l)], feitos));
+}
+
 /** Seleção depois de uma edição: os lotes que ela indicou (ou os mesmos, na posição do desenho). */
 function selDe(ed: Edicao, lotes: Lote[]): Selecao {
   if (ed.sel) return { tipo: "lotes", chaves: ed.sel.indices.map((indice) => ({ quadra: ed.sel!.quadra, fileira: 0, indice })) };

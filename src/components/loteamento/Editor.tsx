@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { PointerEvent as RPointerEvent, ReactNode, WheelEvent as RWheelEvent } from "react";
 import proj4mod from "proj4";
 import { GEO_DEF, utmDef } from "../../../supabase/functions/_shared/geo.ts";
-import { caixa, centroide, dentroPol, dist, distSegmento, dot, esquerda, sub, unit } from "../../lib/loteamento/geom.ts";
+import { caixa, centroide, dentroPol, dist, distSegmento, dot, esquerda, pontoDoRotulo, sub, unit } from "../../lib/loteamento/geom.ts";
 import type { Anel, Poligono, Pt } from "../../lib/loteamento/geom.ts";
 import type { Lote, Quadra, Resultado } from "../../lib/loteamento/calculo.ts";
 import { fmt } from "../../lib/loteamento/calculo.ts";
@@ -593,6 +593,13 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
   const verMedidas = vista.medidas && pxLote >= 52;
   const dentroTela = (p: Pt) => p[0] > -40 && p[0] < W + 40 && p[1] > -40 && p[1] < H + 40;
 
+  // nome das áreas públicas: dentro da própria área (numa faixa em L o
+  // centroide cai fora, em cima dos lotes); a proporção é a do rótulo de 2 linhas
+  const pontosAreas = useMemo(() => new Map(res.publicas.map((a) => {
+    const largura = Math.max(a.nome.length, `${fmt(a.area)} m²`.length) * 0.62;
+    return [a, pontoDoRotulo(a.pol, largura / 2.4)] as const;
+  })), [res.publicas]);
+
   const textosLotes = useMemo(() => {
     if (!verNumero) return [];
     return res.lotes.map((l) => {
@@ -691,7 +698,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
           return <text key={q.nome} x={c[0]} y={c[1]} className="lot-q-nome" style={{ fontSize: Math.max(14, Math.min(46, 9 * vv.s)), opacity: verArea ? 0.18 : 0.55 }}>{q.nome}</text>;
         })}
         {res.publicas.map((a, i) => {
-          const c = tela(centroide(a.pol.ext));
+          const c = tela(pontosAreas.get(a) ?? centroide(a.pol.ext));
           if (!dentroTela(c) || Math.abs(c[0]) > 1e5 || a.area < 100) return null;
           return (
             <text key={i} x={c[0]} y={c[1]} className="lot-area-nome">

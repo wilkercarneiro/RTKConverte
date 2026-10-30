@@ -8,18 +8,20 @@ import { CONSELHOS } from "../lib/domains";
 import { useAvisos } from "../lib/ux";
 import { confirmar, Dica, EstadoErro, EstadoVazio, Esqueleto, Rotulo } from "./ui";
 import { temPermissao } from "../lib/permissoes";
+import { contadoresParaGravar, ultimosDe, ultimoUsado } from "../lib/contadores";
+import type { CampoContador, UltimosUsados } from "../lib/contadores";
 import type { Credenciado, RT } from "../lib/types";
 
 type NovoRT = Omit<RT, "id">;
-type NovoCredenciado = Omit<Credenciado, "id">;
+/**
+ * O formulário do credenciado fala em ÚLTIMO número usado; o banco guarda o
+ * PRÓXIMO a usar. A conversão fica em lib/contadores.ts.
+ */
+type FormCredenciado = { nome: string; prefixo_vertice: string; ultimos: UltimosUsados };
 
 const RT_VAZIO: NovoRT = {
   nome: "", formacao: "", conselho_sigla: "CFTA", conselho_numero: "",
   cpf: "", identidade: "", crea: null, trt: null,
-};
-
-const CREDENCIADO_VAZIO: NovoCredenciado = {
-  nome: "", prefixo_vertice: "", contador_m: 0, contador_p: 0, contador_v: 0,
 };
 
 // O banco recusa apagar um registro que já está em uso por algum serviço (FK).
@@ -189,7 +191,9 @@ function CadastroRTs() {
 
 function CadastroCredenciados() {
   const [creds, setCreds] = useState<Credenciado[]>([]);
-  const [form, setForm] = useState<NovoCredenciado | null>(null);
+  const [form, setForm] = useState<FormCredenciado | null>(null);
+  // o credenciado como estava ao abrir a edição: só o contador que mudar vai ao banco
+  const [original, setOriginal] = useState<Credenciado | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -206,28 +210,37 @@ function CadastroCredenciados() {
 
   useEffect(() => { recarregar(); }, []);
 
-  function campo<K extends keyof NovoCredenciado>(k: K, v: NovoCredenciado[K]) {
+  function campo(k: "nome" | "prefixo_vertice", v: string) {
     setForm((f) => (f ? { ...f, [k]: v } : f));
   }
 
   function abrirNovo() {
     setEditId(null);
-    setForm({ ...CREDENCIADO_VAZIO });
+    setOriginal(null);
+    // nenhum número usado ainda: o primeiro vértice sai M-0001
+    setForm({ nome: "", prefixo_vertice: "", ultimos: ultimosDe(null) });
     setErro(null);
   }
 
   function abrirEdicao(c: Credenciado) {
-    const { id, ...campos } = c;
-    setEditId(id);
-    setForm(campos);
+    setEditId(c.id);
+    setOriginal(c);
+    setForm({ nome: c.nome, prefixo_vertice: c.prefixo_vertice, ultimos: ultimosDe(c) });
     setErro(null);
+  }
+
+  function fechar() {
+    setForm(null);
+    setEditId(null);
+    setOriginal(null);
   }
 
   // Os contadores continuam a numeração do Anexo A do credenciado: o gerador
   // aloca a partir deles, então mexer aqui reescreve a sequência dos vértices.
-  function contador(k: "contador_m" | "contador_p" | "contador_v", v: string) {
+  // A tela mostra o ÚLTIMO número usado; o banco recebe último + 1.
+  function contador(k: CampoContador, v: string) {
     const n = parseInt(v, 10);
-    campo(k, Number.isFinite(n) && n >= 0 ? n : 0);
+    setForm((f) => (f ? { ...f, ultimos: { ...f.ultimos, [k]: Number.isFinite(n) && n >= 0 ? n : 0 } } : f));
   }
 
   async function salvar() {
@@ -236,14 +249,16 @@ function CadastroCredenciados() {
     if (!form.nome.trim()) { setErro("Informe o nome do credenciado."); return; }
     if (!/^[A-Z0-9]{2,8}$/.test(codigo)) { setErro("Código do credenciado: 2 a 8 letras ou números (ex.: DSBN)."); return; }
     setErro(null);
-    const dados = { ...form, nome: form.nome.trim(), prefixo_vertice: codigo };
+    const dados = {
+      nome: form.nome.trim(), prefixo_vertice: codigo,
+      ...contadoresParaGravar(editId ? original : null, form.ultimos),
+    };
     const { error } = editId
       ? await supabase.from("credenciados").update(dados).eq("id", editId)
       : await supabase.from("credenciados").insert(dados);
     if (error) { setErro(error.message); return; }
     avisar("ok", editId ? "Credenciado atualizado." : "Credenciado cadastrado — já disponível nos serviços.");
-    setForm(null);
-    setEditId(null);
+    fechar();
     await recarregar();
   }
 
@@ -258,14 +273,14 @@ function CadastroCredenciados() {
     if (error) { setErro(mensagemErro(error, "este credenciado")); return; }
     setErro(null);
     avisar("ok", `Credenciado "${c.nome}" excluído.`);
-    if (editId === c.id) { setForm(null); setEditId(null); }
+    if (editId === c.id) fechar();
     await recarregar();
   }
 
   return (
     <section className="bloco">
       <header>
-        <h3>Credenciados<Dica>o código prefixa todo vértice gerado (ex.: <code>DSBN-M-3605</code>)</Dica></h3>
+        <h3>Credenciados<Dica>o código prefixa todo vértice gerado (ex.: <code>DSBN-M-3605</code>); Último M/P/V é o último número já usado de cada tipo — a próxima geração continua do seguinte</Dica></h3>
         <span className="esticar" />
         {pode && !form && creds.length > 0 && <button onClick={abrirNovo}>+ Novo credenciado</button>}
       </header>
@@ -278,15 +293,15 @@ function CadastroCredenciados() {
             acao={pode && !form ? <button className="principal" onClick={abrirNovo}>Cadastrar credenciado</button> : undefined} />
         ) : (
           <div className="tabela-wrap"><table className="tabela-vertices">
-            <thead><tr><th>Nome</th><th>Código</th><th className="col-sec">Contador M</th><th className="col-sec">Contador P</th><th className="col-sec">Contador V</th>{pode && <th><span className="sr-only">Ações</span></th>}</tr></thead>
+            <thead><tr><th>Nome</th><th>Código</th><th className="col-sec">Último M</th><th className="col-sec">Último P</th><th className="col-sec">Último V</th>{pode && <th><span className="sr-only">Ações</span></th>}</tr></thead>
             <tbody>
               {creds.map((c) => (
                 <tr key={c.id}>
                   <td><b>{c.nome}</b></td>
                   <td className="mono">{c.prefixo_vertice}</td>
-                  <td className="mono col-sec">{c.contador_m}</td>
-                  <td className="mono col-sec">{c.contador_p}</td>
-                  <td className="mono col-sec">{c.contador_v}</td>
+                  <td className="mono col-sec">{ultimoUsado(c.contador_m)}</td>
+                  <td className="mono col-sec">{ultimoUsado(c.contador_p)}</td>
+                  <td className="mono col-sec">{ultimoUsado(c.contador_v)}</td>
                   {pode && (
                     <td className="acao">
                       <button className="fantasma" onClick={() => abrirEdicao(c)} aria-label={`Editar ${c.nome}`}>Editar</button>
@@ -302,8 +317,9 @@ function CadastroCredenciados() {
       {form && (
         <fieldset className="inserir-v cadastro-form">
           <legend>{editId ? "Editando credenciado" : "Novo credenciado"}<Dica>
-            Os contadores continuam a numeração do Anexo A: informe o último número já usado por este
-            credenciado. Cada geração incrementa automaticamente — só mexa aqui para acertar a sequência.
+            A numeração do Anexo A continua daqui: informe o último número já usado por este credenciado
+            em cada tipo (0 se ainda não usou nenhum — o primeiro vértice sai M-0001). Cada geração
+            continua a sequência sozinha; só mexa aqui para acertá-la.
           </Dica></legend>
           <div className="grade">
             <label>Nome do credenciado *
@@ -314,22 +330,22 @@ function CadastroCredenciados() {
                 onChange={(e) => campo("prefixo_vertice", e.target.value.toUpperCase())}
                 placeholder="ex.: DSBN" />
             </label>
-            <label>Contador M
-              <input className="mono" type="number" min={0} value={form.contador_m}
+            <label>Último M usado
+              <input className="mono" type="number" min={0} value={form.ultimos.contador_m}
                 onChange={(e) => contador("contador_m", e.target.value)} />
             </label>
-            <label>Contador P
-              <input className="mono" type="number" min={0} value={form.contador_p}
+            <label>Último P usado
+              <input className="mono" type="number" min={0} value={form.ultimos.contador_p}
                 onChange={(e) => contador("contador_p", e.target.value)} />
             </label>
-            <label>Contador V
-              <input className="mono" type="number" min={0} value={form.contador_v}
+            <label>Último V usado
+              <input className="mono" type="number" min={0} value={form.ultimos.contador_v}
                 onChange={(e) => contador("contador_v", e.target.value)} />
             </label>
           </div>
           <div className="rodape-acoes">
             <button className="principal" onClick={salvar}>{editId ? "Salvar alterações" : "Cadastrar"}</button>
-            <button className="fantasma" onClick={() => { setForm(null); setEditId(null); setErro(null); }}>Cancelar</button>
+            <button className="fantasma" onClick={() => { fechar(); setErro(null); }}>Cancelar</button>
           </div>
         </fieldset>
       )}

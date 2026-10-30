@@ -7,11 +7,12 @@ import assert from "node:assert/strict";
 import proj4lib from "proj4";
 import { sugerirDivisoes } from "../src/lib/divisao.ts";
 import { entradaDoServico, publicadorUtm } from "../src/lib/divisao_servico.ts";
-import { anelBruto, limparAvisos, perimetroDaDivisao, projetoDaDivisao } from "../src/lib/divisao_prancheta.ts";
+import { ajustarPartes, aneisDosLotes, anelBruto, limparAvisos, perimetroDaDivisao, projetoDaDivisao, resultadoDosLotes } from "../src/lib/divisao_prancheta.ts";
 import { calcular } from "../src/lib/loteamento/calculo.ts";
 import { alcasDoLote, moverDivisa } from "../src/lib/loteamento/edicao.ts";
 import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
 import { linhasBalanceadas } from "../src/lib/grade.ts";
+import { fmtBR } from "../supabase/functions/_shared/geo.ts";
 import { ANEL } from "./fixtures/salgada_velha.mjs";
 
 const proj4 = (f, t, c) => proj4lib(f, t, c);
@@ -54,6 +55,71 @@ for (const n of [3, 4]) {
     assert.ok(pior3 < 1, `motor: maior diferença ${pior3} m²`);
   });
 }
+
+// O painel e os documentos medem a parte nos pontos arredondados a 0,001"
+// (resultadoDosLotes), não no desenho: igualar só a área do desenho deixava o
+// painel mostrando partes até 7 m² diferentes com a mensagem "todas com X m²".
+/** A prancheta com a primeira divisa arrastada à mão (partes desiguais). */
+function bagunçada(fr, desl = 25) {
+  const ent = entradaDoServico(vertices, fr, false, publicadorUtm(24, proj4));
+  const per = perimetroDaDivisao(ent);
+  const r = sugerirDivisoes(ent)[0];
+  const calc = (p) => { try { return limparAvisos(calcular(p, per), true); } catch { return null; } };
+  const motor = () => projetoDaDivisao(ent, r.partes.map((p) => anelBruto(ent, p)), "TESTE");
+  let pr = motor();
+  const res = calc(pr);
+  const q = res.quadras[0];
+  const div = alcasDoLote(res.lotes[0], q).filter((a) => a.tipo !== "quina" && !a.naBorda);
+  pr = moverDivisa(pr, res, q, div[0].a, div[0].b, desl, false, 0).pr;
+  return { ent, calc, motor, pr };
+}
+/** As áreas como o painel mostra (e os documentos imprimem). */
+const noPainel = (ent, calc, pr, fr) => resultadoDosLotes(ent, aneisDosLotes(calc(pr)), fr);
+
+test("ajustar lotes · igualar só o desenho deixa as áreas impressas diferentes (o defeito)", () => {
+  const { ent, calc, pr } = bagunçada([1, 1]);
+  const res = calc(pr);
+  const ls = [...res.lotes].sort((a, b) => a.numero - b.numero);
+  const alvo = ls.reduce((s, l) => s + l.area, 0) / 2;
+  const s = executar(`area ${alvo.toFixed(2)}`, pr, res, { tipo: "lotes", chaves: ls.slice(0, -1).map(chaveDoLote) });
+  const desenho = calc(s.pr).lotes.map((l) => l.area);
+  assert.ok(Math.max(...desenho) - Math.min(...desenho) < 1, "no desenho, iguais");
+  const as = noPainel(ent, calc, s.pr).partes.map((p) => p.areaM2);
+  assert.ok(Math.max(...as) - Math.min(...as) > 0.5, `no painel, diferentes: ${as.join(" / ")}`);
+});
+
+for (const n of [2, 3, 4, 5]) {
+  test(`ajustar lotes · ${n} partes: as áreas do painel e dos documentos saem iguais, e a mensagem diz as reais`, () => {
+    const { ent, calc, motor, pr } = bagunçada(Array(n).fill(1));
+    const aj = ajustarPartes(pr, ent, calc, undefined, motor);
+    assert.ok(aj, "ajustou");
+    const rd = noPainel(ent, calc, aj.pr);
+    assert.ok(rd.ok, rd.motivo);
+    const as = rd.partes.map((p) => p.areaM2);
+    // o que a mensagem cita é o que o painel mostra
+    assert.deepEqual(aj.rd.partes.map((p) => fmtBR(p.areaM2, 2)), as.map((a) => fmtBR(a, 2)));
+    // documentos: ha com 4 casas — o mesmo número em todas as partes
+    const docs = as.map((a) => fmtBR(a / 10000, 4));
+    assert.equal(new Set(docs).size, 1, `documentos: ${docs.join(" / ")}`);
+    // painel: m² com 2 casas. O ponto arredondado a 0,001" anda em degraus de
+    // ~3 cm e a área da parte, em degraus de ~0,5 × divisa × 3 cm; o par das
+    // duas pontas da divisa chega a centésimos, não a zero (o motor sozinho
+    // fica entre 0,01 e 0,25 m² neste imóvel). Antes: até 7 m².
+    assert.ok(Math.max(...as) - Math.min(...as) < 0.2, `painel: ${as.map((a) => fmtBR(a, 2)).join(" / ")}`);
+    assert.ok(rd.erroAreaM2 < 0.1, `maior diferença p/ a cota ${rd.erroAreaM2}`);
+  });
+}
+
+test("ajustar lotes · na fração de cada uma (2/3 e 1/3), pelas áreas impressas", () => {
+  const fr = [2, 1];
+  const { ent, calc, motor, pr } = bagunçada(fr, 12);
+  const aj = ajustarPartes(pr, ent, calc, fr, motor);
+  assert.ok(aj);
+  const rd = noPainel(ent, calc, aj.pr, fr);
+  const [a, b] = rd.partes.map((p) => p.areaM2);
+  const total = a + b;
+  assert.ok(Math.abs(a - (2 / 3) * total) < 0.1 && Math.abs(b - total / 3) < 0.1, `${a} / ${b}`);
+});
 
 test("grade balanceada · nenhuma linha com um campo sozinho", () => {
   assert.deepEqual(linhasBalanceadas(7, 6), [4, 3]); // Dados do serviço: o UF não fica sozinho

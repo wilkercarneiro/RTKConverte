@@ -98,14 +98,25 @@ const RPC: Record<string, unknown> = {
   listar_acessos: ACESSOS, uso_da_equipe: USO, meus_chamados: CHAMADOS, abrir_chamado: "ch2",
 };
 
+// credenciados (Configurações › Responsáveis e credenciados): um em uso, com a
+// numeração andando, e um antigo que nunca gerou (contador 0 = nenhum usado)
+const CREDENCIADOS = [
+  { id: "c1", nome: "DANIEL NASCIMENTO", prefixo_vertice: "DSBN", contador_m: 3611, contador_p: 14300, contador_v: 758 },
+  { id: "c2", nome: "MARTA RIBEIRO", prefixo_vertice: "MRTR", contador_m: 0, contador_p: 0, contador_v: 0 },
+];
+/** O que a tela mandou gravar (insert/update), para conferir no laboratório. */
+const ESCRITAS: { tabela: string; op: string; dados: unknown }[] = [];
+(window as unknown as { __labEscritas: typeof ESCRITAS }).__labEscritas = ESCRITAS;
+
 function consulta(t: string) {
-  let linhas: unknown[] = t === "servicos" ? SERVICOS : t === "tutoriais" ? TUTORIAIS
+  let linhas: unknown[] = t === "servicos" ? SERVICOS : t === "tutoriais" ? TUTORIAIS : t === "credenciados" ? CREDENCIADOS
     : t === "integracoes" ? (CONECTADO ? [{ status: "ativa", empresa_externa_nome: "D'Prol Topografia", conectado_em: dia(20), ultima_sincronizacao: min(3), ultimo_erro: null, resumo: null }] : [])
       : t === "config_empresa" ? [{ key: "razao_social", value: "D'PROL TOPOGRAFIA LTDA" }, { key: "cnpj", value: "12.345.678/0001-90" }, { key: "cidade_empresa", value: "Irecê" }, { key: "uf_empresa", value: "BA" }]
         : [];
   let contar = false;
   const c: Record<string, unknown> = {};
   for (const m of ["order", "in", "limit", "insert", "update", "upsert", "delete", "neq", "gte"]) c[m] = () => c;
+  for (const m of ["insert", "update", "upsert"]) c[m] = (dados: unknown) => { ESCRITAS.push({ tabela: t, op: m, dados }); return c; };
   c.select = (_s?: string, o?: { count?: string; head?: boolean }) => { if (o?.head) contar = true; return c; };
   c.eq = (col: string, v: string) => { if (t === "chamado_mensagens" && col === "chamado_id") linhas = MENSAGENS[v] ?? []; return c; };
   c.single = c.maybeSingle = () => Promise.resolve({ data: linhas[0] ?? null, error: null });
@@ -128,8 +139,22 @@ function instalar() {
   });
   const auth = supabase.auth as unknown as Record<string, unknown>;
   auth.getUser = () => Promise.resolve({ data: { user: { id: "u1", email: "daniel@dprol.com.br" } }, error: null });
-  auth.getSession = () => Promise.resolve({ data: { session: null }, error: null });
+  // conectado: a função gprol responde daqui (Integrações mostra o estado e "Configurar sincronização")
+  auth.getSession = () => Promise.resolve({ data: { session: CONECTADO ? { access_token: "lab" } : null }, error: null });
   auth.signOut = () => Promise.resolve({ error: null });
+  RPC.meu_escritorio = [{ id: "e1", nome: "D'Prol", papel: "dono", modelos_compartilhados: true, status: "ativo" }];
+  const fetchReal = window.fetch.bind(window);
+  window.fetch = async (entrada: RequestInfo | URL, init?: RequestInit) => {
+    const u = String(entrada instanceof Request ? entrada.url : entrada);
+    if (!u.includes("/functions/v1/gprol")) return fetchReal(entrada, init);
+    const { acao } = JSON.parse(String(init?.body ?? "{}")) as { acao?: string };
+    const corpo = acao === "status"
+      ? { liberado: true, pode_configurar: true, pendentes: 0, pedidos_pendentes: 2, erros: [],
+          integracao: { status: "ativa", empresa_externa_nome: "D'Prol Topografia", conectado_em: dia(20), ultima_sincronizacao: min(3), ultimo_erro: null,
+            resumo: { clientes_ligados: 214, clientes_criados: 9, pedidos: 12 } } }
+      : { ok: true, enviados: 0, recebidos: 0 };
+    return new Response(JSON.stringify(corpo), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
   definirRecursos({ "servico.completo": true, "servico.conferencia": true, "servico.loteamento": true, "servico.car": true, "empresa.equipe": true,
     "integracao.gprol": true, "planta.editor": true, "sigef.mapa": true, "loteamento.maquete3d": false, "sigef.sobreposicao": false });
   definirPermissoes({ dono: true, lista: [] });

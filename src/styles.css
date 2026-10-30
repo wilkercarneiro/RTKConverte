@@ -1219,6 +1219,13 @@ button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #f
 .gp-integracao .gp-resumo { margin: 0 0 12px; }
 .gp-integracao .gp-erros ul { margin: 6px 0 12px; padding-left: 18px; font-size: 13px; display: grid; gap: 4px; }
 .gp-integracao .gp-acoes { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.gp-integracao .gp-configurar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  margin: 0 0 14px; padding: 14px 16px; border-radius: 14px; background: var(--primaria-clara, #EAF5EF);
+}
+.gp-integracao .gp-configurar > div { display: grid; gap: 3px; min-width: 0; flex: 1 1 320px; }
+.gp-integracao .gp-configurar b { font-size: 14px; }
+.gp-integracao .gp-configurar .sub { font-size: 12.5px; line-height: 1.45; }
 .gp-como { margin: 14px 0 6px; padding-left: 18px; display: grid; gap: 6px; font-size: 13.5px; color: var(--texto-2); }
 .gp-escolher { max-width: 760px; }
 @media (max-width: 860px) {

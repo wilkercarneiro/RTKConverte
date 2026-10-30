@@ -23,12 +23,14 @@ async function textoDoArquivo(f: File): Promise<string> {
   return kml.async("string");
 }
 
-export function CarNovo({ definicao, clienteId, pedidoId, onCriado, onVoltar }: {
+export function CarNovo({ definicao, clienteId, pedidoId, onCriado, onVoltar, voltarPara = "o Início" }: {
   definicao: DefinicaoServico;
   clienteId?: string;
   pedidoId?: string;
   onCriado: (s: Servico) => void;
   onVoltar?: () => void;
+  /** para onde o "← Voltar" leva (aberto pela página do cliente, "o cliente") */
+  voltarPara?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [arrastando, setArrastando] = useState(false);
@@ -93,7 +95,7 @@ export function CarNovo({ definicao, clienteId, pedidoId, onCriado, onVoltar }: 
         { rotulo: "Shapefiles", estado: "futura" },
       ]} />
       <div className="upload-card">
-        {onVoltar && <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para o Início</button>}
+        {onVoltar && <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
         <div>
           <h2>{definicao.titulo}<Dica>{definicao.resumo}</Dica></h2>
         </div>

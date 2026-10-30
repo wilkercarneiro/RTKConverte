@@ -34,6 +34,8 @@ import type { PontoMapa } from "./MapaInterativo";
 import { aneisLonLat, lonLatDoVertice } from "../lib/sigef";
 import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
 import { HistoricoDocs } from "./HistoricoDocs";
+import { avisarHistoricoAtualizado, folhaDoTitulo, nomeDaGlebaNoTitulo, ultimaGeracao } from "../lib/historico";
+import type { DocHistorico } from "../lib/historico";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { temRecurso } from "../lib/recursos";
 import { temPermissao } from "../lib/permissoes";
@@ -61,13 +63,17 @@ interface Gerado {
   folha?: string;
   avisos?: string[];
   /** planta A3 de cada gleba/parte (serviço com glebas); memorial e tabular por gleba saem nas peças técnicas */
-  glebas?: { nome: string; planta_pdf: string | null; areaHa: number }[];
-  resumo: { areaHa: number; perimetroM: number; qtdM: number; qtdP: number; qtdV: number; verticeInicial: string };
+  glebas?: { nome: string; planta_pdf: string | null; areaHa: number | null }[];
+  /** Só na geração desta sessão: reaberto do histórico, o servidor não guardou o resumo. */
+  resumo?: { areaHa: number; perimetroM: number; qtdM: number; qtdP: number; qtdV: number; verticeInicial: string };
+  /** versão do histórico de onde a tela reabriu os documentos */
+  versao?: number;
 }
 
 interface PecasGeradas {
   arquivos: { titulo: string; url: string }[];
-  resumo: {
+  /** Só na geração desta sessão (ver Gerado.resumo). */
+  resumo?: {
     areaHa: string; perimetro: string; trt: string; vertices: number; cartas: number; via: string | null;
     /** Serviço de glebas: uma linha por gleba, com a área e o perímetro do memorial dela. */
     glebas?: { nome: string; areaHa: string; perimetro: string; vertices: number }[];
@@ -236,17 +242,21 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
 
   // O que sobrou da última geração. Só a LISTA, não os arquivos: saber que a
   // imagem existe já permite gerar de novo sem pedir nada ao operador.
+  async function lerEntrada(): Promise<typeof salvo> {
+    const { data } = await supabase.storage.from("gerados").list(`${inicial.servico.id}/entrada`);
+    const achados: typeof salvo = { satelitesGlebas: {} };
+    for (const f of data ?? []) {
+      const mg = /^satelite-gleba-(\d+)\.(png|jpg)$/.exec(f.name);
+      if (f.name === "satelite.png") achados.satelite = { nome: f.name, tipo: "png" };
+      else if (f.name === "satelite.jpg") achados.satelite = { nome: f.name, tipo: "jpg" };
+      else if (mg) achados.satelitesGlebas![Number(mg[1])] = { nome: f.name, tipo: mg[2] as "png" | "jpg" };
+      else if (f.name === "sigef.pdf") achados.sigef = f.name;
+      else if (f.name === "mapa.json") achados.mapa = true;
+    }
+    return achados;
+  }
   useEffect(() => {
-    supabase.storage.from("gerados").list(`${inicial.servico.id}/entrada`).then(({ data }) => {
-      const achados: typeof salvo = { satelitesGlebas: {} };
-      for (const f of data ?? []) {
-        const mg = /^satelite-gleba-(\d+)\.(png|jpg)$/.exec(f.name);
-        if (f.name === "satelite.png") achados.satelite = { nome: f.name, tipo: "png" };
-        else if (f.name === "satelite.jpg") achados.satelite = { nome: f.name, tipo: "jpg" };
-        else if (mg) achados.satelitesGlebas![Number(mg[1])] = { nome: f.name, tipo: mg[2] as "png" | "jpg" };
-        else if (f.name === "sigef.pdf") achados.sigef = f.name;
-        else if (f.name === "mapa.json") achados.mapa = true;
-      }
+    lerEntrada().then((achados) => {
       setSalvo(achados);
       if (achados.mapa) carregarMapaSat();
       // O que falta, o servidor busca sozinho pelas coordenadas (Mapbox): a
@@ -257,6 +267,84 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         buscarSatelite({ faltantes: true });
       }
     });
+  }, [inicial.servico.id]);
+
+  /**
+   * Depois de gerar: a geração busca no servidor a imagem que faltava (a do
+   * imóvel e a de cada gleba) e a guarda em `entrada/`. Relê a lista para a
+   * tela parar de dizer "ainda sem imagem" — e avisa o histórico, que ganhou
+   * uma versão. Só leitura: não dispara busca nenhuma.
+   */
+  function depoisDeGerar(opcoes: { entrada?: boolean } = {}) {
+    avisarHistoricoAtualizado();
+    if (opcoes.entrada === false) return;
+    void lerEntrada().then((achados) => setSalvo((s) => ({
+      ...achados,
+      // o PDF do SIGEF desta sessão vale mesmo que a cópia no Storage tenha falhado
+      sigef: achados.sigef ?? s.sigef,
+      mapa: achados.mapa || s.mapa,
+    })));
+  }
+
+  // Reabrir um serviço que já tem documentos mostra os da última geração: o
+  // bloco "Documentos gerados", a planta do SIGEF e as peças vinham só da
+  // resposta da função, e sumiam ao fechar a tela (ficava só o histórico).
+  // As URLs são assinadas aqui, como as da função; o que esta sessão gerar
+  // depois tem precedência (`?? restaurado`).
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      const { data } = await supabase.from("documentos_gerados").select().eq("servico_id", inicial.servico.id)
+        .order("versao", { ascending: false });
+      const docs = (data as DocHistorico[] | null) ?? [];
+      if (!vivo || docs.length === 0) return;
+      const ult = ultimaGeracao(docs);
+      const nomeBase = (inicial.servico.denominacao || "documento").replace(/[\\/:*?"<>|]/g, "-").trim();
+      const assinar = async (d: DocHistorico | null, nome: string): Promise<string | null> => {
+        if (!d) return null;
+        const ext = d.path.split(".").pop();
+        const { data: s } = await supabase.storage.from("gerados")
+          .createSignedUrl(d.path, 3600, { download: `${nome.replace(/[\\/:*?"<>|]/g, "-")}.${ext}` });
+        return s?.signedUrl ?? null;
+      };
+
+      if (ult.documentos) {
+        const dd = ult.documentos;
+        const [memorial, planilha, planta, glebasUrls] = await Promise.all([
+          assinar(dd.memorial, `Memorial - ${nomeBase}`),
+          assinar(dd.planilha, `Planilha SIGEF - ${nomeBase}`),
+          assinar(dd.planta, `Planta - ${nomeBase}`),
+          Promise.all(dd.glebas.map((g) => assinar(g, `Planta A3 - ${nomeBase} - ${nomeDaGlebaNoTitulo(g.titulo)}`))),
+        ]);
+        if (vivo && memorial && planilha) {
+          const restaurado: Gerado = {
+            memorial_docx: memorial, planilha_ods: planilha, planta_pdf: planta,
+            folha: dd.planta ? folhaDoTitulo(dd.planta.titulo) ?? undefined : undefined,
+            glebas: dd.glebas.map((g, i) => ({ nome: nomeDaGlebaNoTitulo(g.titulo), planta_pdf: glebasUrls[i], areaHa: null })),
+            versao: dd.versao,
+          };
+          setGerado((atual) => atual ?? restaurado);
+        }
+      }
+      if (ult.plantaSigef) {
+        const url = await assinar(ult.plantaSigef, `Planta - ${nomeBase}`);
+        if (vivo && url) setPlantaUrl((atual) => atual ?? url);
+      }
+      if (ult.pecas) {
+        const itens = ult.pecas.itens;
+        const urls = await Promise.all(itens.map((d) => assinar(d, `${d.titulo} - ${nomeBase}`)));
+        if (vivo) {
+          const arquivos = itens.map((d, i) => ({ titulo: d.titulo, url: urls[i] ?? "" })).filter((a) => a.url);
+          if (arquivos.length) setPecas((atual) => atual ?? { arquivos });
+        }
+      }
+      if (ult.tabular) {
+        const t = ult.tabular;
+        const url = await assinar(t, `Memorial Tabular - ${nomeBase}`);
+        if (vivo && url) setTabular((atual) => atual ?? [{ titulo: t.titulo, url }]);
+      }
+    })();
+    return () => { vivo = false; };
   }, [inicial.servico.id]);
 
   // Fundo de satélite do mapa de vértices: a imagem limpa (entrada/mapa.jpg)
@@ -710,14 +798,24 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     setVertices(r.vertices);
     setGlebas(r.glebas);
     setServico((s) => ({ ...s, tem_glebas: true, divisao: r.divisao ?? {} }));
-    avisar("ok", `Divisão salva em ${r.glebas.length} partes. Confira os confrontantes do perímetro e gere os documentos de novo: a planta A1 sai com as divisões, e cada parte com a sua A3 e o seu memorial.`);
+    avisar("ok", `Divisão salva em ${r.glebas.length} partes. Confira os confrontantes do perímetro e gere os documentos de novo: a planta A1 sai com as divisões e cada parte com a sua planta A3. ${ondeSaiMemorialDaGleba("parte")}`);
   }
   /** Serviço de glebas: as partes da prancheta viram glebas, sem virar partilha. */
   function aplicarGlebasNaTela(r: { vertices: Vertice[]; glebas: Gleba[] }) {
     setVertices(r.vertices);
     setGlebas(r.glebas);
     setServico((s) => ({ ...s, tem_glebas: true }));
-    avisar("ok", `Imóvel dividido em ${r.glebas.length} glebas. Confira os confrontantes e gere os documentos: sai a planta A1 com todas as glebas e, de cada uma, a A3 e o memorial.`);
+    avisar("ok", `Imóvel dividido em ${r.glebas.length} glebas. Confira os confrontantes e gere os documentos: sai a planta A1 com todas as glebas e a planta A3 de cada uma. ${ondeSaiMemorialDaGleba("gleba")}`);
+  }
+  /**
+   * "Gerar documentos" (gerar-documentos) emite, por gleba, SÓ a planta A3: o
+   * memorial descritivo e o tabular de cada gleba são o jogo por gleba de
+   * gerar-pecas, lidos do PDF do SIGEF. A tela não promete o que não sai.
+   */
+  function ondeSaiMemorialDaGleba(unidade: "gleba" | "parte"): string {
+    return ehConferencia
+      ? `O memorial de cada ${unidade} não sai na conferência de área: é das peças técnicas do serviço completo, depois do SIGEF.`
+      : `O memorial de cada ${unidade} sai nas peças técnicas, depois do SIGEF${unidade === "parte" ? " (e no GEO individual dela)" : ""}.`;
   }
   /** Serviço completo que vira partilha: liga as glebas e abre a etapa Divisão. */
   function comecarDivisao() {
@@ -885,6 +983,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
           pdf_base64: await garantirSigef() ?? undefined,
         });
         setGerado(g);
+        depoisDeGerar();
         const { data: vs } = await supabase.from("vertices").select().eq("servico_id", servico.id).order("ordem");
         if (vs) setVertices(vs as Vertice[]);
         avisar("ok", "Sobreposição corrigida — planilha, memorial e planta regerados. Baixe a nova ODS e reenvie ao SIGEF.");
@@ -916,6 +1015,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         metragem: comMetragem,
       });
       setPlantaUrl(r.planta_pdf);
+      depoisDeGerar();
       for (const a of r.avisos ?? []) avisar("alerta", a);
       avisar("ok", `Planta ${folhaEfetiva} gerada.`);
       abrirPlantaSigef(r.planta_pdf);
@@ -944,6 +1044,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
       await salvar();
       const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64: pdf });
       setPecas(r);
+      depoisDeGerar({ entrada: false });
       const nGlebas = r.resumo?.glebas?.length ?? 0;
       avisar("ok", nGlebas
         ? `Peças geradas: um jogo do imóvel e um de cada uma das ${nGlebas} glebas.`
@@ -968,6 +1069,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         servico_id: servico.id, origem: "calculo", apenas: ["2"],
       });
       setTabular(r.arquivos);
+      depoisDeGerar({ entrada: false });
       avisar("ok", "Memorial Tabular gerado a partir do cálculo do sistema (prévia).");
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
@@ -998,6 +1100,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         pdf_base64: await garantirSigef() ?? undefined,
       });
       setGerado(r);
+      depoisDeGerar();
       for (const a of r.avisos ?? []) avisar("alerta", a);
       if (r.planta_pdf) abrirPlantaSistema(r.planta_pdf, `Planta ${r.folha ?? folhaEfetiva}`);
       avisar("ok", r.planta_pdf ? "Memorial, planilha e planta gerados com sucesso." : "Memorial e planilha gerados com sucesso.");
@@ -1889,9 +1992,11 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
 
                 {tabular && (
                   <div className="downloads" style={{ marginTop: 10 }}>
+                    {/* rótulo fixo: o título cru da peça ("2 - Memorial Tabular") é o
+                        do jogo de peças do SIGEF, não o desta prévia */}
                     {tabular.map((a) => (
                       <a key={a.url} className="botao-download" href={a.url} target="_blank" rel="noreferrer">
-                        <span className="ext">DOCX</span> {a.titulo}
+                        <span className="ext">DOCX</span> Memorial Tabular (prévia)
                       </a>
                     ))}
                   </div>
@@ -2084,6 +2189,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               <section className="bloco gerados" id="bloco-gerados">
                 <header>
                   <h3>Documentos gerados<Dica>regeração ilimitada — cada geração vira uma nova versão no histórico</Dica></h3>
+                  {gerado.versao != null && <span className="desc">última geração · v{gerado.versao}</span>}
                 </header>
                 <div className="downloads">
                   <a className="botao-download" href={gerado.memorial_docx} target="_blank" rel="noreferrer">
@@ -2107,7 +2213,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   <div className="downloads-glebas">
                     {gerado.glebas.map((g) => (
                       <div className="downloads-gleba" key={g.nome}>
-                        <b>{g.nome}</b> <span className="sub">{g.areaHa.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} ha</span>
+                        <b>{g.nome}</b>{g.areaHa != null && <> <span className="sub">{g.areaHa.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} ha</span></>}
                         <div className="downloads">
                           {g.planta_pdf && <a className="botao-download" href={g.planta_pdf} target="_blank" rel="noreferrer"><span className="ext">PDF</span> Planta A3</a>}
                           {g.planta_pdf && (
@@ -2118,11 +2224,19 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                         </div>
                       </div>
                     ))}
+                    {/* o que sai aqui por gleba é só a A3 (ver ondeSaiMemorialDaGleba) */}
+                    <p className="sub" style={{ margin: 0 }}>
+                      {ehConferencia
+                        ? "Por gleba sai aqui a planta A3. O memorial de cada gleba é das peças técnicas do serviço completo."
+                        : "Por gleba sai aqui a planta A3. O memorial de cada gleba sai nas peças técnicas, depois do SIGEF."}
+                    </p>
                   </div>
                 )}
-                <p className="sub" style={{ margin: 0 }}>
-                  Vértice inicial <span className="mono">{gerado.resumo.verticeInicial}</span> · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
-                </p>
+                {gerado.resumo && (
+                  <p className="sub" style={{ margin: 0 }}>
+                    Vértice inicial <span className="mono">{gerado.resumo.verticeInicial}</span> · M/P/V: {gerado.resumo.qtdM}/{gerado.resumo.qtdP}/{gerado.resumo.qtdV}
+                  </p>
+                )}
               </section>
             )}
 
@@ -2300,10 +2414,14 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 {erroPecas && <div className="erro">{erroPecas}</div>}
                 {pecas && (
                   <div style={{ marginTop: 14 }}>
-                    <p className="sub" style={{ margin: "0 0 8px" }}>
-                      Área SGL {pecas.resumo.areaHa} ha · perímetro {pecas.resumo.perimetro} m · TRT {pecas.resumo.trt} ·{" "}
-                      {pecas.resumo.vertices} vértices · {pecas.resumo.cartas} carta(s) de anuência{pecas.resumo.via ? ` · via ${pecas.resumo.via}` : ""}
-                    </p>
+                    {pecas.resumo ? (
+                      <p className="sub" style={{ margin: "0 0 8px" }}>
+                        Área SGL {pecas.resumo.areaHa} ha · perímetro {pecas.resumo.perimetro} m · TRT {pecas.resumo.trt} ·{" "}
+                        {pecas.resumo.vertices} vértices · {pecas.resumo.cartas} carta(s) de anuência{pecas.resumo.via ? ` · via ${pecas.resumo.via}` : ""}
+                      </p>
+                    ) : (
+                      <p className="sub" style={{ margin: "0 0 8px" }}>Peças da última geração — o histórico abaixo guarda todas as versões.</p>
+                    )}
                     <div className="downloads">
                       {pecas.arquivos.map((a) => (
                         <a key={a.titulo} className="botao-download" href={a.url} target="_blank" rel="noreferrer">

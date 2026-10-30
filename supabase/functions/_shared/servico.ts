@@ -85,9 +85,19 @@ export interface VerticeMontado extends VerticeCalc {
   metodo: string;
   codigo: string;
   /**
-   * O vértice como veio do banco. `ordem` (herdada de VerticeCalc) é a POSIÇÃO
-   * dentro do anel calculado — num serviço em partes, cada parte conta do zero.
-   * Quem precisa da linha da tabela `vertices` usa `conf.ordem`, nunca `ordem`.
+   * A linha da tabela `vertices` DESTE ponto (a `ordem` dela no banco). `ordem`
+   * (herdada de VerticeCalc) é a POSIÇÃO dentro do anel calculado — num serviço
+   * em partes, cada parte conta do zero. Quem grava no banco usa `ordemBanco`.
+   */
+  ordemBanco: number;
+  /**
+   * A CONFRONTAÇÃO que este vértice abre (descritivo, limite, via…), como veio
+   * do banco. Num TXT anti-horário o anel é invertido e cada M passa a carregar
+   * a confrontação do M seguinte (`inverterSentido`): aí `conf` é a linha de
+   * OUTRO vértice. Por isso `conf.ordem` nunca serve para achar a linha deste
+   * ponto — gravar o código por ela punha o código de cada M na linha do M
+   * vizinho, e a segunda geração saía com os M trocados (o inicial M-0006 virava
+   * M-0011). Para a linha, `ordemBanco`.
    */
   conf: VerticeServico;
   trecho: TrechoServico;         // trecho a que o vértice pertence
@@ -149,7 +159,8 @@ export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado
   const ordemInicial = ordemMaisAoNorte(calc);
 
   // ring no sentido horário, rotacionado a partir do vértice inicial
-  const juntos = calc.map((c, i) => ({ ...c, tipo: inp.vertices[i].tipo, metodo: inp.vertices[i].metodo, codigoManual: inp.vertices[i].codigoManual ?? null, conf: inp.vertices[i] }));
+  // `ordemBanco` fica preso ao PONTO (inverterSentido só troca `conf` entre os M)
+  const juntos = calc.map((c, i) => ({ ...c, tipo: inp.vertices[i].tipo, metodo: inp.vertices[i].metodo, codigoManual: inp.vertices[i].codigoManual ?? null, ordemBanco: inp.vertices[i].ordem, conf: inp.vertices[i] }));
   // O SIGEF exige o perímetro descrito no sentido horário. O TXT do levantamento
   // vem em qualquer sentido, então normalizamos aqui — antes de alocar códigos,
   // para que a numeração acompanhe a sequência que vai ser publicada.
@@ -275,6 +286,19 @@ export function montarPartes(
 }
 
 /**
+ * O código de cada LINHA da tabela `vertices` (chave: a `ordem` do banco), do
+ * jeito que a geração grava. É o caminho de volta da numeração: a geração
+ * seguinte lê esses códigos como `codigoManual` e tem de remontar exatamente
+ * o mesmo anel — mesmo vértice inicial, mesmos códigos, nenhum número novo.
+ * A chave é `ordemBanco`, nunca `conf.ordem` (ver VerticeMontado).
+ */
+export function codigosPorLinha(ring: VerticeMontado[]): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const v of ring) out.set(v.ordemBanco, v.codigo);
+  return out;
+}
+
+/**
  * Confere a invariante "confrontação só no vértice M" sobre as linhas cruas do
  * banco. Cita sempre o CÓDIGO: o usuário raciocina em "DSBN-M-3704", nunca em
  * "ordem 2". Ver ARQUITETURA-TRECHOS.md.
@@ -284,9 +308,16 @@ export function montarPartes(
  * dados legados e escrita direta no banco. Descritivo vazio NÃO é erro: o
  * memorial cai no apelido, e sem os dois segue sem cláusula de confrontação,
  * comportamento suportado desde sempre — por isso vira aviso.
+ *
+ * O aviso de documento cobra CPF ou CNPJ só de quem tem: pessoa ou empresa.
+ * Trecho de faixa de domínio (marcado `eh_via`), estrada (LA3) e rio (LN1) não
+ * têm dono com documento — avisar ali só ensinava a ignorar o aviso.
  */
 export function validarConfrontacoes(
-  vertices: { tipo: string; codigo?: string | null; descritivo?: string | null; apelido_txt?: string | null }[],
+  vertices: {
+    tipo: string; codigo?: string | null; descritivo?: string | null; apelido_txt?: string | null;
+    eh_via?: boolean | null; tipo_limite?: string | null;
+  }[],
 ): { erros: string[]; avisos: string[] } {
   const erros: string[] = [];
   const avisos: string[] = [];
@@ -300,8 +331,8 @@ export function validarConfrontacoes(
     }
     if (!desc && !apelido) {
       avisos.push(`${nome(v)} inicia uma confrontação sem confrontante nem apelido — o memorial seguirá sem a cláusula de confrontação nesse trecho.`);
-    } else if (desc && !/CPF/i.test(desc)) {
-      avisos.push(`Confrontante de ${nome(v)} ("${desc.split("\\")[0].trim()}") está sem CPF. Se for estrada, rio ou corredor, marque "faixa de domínio pública".`);
+    } else if (desc && !/CPF|CNPJ/i.test(desc) && !v.eh_via && !ehViaPorLimite(v.tipo_limite) && !ehRioPorLimite(v.tipo_limite)) {
+      avisos.push(`Confrontante de ${nome(v)} ("${desc.split("\\")[0].trim()}") está sem CPF/CNPJ. Se for estrada, rio ou corredor, marque "faixa de domínio pública".`);
     }
   }
   if (!vertices.some((v) => v.tipo === "M")) {

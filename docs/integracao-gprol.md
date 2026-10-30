@@ -491,7 +491,8 @@ Não há pg_cron. Se ninguém abrir o Vertces, os pedidos novos esperam até a p
 
 ### Operar
 - **Conectar:** Vertces → Configurações → Integrações → Conectar GPROL. O admin do GPROL autoriza.
-- **Mudar etapas e tipos depois:** no GPROL, em Integrações → Vertces.
+- **Mudar etapas e tipos depois (2026-10-30):** Vertces → Integrações → **Configurar sincronização** abre no GPROL a mesma tela da conexão (`/integracoes/vertces/configurar`), já com a configuração em uso. O admin de lá salva (`salvar_config`), pode mandar na hora os abertos dos tipos novos (`enviar_abertos`) e volta ao Vertces com `?gprol_config=ok`, que sincroniza e avisa. Não troca a chave nem refaz a conexão. Continua valendo também no GPROL, em Integrações → Vertces.
+- **Atrelar serviços que já existiam (2026-10-30):** na página do cliente ligado ao GPROL, **Atrelar serviços** abre uma gaveta com o que o GPROL tem do cliente: pedidos "A executar" (por modalidade ainda não feita) e serviços abertos lá que ainda não vieram. Cada um recebe um serviço daqui: pedido → `servicos.pedido_externo_id` (os gatilhos da 0028 recalculam o pedido e enfileiram a etapa); aberto → ação `vincular`. Serviço derivado (gleba, parte) herda do principal e não aparece. "Desatrelar" só para pedido vindo do GPROL; pedido sem serviço feito aqui oferece "Executar agora".
 - **Diagnóstico:**
   - Vertces → Integrações mostra o último erro e o que está esperando, com "Tentar de novo";
   - no banco: `integracao_saida` (Vertces) e `integration_outbox` (GPROL).

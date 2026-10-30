@@ -846,3 +846,17 @@ test("configuração ilógica é acertada na hora e o que sobra bloqueia a gera�
   assert.ok(conferirConfiguracao(base, 800).bloqueios.some((x) => /não cabem/.test(x)));
 });
 
+
+test("rótulo da área verde em L cai dentro da faixa, no braço onde cabe deitado (o centroide cai fora)", async () => {
+  const { centroide, dentroPol, pontoDoRotulo, distAnel } = await import("../src/lib/loteamento/geom.ts");
+  // faixa de 20 m: braço deitado de 200 m ao sul e braço em pé de 120 m a oeste
+  const L = { ext: [[0, 0], [200, 0], [200, 20], [20, 20], [20, 120], [0, 120]], furos: [] };
+  assert.ok(!dentroPol(centroide(L.ext), L), "o centroide do L fica fora da faixa (em cima dos lotes)");
+  const p = pontoDoRotulo(L, 3.6); // "ÁREA VERDE 01" / "4.000,00 m²": ~3,6 × mais largo que alto
+  assert.ok(dentroPol(p, L), `rótulo em ${p}`);
+  assert.ok(p[1] < 20 && p[0] > 40, `no braço deitado: ${p}`);
+  assert.ok(Math.abs(p[1] - 10) < 1.5, `no meio da largura da faixa: ${p}`);
+  // sem proporção (rótulo quadrado), ainda dentro e longe da borda
+  const q = pontoDoRotulo(L);
+  assert.ok(dentroPol(q, L) && distAnel(q, L.ext) > 8, `${q}`);
+});

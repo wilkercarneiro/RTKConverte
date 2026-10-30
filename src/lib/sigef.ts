@@ -1,6 +1,8 @@
 // Base local de parcelas certificadas (SIGEF): consulta de vizinhança e de
 // sobreposição, e gravação das parcelas que chegam por CSV. O trabalho
-// geométrico é do PostGIS (migration 0018); aqui só se monta o GeoJSON.
+// geométrico é do PostGIS (migrations 0018/0019/0030); aqui só se monta o GeoJSON.
+// Desde a 0030: parcela oficial (INCRA) só o servidor grava e todas as empresas
+// veem; o CSV do vizinho enviado pela tela fica com a empresa e só ela o vê.
 import proj4mod from "proj4";
 import { chamarFuncao, supabase } from "./supabase";
 import { GEO_DEF, gmsToDeg, parseGmsPlanilha, utmDef } from "../../supabase/functions/_shared/geo.ts";
@@ -142,13 +144,16 @@ export interface ParcelaParaGuardar {
   nome?: string | null;
   uf?: string | null;
   municipio?: string | null;
-  fonte?: string;
   geometria: GeoJSON.Polygon | GeoJSON.MultiPolygon;
 }
 
+/**
+ * Guarda o CSV do vizinho como parcela DA EMPRESA (fonte "csv"): entra no mapa e
+ * na sobreposição só de quem enviou. A base oficial é do servidor (consultar-sigef).
+ */
 export async function guardarParcelasSigef(parcelas: ParcelaParaGuardar[]): Promise<number> {
   if (!parcelas.length) return 0;
-  const { data, error } = await supabase.rpc("sigef_guardar", { parcelas });
+  const { data, error } = await supabase.rpc("sigef_guardar_csv", { parcelas });
   if (error) throw new Error(error.message);
   return Number(data ?? 0);
 }

@@ -12,6 +12,7 @@ import { contarPreenchidos, useAutosave, useAvisos } from "../lib/ux";
 import { ehRioPorLimite, ehViaPorLimite, numerarConfrontantes, viasDaPlanta } from "../lib/trechos";
 import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
+import { avisarHistoricoAtualizado } from "../lib/historico";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { Avisos, BarraEtapas, Dica, Passos, Rotulo, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 import { AutoriaServico } from "./Auditoria";
@@ -242,6 +243,7 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
       await salvar();
       const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64: b64 });
       setPecas(r);
+      avisarHistoricoAtualizado(); // a versão nova entra no histórico sem recarregar
       avisar("ok", "7 peças técnicas geradas.");
       irParaCampo("pc-gerar");
     } catch (e) {
@@ -270,6 +272,7 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
         folha: folhaEfetiva,
       });
       setPlantaUrl(r.planta_pdf);
+      avisarHistoricoAtualizado();
       for (const a of r.avisos ?? []) avisar("alerta", a);
       avisar("ok", `Planta ${folhaEfetiva} gerada.`);
       abrirPlantaGerada(r.planta_pdf);

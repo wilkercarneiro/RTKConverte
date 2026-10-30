@@ -19,7 +19,7 @@
 import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 import type { PDFFont, PDFImage, PDFPage, RGB } from "pdf-lib";
 import { textoWinAnsi } from "../../../supabase/functions/_shared/texto.ts";
-import { areaPol, caixa, centroide, dist, esquerda, sub, unit } from "./geom.ts";
+import { areaPol, caixa, centroide, dist, esquerda, pontoDoRotulo, sub, unit } from "./geom.ts";
 import { pontoInterno } from "./auto.ts";
 import type { Anel, Poligono, Pt } from "./geom.ts";
 import { fmt, viarioDe } from "./calculo.ts";
@@ -242,7 +242,8 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   }
   for (const a of res.publicas) {
     if (a.area < 100) continue;
-    const c2 = P(centroide(a.pol.ext));
+    // dentro da própria área (faixa em L: o centroide cai em cima dos lotes)
+    const c2 = P(pontoDoRotulo(a.pol, (Math.max(a.nome.length, 12) * 0.6) / 2.4));
     textoCentrado(page, negrito, T(a.nome), c2[0], c2[1] + 3, 7 * k, CINZA(0.1));
     textoCentrado(page, fonte, `${fmt(a.area)} m²`, c2[0], c2[1] - 6, 6 * k, CINZA(0.2));
   }

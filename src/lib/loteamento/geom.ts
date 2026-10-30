@@ -121,6 +121,52 @@ export function distAnel(p: Pt, anel: Anel): number {
   return m;
 }
 
+/**
+ * Onde escrever o nome de uma área dentro dela: o ponto mais longe das bordas
+ * (polo de inacessibilidade), medido com a largura dividida pela `proporcao`
+ * do rótulo (largura ÷ altura do texto, deitado no desenho). Numa faixa em L o
+ * centroide cai fora da faixa, em cima dos lotes; aqui o rótulo vai para o
+ * braço em que ele cabe deitado. Entre pontos quase tão fundos quanto o melhor
+ * (o braço inteiro de uma faixa), fica o do meio deles.
+ */
+export function pontoDoRotulo(pol: Poligono, proporcao = 1): Pt {
+  const k = Math.max(0.05, proporcao);
+  const esticar = (a: Anel): Anel => a.map(([x, y]) => [x / k, y] as Pt);
+  const aneis = [esticar(pol.ext), ...pol.furos.map(esticar)];
+  const p2: Poligono = { ext: aneis[0], furos: aneis.slice(1) };
+  const fundo = (p: Pt) => (dentroPol(p, p2) ? Math.min(...aneis.map((a) => distAnel(p, a))) : -1);
+  const { min, max } = caixa(p2.ext);
+  const lado = Math.max(max[0] - min[0], max[1] - min[1]);
+  const volta = (p: Pt): Pt => [p[0] * k, p[1]];
+  if (!(lado > 0)) return volta(centroide(p2.ext));
+  const passo = lado / 64;
+  const pontos: { p: Pt; d: number }[] = [];
+  for (let x = min[0] + passo / 2; x < max[0]; x += passo) {
+    for (let y = min[1] + passo / 2; y < max[1]; y += passo) {
+      const d = fundo([x, y]);
+      if (d > 0) pontos.push({ p: [x, y], d });
+    }
+  }
+  if (!pontos.length) return volta(centroide(p2.ext));
+  const dMax = Math.max(...pontos.map((q) => q.d));
+  const fundos = pontos.filter((q) => q.d >= dMax - Math.max(passo, dMax * 0.05));
+  const meio: Pt = [fundos.reduce((s, q) => s + q.p[0], 0) / fundos.length, fundos.reduce((s, q) => s + q.p[1], 0) / fundos.length];
+  let melhor = fundos.reduce((m, q) => (dist(q.p, meio) < dist(m.p, meio) ? q : m), fundos[0]);
+  // acabamento: anda para o fundo em passos cada vez menores (atravessa o braço, não corre por ele)
+  for (let h = passo / 2; h > passo / 32; h /= 2) {
+    let andou = true;
+    while (andou) {
+      andou = false;
+      for (const [dx, dy] of [[h, 0], [-h, 0], [0, h], [0, -h]]) {
+        const q: Pt = [melhor.p[0] + dx, melhor.p[1] + dy];
+        const d = fundo(q);
+        if (d > melhor.d + 1e-9) { melhor = { p: q, d }; andou = true; }
+      }
+    }
+  }
+  return volta(melhor.p);
+}
+
 /** Interseção de duas retas (p + t·r) e (q + u·s). null se paralelas. */
 export function intersecaoRetas(p: Pt, r: Pt, q: Pt, s: Pt): { t: number; u: number; pt: Pt } | null {
   const rxs = cross(r, s);

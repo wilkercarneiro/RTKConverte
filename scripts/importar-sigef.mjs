@@ -1,6 +1,7 @@
 // Importa parcelas certificadas do SIGEF para a base local (tabela
 // parcelas_sigef, migration 0018) — é o que alimenta o mapa interativo e a
-// verificação automática de sobreposição.
+// verificação automática de sobreposição. Entra como parcela OFICIAL, que todas
+// as empresas veem: por isso `sigef_guardar` só aceita a service_role (0030).
 //
 // Aceita o shapefile que o INCRA exporta por UF (o .zip inteiro, ou o .shp com
 // o .dbf ao lado) e também GeoJSON (FeatureCollection). Vale para

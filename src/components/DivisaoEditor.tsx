@@ -14,7 +14,7 @@ import proj4 from "proj4";
 import type { Gleba, ParametrosDivisao, Servico, Vertice } from "../lib/types";
 import { dividir, sugerirDivisoes } from "../lib/divisao";
 import { ROTULO_DIVISAO, aplicarDivisao, denominacaoDaParte, entradaDoServico, medidasDasPartes, pontosLocacaoDivisao, publicadorUtm, type InfoParte } from "../lib/divisao_servico";
-import { aneisDasGlebas, aneisDosLotes, anelBruto, comRegrasDaDivisao, limparAvisos, perimetroDaDivisao, projetoDaDivisao, projetoServe, resultadoDosLotes } from "../lib/divisao_prancheta";
+import { ajustarPartes, aneisDasGlebas, aneisDosLotes, anelBruto, comRegrasDaDivisao, limparAvisos, perimetroDaDivisao, projetoDaDivisao, projetoServe, resultadoDosLotes } from "../lib/divisao_prancheta";
 import { FORMATOS, arquivoLocacao, type FormatoLocacao } from "../lib/loteamento/saidas";
 import { calcular } from "../lib/loteamento/calculo";
 import type { Lote, Resultado } from "../lib/loteamento/calculo";
@@ -106,7 +106,13 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
 
   const aplicadaAntes = vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO) && glebas.length >= 2;
   const fuso = servico.fuso_utm ?? 24;
-  const [n, setN] = useState(() => (aplicadaAntes ? glebas.length : 2));
+  const rascunho = (servico.divisao as (ParametrosDivisao & { projeto?: Projeto }) | null | undefined)?.projeto;
+  // o contador começa nas partes que a prancheta vai abrir: as do rascunho
+  // guardado (era sempre 2 — com 3 partes na tela, o "+" pulava para 4)
+  const [n, setN] = useState(() => {
+    const doRascunho = rascunho?.quadras?.[0]?.lotes?.length ?? 0;
+    return doRascunho >= 2 ? Math.min(30, doRascunho) : aplicadaAntes ? glebas.length : 2;
+  });
   const [iguais, setIguais] = useState(servico.divisao?.iguais ?? !glebas.some((g) => g.fracao && Math.abs(g.fracao - 1 / glebas.length) > 1e-6));
   const [pct, setPct] = useState<number[]>(() => glebas.length >= 2 && glebas.every((g) => g.fracao) ? glebas.map((g) => Math.round(g.fracao! * 10000) / 100) : []);
   const [azManual, setAzManual] = useState<number | null>(servico.divisao?.azimute ?? null);
@@ -135,7 +141,7 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
     return { pr: projetoDaDivisao(e, r.partes.map((p) => anelBruto(e, p)), nomeProjeto) };
   };
   const hist = useHistorico(() => {
-    const salvo = (servico.divisao as (ParametrosDivisao & { projeto?: Projeto }) | null | undefined)?.projeto;
+    const salvo = rascunho;
     if (projetoServe(salvo, ent)) return comRegrasDaDivisao(salvo);
     if (aplicadaAntes) return projetoDaDivisao(ent, aneisDasGlebas(glebas), nomeProjeto);
     return gerarProjeto(n, iguais, pct, azManual, inverter).pr;
@@ -152,6 +158,8 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
   }, [perimetro, temEstrada]);
   const res = useMemo(() => (projeto ? calc(projeto) : null), [projeto, calc]);
   const nPartes = res?.lotes.length ?? n;
+  // parte dividida ou unida na prancheta (comando, Ctrl+Z): o contador acompanha
+  useEffect(() => { if (res) setN(res.lotes.length); }, [res?.lotes.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const fracoesRd = nPartes === fracoes.length ? fracoes : undefined;
   // as partes como o operador deixou, de volta ao formato da divisão (marcos, glebas, locação)
   const rd = useMemo(() => (res ? resultadoDosLotes(ent, aneisDosLotes(res), fracoesRd, azManual ?? sugestoes[0]?.azimute ?? 0) : null), [res, ent, fracoesRd, azManual, sugestoes]);
@@ -209,31 +217,34 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
     giroT.current = setTimeout(() => regerar(n, iguais, pct, az, inverter), 160);
   };
 
-  /** "Ajustar lotes": deixa todas as partes do mesmo tamanho (ou na fração de cada uma).
-   *  Primeiro tenta sem desmanchar o desenho — as divisas deslizam, como o "area"
-   *  da linha de comando; se a forma não deixar (sem frente para deslizar, ou
-   *  sobra diferença), divide de novo pelo motor na direção atual, que garante
-   *  as áreas iguais como os documentos imprimem. */
+  /** "Ajustar lotes": deixa todas as partes com a mesma área IMPRESSA (ou na
+   *  fração de cada uma) — a do painel e dos documentos, medida nos pontos
+   *  arredondados a 0,001", não a do desenho (igualar a do desenho deixava até
+   *  7 m² de diferença no painel). Primeiro sem desmanchar o desenho: as divisas
+   *  deslizam e as pontas acertam o arredondamento; se a forma não deixar,
+   *  divide de novo pelo motor na direção atual (ver ajustarPartes). A mensagem
+   *  diz as áreas que ficaram, não o alvo. */
   const ajustarLotes = () => {
     if (!projeto || !res) return;
-    const ls = [...res.lotes].sort((a, b) => a.numero - b.numero);
-    const total = ls.reduce((s, l) => s + l.area, 0);
-    const somaFr = fracoes.reduce((s, f) => s + f, 0);
-    const alvo = (k: number) => (fracoes.length === ls.length ? fracoes[k] / somaFr : 1 / ls.length) * total;
-    if (iguais && ls.length >= 2) {
-      const s = executar(`area ${alvo(0).toFixed(2)}`, projeto, res, { tipo: "lotes", chaves: ls.slice(0, -1).map(chaveDoLote) });
-      const r2 = s.pr ? calc(s.pr) : null;
-      const pior = r2 ? Math.max(...[...r2.lotes].sort((a, b) => a.numero - b.numero).map((l, k) => Math.abs(l.area - alvo(k)))) : Infinity;
-      if (s.pr && r2 && r2.lotes.length === ls.length && pior < 1) {
-        mudar(s.pr);
-        setSel(null);
-        mostrar(`Partes ajustadas: todas com ${fmtM2(alvo(0))} m², o desenho foi mantido (Ctrl+Z volta).`);
-        return;
-      }
-    }
-    if (regerar(ls.length, iguais, pct, azManual, inverter)) {
-      mostrar(`Partes ajustadas pelo motor na direção atual: todas ${iguais ? "do mesmo tamanho" : "na fração de cada uma"} (Ctrl+Z volta para o desenho anterior).`);
-    }
+    const nn = res.lotes.length;
+    let motivo = "";
+    const aj = ajustarPartes(projeto, ent, calc, fracoes.length === nn ? fracoes : undefined, () => {
+      const g = gerarProjeto(nn, iguais, pct, azManual, inverter);
+      motivo = g.motivo ?? "";
+      return g.pr;
+    });
+    if (!aj) { mostrar(`Não deu para ajustar as partes${motivo ? `: ${motivo}` : ""}. Arraste as divisas ou gire a direção.`, true); return; }
+    if (!mudar(aj.pr)) return;
+    setSel(null);
+    const as = aj.rd.partes.map((p) => p.areaM2);
+    const noPainel = [...new Set(as.map(fmtM2))];
+    const noDoc = [...new Set(as.map((a) => fmt(a / 10000)))];
+    const faixa = `de ${fmtM2(Math.min(...as))} a ${fmtM2(Math.max(...as))} m²`;
+    const como = aj.manteve ? "o desenho foi mantido" : "divididas de novo pelo motor na direção atual";
+    if (!iguais) mostrar(`Partes ajustadas na fração de cada uma (maior diferença p/ a cota: ${fmtM2(aj.rd.erroAreaM2)} m², como os documentos imprimem) — ${como} (Ctrl+Z volta).`);
+    else if (noPainel.length === 1) mostrar(`Partes ajustadas: todas com ${noPainel[0]} m² (${noDoc[0]} ha), como os documentos imprimem — ${como} (Ctrl+Z volta).`);
+    else if (noDoc.length === 1) mostrar(`Partes ajustadas: todas com ${noDoc[0]} ha nos documentos (${faixa}: o arredondamento dos pontos a 0,001" não deixa igualar o centésimo) — ${como} (Ctrl+Z volta).`);
+    else mostrar(`Partes ajustadas ${faixa}, como os documentos imprimem (maior diferença p/ a cota: ${fmtM2(aj.rd.erroAreaM2)} m²) — ${como} (Ctrl+Z volta).`, aj.rd.erroAreaM2 >= 1);
   };
 
   // o contorno mudou em "Ajustar pontos" e continua uma área só: a prancheta divide de novo
@@ -454,7 +465,7 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
                 <button type="button" className="principal" disabled={areasSalvas || areas.cruzadas.length > 0} onClick={salvarAreas}>
                   {areasSalvas ? "Glebas salvas ✓" : `Salvar ${areas.aneis.length} glebas`}
                 </button>
-                <Dica>Grava cada área fechada como uma gleba, com os pontos que já existem (nenhum marco novo).{areas.soltos.length > 0 ? ` Os ${areas.soltos.length} pontos sem ligação saem do serviço.` : ""} Em Documentos sai a planta A1 com todas as glebas e, de cada uma, a A3 e o memorial.</Dica>
+                <Dica>Grava cada área fechada como uma gleba, com os pontos que já existem (nenhum marco novo).{areas.soltos.length > 0 ? ` Os ${areas.soltos.length} pontos sem ligação saem do serviço.` : ""} Em Documentos sai a planta A1 com todas as glebas e a A3 de cada uma; o memorial de cada gleba sai nas peças técnicas, depois do SIGEF.</Dica>
               </div>
             ) : (
               <div className="dv-barra-grupo">
@@ -535,13 +546,13 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
             <div className="dv-painel-topo">
               <b>{ehGleba ? "Glebas" : "Partes"}</b>
               <div className="dv-contador dv-contador-p">
-                <button type="button" onClick={() => { const v = Math.max(2, nPartes - 1); setN(v); setPct([]); regerar(v, iguais, [], azManual, inverter); }} disabled={nPartes <= 2} aria-label={ehGleba ? "Menos uma gleba" : "Menos uma parte"}>−</button>
+                <button type="button" onClick={() => { const v = Math.max(2, nPartes - 1); setN(v); setPct([]); if (!regerar(v, iguais, [], azManual, inverter)) setN(nPartes); }} disabled={nPartes <= 2} aria-label={ehGleba ? "Menos uma gleba" : "Menos uma parte"}>−</button>
                 <input type="number" min={2} max={30} value={n} aria-label={ehGleba ? "Quantas glebas" : "Quantas partes"}
                   onChange={(e) => setN(Math.max(2, Math.min(30, Math.round(Number(e.target.value)) || 2)))}
-                  onBlur={() => { if (n !== nPartes) { setPct([]); regerar(n, iguais, [], azManual, inverter); } }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
-                <button type="button" onClick={() => { const v = Math.min(30, nPartes + 1); setN(v); setPct([]); regerar(v, iguais, [], azManual, inverter); }} disabled={nPartes >= 30} aria-label={ehGleba ? "Mais uma gleba" : "Mais uma parte"}>+</button>
+                  onBlur={() => { if (n !== nPartes) { setPct([]); if (!regerar(n, iguais, [], azManual, inverter)) setN(nPartes); } }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                <button type="button" onClick={() => { const v = Math.min(30, nPartes + 1); setN(v); setPct([]); if (!regerar(v, iguais, [], azManual, inverter)) setN(nPartes); }} disabled={nPartes >= 30} aria-label={ehGleba ? "Mais uma gleba" : "Mais uma parte"}>+</button>
               </div>
-              <button type="button" className="fantasma dv-ajustar" onClick={ajustarLotes} title="Deixa todas do mesmo tamanho (Ctrl+Z volta)">⚖ Ajustar lotes</button>
+              <button type="button" className="fantasma dv-ajustar" onClick={ajustarLotes} title="Deixa todas com a mesma área, como o painel mostra e os documentos imprimem (Ctrl+Z volta)">⚖ Ajustar lotes</button>
               <Dica lado="baixo">Clique numa {ehGleba ? "gleba" : "parte"} (no desenho ou aqui) para abrir os dados dela; as outras ficam encolhidas embaixo. "Ajustar lotes" deixa todas do mesmo tamanho mantendo o desenho — se a forma não deixar, divide de novo na direção do giro. Arraste quinas e divisas no desenho para ajustar à mão; roda do mouse aproxima.</Dica>
             </div>
 
@@ -651,9 +662,9 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
           <Dica>
             {igualAplicada
               ? (ehGleba
-                ? "As glebas estão salvas no serviço: em Documentos saem a planta A1 com todas as glebas e, de cada uma, a A3 e o memorial. O nome de cada gleba pode ser mudado aqui a qualquer momento."
-                : "As partes estão salvas no serviço: em Documentos saem a planta A1 com as divisões, a planta A3 e o memorial de cada parte, e o GEO de cada uma. Herdeiro, nome e denominação podem ser mudados aqui a qualquer momento.")
-              : <>Salva os {rd?.ok ? rd.novos.length : "—"} pontos novos como marcos <b>M</b> no perímetro (método PA1 até a implantação) e as {nPartes} {ehGleba ? "glebas" : "partes"} como glebas — só depois de salvas elas entram na planta A1, na A3 e no memorial de cada uma.
+                ? "As glebas estão salvas no serviço: em Documentos saem a planta A1 com todas as glebas e a A3 de cada uma; o memorial de cada gleba sai nas peças técnicas, depois do SIGEF. O nome de cada gleba pode ser mudado aqui a qualquer momento."
+                : "As partes estão salvas no serviço: em Documentos saem a planta A1 com as divisões e a planta A3 de cada parte, e o GEO de cada uma; o memorial de cada parte sai nas peças técnicas, depois do SIGEF. Herdeiro, nome e denominação podem ser mudados aqui a qualquer momento.")
+              : <>Salva os {rd?.ok ? rd.novos.length : "—"} pontos novos como marcos <b>M</b> no perímetro (método PA1 até a implantação) e as {nPartes} {ehGleba ? "glebas" : "partes"} como glebas — só depois de salvas elas entram na planta A1 e na A3 de cada uma (o memorial de cada uma sai nas peças técnicas, depois do SIGEF).
                 {!ehGleba && " Os ajustes da prancheta ficam guardados como rascunho mesmo sem salvar."}
                 {comCodigo && " Os códigos do imóvel serão realocados na próxima geração, por causa dos marcos novos."}
                 {aplicadaAntes && (ehGleba ? " As glebas salvas antes são substituídas." : " A divisão salva antes é substituída.")}</>}
