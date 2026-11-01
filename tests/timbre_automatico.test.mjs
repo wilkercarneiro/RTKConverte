@@ -17,6 +17,7 @@ import { execFileSync } from "node:child_process";
 import { deflateSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import JSZip from "jszip";
 import { extractText, getDocumentProxy } from "unpdf";
 import {
@@ -258,7 +259,7 @@ test("modelos neutros + timbre: abrem no LibreOffice com o rodapé da empresa", 
       writeFileSync(new URL(`${nome}.docx`, OUT), readFileSync(caminho));
       arquivos.push(caminho);
     }
-    execFileSync(SOFFICE, ["--headless", `-env:UserInstallation=file:///${dir.replace(/\\/g, "/")}/perfil`, "--convert-to", "pdf", "--outdir", dir, ...arquivos], { stdio: "ignore", timeout: 200_000 });
+    execFileSync(SOFFICE, ["--headless", `-env:UserInstallation=${pathToFileURL(join(dir, "perfil")).href}`, "--convert-to", "pdf", "--outdir", dir, ...arquivos], { stdio: "ignore", timeout: 200_000 });
     for (const caminho of arquivos) {
       const pdfPath = caminho.replace(/\.docx$/, ".pdf");
       assert.ok(existsSync(pdfPath), `${caminho}: o LibreOffice não conseguiu abrir`);
