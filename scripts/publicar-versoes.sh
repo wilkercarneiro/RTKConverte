@@ -27,7 +27,8 @@ LEITOR_MUDA=(executor index ordem)   # + versoes.ts, novo
 # o que está no ar tem de ser o da leitura universal (inalterado até 3477bb3)
 BASE_COMMIT="3477bb3"
 
-ssh_() { ssh -i "$CHAVE" -o ConnectTimeout=20 "$VPS" "$@"; }
+# -n: sem isso o ssh lê o stdin e engole o resto da lista dos laços `while read`
+ssh_() { ssh -n -i "$CHAVE" -o ConnectTimeout=20 "$VPS" "$@"; }
 passo() { echo; echo "==> $*"; }
 md5_repo() { git show "$1:$2" | tr -d '\r' | md5sum | cut -c1-32; }
 md5_local() { tr -d '\r' < "$1" | md5sum | cut -c1-32; }
@@ -74,7 +75,7 @@ fi
 passo "2. Troca dos arquivos"
 for f in "${FUNCOES[@]}"; do
   while IFS= read -r par; do
-    if $EXEC; then scp -q -i "$CHAVE" "${par#*:}" "$VPS:$FN/$f/${par%%:*}"; else echo "   [simulação] $f/${par%%:*}"; fi
+    if $EXEC; then scp -q -i "$CHAVE" "${par#*:}" "$VPS:$FN/$f/${par%%:*}" < /dev/null; else echo "   [simulação] $f/${par%%:*}"; fi
   done < <(pares "$f")
 done
 
