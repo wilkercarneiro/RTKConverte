@@ -28,6 +28,24 @@ propósito, até o dono revisar e aplicar).
 6. Entre no sistema com o usuário do escritório atual e confira se os serviços, clientes e a logo aparecem.
 7. Só então: publique modelos neutros em `templates/padrao/…` (mesmos nomes da raiz, sem timbre de ninguém) para os escritórios novos, e ligue `VITE_CADASTRO_ABERTO=true` na Vercel.
 
+## Documentos de cada empresa (modelos, logo e timbre)
+
+Toda geração usa o escritório **do serviço** (`escritorioDoServico`, `_shared/modelos.ts`), nunca o de quem está logado em outro lugar. Os modelos são procurados nesta ordem:
+
+| Empresa | Modelos | Logo (planta e timbre) | Timbre dos .docx |
+|---|---|---|---|
+| Legada (`modelos_compartilhados = true`, a D'Prol) | raiz de `templates/` | `templates/logo-empresa.png` | o que está no modelo da raiz (inalterado) |
+| Com modelo próprio | `templates/escritorios/{id}/…` | `templates/escritorios/{id}/logo-empresa.png` | o que está no modelo dela (inalterado) |
+| Sem modelo próprio | `templates/padrao/…` (neutros) | `templates/escritorios/{id}/logo-empresa.png` | **automático** (`_shared/timbre_automatico.ts`) |
+
+O timbre automático entra no memorial (`gerar-documentos`) e nas peças técnicas, de matrícula e de posse (`gerar-pecas`), sempre que o modelo veio de `padrao/`:
+
+- cabeçalho: a logo da empresa, centrada (42 pt de altura, até 170 pt de largura); sem logo, o nome da empresa;
+- marca d'água: a mesma logo, desbotada (12 cm no lado maior) atrás do texto;
+- rodapé: razão social (Configurações; reserva: nome do cadastro), CNPJ, telefone e e-mail do cadastro, a 1 cm da borda.
+
+O corpo do documento não muda. Nada da logo de outra empresa entra: sem logo própria, sai o nome. Teste: `node --test tests/timbre_automatico.test.mjs` (com o LibreOffice instalado, converte para PDF e confere o rodapé).
+
 ## Teste antes de aplicar
 
 ```sh

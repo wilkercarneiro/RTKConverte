@@ -36,6 +36,7 @@ import type { NumerosSigef } from "../_shared/sigef_glebas.ts";
 import { autorDaChamada, exigirPermissao, exigirServicoDoUsuario, gravarHistoricoDocumentos } from "../_shared/acesso.ts";
 import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
+import { aplicarTimbreAutomatico, identidadeDaEmpresa, precisaTimbreAutomatico } from "../_shared/timbre_automatico.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
@@ -444,6 +445,9 @@ Deno.serve(async (req) => {
     // e é por isso que os dois saem idênticos.
     const tplMemorial = await baixarModelo(supa, esc, `${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx`);
     let doModelo = false;
+    // modelo neutro (empresa sem modelo próprio): o memorial leva o timbre da
+    // empresa — logo no cabeçalho, marca d'água e rodapé (_shared/timbre_automatico.ts)
+    let caminhoDoMemorial: string | null = null;
     // O modelo da peça 1 descreve UM anel; em partes o memorial sai montado em
     // código, uma descrição por parte, com o timbre do memorial-template.
     if (!memorialPartes && tplMemorial.data) {
@@ -458,6 +462,7 @@ Deno.serve(async (req) => {
         gerarMemorialDescritivoXml(await tz.file("word/document.xml")!.async("string"), dadosPecas, posse),
       );
       doModelo = true;
+      caminhoDoMemorial = tplMemorial.caminho;
     }
     // Sem o modelo o memorial ainda sai, montado em código: não é o documento da
     // empresa, mas é melhor do que não gerar — e o aviso diz o que aconteceu.
@@ -474,11 +479,15 @@ Deno.serve(async (req) => {
       }
       if (!timbre) for (const [path, content] of buildDocxSkeleton(logo)) zipDocx.file(path, content);
       zipDocx.file("word/document.xml", buildDocumentXml(dadosMemorial, !timbre && !!logo, timbre));
+      if (timbre) caminhoDoMemorial = tplDocx.caminho;
       avisosGeracao.push(memorialPartes
         // o memorial de cada gleba NÃO sai desta função (ver "por gleba" abaixo):
         // é o jogo por gleba de gerar-pecas, depois do SIGEF
         ? `Imóvel em ${memorialPartes.length} ${calcPartes ? "partes" : "glebas"}: o memorial geral descreve cada anel em sequência, com o timbre básico; o memorial de cada ${calcPartes ? "parte" : "gleba"} pelo modelo da empresa sai nas peças técnicas, depois do SIGEF.`
         : `Memorial gerado fora do modelo da empresa: templates/${posse ? "pecas-posse" : "pecas"}/1-memorial-descritivo.docx não está no Storage.`);
+    }
+    if (precisaTimbreAutomatico(esc, caminhoDoMemorial)) {
+      await aplicarTimbreAutomatico(zipDocx, logo, await identidadeDaEmpresa(supa, esc.id));
     }
     const docxBuf = await zipDocx.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 

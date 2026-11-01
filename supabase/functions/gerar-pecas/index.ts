@@ -14,7 +14,8 @@ import type { GlebaRow } from "../_shared/planta_dados.ts";
 import { cartasDe, gerarPecasPosseXml, gerarPecasXml, montarTrechosPecas, rotuloVia, viasDaPlanta } from "../_shared/pecas.ts";
 import type { DadosPecas, Requerente } from "../_shared/pecas.ts";
 import { ehViaPorLimite, montarServico } from "../_shared/servico.ts";
-import { geometriaDoCalculo, sigefDoCalculo } from "../_shared/planta_dados.ts";
+import { carregarLogoPlanta, geometriaDoCalculo, sigefDoCalculo } from "../_shared/planta_dados.ts";
+import { aplicarTimbreAutomatico, identidadeDaEmpresa, precisaTimbreAutomatico } from "../_shared/timbre_automatico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { autorDaChamada, exigirPermissao, exigirServicoDoUsuario, gravarHistoricoDocumentos } from "../_shared/acesso.ts";
 import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
@@ -428,6 +429,9 @@ Deno.serve(async (req) => {
     const tplXml: Record<string, string> = {};
     // modelos do escritório do serviço (ver _shared/modelos.ts)
     const esc = await escritorioDoServico(supa, servico);
+    // peças que saem do modelo neutro (empresa sem modelo próprio) levam o
+    // timbre da empresa: logo no cabeçalho, marca d'água e rodapé com os dados
+    const comTimbre = new Set<string>();
     for (const [num, arquivo] of TODAS) {
       const dl = await baixarModelo(supa, esc, `${pasta}/${arquivo}.docx`);
       if (!dl.data) {
@@ -440,7 +444,11 @@ Deno.serve(async (req) => {
       const bytes = await dl.data.arrayBuffer();
       tplBytes[num] = bytes;
       tplXml[num] = await (await JSZip.loadAsync(bytes)).file("word/document.xml")!.async("string");
+      if (precisaTimbreAutomatico(esc, dl.caminho)) comTimbre.add(num);
     }
+    const timbre = comTimbre.size
+      ? { logo: await carregarLogoPlanta(supa, esc), ident: await identidadeDaEmpresa(supa, esc.id) }
+      : null;
 
     const nomeBase = (servico.denominacao ?? "documento").replace(RE_NOME_ARQUIVO, "-").trim();
     const { data: vmax } = await supa.from("documentos_gerados").select("versao")
@@ -475,6 +483,7 @@ Deno.serve(async (req) => {
         if (xmls[num] == null) continue; // ex.: declaração de faixa sem estrada/corredor/rio
         const zip = await JSZip.loadAsync(tplBytes[num]);
         zip.file("word/document.xml", xmls[num]!);
+        if (timbre && comTimbre.has(num)) await aplicarTimbreAutomatico(zip, timbre.logo, timbre.ident);
         const buf = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
         const tituloCompleto = rotulo ? `${titulo} · ${rotulo}` : titulo;
         const chave = sufixo ? `_${sufixo.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "")}` : "";
