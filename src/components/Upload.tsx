@@ -18,6 +18,7 @@ import { Icone, ICONE } from "./Icone";
 import { Dica, Passos, Rotulo, type Passo } from "./ui";
 import { PlantaCertificada } from "./PlantaCertificada";
 import { PainelSigef } from "./PainelSigef";
+import { BarreiraErro } from "./BarreiraErro";
 import { temRecurso } from "../lib/recursos";
 import { guardarParcelasSigef } from "../lib/sigef";
 import { loteamentoDisponivel } from "../lib/loteamento/persistencia";
@@ -313,7 +314,11 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
               <header>
                 <span className="nome">Mapa das parcelas<Dica>satélite Esri + relevo AWS · em azul os CSVs enviados, em amarelo as parcelas certificadas já na base</Dica></span>
               </header>
-              <PainelSigef modo="vizinhanca" destaques={destaquesSigef} ignorar={destaquesSigef.map((d) => d.codigo)} uf={uf || null} altura={420} />
+              {/* falha do mapa fica no mapa: a escolha dos vértices acima continua */}
+              <BarreiraErro onde="o mapa das parcelas" compacta>
+                <PainelSigef modo="vizinhanca" destaques={destaquesSigef} ignorar={destaquesSigef.map((d) => d.codigo)} uf={uf || null} altura={420}
+                  semMapa="a escolha dos vértices nas plantas acima não depende dele" />
+              </BarreiraErro>
             </section>
           )}
 

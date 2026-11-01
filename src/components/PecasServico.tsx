@@ -76,6 +76,13 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
   const [rts, setRts] = useState<RT[]>([]);
   const [credenciados, setCredenciados] = useState<Credenciado[]>([]);
   const [rtExtras, setRtExtras] = useState({ formacao: "", conselho_sigla: "CFTA", conselho_numero: "", identidade: "", cpf: "" });
+  // Só o que o operador digita nos extras do RT volta para o cadastro (carregar não é editar).
+  const [rtExtrasEditado, setRtExtrasEditado] = useState(false);
+  const editarRtExtras = (patch: Partial<typeof rtExtras>) => { setRtExtras((x) => ({ ...x, ...patch })); setRtExtrasEditado(true); };
+  // Serviço existente: serviço e confrontantes chegam JUNTOS do banco. Antes
+  // chegavam separados, e o autossalvamento podia rodar entre um e outro —
+  // apagando os confrontantes (o salvar faz delete + insert) só por abrir a tela.
+  const [carregado, setCarregado] = useState(false);
   const [pdfB64, setPdfB64] = useState<string | null>(null);
   const [pdfNome, setPdfNome] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
@@ -111,10 +118,18 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
     supabase.from("responsaveis_tecnicos").select().order("nome").then(({ data }) => setRts((data as RT[]) ?? []));
     supabase.from("credenciados").select().order("nome").then(({ data }) => setCredenciados((data as Credenciado[]) ?? []));
     if (servicoId) {
-      supabase.from("servicos").select().eq("id", servicoId).single().then(({ data }) => setServico(data as Servico));
-      supabase.from("trechos_confrontantes").select().eq("servico_id", servicoId).order("vertice_inicio_ordem")
-        .then(({ data }) => setTrechos(((data ?? []) as (TrechoPdf & { codigo_inicio: string | null })[])
-          .map((t) => ({ id: (t as { id?: string }).id, codigo_inicio: t.codigo_inicio ?? "", descritivo: t.descritivo ?? "", tipo_limite: t.tipo_limite, eh_via: !!t.eh_via, numerado: !!t.numerado, exibir_planta: t.exibir_planta !== false }))));
+      let vivo = true;
+      Promise.all([
+        supabase.from("servicos").select().eq("id", servicoId).single(),
+        supabase.from("trechos_confrontantes").select().eq("servico_id", servicoId).order("vertice_inicio_ordem"),
+      ]).then(([{ data: s }, { data: ts }]) => {
+        if (!vivo) return;
+        setServico(s as Servico);
+        setTrechos(((ts ?? []) as (TrechoPdf & { codigo_inicio: string | null })[])
+          .map((t) => ({ id: (t as { id?: string }).id, codigo_inicio: t.codigo_inicio ?? "", descritivo: t.descritivo ?? "", tipo_limite: t.tipo_limite, eh_via: !!t.eh_via, numerado: !!t.numerado, exibir_planta: t.exibir_planta !== false })));
+        setCarregado(true);
+      });
+      return () => { vivo = false; };
     }
   }, [servicoId]);
 
@@ -140,6 +155,7 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
         formacao: rtSel.formacao ?? "", conselho_sigla: rtSel.conselho_sigla ?? "CFTA",
         conselho_numero: rtSel.conselho_numero ?? "", identidade: rtSel.identidade ?? "", cpf: rtSel.cpf ?? "",
       });
+      setRtExtrasEditado(false);
     }
   }, [servico?.rt_id, rts.length]);
 
@@ -229,15 +245,18 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
       exibir_planta: t.exibir_planta !== false,
     })));
     if (e3) throw e3;
-    if (servico.rt_id) await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
+    if (servico.rt_id && rtExtrasEditado) await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
   }
 
   // Autossalvamento, suspenso enquanto uma rotina do servidor está no ar —
   // gerar/analisar gravam o serviço e uma escrita concorrente sobrescreveria.
+  // Serviço existente: nada conta como edição até serviço e confrontantes
+  // chegarem (juntos); o que chegou vira o "já gravado" (`base`).
+  const prontoParaSalvar = !servicoId || carregado;
   const auto = useAutosave(
-    { servico, trechos, rtExtras },
+    prontoParaSalvar ? { servico, trechos, rtExtras: rtExtrasEditado ? rtExtras : null } : null,
     async () => { await salvar(); },
-    { ativo: !ocupado && servico !== null, atraso: 1500 },
+    { ativo: !ocupado && servico !== null && prontoParaSalvar, atraso: 1500, base: carregado },
   );
 
   // ---- passo 2: gerar as peças ----
@@ -540,11 +559,11 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
                         <small className="sub">preenchido com o TRT padrão de {rtSel.nome}</small>
                       )}
                     </label>
-                    <label>Formação do RT <input value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} /></label>
-                    <label>Conselho (sigla) <input value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} /></label>
-                    <label>Conselho (número) <input className="mono" value={rtExtras.conselho_numero} onChange={(e) => setRtExtras({ ...rtExtras, conselho_numero: e.target.value })} /></label>
-                    <label>Identidade do RT <input value={rtExtras.identidade} onChange={(e) => setRtExtras({ ...rtExtras, identidade: e.target.value })} /></label>
-                    <label>CPF do RT <input className="mono" value={rtExtras.cpf} onChange={(e) => setRtExtras({ ...rtExtras, cpf: e.target.value })} /></label>
+                    <label>Formação do RT <input value={rtExtras.formacao} onChange={(e) => editarRtExtras({ formacao: e.target.value })} /></label>
+                    <label>Conselho (sigla) <input value={rtExtras.conselho_sigla} onChange={(e) => editarRtExtras({ conselho_sigla: e.target.value })} /></label>
+                    <label>Conselho (número) <input className="mono" value={rtExtras.conselho_numero} onChange={(e) => editarRtExtras({ conselho_numero: e.target.value })} /></label>
+                    <label>Identidade do RT <input value={rtExtras.identidade} onChange={(e) => editarRtExtras({ identidade: e.target.value })} /></label>
+                    <label>CPF do RT <input className="mono" value={rtExtras.cpf} onChange={(e) => editarRtExtras({ cpf: e.target.value })} /></label>
                   </div>
                 </Secao>
               </div>

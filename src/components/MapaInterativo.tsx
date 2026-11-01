@@ -9,11 +9,23 @@
 // Rótulos são marcadores HTML (sem servidor de glyphs): funcionam offline e
 // herdam o CSS da tela. Os dados chegam já em lon/lat (SIRGAS 2000 ≈ WGS84
 // para a escala de um mapa de tela).
-import { useEffect, useRef } from "react";
+//
+// Sem WebGL (aceleração gráfica desligada, placa bloqueada, contexto perdido)
+// o MapLibre não nasce: em vez de deixar o erro subir e apagar a tela inteira,
+// o mapa vira um aviso no próprio lugar e o resto da tela segue (ver lib/webgl.ts).
+import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSource, Map as MapaGl, StyleSpecification } from "maplibre-gl";
 import type { FeatureParcela, LonLat, Sobreposicao } from "../lib/sigef";
 import { fecharAnel } from "../lib/sigef";
+import { esquecerWebgl, MOTIVO_SEM_WEBGL, webglDisponivel } from "../lib/webgl";
+
+/** Texto para o usuário a partir do erro do MapLibre. */
+export function motivoDaFalhaDoMapa(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/webgl|context/i.test(msg)) return MOTIVO_SEM_WEBGL;
+  return `Não deu para abrir o mapa interativo (${msg.slice(0, 160)}).`;
+}
 
 export const ATRIBUICAO = "© AWS Terrain Tiles | © Esri World Imagery";
 
@@ -39,6 +51,8 @@ interface Props {
   foco?: string | null;
   altura?: number | string;
   cor?: string;
+  /** o que o usuário pode usar no lugar, quando o mapa não abre (ex.: "use Satélite ou Esquema, acima") */
+  semMapa?: string;
 }
 
 const VAZIO: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -110,14 +124,27 @@ export function MapaInterativo(props: Props) {
   const prontoRef = useRef(false);
   const marcadoresRef = useRef<maplibregl.Marker[]>([]);
   const enquadradoRef = useRef<string>("");
+  // por que o mapa não está desenhado (null = está); "tentativa" recria o mapa
+  const [falha, setFalha] = useState<string | null>(() => (webglDisponivel() ? null : MOTIVO_SEM_WEBGL));
+  const [tentativa, setTentativa] = useState(0);
 
-  // cria o mapa uma vez
+  // cria o mapa (uma vez por tentativa)
   useEffect(() => {
-    if (!divRef.current || mapaRef.current) return;
-    const mapa = new maplibregl.Map({
-      container: divRef.current, style: estilo(), center: [-47.9, -15.8], zoom: 4,
-      attributionControl: false, maxPitch: 70,
-    });
+    if (falha || !divRef.current || mapaRef.current) return;
+    let mapa: MapaGl;
+    try {
+      mapa = new maplibregl.Map({
+        container: divRef.current, style: estilo(), center: [-47.9, -15.8], zoom: 4,
+        attributionControl: false, maxPitch: 70,
+      });
+    } catch (e) {
+      console.warn("[mapa] não foi criado:", e);
+      setFalha(motivoDaFalhaDoMapa(e));
+      return;
+    }
+    // o navegador pode tomar o contexto gráfico depois (muitas abas com mapa,
+    // placa de vídeo reiniciada): o mapa congela — melhor dizer do que fingir
+    mapa.on("webglcontextlost", () => setFalha("O navegador interrompeu o desenho do mapa (contexto gráfico perdido). Clique em \"Tentar de novo\"."));
     mapa.addControl(new maplibregl.AttributionControl({ compact: false, customAttribution: ATRIBUICAO }), "bottom-right");
     mapa.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
     mapa.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
@@ -152,9 +179,14 @@ export function MapaInterativo(props: Props) {
     mapaRef.current = mapa;
     // acesso para testes automatizados (playwright): document.querySelector(".mapa-interativo").__mapa
     (divRef.current as HTMLDivElement & { __mapa?: MapaGl }).__mapa = mapa;
-    return () => { prontoRef.current = false; mapa.remove(); mapaRef.current = null; };
+    return () => {
+      prontoRef.current = false; mapaRef.current = null; enquadradoRef.current = "";
+      for (const m of marcadoresRef.current) m.remove();
+      marcadoresRef.current = [];
+      try { mapa.remove(); } catch { /* contexto já perdido */ }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tentativa, falha]);
 
   // Os rótulos HTML dos vértices só aparecem quando o zoom os separa: com
   // centenas de pontos num imóvel grande, no zoom de enquadramento eles se
@@ -169,6 +201,11 @@ export function MapaInterativo(props: Props) {
   }
 
   function aplicar() {
+    // um dado estranho (anel degenerado, coordenada inválida) não pode derrubar a tela
+    try { desenhar(); } catch (e) { console.warn("[mapa] dados não desenhados:", e); }
+  }
+
+  function desenhar() {
     const mapa = mapaRef.current;
     if (!mapa || !prontoRef.current) return;
     const { aneis, pontos, parcelas, sobreposicoes, destaques, foco, cor = "#ffffff" } = propsRef.current;
@@ -235,5 +272,21 @@ export function MapaInterativo(props: Props) {
 
   useEffect(() => { aplicar(); }, [props.aneis, props.pontos, props.parcelas, props.sobreposicoes, props.destaques, props.foco, props.cor]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={divRef} className="mapa-interativo" style={{ height: altura }} />;
+  return (
+    <>
+      <div ref={divRef} className="mapa-interativo" style={{ height: altura, display: falha ? "none" : undefined }} />
+      {falha && (
+        <div className="mapa-indisponivel" role="status" style={{ minHeight: typeof altura === "number" ? Math.min(altura, 260) : 220 }}>
+          <b>Mapa interativo indisponível</b>
+          <p>{falha}</p>
+          <p className="sub">O resto da tela funciona normalmente{props.semMapa ? `: ${props.semMapa}` : "."}</p>
+          <button type="button" onClick={() => {
+            esquecerWebgl();
+            if (!webglDisponivel()) { setFalha(MOTIVO_SEM_WEBGL); return; }
+            setFalha(null); setTentativa((t) => t + 1);
+          }}>Tentar de novo</button>
+        </div>
+      )}
+    </>
+  );
 }

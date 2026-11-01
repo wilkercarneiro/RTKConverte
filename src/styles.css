@@ -1331,3 +1331,26 @@ button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #f
   .cr-passo { max-width: none; }
   .pu-mensalidade > .botao-download { margin-left: 0; width: 100%; text-align: center; }
 }
+
+/* ---------- Barreira de erro e mapa sem WebGL (2026-11-01) ----------
+   Um erro numa parte da tela vira este aviso no lugar dela — o menu e o resto
+   da tela continuam (antes, a página inteira ficava em branco). */
+.barreira-erro {
+  margin: 24px auto; max-width: 640px; padding: 20px 22px;
+  background: var(--card); border: 1px solid var(--alerta); border-left-width: 4px;
+  border-radius: var(--raio-g); box-shadow: var(--sombra); color: var(--texto);
+}
+.barreira-erro.compacta { margin: 0; max-width: none; padding: 14px 16px; border-radius: var(--raio); box-shadow: none; }
+.barreira-erro b { display: block; font-size: 15px; margin-bottom: 6px; }
+.barreira-erro p { margin: 0 0 8px; color: var(--texto-2); font-size: 13.5px; line-height: 1.5; }
+.barreira-erro .detalhe { font-family: var(--mono); font-size: 11.5px; color: var(--texto-3); overflow-wrap: anywhere; }
+.barreira-erro .acoes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+
+.mapa-indisponivel {
+  display: flex; flex-direction: column; justify-content: center; gap: 6px;
+  padding: 20px 22px; border-radius: 10px;
+  background: var(--alerta-claro); border: 1px dashed var(--alerta); color: var(--texto);
+}
+.mapa-indisponivel b { font-size: 14.5px; }
+.mapa-indisponivel p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--texto-2); overflow-wrap: anywhere; }
+.mapa-indisponivel button { align-self: flex-start; margin-top: 4px; }

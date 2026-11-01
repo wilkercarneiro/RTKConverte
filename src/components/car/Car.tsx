@@ -63,7 +63,9 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
     return () => { cancelado = true; };
   }, [servico.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const auto = useAutosave(projeto, async (p) => { if (p) await armazenamento.salvar(servico.id, p); }, { ativo: !!projeto });
+  // `base`: o projeto que CHEGA do armazenamento é o já gravado — abrir o CAR
+  // não pode regravar o projeto nem deixar "car.alterado" na auditoria
+  const auto = useAutosave(projeto, async (p) => { if (p) await armazenamento.salvar(servico.id, p); }, { ativo: !!projeto, base: projeto !== null });
 
   const res: ResultadoCar | null = useMemo(() => {
     if (!projeto) return null;

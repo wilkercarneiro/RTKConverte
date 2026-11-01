@@ -42,6 +42,8 @@ import { temPermissao } from "../lib/permissoes";
 import { Avisos, BarraEtapas, BotaoPerigo, Dica, ProximaAcao, Rotulo, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 import { BotaoConcluir, useConclusao } from "./ConcluirServico";
 import { AutoriaServico } from "./Auditoria";
+import { BarreiraErro } from "./BarreiraErro";
+import { MOTIVO_SEM_WEBGL, webglDisponivel } from "../lib/webgl";
 
 /** Etapas do serviço: uma por vez, como abas dentro do cabeçalho. */
 type Etapa = "dados" | "confrontantes" | "glebas" | "documentos";
@@ -130,6 +132,12 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [gerado, setGerado] = useState<Gerado | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [rtExtras, setRtExtras] = useState({ formacao: "", conselho_sigla: "CFTA", conselho_numero: "", identidade: "", cpf: "" });
+  // Os extras do RT chegam do cadastro DEPOIS do primeiro desenho. Só o que o
+  // operador digitou volta para o cadastro: carregar não é editar — antes, abrir
+  // o serviço já disparava o autossalvamento ("Última alteração por …" sem
+  // ninguém ter mexido em nada).
+  const [rtExtrasEditado, setRtExtrasEditado] = useState(false);
+  const editarRtExtras = (patch: Partial<typeof rtExtras>) => { setRtExtras((x) => ({ ...x, ...patch })); setRtExtrasEditado(true); };
   const [pecas, setPecas] = useState<PecasGeradas | null>(null);
   const [gerandoPecas, setGerandoPecas] = useState(false);
   const [erroPecas, setErroPecas] = useState<string | null>(null);
@@ -192,6 +200,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [clientes, setClientes] = useState<Cliente[]>([]);
   // glebas do serviço (só carregadas e salvas quando o serviço as tem)
   const [glebas, setGlebas] = useState<Gleba[]>([]);
+  const [glebasCarregadas, setGlebasCarregadas] = useState(false);
   // o que ficou guardado no Storage de gerações anteriores (só os nomes)
   const [salvo, setSalvo] = useState<{ satelite?: { nome: string; tipo: "png" | "jpg" }; sigef?: string; satelitesGlebas?: Record<number, { nome: string; tipo: "png" | "jpg" }>; mapa?: boolean }>({});
   const [tabular, setTabular] = useState<{ titulo: string; url: string }[] | null>(null);
@@ -352,7 +361,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // e a georreferência (mapa.json) que posiciona cada ponto sobre ela.
   const [mapaSat, setMapaSat] = useState<FundoSatelite | null>(null);
   const [verAvisos, setVerAvisos] = useState(false);
-  const [fundoMapa, setFundoMapa] = useState<"mapa" | "satelite" | "esquema">(temRecurso("sigef.mapa") ? "mapa" : "esquema");
+  // Sem WebGL o mapa interativo não abre: começa no esquema em vez de num mapa
+  // que só daria o aviso (antes, a tela inteira ficava em branco).
+  const mapaInterativoOk = temRecurso("sigef.mapa") && webglDisponivel();
+  const [fundoMapa, setFundoMapa] = useState<"mapa" | "satelite" | "esquema">(mapaInterativoOk ? "mapa" : "esquema");
   async function carregarMapaSat() {
     const dl = await supabase.storage.from("gerados").download(`${inicial.servico.id}/entrada/mapa.json`);
     if (dl.error || !dl.data) { setMapaSat(null); return; }
@@ -416,7 +428,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   useEffect(() => {
     if (!inicial.servico.tem_glebas) return;
     supabase.from("glebas").select().eq("servico_id", inicial.servico.id).order("ordem")
-      .then(({ data }) => setGlebas((data as Gleba[]) ?? []));
+      .then(({ data }) => { setGlebas((data as Gleba[]) ?? []); setGlebasCarregadas(true); });
   }, [inicial.servico.id, inicial.servico.tem_glebas]);
 
   // etapa 1 concluída: documentos (ODS+DOCX) já gerados nesta sessão ou em sessão anterior
@@ -445,6 +457,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
         formacao: rtSel.formacao ?? "", conselho_sigla: rtSel.conselho_sigla ?? "CFTA",
         conselho_numero: rtSel.conselho_numero ?? "", identidade: rtSel.identidade ?? "", cpf: rtSel.cpf ?? "",
       });
+      setRtExtrasEditado(false);
     }
   }, [servico.rt_id, rts.length]);
 
@@ -683,7 +696,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     // a confrontação vai junto, nas colunas do próprio vértice
     const { error: e3 } = await supabase.from("vertices").upsert(linhas, { onConflict: "id" });
     if (e3) throw e3;
-    if (servico.rt_id) {
+    if (servico.rt_id && rtExtrasEditado) {
       await supabase.from("responsaveis_tecnicos").update(rtExtras).eq("id", servico.rt_id);
     }
     // Glebas: upsert com id estável e remoção do que saiu da tela, o mesmo
@@ -719,10 +732,12 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
   // gerar/corrigir gravam e releem o serviço, e uma escrita concorrente
   // sobrescreveria o que acabou de voltar.
   const emRotina = ocupado || corrigindo || gerandoPecas || gerandoPlanta || gerandoTabular;
+  // `base`: as glebas chegam do banco depois do primeiro desenho; quando chegam,
+  // o que está na tela passa a ser o "já gravado" (abrir não é editar).
   const auto = useAutosave(
-    { servico, vertices, rtExtras, glebas },
+    { servico, vertices, rtExtras: rtExtrasEditado ? rtExtras : null, glebas },
     async () => { await salvar(); },
-    { ativo: !emRotina && vertices.length > 0, atraso: 1500 },
+    { ativo: !emRotina && vertices.length > 0, atraso: 1500, base: glebasCarregadas },
   );
 
   // ------- separar as glebas em serviços próprios -------
@@ -1833,7 +1848,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 <div className="mapa-fundo-toggle" role="group" aria-label="Fundo do mapa">
                   {temRecurso("sigef.mapa") && (
                     <button type="button" className={fundoMapa === "mapa" ? "ativo" : ""} onClick={() => setFundoMapa("mapa")}
-                      title="Mapa interativo (Esri World Imagery + AWS Terrain Tiles) com as parcelas certificadas e a sobreposição">Mapa</button>
+                      disabled={!mapaInterativoOk}
+                      title={mapaInterativoOk
+                        ? "Mapa interativo (Esri World Imagery + AWS Terrain Tiles) com as parcelas certificadas e a sobreposição"
+                        : MOTIVO_SEM_WEBGL}>Mapa</button>
                   )}
                   <button type="button" className={fundoMapa === "satelite" ? "ativo" : ""} onClick={() => setFundoMapa("satelite")}
                     disabled={!mapaSat} title={!mapaSat ? (buscandoSat ? "buscando a imagem de satélite…" : "imagem de satélite ainda não disponível") : undefined}>
@@ -1846,11 +1864,22 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                       title="Busca de novo a imagem de fundo pelas coordenadas atuais">atualizar</button>
                   )}
                 </div>
-                {fundoMapa === "mapa" && temRecurso("sigef.mapa") ? (
-                  <PainelSigef modo="sobreposicao" aneis={aneisSigef} pontos={pontosSigef} uf={servico.uf} altura={440} />
-                ) : (
-                  <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={aneisMapa ?? undefined}
-                    fundo={fundoMapa === "satelite" ? mapaSat : null} />
+                {/* a barreira segura qualquer falha do mapa AQUI: confrontantes e
+                    vértices, ao lado, continuam na tela */}
+                <BarreiraErro onde="o mapa" compacta chave={`${fundoMapa}|${servico.id}`}>
+                  {fundoMapa === "mapa" && mapaInterativoOk ? (
+                    <PainelSigef modo="sobreposicao" aneis={aneisSigef} pontos={pontosSigef} uf={servico.uf} altura={440}
+                      semMapa={'use "Satélite" ou "Esquema", logo acima'} />
+                  ) : (
+                    <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={aneisMapa ?? undefined}
+                      fundo={fundoMapa === "satelite" ? mapaSat : null} />
+                  )}
+                </BarreiraErro>
+                {!mapaInterativoOk && temRecurso("sigef.mapa") && (
+                  <p className="sub" style={{ margin: 0 }}>
+                    <b>Mapa interativo desligado neste navegador</b> (sem WebGL): a verificação de sobreposição com o SIGEF
+                    aparece quando ele estiver disponível. <Dica>{MOTIVO_SEM_WEBGL}</Dica>
+                  </p>
                 )}
                 {partesOrdens ? (
                   <p className="sub" style={{ margin: 0 }}>
@@ -2417,19 +2446,19 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     dica={rtSel ? `salvo no cadastro de ${rtSel.nome}` : "selecione um RT na etapa Dados"}>
                     <div className="grade">
                       <label>Formação do RT
-                        <input placeholder="Técnico em Agropecuária" value={rtExtras.formacao} onChange={(e) => setRtExtras({ ...rtExtras, formacao: e.target.value })} />
+                        <input placeholder="Técnico em Agropecuária" value={rtExtras.formacao} onChange={(e) => editarRtExtras({ formacao: e.target.value })} />
                       </label>
                       <label>Conselho (sigla)
-                        <input placeholder="CFTA / CREA" value={rtExtras.conselho_sigla} onChange={(e) => setRtExtras({ ...rtExtras, conselho_sigla: e.target.value })} />
+                        <input placeholder="CFTA / CREA" value={rtExtras.conselho_sigla} onChange={(e) => editarRtExtras({ conselho_sigla: e.target.value })} />
                       </label>
                       <label>Conselho (número)
-                        <input className="mono" placeholder="0578839458-9" value={rtExtras.conselho_numero} onChange={(e) => setRtExtras({ ...rtExtras, conselho_numero: e.target.value })} />
+                        <input className="mono" placeholder="0578839458-9" value={rtExtras.conselho_numero} onChange={(e) => editarRtExtras({ conselho_numero: e.target.value })} />
                       </label>
                       <label>Identidade do RT
-                        <input placeholder="00.000.000-00 SSP/BA" value={rtExtras.identidade} onChange={(e) => setRtExtras({ ...rtExtras, identidade: e.target.value })} />
+                        <input placeholder="00.000.000-00 SSP/BA" value={rtExtras.identidade} onChange={(e) => editarRtExtras({ identidade: e.target.value })} />
                       </label>
                       <label>CPF do RT
-                        <input className="mono" value={rtExtras.cpf} onChange={(e) => setRtExtras({ ...rtExtras, cpf: e.target.value })} />
+                        <input className="mono" value={rtExtras.cpf} onChange={(e) => editarRtExtras({ cpf: e.target.value })} />
                       </label>
                     </div>
                   </Secao>

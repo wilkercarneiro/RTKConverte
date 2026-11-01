@@ -11,6 +11,8 @@ import { supabase } from "../lib/supabase";
 import type { Rota } from "../lib/rota";
 import { temRecurso } from "../lib/recursos";
 import { Logo } from "./Logo";
+import { BarreiraErro } from "./BarreiraErro";
+import { MOTIVO_SEM_WEBGL } from "../lib/webgl";
 import { AvisosGlobais, DialogosGlobais } from "./ui";
 import { AvisoCreditoGlobal } from "./Creditos";
 import { abrirSuporte, SuporteChat, useNaoLidasSuporte } from "./suporte/SuporteChat";
@@ -173,7 +175,14 @@ export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId
         </>
       )}
 
-      <main className="app-conteudo" key={rota.t}>{children}</main>
+      {/* Um erro de desenho em qualquer tela fica NESTA área: o menu continua e o
+          aviso oferece "tentar de novo" — nunca mais a página inteira em branco. */}
+      <main className="app-conteudo" key={rota.t}>
+        <BarreiraErro onde="esta tela" chave={JSON.stringify(rota)}
+          explicar={(e) => (/webgl/i.test(e.message) ? MOTIVO_SEM_WEBGL : null)}>
+          {children}
+        </BarreiraErro>
+      </main>
       {escritorioId && <SuporteChat escritorioId={escritorioId} nome={usuario?.nome} />}
       <AvisosGlobais />
       <AvisoCreditoGlobal />

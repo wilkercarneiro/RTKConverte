@@ -149,7 +149,8 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     return () => { cancelado = true; };
   }, [servico.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const auto = useAutosave(projeto, async (p) => { if (p) await armazenamento.salvar(servico.id, p); }, { ativo: !!projeto, atraso: 1500 });
+  // `base`: o projeto que CHEGA do armazenamento é o já gravado (abrir não é editar)
+  const auto = useAutosave(projeto, async (p) => { if (p) await armazenamento.salvar(servico.id, p); }, { ativo: !!projeto, atraso: 1500, base: projeto !== null });
 
   // um cálculo por versão do projeto: a conferência das regras na edição e o
   // desenho usam o mesmo resultado

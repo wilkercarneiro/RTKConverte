@@ -19,6 +19,26 @@ export interface Autosave {
   agora: () => Promise<void>;
 }
 
+/** Memória do autossalvamento entre um desenho e outro. */
+export interface MemoriaAutosave { gravado: string | null; visto: string | null; base: unknown }
+
+/**
+ * Um passo do autossalvamento (puro, testável): dado o valor serializado agora
+ * e a `base` atual, devolve a memória nova e se há algo pendente a gravar.
+ *   - 1º valor: é o que veio do banco → já gravado;
+ *   - `base` mudou (terminou de carregar algo): o valor de agora vira o já
+ *     gravado, a menos que já houvesse edição pendente antes disso;
+ *   - senão: pendente se difere do já gravado.
+ */
+export function passoAutosave(m: MemoriaAutosave, serial: string, base: unknown): MemoriaAutosave & { pendente: boolean } {
+  if (m.gravado === null) return { gravado: serial, visto: serial, base, pendente: false };
+  if (!Object.is(base, m.base)) {
+    const haviaPendente = m.visto !== null && m.visto !== m.gravado;
+    if (!haviaPendente) return { gravado: serial, visto: serial, base, pendente: false };
+  }
+  return { gravado: m.gravado, visto: serial, base, pendente: serial !== m.gravado };
+}
+
 /**
  * Grava `valor` sempre que ele muda e o usuário para de digitar por `atraso`.
  *
@@ -27,11 +47,17 @@ export interface Autosave {
  * no meio de uma geração de documentos ou da correção de sobreposição — essas
  * rotinas gravam e releem o serviço, e uma escrita concorrente sobrescreveria
  * o resultado que acabou de voltar do servidor.
+ *
+ * `base`: dado que a tela termina de CARREGAR depois do primeiro desenho (ex.:
+ * as glebas do serviço). Quando `base` muda, o valor do momento passa a ser o
+ * "já gravado" — abrir uma tela não é editar, e não pode gravar nada nem deixar
+ * "Última alteração por …" para quem só olhou. Uma edição que já estava
+ * pendente nesse instante continua sendo gravada (nunca é engolida).
  */
 export function useAutosave<T>(
   valor: T,
   salvar: (v: T) => Promise<void>,
-  { ativo, atraso = 1200 }: { ativo: boolean; atraso?: number },
+  { ativo, atraso = 1200, base }: { ativo: boolean; atraso?: number; base?: unknown },
 ): Autosave {
   const [estado, setEstado] = useState<EstadoSalvamento>("ocioso");
   const [horaSalvo, setHoraSalvo] = useState<string | null>(null);
@@ -42,6 +68,9 @@ export function useAutosave<T>(
   const valorAtual = useRef(valor);
   valorAtual.current = valor;
   const gravado = useRef<string | null>(null);
+  // último valor visto pelo efeito e a `base` em que ele foi visto
+  const visto = useRef<string | null>(null);
+  const baseVista = useRef<unknown>(base);
 
   const executar = useCallback(async () => {
     const serial = JSON.stringify(valorAtual.current);
@@ -60,13 +89,12 @@ export function useAutosave<T>(
   }, []);
 
   useEffect(() => {
-    const serial = JSON.stringify(valor);
-    // primeira passada: registra o estado que veio do banco como já gravado
-    if (gravado.current === null) { gravado.current = serial; return; }
-    if (serial === gravado.current || !ativo) return;
+    const p = passoAutosave({ gravado: gravado.current, visto: visto.current, base: baseVista.current }, JSON.stringify(valor), base);
+    gravado.current = p.gravado; visto.current = p.visto; baseVista.current = p.base;
+    if (!p.pendente || !ativo) return;
     const t = setTimeout(executar, atraso);
     return () => clearTimeout(t);
-  }, [valor, ativo, atraso, executar]);
+  }, [valor, ativo, atraso, executar, base]);
 
   return { estado, horaSalvo, agora: executar };
 }

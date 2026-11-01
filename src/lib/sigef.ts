@@ -5,6 +5,7 @@
 // veem; o CSV do vizinho enviado pela tela fica com a empresa e só ela o vê.
 import proj4mod from "proj4";
 import { chamarFuncao, supabase } from "./supabase";
+import { normalizarResultadoSigef } from "./sigef_resultado";
 import { GEO_DEF, gmsToDeg, parseGmsPlanilha, utmDef } from "../../supabase/functions/_shared/geo.ts";
 import type { Vertice } from "./types";
 
@@ -116,7 +117,7 @@ export async function consultarSigef(aneis: LonLat[][], opcoes?: { raioM?: numbe
     imovel: mp, raio_m: opcoes?.raioM ?? 300, ignorar_codigos: opcoes?.ignorar ?? [],
   });
   if (error) throw new Error(error.message);
-  return (data as ResultadoSigef) ?? vazio;
+  return normalizarResultadoSigef(data);
 }
 
 // caixas já sincronizadas nesta aba: evita bater no INCRA a cada vértice mexido

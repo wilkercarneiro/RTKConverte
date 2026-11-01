@@ -20,6 +20,7 @@ import { Maquete } from "./maquete3d.ts";
 import { Trilha } from "./trilha.ts";
 import type { Legenda } from "../../lib/loteamento/cinema3d.ts";
 import type { Rotulo } from "./maquete3d.ts";
+import { MOTIVO_SEM_WEBGL, webglDisponivel } from "../../lib/webgl";
 import "./maquete3d.css";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
@@ -135,6 +136,9 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
     let vivo = true;
     (async () => {
       try {
+        // sem WebGL o three.js não cria o desenho: diz o porquê logo, em vez de
+        // baixar relevo e satélite para falhar no fim
+        if (!webglDisponivel()) { setErro(MOTIVO_SEM_WEBGL); return; }
         // relevo cobrindo também a margem da maquete (a grade do projeto só vai 60 m além da divisa)
         const cantos = cantosDaCena(res).map((p) => paraUtm(res.plano, p));
         let terreno: GradeTerreno | null = null;

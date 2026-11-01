@@ -28,6 +28,8 @@ interface Props {
   ignorar?: string[];
   uf?: string | null;
   altura?: number | string;
+  /** alternativa a oferecer quando o mapa não abre (navegador sem WebGL) */
+  semMapa?: string;
 }
 
 /**
@@ -43,7 +45,7 @@ function resumoFalha(detalhe: string): string {
 
 const chaveDe = (aneis: LonLat[][]) => JSON.stringify(aneis.map((a) => a.map((p) => [Math.round(p[0] * 1e7), Math.round(p[1] * 1e7)])));
 
-export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altura }: Props) {
+export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altura, semMapa }: Props) {
   const busca = useMemo<LonLat[][]>(
     () => (modo === "sobreposicao" ? (aneis ?? []) : (destaques ?? []).map((d) => d.anel)),
     [modo, aneis, destaques],
@@ -127,7 +129,7 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
   return (
     <div className="mapa-cert">
       <MapaInterativo aneis={aneis ?? []} pontos={pontos} parcelas={resultado?.parcelas.features} sobreposicoes={sobre}
-        destaques={destaques} foco={foco} altura={altura} />
+        destaques={destaques} foco={foco} altura={altura} semMapa={semMapa} />
       <div className={`sobreposicao-painel ${classe}`}>
         <header>
           {titulo}

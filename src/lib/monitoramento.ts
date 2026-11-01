@@ -46,6 +46,12 @@ export function enviarErro(dsn: Dsn, erro: unknown, origem: string): void {
   }).catch(() => { /* monitoramento nunca derruba a tela */ });
 }
 
+/** Erro que uma barreira (BarreiraErro) segurou: não chega ao window.error, então vai daqui. */
+export function relatarErro(erro: unknown, origem: string): void {
+  const dsn = lerDsn(import.meta.env.VITE_SENTRY_DSN as string | undefined);
+  if (dsn) enviarErro(dsn, erro, origem);
+}
+
 export function iniciarMonitoramento(): void {
   const dsn = lerDsn(import.meta.env.VITE_SENTRY_DSN as string | undefined);
   if (!dsn) return;
