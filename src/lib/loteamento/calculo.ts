@@ -2227,6 +2227,22 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     fixos.add(item(q.pol, q.destino === "app" ? "faixa" : "area", `qa${q.cfgIdx}`, ROTULO_AREA[q.destino]));
   }
 
+  // lotes livres: desenhados pelo operador por cima da divisa invisível entre
+  // quadras (a quina onde a rua acaba, a quadra que ficou vazia). A terra deles
+  // — sem rua nem área pública — sai das outras quadras e entra na do lote.
+  const publicasQ = tmp.filter((q) => q.destino).map((q) => q.pol);
+  const livres: { ci: number; pols: Poligono[] }[] = [];
+  projeto.quadras.forEach((c, ci) => {
+    if (!usadas.has(ci) || !Array.isArray(c.lotes)) return; // quadra que não existe mais: o lote não tem dono
+    for (const ld of c.lotes) {
+      if (!ld.livre || ld.anel.length < 3) continue;
+      let pols = intersecao([{ ext: antiHorario(ld.anel.map(P)), furos: [] }], pedacos);
+      if (publicasQ.length) pols = diferenca(pols, publicasQ);
+      pols = pols.filter((x) => areaPol(x) > 0.05);
+      if (pols.length) livres.push({ ci, pols });
+    }
+  });
+
   const lotesIdx = new Indice();
   const quadras: Quadra[] = [];
   const quadrasVazias: Quadra[] = [];
@@ -2245,12 +2261,30 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       });
       continue;
     }
-    const { pol: polEsq, curvas } = tratarEsquinas(ctx, q.pol, p);
+    const { pol: polArred, curvas } = tratarEsquinas(ctx, q.pol, p);
     // depois de arredondar as esquinas, pedaço menor que um lote não é quadra:
     // na beira da estrada vira passeio; no resto, retalho
-    if (areaPol(polEsq) < p.areaMin) {
-      if (!ladosDe(ctx, polEsq, null).some((l) => l.tipo === "via")) sobras.push(polEsq);
+    if (areaPol(polArred) < p.areaMin) {
+      if (!ladosDe(ctx, polArred, null).some((l) => l.tipo === "via")) sobras.push(polArred);
       continue;
+    }
+    // lotes livres: a quadra perde a terra dos lotes livres das outras e ganha a dos seus
+    let polEsq = polArred;
+    const alheios = livres.filter((x) => x.ci !== q.cfgIdx).flatMap((x) => x.pols);
+    const proprios = livres.filter((x) => x.ci === q.cfgIdx).flatMap((x) => x.pols);
+    if (alheios.length || proprios.length) {
+      const resto = alheios.length ? diferenca([polArred], alheios).filter((x) => areaPol(x) > 0.05) : [polArred];
+      const juntos = (proprios.length ? uniaoFechada([...resto, ...proprios]) : resto).sort((a, b) => areaPol(b) - areaPol(a));
+      const manualQ = Array.isArray(q.cfg?.lotes);
+      if (!juntos.length || areaPol(juntos[0]) < 1) {
+        // a quadra inteira foi tomada por lote livre de outra: quadra desenhada
+        // guarda a letra (senão as outras mudariam de nome)
+        if (manualQ) nQuadra++;
+        continue;
+      }
+      polEsq = { ext: limparAnel(juntos[0].ext, 0.003), furos: juntos[0].furos };
+      // pedaço que o lote livre separou do resto da quadra: área livre
+      for (const x of juntos.slice(1)) if (areaPol(x) > 1) (manualQ ? vazios : sobras).push(x);
     }
     // lotes da divisa: mesma frente, ou áreas iguais absorvendo a irregularidade
     const naDivisa = ladosDe(ctx, polEsq, null).some((l) => l.tipo === "divisa");
@@ -2467,6 +2501,20 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
   }
   // --- área livre das quadras desenhadas: não entra no lote vizinho (é do operador)
   sobras.push(...vazios);
+  // --- retalho coberto por lote livre é do lote
+  if (livres.length && sobras.length) {
+    const resto = diferenca(sobras, livres.flatMap((x) => x.pols)).filter((x) => areaPol(x) > 1);
+    sobras.length = 0;
+    sobras.push(...resto);
+  }
+  // --- área livre encostada é UMA área: a divisa invisível entre duas quadras
+  //     (ou entre a quadra e o retalho da quina) não aparece como linha no rosa,
+  //     e o duplo clique com a ferramenta Lote pega a área inteira
+  if (sobras.length > 1) {
+    const u = uniaoFechada(sobras).filter((x) => areaPol(x) > 1);
+    sobras.length = 0;
+    sobras.push(...u.map((x) => ({ ext: limparAnel(x.ext, 0.003), furos: x.furos })));
+  }
   // --- sobras entram no índice (para o lado do lote dizer "área remanescente")
   for (const [i, s] of sobras.entries()) fixos.add(item(s, "sobra", `sobra${i}`, "área remanescente"));
 

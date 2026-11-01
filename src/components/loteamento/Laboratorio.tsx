@@ -16,14 +16,22 @@ const servico = {
   detentor_nome: "JOÃO DA SILVA", detentor_cpf: "000.000.000-00", matricula: "12.345", trt: null, rt_id: null,
 } as unknown as Servico;
 
-const vertices: Vertice[] = REL.map(([e, n], i) => ({
-  servico_id: servico.id, ordem: i, num_txt: i + 1, rotulo_txt: null, e: E0 + e, n: N0 + n, h: 318 + i * 0.7,
+const CHAVE = "vertice.lab.loteamento";
+
+// gleba de um caso real, guardada no navegador (para reproduzir um projeto de
+// produção sem banco): localStorage["vertice.lab.loteamento.gleba"] =
+// [[E, N, h, "confrontante", éEstrada], …] — junto com o projeto em CHAVE
+function glebaGuardada(): [number, number, number, string, boolean][] | null {
+  try { const g = JSON.parse(localStorage.getItem(`${CHAVE}.gleba`) ?? "null"); return Array.isArray(g) && g.length >= 3 ? g : null; } catch { return null; }
+}
+const GLEBA = glebaGuardada() ?? REL.map(([e, n], i): [number, number, number, string, boolean] => [E0 + e, N0 + n, 318 + i * 0.7, CONF[i], i === 0]);
+
+const vertices: Vertice[] = GLEBA.map(([e, n, h, conf, via], i) => ({
+  servico_id: servico.id, ordem: i, num_txt: i + 1, rotulo_txt: null, e, n, h,
   sigma_pos: 0.003, sigma_h: 0.005, tipo: "M", codigo: `M-${String(i + 1).padStart(2, "0")}`, metodo: "PG1", inserido_manual: false,
-  lat_gms: "", lon_gms: "", descritivo: CONF[i], tipo_limite: null, eh_via: i === 0, cns: null, matricula: null, apelido_txt: null,
+  lat_gms: "", lon_gms: "", descritivo: conf, tipo_limite: null, eh_via: via, cns: null, matricula: null, apelido_txt: null,
   numerado: false, exibir_planta: true,
 }));
-
-const CHAVE = "vertice.lab.loteamento";
 
 export function Laboratorio() {
   return (

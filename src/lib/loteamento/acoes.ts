@@ -2,7 +2,7 @@
 // desenho, os botões do painel e a linha de comando. Uma ação recebe o projeto
 // e o resultado atual e devolve um projeto NOVO (nunca muta), o que dá o
 // desfazer/refazer de graça.
-import { areaPol, centroide, cross, dentroPol, dist, dot, sub, unit } from "./geom.ts";
+import { areaPol, centroide, cross, dentroPol, dist, dot, intersecao, sub, unit } from "./geom.ts";
 import type { Pt } from "./geom.ts";
 import { ancoraDaQuadra } from "./auto.ts";
 import { fmt } from "./calculo.ts";
@@ -343,10 +343,11 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       return { ferramenta: "area", sel: null, msg: "Clique o contorno da área. Enter fecha, Esc cancela." };
     case "preencher": {
       if (!quadra) return precisa("a quadra (duplo clique num lote)");
-      const livres = res.sobras.filter((sb) => dentroPol(centroide(sb.ext), quadra.pol) && areaPol(sb) > 1);
+      // a área livre que encosta na quadra (a da quina pode atravessar a divisa com a vizinha)
+      const livres = res.sobras.filter((sb) => areaPol(sb) > 1 && (dentroPol(centroide(sb.ext), quadra.pol) || intersecao([sb], [quadra.pol]).reduce((s2, x) => s2 + areaPol(x), 0) > 1));
       if (!livres.length) return { msg: `A quadra ${quadra.nome} não tem área livre.` };
       let novo = pr, feitos = 0;
-      for (const sb of livres) { const ed = desenharLote(novo, res, sb.ext); if (ed) { novo = ed.pr; feitos++; } }
+      for (const sb of livres) { const ed = desenharLote(novo, res, sb.ext, { soLivre: true }); if (ed) { novo = ed.pr; feitos++; } }
       if (!feitos) return { msg: "Não consegui fazer lote da área livre desta quadra.", erro: true };
       return { pr: novo, msg: `${feitos === 1 ? "A área livre virou um lote" : `${feitos} áreas livres viraram lotes`} — ajuste as quinas se quiser.` };
     }

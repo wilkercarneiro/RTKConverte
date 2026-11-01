@@ -249,7 +249,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       return;
     } else if (ferramenta === "lote" && desenho.length >= 3) {
       const ed = desenharLote(projeto, res, desenho);
-      if (!ed) onMsg("O contorno não pega nenhuma quadra — desenhe o lote dentro de uma quadra.");
+      if (!ed) onMsg("O contorno não pega terra para lote — ele caiu só em rua ou em área pública.");
       else {
         onMudar(ed.pr);
         if (ed.sel) onSel({ tipo: "lotes", chaves: ed.sel.indices.map((indice) => ({ quadra: ed.sel!.quadra, fileira: 0, indice })) });
@@ -547,7 +547,8 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         const livre = res.sobras.find((sb) => dentroPol(pm, sb));
         if (!livre) onMsg("Duplo clique dentro de uma área livre (rosa) vira lote; para um lote novo, clique as quinas e tecle Enter.");
         if (livre) {
-          const ed = desenharLote(projeto, res, livre.ext);
+          // a área rosa INTEIRA vira lote, mesmo atravessando a divisa entre quadras — nenhum lote cede
+          const ed = desenharLote(projeto, res, livre.ext, { soLivre: true });
           setDesenho([]);
           if (ed) {
             onMudar(ed.pr);

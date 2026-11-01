@@ -23,8 +23,8 @@ import type { LoteDesenhado, Projeto, QuadraCfg } from "./modelo.ts";
 
 const TOL = 0.02;
 
-/** O que acompanha cada contorno: destino (área pública) e a frente escolhida (plano). */
-interface Meta { destino?: LoteDesenhado["destino"]; frente?: [Pt, Pt] }
+/** O que acompanha cada contorno: destino (área pública), a frente escolhida (plano) e se o lote passa da quadra. */
+interface Meta { destino?: LoteDesenhado["destino"]; frente?: [Pt, Pt]; livre?: boolean }
 
 export interface Edicao {
   pr: Projeto;
@@ -90,7 +90,7 @@ function contornos(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: nu
       const dentro = intersecao([pg], [q.pol]).sort((x, y) => areaPol(y) - areaPol(x))[0];
       return dentro ? limparAnel(dentro.ext, 0.003) : an;
     });
-    return { pr, i: ic, aneis: normalizar(aneis), destinos: c.lotes!.map((l) => ({ destino: l.destino, frente: l.frente ? [paraPlano(pl, l.frente[0]), paraPlano(pl, l.frente[1])] as [Pt, Pt] : undefined })) };
+    return { pr, i: ic, aneis: normalizar(aneis), destinos: c.lotes!.map((l) => ({ destino: l.destino, frente: l.frente ? [paraPlano(pl, l.frente[0]), paraPlano(pl, l.frente[1])] as [Pt, Pt] : undefined, livre: l.livre })) };
   }
   const aneis: Pt[][] = ordemDoDesenho(pr, q).map((l) => l.pol.ext.slice());
   const destinos: Meta[] = aneis.map(() => ({}));
@@ -121,6 +121,7 @@ function gravar(pr: Projeto, res: Resultado, i: number, aneis: Pt[][], destinos:
     const m = destinos[k] ?? {};
     const ld: LoteDesenhado = { anel: a.map((p) => paraUtm(pl, p)) };
     if (m.destino) ld.destino = m.destino;
+    if (m.livre) ld.livre = true;
     // a frente escolhida acompanha o lado: o lado do contorno perto da linha
     // dela (girado até 45°, deslocado até 30% do comprimento) e que se sobrepõe
     // a ela. Longe disso o lote não tem mais aquele lado (o pedaço de trás de
@@ -530,35 +531,65 @@ export function apagarLotes(pr0: Projeto, res: Resultado, q: Quadra, indices: nu
   };
 }
 
-/**
- * Lote desenhado pelo operador: o contorno dele manda. O que ele cobre sai dos
- * lotes vizinhos (eles se ajustam ao desenho) e o lote fica dentro da quadra.
- */
-export function desenharLote(pr0: Projeto, res: Resultado, anel: Pt[]): Edicao | null {
-  const pol: Poligono = { ext: antiHorario(anel), furos: [] };
-  let q: Quadra | null = null, melhor = 0;
-  for (const x of [...res.quadras, ...(res.quadrasVazias ?? [])]) {
-    const a = intersecao([pol], [x.pol]).reduce((s, y) => s + areaPol(y), 0);
-    if (a > melhor) { melhor = a; q = x; }
-  }
-  if (!q || melhor < 1) return null;
-  const { pr, i, aneis, destinos } = contornos(pr0, res, q);
-  // o lote desenhado manda sobre os lotes — não sobre a área pública da quadra
-  const publicas = aneis.filter((_, k) => destinos[k]?.destino).map((a) => ({ ext: antiHorario(a), furos: [] as Pt[][] }));
-  const novo = diferenca(intersecao([pol], [q.pol]), publicas).sort((x, y) => areaPol(y) - areaPol(x))[0];
-  if (!novo || areaPol(novo) < 1) return null;
-  const ext = limparAnel(novo.ext, 0.005);
-  const outros: Pt[][] = [], dOutros: Meta[] = [];
+/** Os lotes cedem ao contorno `ext` o que ele cobre (área pública da quadra fica). */
+function cederAo(ext: Pt[], aneis: Pt[][], destinos: Meta[]): { aneis: Pt[][]; metas: Meta[] } {
+  const outros: Pt[][] = [], metas: Meta[] = [];
   aneis.forEach((a, k) => {
-    if (destinos[k]?.destino) { outros.push(a); dOutros.push(destinos[k]); return; }
+    if (destinos[k]?.destino) { outros.push(a); metas.push(destinos[k]); return; }
     const resto = diferenca([{ ext: antiHorario(a), furos: [] }], [{ ext, furos: [] }]).filter((x) => areaPol(x) > 1).sort((x, y) => areaPol(y) - areaPol(x));
     if (!resto.length) return;
     outros.push(limparAnel(resto[0].ext, 0.003));
-    dOutros.push(destinos[k]);
+    metas.push(destinos[k]);
   });
-  const todos = normalizar([...outros, ext]);
+  return { aneis: outros, metas };
+}
+
+/**
+ * Lote desenhado pelo operador: o contorno dele manda. Ele toma a terra que
+ * cobrir — lotes, área livre (rosa) e a divisa invisível entre duas quadras
+ * (a quina onde a rua acaba, a quadra que ficou vazia) —, nunca rua nem área
+ * pública. Os lotes que ele cobre se ajustam ao desenho; o lote fica na quadra
+ * de que ele tem mais terra e, passando dela, é "livre" (a quadra cresce).
+ * `soLivre`: só a área livre (duplo clique no rosa — nenhum lote cede).
+ */
+export function desenharLote(pr0: Projeto, res: Resultado, anel: Pt[], op: { soLivre?: boolean } = {}): Edicao | null {
+  const pol: Poligono = { ext: antiHorario(anel), furos: [] };
+  const todas = [...res.quadras, ...(res.quadrasVazias ?? [])];
+  const publicas = res.areas.flatMap((a) => a.pols);
+  let pedacos = intersecao([pol], op.soLivre ? res.sobras : [...todas.map((x) => x.pol), ...res.sobras]);
+  if (publicas.length) pedacos = diferenca(pedacos, publicas);
+  pedacos = pedacos.filter((x) => areaPol(x) > 0.05);
+  const novo = (pedacos.length > 1 ? uniaoFechada(pedacos) : pedacos).sort((x, y) => areaPol(y) - areaPol(x))[0];
+  if (!novo || areaPol(novo) < 1) return null;
+  const ext = limparAnel(novo.ext, 0.005);
+  const novoPol: Poligono = { ext, furos: [] };
+  // dono: a quadra de que o lote tem mais terra; só retalho (fora das quadras) → a quadra mais perto
+  const partes = todas
+    .map((x) => ({ q: x, a: intersecao([novoPol], [x.pol]).reduce((s, y) => s + areaPol(y), 0) }))
+    .filter((x) => x.a > 0.5).sort((x, y) => y.a - x.a);
+  const c: Pt = [ext.reduce((s, p) => s + p[0], 0) / ext.length, ext.reduce((s, p) => s + p[1], 0) / ext.length];
+  const longe = (x: Quadra) => Math.min(...x.pol.ext.map((p, j) => distSegmento(c, p, x.pol.ext[(j + 1) % x.pol.ext.length]).d));
+  const dono = partes[0]?.q ?? [...todas].sort((x, y) => longe(x) - longe(y))[0];
+  if (!dono) return null;
+  const livre = diferenca([novoPol], [dono.pol]).reduce((s, x) => s + areaPol(x), 0) > 1;
+  // as outras quadras cobertas cedem a parte delas
+  let pr = pr0;
+  for (const { q: qx } of partes) {
+    if (qx === dono) continue;
+    const cx = contornos(pr, res, qx);
+    const cedido = cederAo(ext, cx.aneis, cx.destinos);
+    pr = gravar(cx.pr, res, cx.i, normalizar(cedido.aneis), cedido.metas);
+  }
+  const { pr: prD, i, aneis, destinos } = contornos(pr, res, dono);
+  const cedido = cederAo(ext, aneis, destinos);
+  const todos = normalizar([...cedido.aneis, ext]);
   const k = todos.length - 1;
-  return { pr: gravar(pr, res, i, todos, [...dOutros, {}]), msg: `Lote desenhado com ${fmt(areaPol({ ext, furos: [] }))} m² — os vizinhos se ajustaram ao contorno.`, sel: { quadra: q.nome, indices: [k] } };
+  const outras = partes.filter((x) => x.q !== dono).map((x) => x.q.nome);
+  return {
+    pr: gravar(prD, res, i, todos, [...cedido.metas, livre ? { livre: true } : {}]),
+    msg: `Lote desenhado com ${fmt(areaPol(novoPol))} m²${livre ? ` — passa da quadra ${dono.nome}${outras.length ? ` e toma a terra da quadra ${outras.join(", ")}` : " e toma a área livre"}; fica na quadra ${dono.nome}` : " — os vizinhos se ajustaram ao contorno"}.`,
+    sel: { quadra: dono.nome, indices: [k] },
+  };
 }
 
 export function unirLotes(pr0: Projeto, res: Resultado, q: Quadra, indices: number[]): Edicao | null {
@@ -568,7 +599,9 @@ export function unirLotes(pr0: Projeto, res: Resultado, q: Quadra, indices: numb
   if (u.length !== 1 || u[0].furos.length) return null;
   const alvo = Math.min(...indices);
   const novos = aneis.map((a, k) => (k === alvo ? limparAnel(u[0].ext, 0.005) : a)).filter((_, k) => k === alvo || !indices.includes(k));
-  const dest = destinos.filter((_, k) => k === alvo || !indices.includes(k));
+  // unido a um lote livre (que passa da quadra), o lote todo continua livre
+  const livre = indices.some((k) => destinos[k]?.livre);
+  const dest = destinos.map((d, k) => (k === alvo && livre ? { ...d, livre: true } : d)).filter((_, k) => k === alvo || !indices.includes(k));
   return { pr: gravar(pr, res, i, normalizar(novos), dest), msg: `${indices.length} lotes unidos em um de ${fmt(areaPol(u[0]))} m².`, sel: { quadra: q.nome, indices: [alvo] } };
 }
 

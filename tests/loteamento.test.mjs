@@ -6,6 +6,7 @@
 // conversão do plano de terreno de volta para UTM.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import { perimetro } from "./fixtures/loteamento_gleba.mjs";
 import { projetoNovo } from "../src/lib/loteamento/modelo.ts";
 import { calcular, fmt, viarioDe } from "../src/lib/loteamento/calculo.ts";
@@ -20,7 +21,7 @@ import { cotaFinal, loteNoPonto, montarCena } from "../src/lib/loteamento/cena3d
 import { camNoTempo, cruzamentos, percurso, roteiroDoVoo } from "../src/lib/loteamento/cinema3d.ts";
 import { pontoInterno } from "../src/lib/loteamento/auto.ts";
 import { criarPlano, paraPlano, paraUtm } from "../src/lib/loteamento/plano.ts";
-import { areaPol, areaPols, comprimento, dentroPol, diferenca, pontoNaPolilinha, quinas, uniao } from "../src/lib/loteamento/geom.ts";
+import { areaPol, areaPols, comprimento, dentroPol, diferenca, intersecao, pontoNaPolilinha, quinas, uniao, uniaoFechada } from "../src/lib/loteamento/geom.ts";
 import {
   arquivoLocacao, chavePonto, gerarDxf, gerarKml, ladosNominais, memorialDoLote, nomesDosPontos, pontosDeLocacao,
 } from "../src/lib/loteamento/saidas.ts";
@@ -242,6 +243,117 @@ test("apagar, desenhar, unir, dividir e cortar lotes à mão", () => {
   const ct = cortarLotes(pr0, r0, [cm[0] - d[0] * 40, cm[1] - d[1] * 40], [cm[0] + d[0] * 40, cm[1] + d[1] * 40]);
   assert.ok(ct, "o corte não pegou lote");
   assert.ok(calcular(ct.pr, perimetro).lotes.length > r0.lotes.length);
+});
+
+// ---- quina entre quadras sem rua no meio (caso EDILSON, 2026-11-01) ----------
+// A rua acaba antes da quina: as duas quadras se encontram numa divisa
+// invisível. O operador apagou os lotes da quina — o rosa vinha em pedaços (um
+// por quadra) e o lote novo só cabia dentro de um pedaço.
+const casca = (pts) => {
+  const s = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const p of s) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (const p of [...s].reverse()) { while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  return [...lo.slice(0, -1), ...up.slice(0, -1)];
+};
+const encosta = (pg, q) => uniaoFechada([pg, q.pol], 0.02).length === 1;
+const conferirPlanta = (r, rotulo) => {
+  const q = r.quadro;
+  assert.ok(Math.abs(q.lotes.area + q.viario + q.verde + q.institucional + q.lazer + q.app + q.sobras - q.gleba) < 0.5, `${rotulo}: quadro não fecha`);
+  const soma = r.lotes.reduce((s2, l) => s2 + l.area, 0);
+  assert.ok(Math.abs(areaPols(uniao(r.lotes.map((l) => l.pol))) - soma) < 0.5, `${rotulo}: lotes sobrepostos`);
+};
+
+test("quina entre quadras: o rosa sai inteiro e o duplo clique vira UM lote atravessando a divisa", () => {
+  const qA = r0.quadras.find((q) => q.nome === "A"), qB = r0.quadras.find((q) => q.nome === "B");
+  assert.ok(qA && qB && uniaoFechada([qA.pol, qB.pol], 0.02).length === 1, "a gleba de teste tem A e B vizinhas sem rua");
+  const nomes = (r) => r.quadras.map((q) => q.nome).join(",");
+  // apaga os lotes de A e de B que encostam na outra quadra
+  let pr = pr0, r = r0;
+  for (const [de, outra] of [["A", "B"], ["B", "A"]]) {
+    const q = r.quadras.find((x) => x.nome === de), qo = r.quadras.find((x) => x.nome === outra);
+    const ks = q.lotes.filter((l) => encosta(l.pol, qo)).map((l) => posicaoNoDesenho(pr, r, l));
+    assert.ok(ks.length, `nenhum lote de ${de} encosta em ${outra}`);
+    pr = apagarLotes(pr, r, q, ks).pr;
+    r = calcular(pr, perimetro);
+  }
+  conferirPlanta(r, "apagados");
+  const emA = (sb) => intersecao([sb], [r.quadras.find((q) => q.nome === "A")?.pol ?? qA.pol]).reduce((s2, x) => s2 + areaPol(x), 0);
+  const emB = (sb) => intersecao([sb], [r.quadras.find((q) => q.nome === "B")?.pol ?? qB.pol]).reduce((s2, x) => s2 + areaPol(x), 0);
+  const rosa = r.sobras.find((sb) => emA(sb) > 1 && emB(sb) > 1);
+  assert.ok(rosa, `o rosa da quina veio em pedaços: ${r.sobras.map((s2) => Math.round(areaPol(s2))).join(", ")}`);
+  // duplo clique no rosa: a área inteira vira um lote
+  const ed = desenharLote(pr, r, rosa.ext, { soLivre: true });
+  assert.ok(ed, "o duplo clique não fez lote");
+  const rl = calcular(ed.pr, perimetro);
+  const novo = rl.lotes.find((l) => l.quadra === ed.sel.quadra && l.indice === ed.sel.indices[0]);
+  assert.ok(Math.abs(novo.area - areaPol(rosa)) < 1, `lote de ${novo.area} m² para um rosa de ${areaPol(rosa)} m²`);
+  assert.ok(!rl.sobras.some((sb) => intersecao([sb], [novo.pol]).reduce((s2, x) => s2 + areaPol(x), 0) > 0.5), "sobrou rosa embaixo do lote");
+  assert.equal(nomes(rl), nomes(r0), "as quadras mudaram de nome");
+  conferirPlanta(rl, "duplo clique");
+});
+
+test("quina entre quadras: lote desenhado à mão passa da divisa, os lotes cobertos cedem e ele continua livre nas edições", () => {
+  const qA = r0.quadras.find((q) => q.nome === "A"), qB = r0.quadras.find((q) => q.nome === "B");
+  const lA = qA.lotes.find((l) => encosta(l.pol, qB)), lB = qB.lotes.find((l) => encosta(l.pol, qA));
+  const ed = desenharLote(pr0, r0, casca([...lA.pol.ext, ...lB.pol.ext]));
+  assert.ok(ed, "não desenhou");
+  assert.match(ed.msg, /passa da quadra/);
+  const r = calcular(ed.pr, perimetro);
+  const novo = r.lotes.find((l) => l.quadra === ed.sel.quadra && l.indice === ed.sel.indices[0]);
+  // pegou terra das duas quadras de origem (antes ficava só na quadra de maior parte)
+  const deA = intersecao([novo.pol], [qA.pol]).reduce((s2, x) => s2 + areaPol(x), 0);
+  const deB = intersecao([novo.pol], [qB.pol]).reduce((s2, x) => s2 + areaPol(x), 0);
+  assert.ok(deA > 1 && deB > 1, `o lote ficou de um lado só (A ${deA}, B ${deB})`);
+  assert.ok(novo.area >= lA.area + lB.area - 1, `lote de ${novo.area} m² (os dois cobertos tinham ${lA.area + lB.area})`);
+  assert.ok(ed.pr.quadras.some((c) => (c.lotes ?? []).some((ld) => ld.livre)), "o lote não ficou marcado como livre");
+  conferirPlanta(r, "desenho à mão");
+  // mover uma quina dele: continua com a terra da outra quadra (não é recortado de volta)
+  const q = r.quadras.find((x) => x.nome === novo.quadra);
+  const mv = moverQuina(ed.pr, r, q, novo.pol.ext[0], [novo.pol.ext[0][0] + 0.8, novo.pol.ext[0][1] + 0.8]);
+  const rm = calcular(mv.pr, perimetro);
+  const depois = rm.lotes.find((l) => l.quadra === novo.quadra && l.indice === novo.indice);
+  assert.ok(Math.abs(depois.area - novo.area) < 0.15 * novo.area, `o lote livre foi recortado ao mover a quina (${novo.area} → ${depois.area})`);
+  conferirPlanta(rm, "quina movida");
+  // apagar: a terra volta a ser área livre, inteira
+  const ap = apagarLotes(mv.pr, rm, rm.quadras.find((x) => x.nome === novo.quadra), [posicaoNoDesenho(mv.pr, rm, depois)]);
+  const ra = calcular(ap.pr, perimetro);
+  // (o rosa que a quina movida deixou junta com o do lote: uma área só)
+  assert.ok(Math.abs(areaPols(ra.sobras) - areaPols(rm.sobras) - depois.area) < 1, "a área do lote livre apagado não voltou a ser área livre");
+  assert.ok(ra.sobras.some((sb) => areaPol(sb) >= depois.area - 1), `a área livre veio em pedaços: ${ra.sobras.map((s2) => Math.round(areaPol(s2))).join(", ")}`);
+  conferirPlanta(ra, "apagado");
+});
+
+const EDILSON = new URL("./corpus-real/edilson/", import.meta.url);
+test("quina entre quadras: o projeto real do EDILSON — as duas quinas rosa viram um lote cada, sem mudar o nome das quadras", { skip: !existsSync(new URL("loteamento.json", EDILSON)) && "sem o corpus real" }, async () => {
+  const { normalizarProjeto } = await import("../src/lib/loteamento/modelo.ts");
+  const txt = readFileSync(new URL("Arquivo_de_Coordenadas_Formatado.txt", EDILSON), "utf8").split(/\r?\n/).filter((l) => /^\d/.test(l));
+  const n = (s) => Number(s.replace(",", "."));
+  const per = {
+    pts: txt.map((l) => [n(l.split(";")[1]), n(l.split(";")[2])]), altitudes: txt.map((l) => n(l.split(";")[3])),
+    confrontantes: txt.map((_, i) => (i >= 3 && i <= 14 ? "ESTRADA" : "DIVISA")),
+  };
+  const bruto = JSON.parse(readFileSync(new URL("loteamento.json", EDILSON), "utf8"));
+  let pr = normalizarProjeto(bruto, bruto.nome, per.pts.length);
+  let r = calcular(pr, per);
+  const nomes = r.quadras.map((q) => q.nome).concat((r.quadrasVazias ?? []).map((q) => q.nome)).sort().join(",");
+  // antes: 5 pedaços rosa (dois em cada quina, cortados pela divisa entre as quadras)
+  assert.equal(r.sobras.length, 3, `rosa em ${r.sobras.length} pedaços`);
+  const lotes0 = r.lotes.length;
+  for (const i of [2, 3]) { // quinas dos pontos 3 e 4
+    const Q = paraPlano(r.plano, per.pts[i]);
+    const longe = (sb) => Math.min(...sb.ext.map((p) => Math.hypot(p[0] - Q[0], p[1] - Q[1])));
+    const sb = [...r.sobras].sort((a, b) => longe(a) - longe(b))[0];
+    const ed = desenharLote(pr, r, sb.ext, { soLivre: true });
+    pr = ed.pr; r = calcular(pr, per);
+    const novo = r.lotes.find((l) => l.quadra === ed.sel.quadra && l.indice === ed.sel.indices[0]);
+    assert.ok(Math.abs(novo.area - areaPol(sb)) < 1, `quina do ponto ${i + 1}: lote de ${novo.area} m² para um rosa de ${areaPol(sb)} m²`);
+  }
+  assert.equal(r.lotes.length, lotes0 + 2);
+  assert.equal(r.sobras.length, 1, "sobrou rosa nas quinas");
+  assert.equal(r.quadras.map((q) => q.nome).concat((r.quadrasVazias ?? []).map((q) => q.nome)).sort().join(","), nomes, "quadras mudaram de nome");
+  conferirPlanta(r, "EDILSON");
 });
 
 test("comandos: unir, dividir e virar área verde", () => {

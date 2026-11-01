@@ -358,6 +358,12 @@ export interface LoteDesenhado {
   destino?: TipoArea;
   /** lado escolhido pelo operador como frente (UTM) — lote que dá para servidão, área verde, outro lote */
   frente?: [Pt, Pt];
+  /**
+   * Lote que passa da quadra: o operador o desenhou por cima da divisa
+   * invisível entre duas quadras (a quina onde a rua acaba, a quadra que ficou
+   * vazia). A terra dele sai das quadras vizinhas e entra na quadra deste lote.
+   */
+  livre?: boolean;
 }
 
 /**
