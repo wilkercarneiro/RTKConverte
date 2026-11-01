@@ -799,7 +799,12 @@ function fiapo(an: Pt[]): boolean {
       const z = (y + 1) % n;
       if (y === x || z === x) continue;
       if (dist(an[y], an[z]) < 1e-6) continue;
-      if (distSegmento(an[x], an[y], an[z]).d < 0.03) return true;
+      const { d, t } = distSegmento(an[x], an[y], an[z]);
+      if (d >= 0.03) continue;
+      // perto só da quina vizinha (um lado de 2 cm no meio da rua reta) não é fiapo:
+      // a ponta da divisa passando por um ponto da rua travava o deslizar
+      if ((y === (x + 1) % n && t < 1e-3) || (z === (x + n - 1) % n && t > 1 - 1e-3)) continue;
+      return true;
     }
   }
   return false;
@@ -967,6 +972,32 @@ export function moverPontoDeFundo(pr0: Projeto, res: Resultado, q: Quadra, de: P
   return aplicarArraste(pr, res, q, i, aneis, novos, destinos, -1, `Ponto da linha de fundo movido ${fmt(dist(p, novo))} m pela divisa — os lotes da frente e de trás se ajustaram.`, novo);
 }
 
+/** Resolve M·y = b (eliminação de Gauss com pivô parcial); null se singular. */
+function resolver(M0: number[][], b0: number[]): number[] | null {
+  const n = b0.length;
+  const M = M0.map((l) => l.slice()), b = b0.slice();
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let l = c + 1; l < n; l++) if (Math.abs(M[l][c]) > Math.abs(M[piv][c])) piv = l;
+    if (Math.abs(M[piv][c]) < 1e-12) return null;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    [b[c], b[piv]] = [b[piv], b[c]];
+    for (let l = c + 1; l < n; l++) {
+      const f = M[l][c] / M[c][c];
+      if (!f) continue;
+      for (let k = c; k < n; k++) M[l][k] -= f * M[c][k];
+      b[l] -= f * b[c];
+    }
+  }
+  const y = new Array(n).fill(0);
+  for (let c = n - 1; c >= 0; c--) {
+    let t = b[c];
+    for (let k = c + 1; k < n; k++) t -= M[c][k] * y[k];
+    y[c] = t / M[c][c];
+  }
+  return y;
+}
+
 /** O contorno tem o lado a–b (em qualquer sentido)? */
 function temLado(an: Pt[], a: Pt, b: Pt): boolean {
   for (let j = 0; j < an.length; j++) {
@@ -974,6 +1005,24 @@ function temLado(an: Pt[], a: Pt, b: Pt): boolean {
     if ((dist(v, a) < TOL && dist(w, b) < TOL) || (dist(v, b) < TOL && dist(w, a) < TOL)) return true;
   }
   return false;
+}
+
+/**
+ * Tira do contorno os pontos de passagem — no meio de um lado reto, vindos de
+ * outro lote (que continua com eles) — menos os que `manter` pede. O normalizar
+ * os devolve no lado onde caírem depois de mover as junções.
+ */
+function semPassagens(an: Pt[], todos: Pt[][], manter: (v: Pt) => boolean, q: Quadra): Pt[] {
+  const n = an.length;
+  if (n <= 3) return an;
+  const out = an.filter((v, j) => {
+    if (manter(v)) return true;
+    const { d, t } = distSegmento(v, an[(j + n - 1) % n], an[(j + 1) % n]);
+    if (d > 0.01 || t <= 0 || t >= 1) return true;
+    if (q.pol.ext.some((c) => dist(c, v) < 0.01)) return true;
+    return !todos.some((o) => o !== an && o.some((w) => dist(w, v) < TOL));
+  });
+  return out.length >= 3 ? out : an;
 }
 
 /**
@@ -1012,9 +1061,13 @@ function divisaEntre(x: Pt[], y: Pt[]): [Pt, Pt] | null {
  *
  * Como: os selecionados viram "colunas" (o da frente com o de trás, quando os
  * dois estão selecionados). 1) Uma árvore pelas divisas laterais entre as
- * colunas leva cada parte da árvore à área certa (n × alvo); 2) dentro de cada
- * coluna, o trecho dela da linha de fundo desliza (as pontas correm pelas
- * divisas) até o da frente e o de trás baterem. Repete até todos baterem.
+ * colunas leva cada parte da árvore à área certa (n × alvo); 2) as junções da
+ * linha de fundo correm pelas divisas até o da frente e o de trás baterem
+ * (contínua, sem degrau, com a menor dobra). Repete até todos baterem.
+ *
+ * Forma antes da área: nenhum lote ganha quina, perde a testada, vira faixa
+ * comprida ou fica abaixo da área mínima. A divisa que só andaria assim fica
+ * travada, e cada parte da seleção se iguala por dentro (a mensagem diz quais).
  */
 export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: number[]): Edicao | null {
   const ks = [...new Set(indices)].filter((k) => k >= 0);
@@ -1033,13 +1086,33 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
 
   // ---- colunas: o da frente e o de trás selecionados, ligados pela linha de fundo ----
   const est0 = estruturaDeDivisas(aneis, q);
+  // a divisa entre x e y é (trecho d) da linha de fundo? Ela pode vir em pedaços (o "T" de
+  // um terceiro lote no meio): basta um pedaço de fundo dos dois em cima dela. Pedindo a
+  // divisa inteira como um lado só, o fundo de C-19|C-20 passava por lateral e deslizava (degrau)
+  const deFundo = (est: EstruturaDivisas, d: [Pt, Pt], x: number, y: number) => est.ehFundo(d[0], d[1])
+    || est.comuns.some((c) => c.lotes.includes(x) && c.lotes.includes(y) && est.ehFundo(c.a, c.b)
+      && distSegmento(c.a, d[0], d[1]).d < TOL && distSegmento(c.b, d[0], d[1]).d < TOL);
   const fundoEntre = (an: Pt[][], x: number, y: number, est: EstruturaDivisas): [Pt, Pt] | null => {
     const d = divisaEntre(an[x], an[y]);
-    return d && est.ehFundo(d[0], d[1]) ? d : null;
+    return d && deFundo(est, d, x, y) ? d : null;
   };
   const ufC = new Map(ks.map((k) => [k, k]));
   const achaC = (k: number): number => { let r = k; while (ufC.get(r) !== r) r = ufC.get(r)!; return r; };
-  for (const x of ks) for (const y of ks) if (x < y && fundoEntre(aneis, x, y, est0)) ufC.set(achaC(x), achaC(y));
+  // coluna só com par EXCLUSIVO (alinhado): o da frente encosta pelo fundo só no
+  // de trás e vice-versa. Nas fileiras desencontradas (cada lote encosta no fundo
+  // de dois), juntar em "coluna" encadeava a fileira inteira num bloco só e o
+  // ajuste pelos trechos do fundo cruzava os lotes — ali cada lote fica sozinho
+  // e a fileira se iguala pelas laterais (a ponta delas corre pela linha de fundo)
+  const vizinhosDeFundo = new Map<number, Set<number>>();
+  for (const c of est0.comuns) {
+    if (!est0.ehFundo(c.a, c.b)) continue;
+    const [u, w] = c.lotes;
+    if (!vizinhosDeFundo.has(u)) vizinhosDeFundo.set(u, new Set());
+    if (!vizinhosDeFundo.has(w)) vizinhosDeFundo.set(w, new Set());
+    vizinhosDeFundo.get(u)!.add(w); vizinhosDeFundo.get(w)!.add(u);
+  }
+  const soEle = (x: number, y: number) => { const v = vizinhosDeFundo.get(x); return !!v && v.size === 1 && v.has(y); };
+  for (const x of ks) for (const y of ks) if (x < y && soEle(x, y) && soEle(y, x) && fundoEntre(aneis, x, y, est0)) ufC.set(achaC(x), achaC(y));
   const colunas = new Map<number, number[]>();
   for (const k of ks) colunas.set(achaC(k), [...(colunas.get(achaC(k)) ?? []), k]);
   const cols = [...colunas.values()];
@@ -1055,7 +1128,7 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
     const d = divisaEntre(an[x], an[y]);
     if (!d) return null;
     const est = estruturaDeDivisas(an, q);
-    if (est.ehFundo(d[0], d[1])) return null;
+    if (deFundo(est, d, x, y)) return null;
     const pb = naBorda(q, d[0]), rb = naBorda(q, d[1]);
     const simples = { a: d[0], b: d[1], m: null as Pt | null, dirFundo: null as Pt | null, lotes: [x, y] };
     if (pb === rb) return simples;
@@ -1099,6 +1172,32 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
   const encontro = (x: Pt[], y: Pt[]) => soma2(intersecao([pg(x)], [pg(y)]));
   /** lotes de fora da seleção que acompanharam a divisa (fundo com fundo) */
   const acompanharam = new Set<number>();
+  // forma do lote: o que encosta na rua (a testada) não some. Igualar a área a
+  // qualquer custo deixava, na ponta de uma quadra em leque, lote sem frente e
+  // lote comprido de 60 m de fundo — ali a divisa para e a mensagem avisa
+  const frenteMinima = Math.max(2.5, 0.5 * (pr0.params.frenteMin || 5));
+  const frenteNaBorda = (x: Pt[]) => x.reduce((t, v, j) => { const w = x[(j + 1) % x.length]; return t + (naBorda(q, lerp(v, w, 0.5)) && naBorda(q, v) && naBorda(q, w) ? dist(v, w) : 0); }, 0);
+  // e não vira faixa: alongamento (perímetro² ÷ área; 10×25 dá 19,6 e 7×40 dá 31) até 34 —
+  // lote que já era mais comprido que isso não pode ficar mais comprido do que era
+  const alongamento = (x: Pt[]) => { const p = x.reduce((t, v, j) => t + dist(v, x[(j + 1) % x.length]), 0); return (p * p) / Math.max(Math.abs(areaAssinada(x)), 1e-6); };
+  const alongMax = new Map(ks.map((k) => [k, Math.max(34, alongamento(an0[k]) + 0.5)]));
+  // e não ganha quina: a ponta da divisa que corre pela borda e passa a dobra da rua
+  // levava a dobra para dentro do lote (A-26 com 5 quinas, marcado de vermelho)
+  const qMax = pr0.params.quinasMax ?? 4;
+  const quinasAntes = new Map<number, number>();
+  // (contadas no contorno limpo, como a planta conta: pontos alinhados a cada 2 m pela
+  // rua passavam por "arco de esquina" e escondiam a dobra)
+  const nQuinas = (x: Pt[]) => { const l = limparAnel(x, 0.01); return quinasDe(l.length >= 3 ? l : x).length; };
+  const quinasOk = (x: Pt[], k: number) => {
+    if (qMax <= 0 || !an0[k]) return true;
+    if (!quinasAntes.has(k)) quinasAntes.set(k, nQuinas(an0[k]));
+    return nQuinas(x) <= Math.max(qMax, quinasAntes.get(k)!);
+  };
+  // e não fica abaixo da área mínima do loteamento (se já não estava): a divisa que
+  // arrasta o lote de trás de fora da seleção esvaziava o vizinho até 100 m²
+  const areaMin = pr0.params.areaMin || 0;
+  const areaOk = (x: Pt[], k: number) => !an0[k] || Math.abs(areaAssinada(x)) >= Math.min(areaMin, Math.abs(areaAssinada(an0[k]))) - 0.01;
+  const formaBoa = (x: Pt[], k: number) => quinasOk(x, k) && areaOk(x, k) && (!selecionado.has(k) || alongamento(x) <= alongMax.get(k)!);
 
   /**
    * Desliza o trecho a–b até a soma do `grupo` chegar em `alvoG` (ou o mais
@@ -1106,7 +1205,8 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
    * sai da quadra, se cruza ou vira fiapo. Com `m` (divisa de rua a rua), a
    * junção volta para a linha de fundo depois de deslizar.
    */
-  const ajustar = (seg: { a: Pt; b: Pt; m: Pt | null; dirFundo: Pt | null; lotes: number[] }, grupo: number[], alvoG: number, dono: number) => {
+  /** devolve true quando a divisa não anda nada no sentido que a conta pede (travada) */
+  const ajustar = (seg: { a: Pt; b: Pt; m: Pt | null; dirFundo: Pt | null; lotes: number[] }, grupo: number[], alvoG: number, dono: number): boolean => {
     const { a, b, m, dirFundo } = seg;
     const L = Math.max(dist(a, b), 1);
     const podem = new Set(seg.lotes);
@@ -1135,7 +1235,14 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
     for (let x = 0; x < ls.length; x++) for (let y = x + 1; y < ls.length; y++) pares.push([ls[x], ls[y]]);
     const foraAntes = ls.reduce((s2, k) => s2 + fora(aneis[k]), 0);
     const encAntes = pares.map(([x, y]) => encontro(aneis[x], aneis[y]));
-    const valido = (an: Pt[][]) => an.length === aneis.length && an.every((x, k) => {
+    // a quadra continua coberta, sem sobreposição: a soma de TODOS os lotes não muda
+    // (um lote da divisa que invade outro de fora dela não muda a área do invadido —
+    // só a soma denuncia; foi o que gerava os lotes compridos cruzando na ponta da quadra)
+    const totalAntes = antes.reduce((t, x) => t + x, 0);
+    const frenteAntes = ls.map((k) => frenteNaBorda(aneis[k]));
+    const valido = (an: Pt[][]) => an.length === aneis.length
+      && Math.abs(an.reduce((t, x) => t + Math.abs(areaAssinada(x)), 0) - totalAntes) < 0.05
+      && ls.every((k, j) => frenteNaBorda(an[k]) >= Math.min(frenteAntes[j], frenteMinima) - 0.01 && formaBoa(an[k], k)) && an.every((x, k) => {
       if (antes[k] < 1) return true;
       if (x.length < 3 || Math.sign(areaAssinada(x)) !== Math.sign(areaAssinada(aneis[k])) || Math.abs(areaAssinada(x)) < 1) return false;
       return podem.has(k) || Math.abs(Math.abs(areaAssinada(x)) - antes[k]) < 0.002;
@@ -1144,10 +1251,17 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
       && ls.reduce((s2, k) => s2 + fora(an[k]), 0) <= foraAntes + 0.05;
     const medir = (s: number): { an: Pt[][]; m: number } | null => { const an = aplicar(s); return valido(an) ? { an, m: somaDe(an, grupo) } : null; };
     const g0 = somaDe(aneis, grupo) - alvoG;
-    if (Math.abs(g0) < 0.005) return;
+    if (Math.abs(g0) < 0.005) return false;
     // sentido: o deslocamento +n aumenta ou diminui o grupo?
-    const mais = medir(0.1), menos = mais ? null : medir(-0.1);
-    if (!mais && !menos) return;
+    // (vários tamanhos: um ponto da rua a centímetros da ponta trava um deles)
+    let mais: { an: Pt[][]; m: number } | null = null, menos: { an: Pt[][]; m: number } | null = null;
+    for (const e of [0.1, 0.25, 0.04, 0.5]) {
+      mais = medir(e);
+      if (mais) break;
+      menos = medir(-e);
+      if (menos) break;
+    }
+    if (!mais && !menos) return Math.abs(g0) > 0.05;
     const base = somaDe(aneis, grupo);
     const cresce = mais ? (mais.m > base ? 1 : -1) : (menos!.m > base ? -1 : 1);
     const g = (s: number) => { const r = medir(cresce * s); return r ? { ...r, g: r.m - alvoG } : null; };
@@ -1175,11 +1289,12 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
       for (const k of podem) if (!selecionado.has(k) && Math.abs(area(melhor, k) - antes[k]) > 0.05) acompanharam.add(k);
       aneis = melhor;
     }
+    return !melhor && Math.abs(g0) > 0.05;
   };
 
   // ---- árvore (por um critério de preferência) sobre nós ligados por divisas ----
   type Aresta = { a: number; b: number; x: number; y: number; comp: number };
-  const arvore = (nos: number[], arestas: Aresta[], criterio: (e: Aresta) => number) => {
+  const arvore = (nos: number[], arestas: Aresta[], criterio: (e: Aresta) => number, floresta = false) => {
     const uf = new Map(nos.map((k) => [k, k]));
     const acha = (k: number): number => { let r = k; while (uf.get(r) !== r) r = uf.get(r)!; return r; };
     const viz = new Map<number, { v: number; e: Aresta }[]>(nos.map((k) => [k, []]));
@@ -1189,21 +1304,28 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
       uf.set(ra, rb);
       viz.get(e.a)!.push({ v: e.b, e }); viz.get(e.b)!.push({ v: e.a, e });
     }
-    if (new Set(nos.map(acha)).size > 1) return null;
-    const raiz = [...nos].sort((x, y) => viz.get(y)!.length - viz.get(x)!.length)[0];
+    if (!floresta && new Set(nos.map(acha)).size > 1) return null;
+    // (floresta: uma árvore por parte — a divisa travada separa as partes)
     const pai = new Map<number, { v: number; e: Aresta }>();
+    const parte = new Map<number, number>();
     const ordem: number[] = [];
-    const fila = [raiz];
-    const visto = new Set([raiz]);
-    while (fila.length) {
-      const k = fila.shift()!;
-      ordem.push(k);
-      for (const w of viz.get(k)!) if (!visto.has(w.v)) { visto.add(w.v); pai.set(w.v, { v: k, e: w.e }); fila.push(w.v); }
+    const visto = new Set<number>();
+    for (const raiz of [...nos].sort((x, y) => viz.get(y)!.length - viz.get(x)!.length)) {
+      if (visto.has(raiz)) continue;
+      const fila = [raiz];
+      visto.add(raiz);
+      while (fila.length) {
+        const k = fila.shift()!;
+        ordem.push(k);
+        parte.set(k, raiz);
+        for (const w of viz.get(k)!) if (!visto.has(w.v)) { visto.add(w.v); pai.set(w.v, { v: k, e: w.e }); fila.push(w.v); }
+      }
     }
-    const posOrdem = ordem.slice(1).reverse();
+    // dos filhos para a raiz (as raízes de cada parte ficam de fora)
+    const posOrdem = ordem.filter((k) => pai.has(k)).reverse();
     const subarvore = new Map<number, number[]>(nos.map((k) => [k, [k]]));
     for (const k of posOrdem) subarvore.get(pai.get(k)!.v)!.push(...subarvore.get(k)!);
-    return { pai, posOrdem, subarvore };
+    return { pai, posOrdem, subarvore, parte };
   };
   // arestas entre colunas: divisas laterais entre um lote de cada
   const arestasColunas = (): Aresta[] => {
@@ -1213,7 +1335,7 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
       const d = divisaEntre(aneis[x], aneis[y]);
       if (!d) continue;
       const est = estruturaDeDivisas(aneis, q);
-      if (est.ehFundo(d[0], d[1])) continue;
+      if (deFundo(est, d, x, y)) continue;
       out.push({ a: colDe.get(x)!, b: colDe.get(y)!, x, y, comp: dist(d[0], d[1]) });
     }
     return out;
@@ -1224,111 +1346,328 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
     return { pr: pr0, erro: true, msg: "Os lotes selecionados precisam estar encostados uns nos outros (divisa em comum) — selecione lotes vizinhos, sem pular nenhum." };
   }
   const minimo = () => Math.max(1, 0.1 * alvo);
-  const igual = () => { const md = somaDe(aneis, ks) / ks.length; return ks.every((k) => Math.abs(area(aneis, k) - md) < 0.01); };
+  // divisa travada (não anda no sentido que a conta pede sem deformar um lote): vira
+  // corte, e cada parte se iguala por dentro. Sem isso, a coluna da ponta esvaziava a
+  // vizinha (que não tinha por onde receber de volta) — A-26 ia de 191 a 113 m²
+  const chaveC = (a: number, b: number) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const cortadas = new Map<string, [number, number]>();
+  /** as partes (colunas ligadas por divisas não travadas) e a média de cada uma */
+  const partes = () => {
+    const t = arvore(nosColunas, arestasColunas().filter((e) => !cortadas.has(chaveC(e.a, e.b))), criterios[0], true)!;
+    const grupos = new Map<number, number[]>();
+    for (const j of nosColunas) grupos.set(t.parte.get(j)!, [...(grupos.get(t.parte.get(j)!) ?? []), ...cols[j]]);
+    return [...grupos.values()].map((ls) => ({ lotes: ls, media: somaDe(aneis, ls) / ls.length }));
+  };
+  const igual = () => partes().every((p) => p.lotes.every((k) => Math.abs(area(aneis, k) - p.media) < 0.01));
 
   /** 1) entre colunas: cada divisa lateral (de rua a rua) leva a sua parte da árvore à área certa */
   const passeColunas = (criterio: (e: Aresta) => number) => {
+    // achou divisa travada no meio da passada: volta ao começo dela e refaz com o corte
+    // (o que já tinha andado contava com a divisa travada e esvaziava a coluna da ponta)
+    for (let volta = 0; volta < 8; volta++) {
+      const inicio = aneis, acompInicio = [...acompanharam];
+      if (!umaPasseColunas(criterio)) return;
+      aneis = inicio;
+      acompanharam.clear();
+      acompInicio.forEach((k) => acompanharam.add(k));
+    }
+  };
+  /** uma passada; devolve true se achou divisa travada nova */
+  const umaPasseColunas = (criterio: (e: Aresta) => number): boolean => {
     atualizarAlvo();
-    const t = arvore(nosColunas, arestasColunas(), criterio);
-    if (!t) return;
+    let nova = false;
+    const t = arvore(nosColunas, arestasColunas().filter((e) => !cortadas.has(chaveC(e.a, e.b))), criterio, true);
+    if (!t) return false;
+    // a média de cada parte (sem corte, uma só: a de todos)
+    const mediaParte = new Map<number, number>();
+    for (const raiz of new Set(t.parte.values())) {
+      const membros = nosColunas.filter((j) => t.parte.get(j) === raiz);
+      mediaParte.set(raiz, membros.reduce((s, j) => s + somaDe(aneis, cols[j]), 0) / membros.reduce((s, j) => s + cols[j].length, 0));
+    }
     for (const c of t.posOrdem) {
       const { v: p, e } = t.pai.get(c)!;
       const sub2 = t.subarvore.get(c)!;
-      const alvoC = sub2.reduce((s, j) => s + cols[j].length * alvo, 0) - sub2.filter((j) => j !== c).reduce((s, j) => s + somaDe(aneis, cols[j]), 0);
+      const alvoP = mediaParte.get(t.parte.get(c)!)!;
+      const alvoC = sub2.reduce((s, j) => s + cols[j].length * alvoP, 0) - sub2.filter((j) => j !== c).reduce((s, j) => s + somaDe(aneis, cols[j]), 0);
       const x = colDe.get(e.x) === c ? e.x : e.y, y = x === e.x ? e.y : e.x;
       const seg = lateral(aneis, x, y);
       if (!seg) continue;
       const par = somaDe(aneis, cols[c]) + somaDe(aneis, cols[p]);
-      ajustar(seg, cols[c], Math.min(Math.max(alvoC, minimo() * cols[c].length), par - minimo() * cols[p].length), x);
+      const travou = ajustar(seg, cols[c], Math.min(Math.max(alvoC, minimo() * cols[c].length), par - minimo() * cols[p].length), x);
+      if (travou && !cortadas.has(chaveC(c, p))) { cortadas.set(chaveC(c, p), [x, y]); nova = true; }
     }
+    return nova;
   };
   /**
-   * 0) a linha de fundo das colunas selecionadas anda INTEIRA, reta: cada
-   * junção corre pela sua divisa (o fundo com fundo continua alinhado) até a
-   * soma dos lotes de um lado bater com a do outro. Na ponta da seleção, o lote
-   * vizinho (de fora) fica como está — a junção dele não anda.
+   * 2) frente × fundo de cada coluna pelas JUNÇÕES da linha de fundo (não pelos
+   * trechos): cada junção corre pela sua divisa, e duas colunas vizinhas dividem
+   * a mesma junção — a linha de fundo continua contínua, sem degrau. Com uma
+   * junção a mais que colunas, há solução; longe do alvo o passo é liso (a
+   * linha anda por inteiro), perto dele é o exato de menor dobra. As pontas
+   * correm pelo T do lote de fora e pela dobra da rua. A soma de cada coluna não muda.
    */
-  const passeLinhaDeFundo = () => {
-    const duplas = cols.filter((c) => c.length === 2);
+  const passeJuncoes = () => {
+    // colunas na ordem ao longo da quadra (as junções saem em sequência)
+    const meioFundo = ([x, z]: [number, number]) => { const d = divisaEntre(aneis[x], aneis[z]); return d ? dot(lerp(d[0], d[1], 0.5), q.u) : 0; };
+    const duplas = (cols.filter((c) => c.length === 2) as [number, number][]).sort((a, b) => meioFundo(a) - meioFundo(b));
     if (!duplas.length) return;
-    const est = estruturaDeDivisas(aneis, q);
-    const espinha = est.espinhas.find((e) => duplas.some(([x, z]) => { const d = fundoEntre(aneis, x, z, est); return !!d && e.some((p) => dist(p, d[0]) < TOL); }));
-    if (!espinha) return;
-    // lado "esquerdo" da linha de fundo (na ordem dela): de cada coluna, o lote desse lado
-    const lado: number[] = [];
-    const pontos: { p: Pt; dir: Pt; uF: Pt }[] = [];
-    for (const [x, z] of duplas) {
-      const d = fundoEntre(aneis, x, z, est);
-      if (!d) return;
-      const j = espinha.findIndex((p) => dist(p, d[0]) < TOL);
-      if (j < 0) return;
-      const uF = unit(sub(espinha[Math.min(j + 1, espinha.length - 1)], espinha[Math.max(j - 1, 0)]));
-      const cx = centroDe(aneis[x]);
-      lado.push(cross(uF, sub(cx, d[0])) > 0 ? x : z);
-      for (const p of d) {
-        if (pontos.some((o) => dist(o.p, p) < TOL)) continue;
-        // a divisa lateral que chega na junção (é por ela que a junção anda); na borda, a borda
-        let dir: Pt | null = null;
-        for (const c of est.comuns) {
-          if (est.ehFundo(c.a, c.b)) continue;
-          if (dist(c.a, p) < TOL) { dir = unit(sub(c.b, c.a)); break; }
-          if (dist(c.b, p) < TOL) { dir = unit(sub(c.a, c.b)); break; }
-        }
-        if (!dir) dir = esquerda(uF);
-        pontos.push({ p, dir, uF });
+    const daColuna = new Set(duplas.flat());
+    // cura: degrau numa divisa entre duas colunas selecionadas (o fundo de uma
+    // termina num ponto, o da vizinha noutro, na mesma divisa) — as duas pontas
+    // se juntam no meio e a linha de fundo volta a ser contínua
+    {
+      const pontas = duplas.map(([x, z]) => divisaEntre(aneis[x], aneis[z]));
+      const juntar: { de: Pt; para: Pt }[] = [];
+      for (let c = 0; c + 1 < duplas.length; c++) {
+        const d1 = pontas[c], d2 = pontas[c + 1];
+        if (!d1 || !d2) continue;
+        let par: [Pt, Pt] | null = null, dm = 6;
+        for (const a of d1) for (const b of d2) { const dd = dist(a, b); if (dd < dm) { dm = dd; par = [a, b]; } }
+        if (!par || dm < TOL) continue;
+        // os dois têm de estar na mesma divisa: o trecho entre eles é lado de um lote das duas colunas
+        const [a, b] = par;
+        const naDivisa = [...duplas[c], ...duplas[c + 1]].some((k) => {
+          const an = aneis[k];
+          return an.some((v, j) => { const w = an[(j + 1) % an.length]; return distSegmento(a, v, w).d < TOL && distSegmento(b, v, w).d < TOL; });
+        });
+        if (!naDivisa) continue;
+        const meio = lerp(a, b, 0.5);
+        juntar.push({ de: a, para: meio }, { de: b, para: meio });
+      }
+      if (juntar.length) {
+        const antesC = aneis.map((_, k) => area(aneis, k));
+        const nv = normalizar(moverPontos(aneis, juntar, (k) => daColuna.has(k)));
+        const ok = nv.every((x, k) => antesC[k] < 1 || (x.length >= 3 && Math.abs(areaAssinada(x)) >= 1
+          && (daColuna.has(k) ? !seCruza(x) : Math.abs(Math.abs(areaAssinada(x)) - antesC[k]) < 0.002)));
+        if (ok) aneis = nv;
       }
     }
-    const daColuna = new Set(duplas.flat());
+    const est = estruturaDeDivisas(aneis, q);
+    type Juncao = { p: Pt; dir: Pt; todos: boolean; uF: Pt; borda: boolean };
+    /** na borda: os vizinhos da junção pela borda, de um lado e do outro da linha de fundo (no desenho de agora) */
+    const ladosDe = (j: Juncao): [Pt, Pt] | null => {
+      if (!j.borda) return null;
+      const viz = aneis.flatMap((an, k) => {
+        const jj = daColuna.has(k) ? an.findIndex((v) => dist(v, j.p) < TOL) : -1;
+        return jj < 0 ? [] : [an[(jj + an.length - 1) % an.length], an[(jj + 1) % an.length]];
+      }).filter((v) => naBorda(q, v) && dist(v, j.p) > 0.05);
+      const lado = (v: Pt) => dot(sub(v, j.p), esquerda(j.uF));
+      const A = viz.reduce((m: Pt | null, v) => (!m || lado(v) > lado(m) ? v : m), null);
+      const B = viz.reduce((m: Pt | null, v) => (!m || lado(v) < lado(m) ? v : m), null);
+      return A && B && lado(A) > 0 && lado(B) < 0 ? [A, B] : null;
+    };
+    const juncoes: Juncao[] = [];
+    const extremos: [number, number][] = [];
+    for (const [x, z] of duplas) {
+      const d = divisaEntre(aneis[x], aneis[z]);
+      if (!d) return;
+      let uF = unit(sub(d[1], d[0]));
+      if (dot(uF, q.u) < 0) uF = mult(uF, -1);
+      const ids = d.map((p) => {
+        let j = juncoes.findIndex((o) => dist(o.p, p) < TOL);
+        if (j < 0) {
+          // a junção anda pela divisa lateral dela (na borda, pela borda)
+          let dir = trilhoDaJuncao(est, q, p, uF);
+          // lote de fora da seleção que também tem o ponto: se o ponto é só passagem num
+          // lado reto dele, na direção em que a junção anda, ela corre por esse lado em
+          // todos os lotes e o de fora não muda de forma. Presa ali, a ponta da linha de
+          // fundo obrigava as junções do meio a compensar uma a uma — o zigue-zague.
+          // Senão (quina do lote de fora), só os selecionados a movem (degrau só na ponta)
+          const passagem = (an: Pt[]) => {
+            const j = an.findIndex((v) => dist(v, p) < TOL);
+            if (j < 0) return true;
+            const a = an[(j + an.length - 1) % an.length], b = an[(j + 1) % an.length];
+            const ab = unit(sub(b, a));
+            return distSegmento(p, a, b).d < 0.005 && Math.abs(cross(ab, dir)) < 0.02;
+          };
+          const todos = aneis.every((an, k) => daColuna.has(k) || passagem(an));
+          // todas as junções orientadas para o mesmo lado da linha de fundo (deslocamento "físico" comparável)
+          if (dot(dir, esquerda(uF)) < 0) dir = mult(dir, -1);
+          // na borda (a ponta que já andou pelo lado do lote pode ficar uns centímetros
+          // fora da borda "oficial" da quadra, que é mais curva que o lote)
+          juncoes.push({ p, dir, todos, uF, borda: distBorda(q, p) < 0.5 });
+          j = juncoes.length - 1;
+        }
+        return j;
+      }) as [number, number];
+      extremos.push(ids);
+    }
     const antes = aneis.map((_, k) => area(aneis, k));
-    // metade do que as colunas têm AGORA (a soma delas ainda vai mudar pelas laterais)
-    const alvoLado = somaDe(aneis, [...daColuna]) / 2;
-    const aplicar = (dd: number): Pt[][] | null => {
-      const mapa: { de: Pt; para: Pt }[] = [];
-      for (const { p, dir, uF } of pontos) {
-        const r = intersecaoRetas(soma(p, mult(esquerda(uF), dd)), uF, p, dir);
-        if (!r || dist(r.pt, p) > Math.abs(dd) * 4 + 1) return null;
-        mapa.push({ de: p, para: r.pt });
+    const foraAntes = aneis.map((x, k) => (daColuna.has(k) ? fora(x) : 0));
+    // a quadra continua coberta: a soma de TODOS os lotes não muda (junção da ponta que
+    // anda só nos selecionados e se afasta do vizinho de fora abria um vão entre eles)
+    const totalAntes = antes.reduce((t, x) => t + x, 0);
+    const frenteJ = new Map([...daColuna].map((k) => [k, frenteNaBorda(aneis[k])]));
+    /** para onde a junção vai com o deslocamento s: pela divisa dela; na borda, pelo lado do lote (a rua tem dobras) */
+    const destino = (j: Juncao, s: number): Pt => {
+      const lados = ladosDe(j);
+      if (!lados) return soma(j.p, mult(j.dir, s));
+      const v = s >= 0 ? lados[0] : lados[1];
+      return soma(j.p, mult(unit(sub(v, j.p)), Math.abs(s)));
+    };
+    const aplicar = (s: number[]): Pt[][] | null => {
+      const geral = juncoes.map((j, jj) => ({ de: j.p, para: destino(j, s[jj]), todos: j.todos, lados: ladosDe(j) })).filter((m, jj) => Math.abs(s[jj]) > 1e-9);
+      const anda = (v: Pt) => geral.some((m) => dist(m.de, v) < TOL);
+      const andaEmTodos = (v: Pt) => geral.some((m) => m.todos && dist(m.de, v) < TOL);
+      // os pontos de passagem (o "T" de outro lote no meio de um lado) saem antes e o
+      // normalizar os devolve no lado onde caírem: a junção passa por eles sem dobrar
+      // o lote (a ponta da linha de fundo estava a 22 cm da quina de um lote de fora)
+      const base = aneis.map((an, k) => (daColuna.has(k) ? semPassagens(an, aneis, (v) => anda(v), q) : semPassagens(an, aneis, (v) => !andaEmTodos(v), q)));
+      let nv = moverPontos(base, geral.filter((m) => m.todos));
+      nv = moverPontos(nv, geral.filter((m) => !m.todos), (k) => daColuna.has(k));
+      // na borda a junção correu pelo lado do lote; onde ela estava, se era dobra da
+      // rua, fica como quina do lote que cresceu (senão o lote cortava a dobra)
+      for (const m of geral) {
+        if (!m.lados) continue;
+        const c = m.de;
+        nv = nv.map((an, k) => {
+          const j = daColuna.has(k) ? an.findIndex((v) => dist(v, m.para) < 1e-9) : -1;
+          if (j < 0) return an;
+          const n = an.length;
+          for (const [jv, antesDele] of [[(j + n - 1) % n, true], [(j + 1) % n, false]] as const) {
+            const v = an[jv];
+            if (!m.lados!.some((l) => dist(l, v) < TOL) || Math.abs(cross(unit(sub(m.para, v)), sub(c, v))) < 0.002) continue;
+            return antesDele ? [...an.slice(0, j), c, ...an.slice(j)] : [...an.slice(0, j + 1), c, ...an.slice(j + 1)];
+          }
+          return an;
+        });
       }
-      const nv = normalizar(moverPontos(aneis, mapa, (k) => daColuna.has(k)));
+      nv = normalizar(nv);
+      if (Math.abs(nv.reduce((t, x) => t + Math.abs(areaAssinada(x)), 0) - totalAntes) > 0.05) return null;
+      if ([...daColuna].some((k) => frenteNaBorda(nv[k]) < Math.min(frenteJ.get(k)!, frenteMinima) - 0.01 || !formaBoa(nv[k], k))) return null;
       const ok = nv.every((x, k) => {
         if (antes[k] < 1) return true;
         if (x.length < 3 || Math.sign(areaAssinada(x)) !== Math.sign(areaAssinada(aneis[k])) || Math.abs(areaAssinada(x)) < 1) return false;
-        if (!daColuna.has(k)) return Math.abs(Math.abs(areaAssinada(x)) - antes[k]) < 0.002;
-        return !seCruza(x) && (!fiapo(x) || fiapo(aneis[k])) && fora(x) <= fora(aneis[k]) + 0.05;
+        // o de fora: mesma área e, se a junção corre pelo lado dele, sem passar da quina (vira espeto)
+        if (!daColuna.has(k)) return Math.abs(Math.abs(areaAssinada(x)) - antes[k]) < 0.002
+          && (!geral.some((m) => m.todos && aneis[k].some((v) => dist(v, m.de) < TOL)) || !fiapo(x) || fiapo(aneis[k]));
+        return !seCruza(x) && (!fiapo(x) || fiapo(aneis[k])) && fora(x) <= foraAntes[k] + 0.05;
       });
       return ok ? nv : null;
     };
-    const f = (dd: number) => { const nv = aplicar(dd); return nv ? { nv, g: somaDe(nv, lado) - alvoLado } : null; };
-    const g0 = somaDe(aneis, lado) - alvoLado;
-    if (Math.abs(g0) < 0.01) return;
-    const larg = pontos.length > 1 ? dist(pontos[0].p, pontos[pontos.length - 1].p) : 10;
-    const mais = f(0.1);
-    if (!mais) return;
-    const cresce = mais.g > g0 ? 1 : -1;
-    let lo = 0, gLo = g0, hi = NaN, melhor: Pt[][] | null = null, passo = -g0 / Math.max(larg, 1);
-    for (let it = 0; it < 40 && !Number.isFinite(hi); it++) {
-      const r = f(cresce * (lo + passo));
-      if (!r) { passo /= 2; if (Math.abs(passo) < 1e-3) break; continue; }
-      if (Math.sign(r.g) !== Math.sign(gLo)) { hi = lo + passo; break; }
-      lo += passo; gLo = r.g; melhor = r.nv; passo *= 1.5;
+    const resid = (an: Pt[][]) => duplas.map(([x, z]) => (area(an, x) - area(an, z)) / 2);
+    // junções em sequência pela linha de fundo (as duplas se encadeiam pela junção
+    // comum); a dobra se mede em cada trio seguido
+    const trios: [number, number, number][] = [];
+    {
+      let corrida: number[] = [];
+      const fechar = () => { for (let k = 0; k + 2 < corrida.length; k++) trios.push([corrida[k], corrida[k + 1], corrida[k + 2]]); corrida = []; };
+      extremos.forEach(([a, b], c) => {
+        const ult = corrida[corrida.length - 1];
+        if (corrida.length && a === ult) corrida.push(b);
+        else if (corrida.length && b === ult) corrida.push(a);
+        else {
+          fechar();
+          const prox = extremos[c + 1];
+          corrida = prox && prox.includes(a) ? [b, a] : [a, b];
+        }
+      });
+      fechar();
     }
-    if (Number.isFinite(hi)) {
-      for (let it = 0; it < 50; it++) {
-        const s = (lo + hi) / 2;
-        const r = f(cresce * s);
-        if (!r) { hi = s; continue; }
-        if (Math.sign(r.g) === Math.sign(gLo)) { lo = s; gLo = r.g; } else hi = s;
-        melhor = r.nv;
-        if (Math.abs(r.g) < 0.005 || Math.abs(hi - lo) < 1e-5) break;
+    for (let it = 0; it < 10; it++) {
+      const r = resid(aneis);
+      // derivadas: cada junção, um empurrão de 5 cm pela divisa
+      const nJ = juncoes.length, nC = duplas.length;
+      const J: number[][] = Array.from({ length: nC }, () => new Array(nJ).fill(0));
+      for (let jj = 0; jj < nJ; jj++) {
+        for (const eps of [0.05, -0.05]) {
+          const s = new Array(nJ).fill(0); s[jj] = eps;
+          const an = aplicar(s);
+          if (!an) continue;
+          const r2 = resid(an);
+          extremos.forEach(([a, b], c) => { if (a === jj || b === jj) J[c][jj] = (r2[c] - r[c]) / eps; });
+          break;
+        }
       }
+      // a dobra da linha de fundo em cada junção do meio: a distância dela à reta
+      // entre as vizinhas, e quanto essa distância muda com cada junção andando
+      const dirEf = juncoes.map((j) => mult(sub(destino(j, 0.05), destino(j, -0.05)), 10));
+      const dobra0: number[] = [];
+      const B: number[][] = trios.map(([x, y, z]) => {
+        const P = juncoes[x].p, Q = juncoes[y].p, R = juncoes[z].p;
+        const L = Math.max(dist(P, R), 1e-6);
+        const u = mult(sub(R, P), 1 / L);
+        const t = Math.min(1, Math.max(0, dot(sub(Q, P), u) / L));
+        dobra0.push(cross(u, sub(Q, P)));
+        const linha = new Array(nJ).fill(0);
+        linha[y] += cross(u, dirEf[y]);
+        linha[x] -= (1 - t) * cross(u, dirEf[x]);
+        linha[z] -= t * cross(u, dirEf[z]);
+        return linha;
+      });
+      // junção que não pode andar o que o passo pede (na ponta da seleção, a quina de um
+      // lote de fora no caminho) fica parada; as outras resolvem a conta
+      const fixas = new Set<number>();
+      // o passo: as áreas batem (J·s = −r) e, entre as soluções que batem, a linha de
+      // fundo com MENOS dobra (min Σ dobra²). Há uma família de soluções exatas — numa
+      // delas a linha é lisa, nas outras ondula (cada coluna compensa a vizinha); o
+      // passo que só olhava a área caía numa das onduladas
+      // par com as duas junções paradas não tem como fechar (a ponta da quadra): fica fora
+      // da conta — senão o passo aproximado espalhava a diferença dele pelos pares do meio
+      const preso = (c: number) => fixas.has(extremos[c][0]) && fixas.has(extremos[c][1]);
+      const passoExato = (): number[] | null => {
+        const fx = [...fixas];
+        const linhas = [...J.filter((_, c) => !preso(c)), ...fx.map((j) => Array.from({ length: nJ }, (_, k) => (k === j ? 1 : 0)))];
+        const alvoL = [...r.filter((_, c) => !preso(c)).map((v) => -v), ...fx.map(() => 0)];
+        if (linhas.length > nJ) return null;
+        const N = nJ + linhas.length;
+        const M = Array.from({ length: N }, () => new Array(N).fill(0));
+        const rhs = new Array(N).fill(0);
+        for (let a = 0; a < nJ; a++) {
+          for (let b = 0; b < nJ; b++) M[a][b] = B.reduce((s2, row) => s2 + row[a] * row[b], 0) + (a === b ? 1e-3 : 0);
+          rhs[a] = -B.reduce((s2, row, i) => s2 + row[a] * dobra0[i], 0);
+        }
+        linhas.forEach((row, i) => { for (let a = 0; a < nJ; a++) { M[nJ + i][a] = row[a]; M[a][nJ + i] = row[a]; } rhs[nJ + i] = alvoL[i]; });
+        const y = resolver(M, rhs);
+        return y && y.slice(0, nJ).every((v) => Number.isFinite(v) && Math.abs(v) < 50) ? y.slice(0, nJ) : null;
+      };
+      // sem solução exata (junções paradas demais): a mais perto, lisa
+      // min Σ(r + J·s)² + α·Σ(s[j+1] − s[j])² + μΣs²
+      const passoMinimo = (): number[] | null => {
+        const A = Array.from({ length: nJ }, (_, a) => Array.from({ length: nJ }, (_, b) => J.reduce((t, row) => t + row[a] * row[b], 0) + (a === b ? 1e-3 + (fixas.has(a) ? 1e7 : 0) : 0)));
+        const alfa = 25;
+        // vizinhas pela linha de fundo: as duas pontas de cada coluna (a ordem em que as
+        // junções foram achadas nem sempre é a da linha)
+        for (const [a, b] of extremos) { A[a][a] += alfa; A[b][b] += alfa; A[a][b] -= alfa; A[b][a] -= alfa; }
+        return resolver(A, Array.from({ length: nJ }, (_, a) => -J.reduce((t, row, c) => t + row[a] * r[c], 0)));
+      };
+      // longe do alvo, o passo liso (a linha anda por inteiro); perto, o exato de menor dobra
+      const passo = () => (r.every((v, c) => Math.abs(v) < 0.5 || preso(c)) ? passoExato() ?? passoMinimo() : passoMinimo());
+      let y = passo();
+      for (let tent = 0; y && tent < nJ; tent++) {
+        const ruim = y.findIndex((v, jj) => !fixas.has(jj) && Math.abs(v) > 1e-6 && !aplicar(y!.map((_, k) => (k === jj ? v : 0))));
+        if (ruim < 0) break;
+        fixas.add(ruim);
+        y = passo();
+      }
+      if (!y || y.every((v) => Math.abs(v) < 1e-4)) break;
+      const s = y;
+      const norma = (v: number[]) => v.reduce((t, x) => t + x * x, 0);
+      // mérito: a área manda; a dobra desempata (a linha só alisa sem desigualar)
+      const dobraDe = (novas: Pt[]) => trios.map(([x, y2, z]) => cross(unit(sub(novas[z], novas[x])), sub(novas[y2], novas[x])));
+      const merito = (rr: number[], dd: number[]) => norma(rr) + 0.01 * norma(dd);
+      const m0 = merito(r, dobra0);
+      let aceito = false;
+      for (const lambda of [1, 0.5, 0.25, 0.1]) {
+        const an = aplicar(s.map((v) => v * lambda));
+        if (!an) continue;
+        // as junções andam: posição nova (calculada no desenho de antes)
+        const novas = juncoes.map((j, jj) => (Math.abs(s[jj] * lambda) > 1e-9 ? destino(j, s[jj] * lambda) : j.p));
+        if (merito(resid(an), dobraDe(novas)) < m0 - 1e-7) {
+          aneis = an;
+          juncoes.forEach((j, jj) => { j.p = novas[jj]; });
+          aceito = true;
+          break;
+        }
+      }
+      if (!aceito) break;
     }
-    if (melhor) aneis = melhor;
   };
-  /** 2) dentro da coluna: o trecho dela da linha de fundo desliza até a frente e o fundo baterem */
+  /** 3) coluna com mais de dois lotes: o trecho do fundo desliza (raro: esquina com dois de trás) */
   const passeFundos = () => {
     atualizarAlvo();
     for (const col of cols) {
-      if (col.length < 2) continue;
+      if (col.length < 3) continue;
       // dentro da coluna, a divisa entre dois lotes é a de fundo (a coluna foi
       // formada por ela) — depois que a linha anda, a estrutura nem sempre a reconhece
       const ar: Aresta[] = [];
@@ -1350,16 +1689,13 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
       }
     }
   };
-  // primeiro a linha de fundo reta e as colunas (sem degrau); o ajuste fino de
-  // cada trecho do fundo só no fim, para o que sobrar (quadra torta, esquina)
-  const colunasIguais = () => { const md = somaDe(aneis, ks) / ks.length; return cols.every((c) => Math.abs(somaDe(aneis, c) - c.length * md) < 0.01); };
-  for (let passe = 0; passe < 6 && !(colunasIguais() && igual()); passe++) {
-    passeLinhaDeFundo();
-    passeColunas(criterios[0]);
-  }
+  // a soma de cada coluna pelas divisas laterais (paralelas, de rua a rua) e a
+  // frente × fundo de cada coluna pelas junções da linha de fundo (contínua):
+  // nenhum trecho do fundo anda sozinho — é o que fazia a "escada" de degraus
   for (const criterio of criterios) {
     for (let passe = 0; passe < 10 && !igual(); passe++) {
       passeColunas(criterio);
+      passeJuncoes();
       passeFundos();
     }
     if (igual()) break;
@@ -1373,9 +1709,21 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
   const extra = juntos.length
     ? ` Para continuar fundo com fundo, ${juntos.length === 1 ? "o lote de trás" : "os lotes de trás"} ${juntos.map(nomeDe).join(", ")} ${juntos.length === 1 ? "acompanhou" : "acompanharam"} a divisa (selecione-${juntos.length === 1 ? "o" : "os"} também para igualar junto).`
     : "";
+  // por partes: a divisa travada separou a seleção; cada parte se igualou por dentro
+  const ps = partes();
+  const travadas = [...cortadas.values()].map(([x, y]) => `entre ${nomeDe(x)} e ${nomeDe(y)}`);
+  const descParte = (p: { lotes: number[]; media: number }) => {
+    const as = p.lotes.map((k) => area(aneis, k));
+    const mn = Math.min(...as), mx = Math.max(...as);
+    const nomes = p.lotes.length <= 4 ? ` (${p.lotes.map(nomeDe).sort().join(", ")})` : "";
+    const n = p.lotes.length === 1 ? "1 lote" : `${p.lotes.length} lotes`;
+    return mx - mn < 0.05 ? `${n} com ${fmt(p.media)} m²${nomes}` : `${n} entre ${fmt(mn)} e ${fmt(mx)} m²${nomes}`;
+  };
   const msg = desvio < 0.05
     ? `${ks.length} lotes com ${fmt(alvo)} m² cada — as divisas entre eles deslizaram${cols.some((c) => c.length > 1) ? " e o fundo com fundo continua alinhado" : ""}.${extra || " Os lotes de fora da seleção não mudaram."}`
-    : `Os lotes ficaram entre ${fmt(Math.min(...areas))} e ${fmt(Math.max(...areas))} m² (o alvo era ${fmt(alvo)} m²): a forma da quadra não deixou chegar exato deslizando as divisas — arraste a quina que falta.${extra}`;
+    : travadas.length && ps.length > 1
+    ? `Não deu para todos ficarem iguais: ${travadas.length === 1 ? "a divisa" : "as divisas"} ${travadas.join(" e ")} não ${travadas.length === 1 ? "anda" : "andam"} sem deformar um lote (ganharia quina, perderia a testada ou ficaria comprido demais). Os lotes se igualaram por partes: ${ps.map(descParte).join("; ")}.${extra}`
+    : `Os lotes ficaram entre ${fmt(Math.min(...areas))} e ${fmt(Math.max(...areas))} m² (o alvo era ${fmt(alvo)} m²): igualar mais deformaria os lotes (lote sem testada, comprido demais ou com degrau) — a forma da quadra não deixa. Ajuste as quinas que faltam ou tire da seleção os lotes da ponta.${extra}`;
   return { pr: gravar(pr, res, i, normalizar(aneis), destinos), msg, sel: { quadra: q.nome, indices: ks } };
 }
 

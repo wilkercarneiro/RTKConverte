@@ -472,6 +472,54 @@ test("igualar áreas: o projeto real do EDILSON — fileira desenhada e quadra e
   assert.equal(juncoesAtravessadas(f.s.pr, f.r, "E"), antes);
 });
 
+// Estados reais do desfazer da prancheta do EDILSON (copiados da página, só no corpus local):
+// D — duas fileiras regulares; C — duas fileiras com a ponta já equilibrada e um ponto da
+// rua a 13 cm da quina; A — quadra em triângulo, com a lateral 26|25 saindo da dobra da rua.
+const HIST = new URL("./corpus-real/edilson/historico/", import.meta.url);
+test("igualar áreas: quadras reais do EDILSON — sem lote quebrado, sem degrau, e por partes quando a forma não deixa", { skip: !existsSync(new URL("estado9.json", HIST)) && "sem o corpus real" }, async () => {
+  const { normalizarProjeto } = await import("../src/lib/loteamento/modelo.ts");
+  const txt = readFileSync(new URL("Arquivo_de_Coordenadas_Formatado.txt", EDILSON), "utf8").split(/\r?\n/).filter((l) => /^\d/.test(l));
+  const n = (s2) => Number(s2.replace(",", "."));
+  const per = { pts: txt.map((l) => [n(l.split(";")[1]), n(l.split(";")[2])]), altitudes: txt.map((l) => n(l.split(";")[3])), confrontantes: txt.map((_, i) => (i >= 3 && i <= 14 ? "ESTRADA" : "DIVISA")) };
+  const terreno = JSON.parse(readFileSync(new URL("terreno.json", HIST), "utf8"));
+  const estado = (k) => { const b = JSON.parse(readFileSync(new URL(`estado${k}.json`, HIST), "utf8")); return normalizarProjeto({ ...b, terreno }, b.nome, per.pts.length); };
+  const de = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  const igualar = (k, quadra, nums) => {
+    const pr = estado(k);
+    const r0 = calcular(pr, per);
+    const sel = nums.map((x) => r0.lotes.find((l) => l.quadra === quadra && l.numero === x));
+    const s = executar("igualar", pr, r0, { tipo: "lotes", chaves: sel.map(chaveDoLote) });
+    assert.ok(s.pr, `${quadra}: ${s.msg}`);
+    const r = calcular(s.pr, per);
+    const ids = new Set(sel.map((l) => l.id));
+    const depois = r.lotes.filter((l) => ids.has(l.id));
+    // nenhum lote quebrado: quina a mais, problema novo (área mínima, testada...)
+    for (const l of depois) {
+      const l0 = r0.lotes.find((x) => x.id === l.id);
+      assert.ok(quinas(l.pol.ext) <= Math.max(4, quinas(l0.pol.ext)), `${l.id} ficou com ${quinas(l.pol.ext)} quinas`);
+      for (const p of l.problemas) assert.ok(l0.problemas.includes(p), `${l.id}: problema novo — ${p}`);
+    }
+    conferirPlanta(r, quadra);
+    return { s, r, depois };
+  };
+  // D: 24 lotes exatos, fundo com fundo alinhado
+  const d = igualar(5, "D", de(1, 24));
+  assert.match(d.s.msg, /24 lotes com .* m² cada/);
+  // C: exata — as duas pontas da linha de fundo andam (o T do lote de fora e a dobra da rua),
+  // o fundo de C-19|C-20 em pedaços é fundo (não lateral: era o degrau em C-17/C-18)
+  const c = igualar(9, "C", [...de(1, 10), ...de(17, 20)]);
+  assert.match(c.s.msg, /14 lotes com .* m² cada/, c.s.msg);
+  // A: a lateral que sai da dobra da rua não anda (o lote ganharia a 5ª quina) — iguala por
+  // partes, e nenhuma parte esvazia a vizinha (A-26 ficava com 113 m², abaixo do mínimo)
+  const a = igualar(8, "A", [1, ...de(8, 26)]);
+  assert.match(a.s.msg, /por partes/, a.s.msg);
+  const meio = a.depois.filter((l) => [...de(10, 15), ...de(20, 25)].includes(l.numero)).map((l) => l.area);
+  assert.ok(Math.max(...meio) - Math.min(...meio) < 3, `o meio da A devia ficar igual: ${meio.map((x) => x.toFixed(1)).join(" ")}`);
+  // sem a ponta (A-17), as partes saem exatas
+  const s17 = igualar(8, "A", [1, ...de(8, 16), ...de(18, 26)]);
+  assert.match(s17.s.msg, /por partes: 4 lotes com .* m² \(A-01, A-08, A-09, A-26\); 15 lotes com .* m²/, s17.s.msg);
+});
+
 test("comandos: unir, dividir e virar área verde", () => {
   // lote cujo vizinho da fileira cabe junto com ele na área máxima
   const prox = (x) => r0.lotes.filter((y) => y.quadra === x.quadra && y.fileira === x.fileira && y.indice > x.indice).sort((a, b) => a.indice - b.indice)[0];
