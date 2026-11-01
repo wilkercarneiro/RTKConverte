@@ -249,7 +249,8 @@ export const renomearArea = (pr: Projeto, res: Resultado, id: string, nome: stri
 // Linha de comando
 // ---------------------------------------------------------------------------
 
-export type Ferramenta = "selecionar" | "rua" | "area" | "medir" | "lote" | "cortar" | "frente";
+/** "selecionar" = seta (clique seleciona, arrastar faz a caixa de seleção); "mao" = arrastar move a vista */
+export type Ferramenta = "selecionar" | "mao" | "rua" | "area" | "medir" | "lote" | "cortar" | "frente";
 
 export interface Saida {
   pr?: Projeto;

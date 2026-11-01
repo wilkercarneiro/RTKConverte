@@ -343,7 +343,8 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
         <div className={`lot-area-trabalho${verAvisos ? " com-avisos" : ""}`}>
           <nav className="lot-ferramentas" aria-label="Ferramentas">
             {([
-              ["selecionar", "Selecionar e arrastar (S)", "M5 3l14 9-6 1.5L10 20z"],
+              ["selecionar", "Seta (V): clique seleciona · arraste uma caixa para selecionar vários lotes (da esquerda para a direita: os que ficam inteiros dentro; da direita para a esquerda: os que a caixa toca) · Shift soma · mover a vista: botão do meio/direito ou Espaço", "M5 3l14 9-6 1.5L10 20z"],
+              ["mao", "Mão (H): arrastar move a vista · clique seleciona", "M8 13V5.5a1.5 1.5 0 0 1 3 0V12M11 11V4.5a1.5 1.5 0 0 1 3 0V12M14 11.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5a6 6 0 0 1-5-2.7L3.6 14a1.5 1.5 0 0 1 2.5-1.6L8 15"],
               ["rua", "Desenhar rua (R)", "M4 20 10 4M14 4l6 16M12 6v2M12 11v2M12 16v2"],
               ["lote", "Desenhar lote (L) — clique as quinas, Enter fecha; duplo clique na área livre rosa vira lote", "M4 4h16v16H4zM4 12h16M12 4v16"],
               ["cortar", "Cortar lotes com uma linha (C)", "M6 6a2 2 0 1 0 0 .01M6 18a2 2 0 1 0 0 .01M8 7l12 10M8 17l12-10"],
@@ -431,14 +432,15 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
               <div>
                 <h4>No desenho</h4>
                 <ul>
-                  <li><b>Clique</b> seleciona o lote · <b>Shift+clique</b> soma lotes · <b>duplo clique</b> seleciona a quadra</li>
-                  <li><b>Arrastar o fundo</b> move o desenho · <b>roda do mouse</b> aproxima</li>
+                  <li><b>Seta (V)</b>: <b>clique</b> seleciona o lote · <b>arraste uma caixa</b> para selecionar vários de uma vez (da esquerda para a direita: os lotes inteiros dentro dela; da direita para a esquerda: os que ela toca) · <b>Shift</b> soma · <b>duplo clique</b> seleciona a quadra</li>
+                  <li><b>Mão (H)</b>: arrastar move o desenho · na seta, mova com o <b>botão do meio/direito</b> ou segurando <b>Espaço</b> · <b>roda do mouse</b> aproxima</li>
+                  <li><b>Linha de fundo</b> (laranja, com a quadra ou vários lotes selecionados): a <b>barra</b> move a linha inteira; os <b>losangos</b> dobram a linha num ponto. As junções correm pelas divisas: o fundo com fundo continua alinhado</li>
                   <li><b>Lote selecionado</b>: arraste as <b>quinas</b> (quadrados) e as <b>divisas</b> (barras verdes). A quina na rua ou na divisa da gleba corre por ela; os lotes vizinhos se ajustam. <b>Alt</b> solta a quina da borda</li>
                   <li>Nada é bloqueado: o lote que sair das medidas fica vermelho e aparece na coluna de avisos, à esquerda</li>
                   <li><b>T</b> escolhe a frente: com um lote selecionado, clique no lado que é a frente dele (servidão, área verde, outro lote); sem lote, clique no lado da quadra que é o acesso dela. Na lista de confrontações do lote, ☆ faz o mesmo</li>
                   <li><b>L</b> desenha um lote (clique as quinas; ele se ajusta aos vizinhos) · duplo clique numa área livre rosa vira lote · <b>C</b> corta lotes com uma linha · <b>Delete</b> apaga o lote</li>
                   <li><b>Rua selecionada</b>: arraste os pontos do eixo; o "+" dobra a rua</li>
-                  <li><b>R</b> rua · <b>A</b> área · <b>M</b> medir · <b>S</b> selecionar · <b>F</b> enquadrar</li>
+                  <li><b>R</b> rua · <b>A</b> área · <b>M</b> medir · <b>V</b> seta · <b>H</b> mão · <b>F</b> enquadrar</li>
                   <li><b>Enter</b> termina o desenho · <b>Backspace</b> tira o último ponto · <b>Esc</b> cancela</li>
                   <li><b>Shift</b> trava o ângulo da rua (90°/45° da malha) · os pontos grudam nos vértices e eixos</li>
                   <li><b>Ctrl+Z / Ctrl+Y</b> desfazer e refazer · <b>Delete</b> apaga a rua/área · <b>/</b> vai para o comando</li>

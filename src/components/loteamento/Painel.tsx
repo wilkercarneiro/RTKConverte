@@ -189,7 +189,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
             const media = lotes.reduce((s, l) => s + l.area, 0) / lotes.length;
             return (
               <button className="principal lot-igualar" disabled={!umaQuadra} onClick={() => onComando("igualar")}
-                title={umaQuadra ? `Todos ficam com ${fmt(media)} m² (a soma dividida por igual). Só as divisas entre eles deslizam; os lotes de fora não mudam.` : "Selecione lotes de uma quadra só"}>
+                title={umaQuadra ? `Todos ficam com ${fmt(media)} m² (a soma dividida por igual). Só as divisas entre eles deslizam — a divisa que vai de rua a rua anda inteira, e o fundo com fundo continua alinhado.` : "Selecione lotes de uma quadra só"}>
                 Igualar áreas · {fmt(media)} m² cada
               </button>
             );
@@ -209,7 +209,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
 
       {quadra && (
         <section className="lot-cartao">
-          <header><span className="lot-tag">Quadra</span><h3>Quadra {quadra.nome}<Dica>Clique num lote para arrastar as quinas e as divisas dele. L desenha um lote, C corta lotes com uma linha.</Dica></h3></header>
+          <header><span className="lot-tag">Quadra</span><h3>Quadra {quadra.nome}<Dica>Clique num lote para arrastar as quinas e as divisas dele. L desenha um lote, C corta lotes com uma linha. Com duas fileiras (fundo com fundo), a linha de fundo aparece em laranja: a barra move a linha inteira e os losangos dobram a linha num ponto — as junções correm pelas divisas.</Dica></h3></header>
           <div className="lot-metricas">
             <div><b>{quadra.lotes.length}</b><span>lotes</span></div>
             <div><b>{fmt(quadra.area)}</b><span>m²</span></div>

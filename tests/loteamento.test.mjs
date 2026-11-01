@@ -13,8 +13,8 @@ import { calcular, fmt, viarioDe } from "../src/lib/loteamento/calculo.ts";
 import { gerarPropostas } from "../src/lib/loteamento/auto.ts";
 import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
 import {
-  acertarMedida, alcasDoLote, apagarLotes, cfgDe, cortarLotes, definirFrente, desenharLote, dividirLote, ladosRetos, moverDivisa, moverQuina,
-  posicaoNoDesenho, unirLotes,
+  acertarMedida, alcasDoLote, apagarLotes, cfgDe, cortarLotes, definirFrente, desenharLote, dividirLote, estruturaDeDivisas, ladosRetos,
+  linhasDeFundo, moverDivisa, moverLinhaDeFundo, moverPontoDeFundo, moverQuina, normalizar, ordemDoDesenho, posicaoNoDesenho, unirLotes,
 } from "../src/lib/loteamento/edicao.ts";
 import { alternarAcesso } from "../src/lib/loteamento/acoes.ts";
 import { cotaFinal, loteNoPonto, montarCena } from "../src/lib/loteamento/cena3d.ts";
@@ -357,23 +357,34 @@ test("quina entre quadras: o projeto real do EDILSON — as duas quinas rosa vir
 });
 
 // ---- igualar áreas: vários lotes da mesma quadra com a mesma área ----------
+/** Junções da linha de fundo onde a divisa ATRAVESSA (frente e trás no mesmo ponto: fundo com fundo). */
+const juncoesAtravessadas = (pr, r, nomeQ) => {
+  const q = r.quadras.find((x) => x.nome === nomeQ);
+  const aneis = normalizar(ordemDoDesenho(pr, q).map((l) => l.pol.ext));
+  const est = estruturaDeDivisas(aneis, q);
+  const lat = est.comuns.filter((c) => !est.ehFundo(c.a, c.b));
+  const perto = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.02;
+  return est.espinhas.flatMap((e) => e.slice(1, -1)).filter((p) => lat.filter((c) => perto(c.a, p) || perto(c.b, p)).length >= 2).length;
+};
 const igualarEConferir = (pr, r0, per, sel, rotulo) => {
   const s = executar("igualar", pr, r0, { tipo: "lotes", chaves: sel.map(chaveDoLote) });
   assert.ok(s.pr, `${rotulo}: ${s.msg}`);
-  const media = sel.reduce((s2, l) => s2 + l.area, 0) / sel.length;
+  assert.match(s.msg, /m² cada/, `${rotulo}: ${s.msg}`);
   const r = calcular(s.pr, per);
   const novos = s.sel.chaves.map((c) => r.lotes.find((l) => l.quadra === c.quadra && l.fileira === c.fileira && Math.abs(l.indice - c.indice) < 1e-9));
-  for (const l of novos) assert.ok(Math.abs(l.area - media) < 0.05, `${rotulo}: ${l.id} com ${l.area} m² (alvo ${media})`);
-  // os lotes de fora da seleção não mudam (nem somem)
+  // todos iguais (à média de agora: com o lote de trás acompanhando, a soma dos selecionados pode mudar)
+  const media = novos.reduce((s2, l) => s2 + l.area, 0) / novos.length;
+  for (const l of novos) assert.ok(Math.abs(l.area - media) < 0.05, `${rotulo}: ${l.id} com ${l.area} m² (os outros ${media})`);
+  // de fora da seleção só mudam os lotes de trás que a mensagem nomeia (fundo com fundo)
   const ids = new Set(sel.map((l) => l.id));
   for (const l of r0.lotes.filter((x) => !ids.has(x.id))) {
     const d = r.lotes.find((x) => x.id === l.id);
-    assert.ok(d && Math.abs(d.area - l.area) < 0.05, `${rotulo}: o lote de fora ${l.id} mudou (${l.area} → ${d?.area})`);
+    assert.ok(d, `${rotulo}: o lote ${l.id} sumiu`);
+    if (Math.abs(d.area - l.area) >= 0.05) assert.ok(s.msg.includes(l.id), `${rotulo}: o lote de fora ${l.id} mudou (${l.area} → ${d.area}) sem a mensagem dizer`);
   }
   assert.equal(r.lotes.length, r0.lotes.length);
   conferirPlanta(r, rotulo);
-  assert.match(s.msg, /m² cada/);
-  return r;
+  return { r, s };
 };
 
 test("igualar áreas: lotes vizinhos da mesma quadra ficam com a soma dividida por igual, sem mexer nos de fora", () => {
@@ -395,6 +406,51 @@ test("igualar áreas: lotes vizinhos da mesma quadra ficam com a soma dividida p
   assert.ok(executar("igualar", pr0, r0, { tipo: "lotes", chaves: [chaveDoLote(ord[0])] }).erro);
 });
 
+test("igualar áreas: fundo com fundo continua fundo com fundo (a divisa de rua a rua anda inteira)", () => {
+  const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
+  const antes = juncoesAtravessadas(pr0, r0, q.nome);
+  assert.ok(antes >= 3, `a quadra de teste ${q.nome} devia ter fundo com fundo (junções: ${antes})`);
+  // colunas inteiras: o lote da frente e o de trás de cada uma
+  const lotes = ordemDoDesenho(pr0, q);
+  const est = estruturaDeDivisas(normalizar(lotes.map((l) => l.pol.ext)), q);
+  const pares = est.comuns.filter((c) => est.ehFundo(c.a, c.b)).map((c) => c.lotes.map((k) => lotes[k]));
+  const colunas = pares.slice(0, 4).flat();
+  const c = igualarEConferir(pr0, r0, perimetro, colunas, "colunas");
+  assert.equal(juncoesAtravessadas(c.s.pr, c.r, q.nome), antes, "as divisas da frente e de trás se desencontraram");
+  assert.match(c.s.msg, /fundo com fundo continua alinhado/);
+  // só a frente de três colunas: os de trás acompanham a divisa (e a mensagem diz quais)
+  const frente = pares.slice(2, 5).map(([a]) => a);
+  const f = igualarEConferir(pr0, r0, perimetro, frente, "só a frente");
+  assert.equal(juncoesAtravessadas(f.s.pr, f.r, q.nome), antes, "só a frente: o fundo com fundo se desfez");
+});
+
+test("linha de fundo maleável: a linha inteira anda pelas divisas e um ponto dobra a linha, sem desalinhar", () => {
+  const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
+  const antes = juncoesAtravessadas(pr0, r0, q.nome);
+  const [linha] = linhasDeFundo(pr0, q);
+  assert.ok(linha && linha.length >= 3, "a quadra de duas fileiras tem linha de fundo");
+  // a linha inteira, 2 m: todos os lotes da quadra mudam, os de outras quadras não
+  const ed = moverLinhaDeFundo(pr0, r0, q, linha, 2);
+  assert.ok(!ed.erro, ed.msg);
+  const r = calcular(ed.pr, perimetro);
+  conferirPlanta(r, "linha inteira");
+  assert.equal(juncoesAtravessadas(ed.pr, r, q.nome), antes, "a linha de fundo andou e desalinhou as divisas");
+  const daQ = r0.lotes.filter((l) => l.quadra === q.nome).map((l) => r.lotes.find((x) => x.id === l.id).area - l.area);
+  assert.ok(daQ.filter((d) => Math.abs(d) > 1).length >= daQ.length - 2, "a linha inteira devia mexer na quadra toda");
+  for (const l of r0.lotes.filter((x) => x.quadra !== q.nome)) assert.ok(Math.abs(r.lotes.find((x) => x.id === l.id).area - l.area) < 0.01, `outra quadra mudou: ${l.id}`);
+  // um ponto: só os lotes em volta dele
+  const p = linha[Math.floor(linha.length / 2)];
+  const ed2 = moverPontoDeFundo(pr0, r0, q, p, [p[0] + 1.5, p[1] + 1.5]);
+  assert.ok(!ed2.erro, ed2.msg);
+  const r2 = calcular(ed2.pr, perimetro);
+  conferirPlanta(r2, "ponto");
+  const mudaram = r0.lotes.filter((l) => Math.abs(r2.lotes.find((x) => x.id === l.id).area - l.area) > 0.01);
+  assert.ok(mudaram.length >= 2 && mudaram.length <= 4, `o ponto mexeu em ${mudaram.length} lotes`);
+  // quadra de uma fileira: sem linha de fundo
+  const uma = r0.quadras.find((x) => x.fileiras === 1 && x.lotes.length >= 3);
+  if (uma) assert.equal(linhasDeFundo(pr0, uma).length, 0);
+});
+
 test("igualar áreas: o projeto real do EDILSON — fileira desenhada e quadra em leque na estrada torta", { skip: !existsSync(new URL("loteamento.json", EDILSON)) && "sem o corpus real" }, async () => {
   const { normalizarProjeto } = await import("../src/lib/loteamento/modelo.ts");
   const txt = readFileSync(new URL("Arquivo_de_Coordenadas_Formatado.txt", EDILSON), "utf8").split(/\r?\n/).filter((l) => /^\d/.test(l));
@@ -407,6 +463,13 @@ test("igualar áreas: o projeto real do EDILSON — fileira desenhada e quadra e
   igualarEConferir(pr, r, per, da("F", [10, 11, 12, 13, 14]), "EDILSON F10–F14");
   // leque na estrada torta: a ponta da divisa vira a dobra (antes saía da quadra e sobrepunha o vizinho)
   igualarEConferir(pr, r, per, da("A", [1, 2, 3, 4, 5, 6]), "EDILSON A1–A6");
+  // quadra E (fundo com fundo, a frente mais rasa que o fundo): 4 colunas inteiras — iguais e alinhadas
+  const e = igualarEConferir(pr, r, per, da("E", [1, 29, 2, 28, 3, 27, 4, 26]), "EDILSON E colunas");
+  assert.match(e.s.msg, /fundo com fundo continua alinhado/);
+  // só a frente da E: os de trás acompanham, sem desalinhar
+  const antes = juncoesAtravessadas(pr, r, "E");
+  const f = igualarEConferir(pr, r, per, da("E", [3, 4, 5, 6, 7]), "EDILSON E frente");
+  assert.equal(juncoesAtravessadas(f.s.pr, f.r, "E"), antes);
 });
 
 test("comandos: unir, dividir e virar área verde", () => {

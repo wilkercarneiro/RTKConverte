@@ -118,6 +118,14 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 .lot-num.ruim { fill: #A11D23; font-weight: 700; }
 .lot-medir.ruim { fill: #A11D23; font-size: 11px; }
 .lot-alca.vert { stroke: #12201A; cursor: move; }
+/* linha de fundo (fundo com fundo): barra = a linha inteira; losango = dobrar num ponto */
+.lot-alca.fundo { fill: #D97706; stroke: #fff; stroke-width: 1.8; cursor: grab; }
+.lot-alca.fundo:hover { fill: #92400E; }
+.lot-alca.pfundo { fill: #fff; stroke: #D97706; stroke-width: 2.2; cursor: move; }
+.lot-alca.pfundo:hover { fill: #D97706; }
+/* caixa de seleção da seta (como no CAD): azul contínua = janela, verde tracejada = cruzando */
+.lot-caixa-sel.janela { fill: rgba(37, 99, 235, 0.10); stroke: #2563EB; stroke-width: 1.2; }
+.lot-caixa-sel.cruzando { fill: rgba(22, 163, 74, 0.10); stroke: #16A34A; stroke-width: 1.2; stroke-dasharray: 5 4; }
 .lot-alca.mais { stroke: #12201A; stroke-dasharray: 2 2; cursor: copy; }
 .lot-escala { position: absolute; left: 56px; bottom: 12px; display: flex; align-items: center; gap: 8px; font: 12px var(--mono); color: var(--texto-2); background: rgb(255 255 255 / 88%); padding: 4px 8px; border-radius: 6px; }
 .lot-escala span { display: inline-block; height: 6px; border: 1.5px solid #12201A; border-top: 0; }

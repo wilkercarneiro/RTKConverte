@@ -25,7 +25,21 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
        - O lote fica na quadra de que ele tem mais terra (`LoteDesenhado.livre`); a quadra cresce e as vizinhas encolhem. As quadras não mudam de nome.
      - **C** corta lotes com uma linha (clique o início e o fim). **Delete** apaga o lote (a área fica livre).
      - `frente 12` e `area 300` deslizam a divisa lateral até o valor exato (no lote de esquina, vale a frente da rua da fileira). `unir` junta os selecionados (um só: ao vizinho de maior divisa). `dividir 3` divide em partes de área igual, com as divisas na direção das laterais do lote.
-     - **Igualar áreas** (botão no cartão de vários lotes, ou o comando `igualar`; desde 2026-11-01). Funciona com lotes vizinhos da mesma quadra, selecionados com Shift + clique.
+     - **Seta e mão** (desde 2026-11-01). A **seta (V)** é a ferramenta padrão:
+       - o clique seleciona;
+       - arrastar desenha uma **caixa de seleção**, como no CAD. Da esquerda para a direita (azul contínua), pega os lotes inteiros dentro dela. Da direita para a esquerda (verde tracejada), pega os que ela toca. **Shift** soma à seleção;
+       - para mover a vista com a seta: botão do meio ou direito, ou **Espaço** segurado.
+
+       A **mão (H)** é o comportamento antigo: arrastar move a vista e o clique seleciona.
+     - **Linha de fundo maleável** (quadra de duas fileiras; aparece em laranja com a quadra ou vários lotes selecionados):
+       - a **barra** move a linha inteira, paralela a ela mesma. Cada junção corre pela sua divisa lateral, então o fundo com fundo continua alinhado. Uma fileira fica mais funda e a outra mais rasa;
+       - os **losangos** dobram a linha num ponto: aquela junção corre pela divisa dela, e só os lotes em volta mudam.
+
+       Código: `linhasDeFundo`, `moverLinhaDeFundo` e `moverPontoDeFundo` em `edicao.ts`. A detecção (`estruturaDeDivisas`) monta o caminho pelas junções de dentro da quadra (3 ou mais divisas chegando), ao longo da quadra (até 50° da rua principal). Por isso o degrau sobre uma divisa lateral não é tomado por linha de fundo.
+     - **Igualar áreas** (botão no cartão de vários lotes, ou o comando `igualar`; desde 2026-11-01). Funciona com lotes vizinhos da mesma quadra, selecionados com a caixa da seta ou com Shift + clique.
+       - **Fundo com fundo continua fundo com fundo.** A divisa lateral que vai de rua a rua desliza inteira: o trecho da frente e o de trás juntos, com a junção voltando para a linha de fundo.
+       - Quando só a frente está selecionada, o lote de trás acompanha a divisa, e a mensagem diz quais lotes acompanharam. Selecione os de trás também para igualar junto.
+       - Com as colunas inteiras selecionadas (frente + trás), primeiro a linha de fundo do trecho anda reta. Depois as divisas igualam as colunas. Por fim, um ajuste fino em cada trecho do fundo, que numa quadra regular é zero.
        - Todos ficam com a soma das áreas dividida por igual.
        - Só as divisas **entre** os selecionados deslizam: paralelas a si mesmas, com as pontas correndo pela rua e pela linha de fundo. A ponta vira as dobras do contorno.
        - Os lotes de fora da seleção não mudam de área.

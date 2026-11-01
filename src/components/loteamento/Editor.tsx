@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { PointerEvent as RPointerEvent, ReactNode, WheelEvent as RWheelEvent } from "react";
 import proj4mod from "proj4";
 import { GEO_DEF, utmDef } from "../../../supabase/functions/_shared/geo.ts";
-import { caixa, centroide, dentroPol, dist, distSegmento, dot, esquerda, pontoDoRotulo, sub, unit } from "../../lib/loteamento/geom.ts";
+import { caixa, centroide, dentroPol, dist, distSegmento, dot, esquerda, lerp, pontoDoRotulo, soma, sub, unit } from "../../lib/loteamento/geom.ts";
 import type { Anel, Poligono, Pt } from "../../lib/loteamento/geom.ts";
 import type { Lote, Quadra, Resultado } from "../../lib/loteamento/calculo.ts";
 import { fmt } from "../../lib/loteamento/calculo.ts";
@@ -18,7 +18,7 @@ import { cotaEm } from "../../lib/loteamento/terreno.ts";
 import type { Projeto } from "../../lib/loteamento/modelo.ts";
 import { adicionarArea, adicionarRua, chaveDoLote, editarRua, lotesDaSelecao, quadraDe } from "../../lib/loteamento/acoes.ts";
 import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
-import { alcasDoLote, cortarLotes, definirFrente, desenharLote, ladosRetos, moverDivisa, moverQuina, posicaoNoDesenho } from "../../lib/loteamento/edicao.ts";
+import { alcasDoLote, cortarLotes, definirFrente, desenharLote, ladosRetos, linhasDeFundo, moverDivisa, moverLinhaDeFundo, moverPontoDeFundo, moverQuina, posicaoNoDesenho } from "../../lib/loteamento/edicao.ts";
 import { alternarAcesso } from "../../lib/loteamento/acoes.ts";
 import type { Rede, ResultadoInfra } from "../../lib/loteamento/infra/index.ts";
 import { DefsRedes, RedesGeo, RedesSimbolos } from "./Redes";
@@ -60,11 +60,23 @@ type Arraste =
   | { tipo: "quina"; de: Pt; quadra: Quadra; lote: Lote; pr0: Projeto; res0: Resultado }
   /** divisa do lote (a→b): desliza paralela, pela distância do cursor à posição inicial */
   | { tipo: "divisa"; a: Pt; b: Pt; p0: Pt; quadra: Quadra; lote: Lote; pr0: Projeto; res0: Resultado }
-  | { tipo: "vertice"; rua: string; i: number; pr0: Projeto; inserir: boolean };
+  | { tipo: "vertice"; rua: string; i: number; pr0: Projeto; inserir: boolean }
+  /** caixa de seleção da seta (em pixels da tela) */
+  | { tipo: "caixa"; x0: number; y0: number; x1: number; y1: number; moveu: boolean }
+  /** linha de fundo inteira: desliza pela distância do cursor (na normal `n`) à posição inicial */
+  | { tipo: "fundo"; espinha: Pt[]; p0: Pt; n: Pt; quadra: Quadra; pr0: Projeto; res0: Resultado }
+  /** um ponto da linha de fundo: corre pela divisa dele */
+  | { tipo: "pontoFundo"; de: Pt; quadra: Quadra; pr0: Projeto; res0: Resultado };
 
 const COR_LOTE = "#FFFDF5";
 
 const ultimoPonto = (d: Pt[], q: Pt, tol: number) => d.length > 0 && dist(d[d.length - 1], q) < tol;
+
+/** Os segmentos a–b e c–d se cruzam? */
+function cruzam(a: Pt, b: Pt, c: Pt, d: Pt): boolean {
+  const o = (p: Pt, q: Pt, r: Pt) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+}
 
 function pathPol(p: Poligono): string {
   const r = (a: Anel) => "M" + a.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join("L") + "Z";
@@ -99,6 +111,12 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
   const arraste = useRef<Arraste | null>(null);
   const [arrastando, setArrastando] = useState(false);
   const shift = useRef(false);
+  /** Espaço segurado: a seta vira mão enquanto ele estiver apertado */
+  const espaco = useRef(false);
+  /** caixa de seleção sendo arrastada (pixels da tela) */
+  const [caixaSel, setCaixaSel] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  /** seta ou mão: as ferramentas que não desenham */
+  const navegando = ferramenta === "selecionar" || ferramenta === "mao";
 
   useEffect(() => {
     const el = caixaRef.current;
@@ -265,6 +283,8 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       shift.current = e.shiftKey;
       const alvo = e.target as HTMLElement;
       if (alvo && (alvo.tagName === "INPUT" || alvo.tagName === "TEXTAREA" || alvo.tagName === "SELECT")) return;
+      // Espaço segurado: arrastar move a vista (como a mão), sem trocar de ferramenta
+      if (e.key === " ") { espaco.current = true; if (alvo?.tagName !== "BUTTON") e.preventDefault(); return; }
       if (e.key === "Enter" && desenho.length) { e.preventDefault(); terminar(); }
       else if (e.key === "Escape") { setDesenho([]); onFerramenta("selecionar"); onSel(null); }
       else if (e.key === "Backspace" && desenho.length) { e.preventDefault(); setDesenho((d) => d.slice(0, -1)); }
@@ -277,10 +297,11 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         else if (k === "t") onFerramenta("frente");
         else if (k === "m") onFerramenta("medir");
         else if (k === "s" || k === "v") onFerramenta("selecionar");
+        else if (k === "h") onFerramenta("mao");
         else if (k === "f") enquadrar(res.gleba.ext);
       }
     };
-    const up = (e: KeyboardEvent) => { shift.current = e.shiftKey; };
+    const up = (e: KeyboardEvent) => { shift.current = e.shiftKey; if (e.key === " ") espaco.current = false; };
     addEventListener("keydown", dn);
     addEventListener("keyup", up);
     return () => { removeEventListener("keydown", dn); removeEventListener("keyup", up); };
@@ -309,9 +330,15 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     return rua ? { tipo: "rua", id: rua } : null;
   }
 
+  /** Linha de fundo (fundo com fundo) da quadra ativa — com a quadra ou vários lotes selecionados. */
+  const fundos = useMemo(
+    () => (quadraAtiva && (sel?.tipo === "quadra" || lotesSel.length >= 2) ? linhasDeFundo(projeto, quadraAtiva) : []),
+    [quadraAtiva, sel, lotesSel.length, projeto],
+  );
+
   /** Alças ativas (em coordenadas de tela) para o clique/arraste. */
   const alcas = useMemo(() => {
-    const out: { x: number; y: number; acao: Arraste; titulo: string; forma: "quina" | "divisa" | "vertice" | "mais"; ang?: number; borda?: boolean }[] = [];
+    const out: { x: number; y: number; acao: Arraste; titulo: string; forma: "quina" | "divisa" | "vertice" | "mais" | "fundo" | "pfundo"; ang?: number; borda?: boolean }[] = [];
     if (!v) return out;
     // lote selecionado: uma alça em cada quina e uma no meio de cada divisa
     // (a borda da quadra — rua, divisa da gleba — não anda: a quina desliza nela)
@@ -340,6 +367,30 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       const h = out[k];
       if (h.forma === "divisa" && out.some((o, j) => j !== k && Math.hypot(o.x - h.x, o.y - h.y) < 16)) out.splice(k, 1);
     }
+    // linha de fundo: a barra no meio move a linha inteira; os losangos dobram num ponto
+    if (quadraAtiva) {
+      for (const e of fundos) {
+        const comp = e.reduce((s, p, j) => s + (j ? dist(p, e[j - 1]) : 0), 0);
+        let acc = 0, meio: Pt = e[0], dirMeio: Pt = unit(sub(e[1], e[0]));
+        for (let j = 1; j < e.length; j++) {
+          const d = dist(e[j - 1], e[j]);
+          if (acc + d >= comp / 2 && d > 0) { meio = lerp(e[j - 1], e[j], (comp / 2 - acc) / d); dirMeio = unit(sub(e[j], e[j - 1])); break; }
+          acc += d;
+        }
+        const pt = tela(meio);
+        const dt = sub(tela(soma(meio, dirMeio)), pt);
+        out.push({
+          x: pt[0], y: pt[1], forma: "fundo", ang: (Math.atan2(dt[1], dt[0]) * 180) / Math.PI,
+          acao: { tipo: "fundo", espinha: e, p0: meio, n: esquerda(dirMeio), quadra: quadraAtiva, pr0: projeto, res0: res },
+          titulo: "Arraste a linha de fundo inteira: uma fileira fica mais funda e a outra mais rasa — as junções correm pelas divisas (o fundo com fundo continua alinhado)",
+        });
+        for (const p of e.slice(1, -1)) {
+          const q2 = tela(p);
+          if (Math.hypot(q2[0] - pt[0], q2[1] - pt[1]) < 14) continue;
+          out.push({ x: q2[0], y: q2[1], forma: "pfundo", acao: { tipo: "pontoFundo", de: p, quadra: quadraAtiva, pr0: projeto, res0: res }, titulo: "Arraste para dobrar a linha de fundo neste ponto — ele corre pela divisa (o lote da frente e o de trás se ajustam)" });
+        }
+      }
+    }
     if (sel?.tipo === "rua") {
       const r = res.ruas.find((x) => x.id === sel.id);
       if (r) {
@@ -351,7 +402,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       }
     }
     return out;
-  }, [v, quadraAtiva, lotesSel, sel, res, projeto, tela]);
+  }, [v, quadraAtiva, lotesSel, sel, res, projeto, tela, fundos]);
 
   /**
    * Ferramenta Frente: o lado mais perto do cursor — do lote selecionado (a
@@ -425,14 +476,54 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       return;
     }
     // a quina ganha da divisa quando as duas estão perto do clique
-    const alca = alcas.filter((a) => Math.hypot(a.x - x, a.y - y) <= 13).sort((a, b) => (a.forma === "quina" ? 0 : 1) - (b.forma === "quina" ? 0 : 1) || Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
+    const ponto = (f: string) => (f === "quina" || f === "pfundo" ? 0 : 1);
+    const alca = alcas.filter((a) => Math.hypot(a.x - x, a.y - y) <= 13).sort((a, b) => ponto(a.forma) - ponto(b.forma) || Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
     if (alca) {
       arraste.current = alca.acao;
       movido.current = false;
       setArrastando(true);
       return;
     }
+    // seta: arrastar faz a caixa de seleção (Espaço segurado = mão); mão: arrastar move a vista
+    if (ferramenta === "selecionar" && !espaco.current) {
+      arraste.current = { tipo: "caixa", x0: x, y0: y, x1: x, y1: y, moveu: false };
+      return;
+    }
     arraste.current = { tipo: "pan", x0: x, y0: y, v0: vv, moveu: false };
+  }
+
+  /** Clique simples (sem arrastar): seleciona o lote, a área ou a rua no ponto; Shift soma lotes. */
+  function selecionarNoPonto(x: number, y: number, comShift: boolean) {
+    const alvo = alvoNoPonto(mundo(x, y));
+    if (!alvo) { if (!comShift) onSel(null); return; }
+    if (alvo.tipo === "lote") {
+      if (comShift && sel?.tipo === "lotes") {
+        const ja = sel.chaves.some((c) => c.quadra === alvo.l.quadra && c.fileira === alvo.l.fileira && c.indice === alvo.l.indice);
+        onSel({ tipo: "lotes", chaves: ja ? sel.chaves.filter((c) => !(c.quadra === alvo.l.quadra && c.fileira === alvo.l.fileira && c.indice === alvo.l.indice)) : [...sel.chaves, chaveDoLote(alvo.l)] });
+      } else onSel({ tipo: "lotes", chaves: [chaveDoLote(alvo.l)] });
+    } else onSel({ tipo: alvo.tipo, id: alvo.id });
+  }
+
+  /**
+   * Caixa da seta: da esquerda para a direita pega os lotes INTEIROS dentro
+   * dela; da direita para a esquerda, os que ela toca (como no CAD). Shift soma
+   * à seleção que já existe.
+   */
+  function selecionarNaCaixa(c: { x0: number; y0: number; x1: number; y1: number }, comShift: boolean) {
+    const a = mundo(Math.min(c.x0, c.x1), Math.max(c.y0, c.y1)), b = mundo(Math.max(c.x0, c.x1), Math.min(c.y0, c.y1));
+    const dentro = (p: Pt) => p[0] >= a[0] && p[0] <= b[0] && p[1] >= a[1] && p[1] <= b[1];
+    const janela = c.x1 >= c.x0;
+    const ret: Poligono = { ext: [a, [b[0], a[1]], b, [a[0], b[1]]], furos: [] };
+    const toca = (l: Lote) => l.pol.ext.some(dentro) || ret.ext.some((p) => dentroPol(p, l.pol))
+      || l.pol.ext.some((p, j) => { const q2 = l.pol.ext[(j + 1) % l.pol.ext.length]; return ret.ext.some((r, k) => cruzam(p, q2, r, ret.ext[(k + 1) % 4])); });
+    const pegos = res.lotes.filter((l) => (janela ? l.pol.ext.every(dentro) : toca(l)));
+    const atuais = comShift && sel?.tipo === "lotes" ? sel.chaves : [];
+    const novas = pegos.map(chaveDoLote).filter((k) => !atuais.some((c2) => c2.quadra === k.quadra && c2.fileira === k.fileira && c2.indice === k.indice));
+    const chaves = [...atuais, ...novas];
+    if (!chaves.length) { if (!comShift) onSel(null); onMsg(janela ? "Nenhum lote ficou inteiro dentro da caixa — arraste da direita para a esquerda para pegar os que ela toca." : "A caixa não tocou nenhum lote."); return; }
+    onSel({ tipo: "lotes", chaves });
+    const quadras = new Set(pegos.map((l) => l.quadra));
+    onMsg(`${chaves.length} lote${chaves.length === 1 ? "" : "s"} selecionado${chaves.length === 1 ? "" : "s"}${quadras.size > 1 ? ` (${quadras.size} quadras)` : ""}.`);
   }
 
   const raf = useRef(0);
@@ -463,11 +554,17 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     const a = arraste.current;
     if (!a) {
       if (ferramenta === "frente") { setLadoFrente(ladoDaFrente(p)); return; }
-      if (ferramenta !== "selecionar") encaixar(p, desenho[desenho.length - 1]);
+      if (!navegando) encaixar(p, desenho[desenho.length - 1]);
       else {
         const alvo = alvoNoPonto(p);
         setHover(alvo?.tipo === "lote" ? alvo.l.id : alvo?.tipo === "area" || alvo?.tipo === "rua" ? alvo.id : null);
       }
+      return;
+    }
+    if (a.tipo === "caixa") {
+      a.x1 = x; a.y1 = y;
+      if (Math.hypot(x - a.x0, y - a.y0) > 4) a.moveu = true;
+      if (a.moveu) setCaixaSel({ x0: a.x0, y0: a.y0, x1: x, y1: y });
       return;
     }
     if (a.tipo === "pan") {
@@ -497,6 +594,14 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         }
         movido.current = true;
         onMudar(ed.pr, true);
+      } else if (a.tipo === "fundo" || a.tipo === "pontoFundo") {
+        // linha de fundo: inteira (paralela) ou dobrada num ponto — as junções correm pelas divisas
+        const ed = a.tipo === "fundo"
+          ? moverLinhaDeFundo(a.pr0, a.res0, a.quadra, a.espinha, dot(sub(p, a.p0), a.n))
+          : moverPontoDeFundo(a.pr0, a.res0, a.quadra, a.de, p);
+        if (ed.erro) return;
+        movido.current = true;
+        onMudar(ed.pr, true);
       } else if (a.tipo === "vertice") {
         const r = a.pr0.ruas.find((x2) => x2.id === a.rua);
         if (!r) return;
@@ -515,6 +620,14 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     setArrastando(false);
     setSnap(null);
     if (!a) return;
+    if (a.tipo === "caixa") {
+      setCaixaSel(null);
+      const [x, y] = pos(e);
+      // caixa que não andou é um clique
+      if (!a.moveu) selecionarNoPonto(x, y, e.shiftKey);
+      else selecionarNaCaixa({ x0: a.x0, y0: a.y0, x1: x, y1: y }, e.shiftKey);
+      return;
+    }
     if (a.tipo !== "pan") {
       cancelAnimationFrame(raf.current);
       pendente.current?.();
@@ -524,14 +637,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       if (a.moveu) return;
       // clique simples: seleção
       const [x, y] = pos(e);
-      const alvo = alvoNoPonto(mundo(x, y));
-      if (!alvo) { onSel(null); return; }
-      if (alvo.tipo === "lote") {
-        if (e.shiftKey && sel?.tipo === "lotes") {
-          const ja = sel.chaves.some((c) => c.quadra === alvo.l.quadra && c.fileira === alvo.l.fileira && c.indice === alvo.l.indice);
-          onSel({ tipo: "lotes", chaves: ja ? sel.chaves.filter((c) => !(c.quadra === alvo.l.quadra && c.fileira === alvo.l.fileira && c.indice === alvo.l.indice)) : [...sel.chaves, chaveDoLote(alvo.l)] });
-        } else onSel({ tipo: "lotes", chaves: [chaveDoLote(alvo.l)] });
-      } else onSel({ tipo: alvo.tipo, id: alvo.id });
+      selecionarNoPonto(x, y, e.shiftKey);
       return;
     }
     onFimArraste();
@@ -560,7 +666,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       }
       return;
     }
-    if (ferramenta !== "selecionar") return;
+    if (!navegando) return;
     const [x, y] = pos(e);
     const pm = mundo(x, y);
     const alvo = alvoNoPonto(pm);
@@ -635,7 +741,10 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
   }, [res.lotes, verMedidas, tela, W, H]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const corArea: Record<string, string> = { verde: "#B9E3A4", institucional: "#F6D3A0", lazer: "#BFE3F2", app: "#A9CFEF" };
-  const cursor = ferramenta === "selecionar" ? (arrastando ? "grabbing" : hover ? "pointer" : "grab") : "crosshair";
+  // seta: cursor de seta (mão na alça e com Espaço); mão: a mãozinha de sempre
+  const cursor = ferramenta === "mao" ? (arrastando ? "grabbing" : hover ? "pointer" : "grab")
+    : ferramenta === "selecionar" ? (arrastando ? "grabbing" : caixaSel ? "crosshair" : hover ? "pointer" : "default")
+    : "crosshair";
 
   // prévia da ferramenta
   const ultimo = desenho[desenho.length - 1];
@@ -679,6 +788,11 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
             );
           })}
           {quadraAtiva && <path d={pathPol(quadraAtiva.pol)} fill="none" stroke="#178552" strokeWidth={2.2} strokeDasharray="8 4" vectorEffect="non-scaling-stroke" />}
+          {/* linha de fundo (fundo com fundo) da quadra ativa: arrastável */}
+          {fundos.map((e, i) => (
+            <polyline key={`fundo${i}`} points={e.map((p) => `${p[0]},${p[1]}`).join(" ")} fill="none" stroke="#D97706" strokeWidth={3.2}
+              strokeOpacity={0.9} strokeDasharray="10 5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" pointerEvents="none" />
+          ))}
           {/* frente escolhida pelo operador (lote) e acesso marcado na quadra */}
           {res.lotes.flatMap((l) => l.lados.filter((x) => x.definida).map((x, i) => (
             <line key={`fd${l.id}${i}`} x1={x.a[0]} y1={x.a[1]} x2={x.b[0]} y2={x.b[1]} stroke="#D97706" strokeWidth={4} vectorEffect="non-scaling-stroke" strokeLinecap="round" />
@@ -745,7 +859,14 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         {alcas.filter((a) => a.forma === "divisa").map((a, i) => (
           <rect key={`d${i}`} x={a.x - 9} y={a.y - 3.5} width={18} height={7} rx={3.5} transform={`rotate(${a.ang ?? 0} ${a.x} ${a.y})`} className={`lot-alca divisa${a.borda ? " borda" : ""}`}><title>{a.titulo}</title></rect>
         ))}
-        {alcas.filter((a) => a.forma !== "divisa").map((a, i) => a.forma === "quina"
+        {/* linha de fundo: barra (a linha inteira) e losangos (dobrar num ponto) */}
+        {alcas.filter((a) => a.forma === "pfundo").map((a, i) => (
+          <rect key={`pf${i}`} x={a.x - 5} y={a.y - 5} width={10} height={10} transform={`rotate(45 ${a.x} ${a.y})`} className="lot-alca pfundo"><title>{a.titulo}</title></rect>
+        ))}
+        {alcas.filter((a) => a.forma === "fundo").map((a, i) => (
+          <rect key={`f${i}`} x={a.x - 16} y={a.y - 5} width={32} height={10} rx={5} transform={`rotate(${a.ang ?? 0} ${a.x} ${a.y})`} className="lot-alca fundo"><title>{a.titulo}</title></rect>
+        ))}
+        {alcas.filter((a) => a.forma !== "divisa" && a.forma !== "fundo" && a.forma !== "pfundo").map((a, i) => a.forma === "quina"
           ? <rect key={i} x={a.x - 6} y={a.y - 6} width={12} height={12} rx={2} className="lot-alca quina"><title>{a.titulo}</title></rect>
           : a.forma === "vertice"
             ? <rect key={i} x={a.x - 5} y={a.y - 5} width={10} height={10} className="lot-alca vert"><title>{a.titulo}</title></rect>
@@ -788,11 +909,19 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
             </g>
           );
         })()}
-        {ultimo && alvoPrevia && ferramenta !== "selecionar" && ferramenta !== "medir" && (() => {
+        {ultimo && alvoPrevia && !navegando && ferramenta !== "medir" && (() => {
           const q = tela(alvoPrevia);
           return <text x={q[0] + 12} y={q[1] - 10} className="lot-medir">{fmt(comprimentoPrevia)} m</text>;
         })()}
-        {snap && ferramenta !== "selecionar" && (() => { const q = tela(snap); return <rect x={q[0] - 6} y={q[1] - 6} width={12} height={12} fill="none" stroke="#E11D48" strokeWidth={2} />; })()}
+        {snap && !navegando && (() => { const q = tela(snap); return <rect x={q[0] - 6} y={q[1] - 6} width={12} height={12} fill="none" stroke="#E11D48" strokeWidth={2} />; })()}
+        {/* caixa da seta: contínua (esquerda→direita: lotes inteiros dentro) ou tracejada (direita→esquerda: os que toca) */}
+        {caixaSel && (() => {
+          const janela = caixaSel.x1 >= caixaSel.x0;
+          return (
+            <rect x={Math.min(caixaSel.x0, caixaSel.x1)} y={Math.min(caixaSel.y0, caixaSel.y1)} width={Math.abs(caixaSel.x1 - caixaSel.x0)} height={Math.abs(caixaSel.y1 - caixaSel.y0)}
+              className={`lot-caixa-sel${janela ? " janela" : " cruzando"}`} pointerEvents="none" />
+          );
+        })()}
       </svg>
       {sobreposto}
 
