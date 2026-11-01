@@ -12,7 +12,7 @@ import proj4mod from "proj4";
 import {
   GEO_DEF, ZONAS_BR, calcularVertices, detectZoneCandidates, fmtGmsPlanilha, parseTxt, utmDef,
 } from "../_shared/geo.ts";
-import type { Proj4 } from "../_shared/geo.ts";
+import type { PontoTxt, Proj4 } from "../_shared/geo.ts";
 import { sugerirTrechos } from "../_shared/servico.ts";
 import { blocosPorNumeracao, montarVerticesUnidos, parseCsvSigef, unirEmBlocos } from "../_shared/certificados.ts";
 import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts";
@@ -66,7 +66,19 @@ Deno.serve(async (req) => {
     if (!servico.nome_arquivo_txt) return json({ erro: "Serviço sem TXT guardado" }, 422);
     const dl = await supa.storage.from("uploads-txt").download(`${servico_id}/${servico.nome_arquivo_txt}`);
     if (dl.error || !dl.data) return json({ erro: `TXT não encontrado no Storage: ${dl.error?.message ?? ""}` }, 422);
-    const pontos = parseTxt(await dl.data.text());
+    // serviço lido pelo leitor universal (0035): os pontos e as partes vêm da
+    // leitura confirmada (leitura.json) — o arquivo pode ser de um formato que o
+    // parser antigo nem lê. Serviço antigo: o TXT, como sempre.
+    let pontos: PontoTxt[];
+    let blocosLidos: number[][] | null = null;
+    const lj = await supa.storage.from("uploads-txt").download(`${servico_id}/leitura.json`);
+    if (!lj.error && lj.data) {
+      const lg = JSON.parse(await lj.data.text()) as { anel: { num: number; rotulo: string | null; e: number; n: number; h: number; sigma_pos: number; sigma_h: number }[]; blocos?: number[][] };
+      pontos = lg.anel.map((p) => ({ num: p.num, rotulo: p.rotulo, e: p.e, n: p.n, h: p.h, sigmaPos: p.sigma_pos, sigmaH: p.sigma_h }));
+      blocosLidos = Array.isArray(lg.blocos) ? lg.blocos : null;
+    } else {
+      pontos = parseTxt(await dl.data.text());
+    }
 
     const lista = await supa.storage.from("uploads-txt").list(`${servico_id}/certificados`);
     if (lista.error) throw lista.error;
@@ -105,7 +117,7 @@ Deno.serve(async (req) => {
     );
     const trechosSug = sugerirTrechos(pontos);
     // TXT em partes (blocos de numeração): a união roda parte a parte
-    const blocos = blocosPorNumeracao(pontos);
+    const blocos = blocosLidos ?? blocosPorNumeracao(pontos);
     const uniao = unirEmBlocos(pontos, blocos, grupos, geoParaUtm, {
       toleranciaM: Number.isFinite(tolNum) && tolNum >= 0 ? tolNum : 0.5,
       toleranciaLinhaM: Number.isFinite(tolLinhaNum) && tolLinhaNum >= 0 ? tolLinhaNum : undefined,

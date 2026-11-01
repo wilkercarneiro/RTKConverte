@@ -71,6 +71,20 @@ const BANCO: Record<string, unknown[]> = {
 const RPC: Record<string, (a: Record<string, unknown>) => unknown> = {
   sa_sincronizar_recursos: () => 1,
   sa_empresas: () => EMPRESAS,
+  // leitura universal (0035): #/lab/admin/formatos
+  sa_formatos_vistos: () => ({
+    perfis: [
+      { id: "pf1", nome: "CSV — Emlid Flow com cabeçalho e RMS", origem: "regras", global: true, escritorio: null, usos: 41, sem_edicao: 41, ultimo_uso: dia(0), explicacao: "Colunas separadas por vírgula, decimal com ponto; com cabeçalho; na ordem: nome, código, E, N, altura, σ E, σ N, σ vertical.", created_at: dia(30) },
+      { id: "pf2", nome: "texto — Exportação no estilo Nikon (registros CP)", origem: "ia", global: false, escritorio: "D'Prol Topografia", usos: 6, sem_edicao: 5, ultimo_uso: dia(2), explicacao: "Registros CP trazem ponto, N, E, cota, código e as duas precisões; os registros SS são observações e foram ignorados.", created_at: dia(12) },
+      { id: "pf3", nome: "planilha Excel (.xlsx) — 1ª aba", origem: "operador", global: false, escritorio: "Geo Sertão", usos: 2, sem_edicao: 1, ultimo_uso: dia(9), explicacao: "Leitura definida pelo operador: Ponto na coluna 1, E na coluna 3, N na coluna 4, Altitude na coluna 5.", created_at: dia(9) },
+    ],
+    recusados: [
+      { id: "rc1", escritorio: "Geo Sertão", nome_arquivo: "campo_0311.dbx", caminho: "x/campo_0311.dbx", formato: "Leica (banco DBX)", motivo: "binário: Leica (banco DBX)", resolvido: false, created_at: dia(1) },
+      { id: "rc2", escritorio: "D'Prol Topografia", nome_arquivo: "scan_memorial.pdf", caminho: "x/scan.pdf", formato: "PDF digitalizado", motivo: "binário: PDF digitalizado (imagem)", resolvido: true, created_at: dia(6) },
+    ],
+    ia: { chamadas: 9, aprovadas: 8, custo_usd: 0.0412, por_modelo: { "gpt-6-luna": 8, "gpt-6.1-sol": 1 } },
+    leituras: { padrao: 112, perfil: 47, regras: 9, ia: 6, operador: 2 },
+  }),
   sa_serie_servicos: () => Array.from({ length: 30 }, (_, i) => ({ dia: dia(29 - i).slice(0, 10), total: Math.max(0, Math.round(4 + 3 * Math.sin(i / 3) + (i % 7 === 5 || i % 7 === 6 ? -4 : 0) + i / 6)) })),
   sa_uso_modalidades: () => [
     { chave: "servico.completo", total: 41 }, { chave: "servico.conferencia", total: 17 }, { chave: "servico.car", total: 9 },

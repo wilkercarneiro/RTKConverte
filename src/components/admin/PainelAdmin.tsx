@@ -22,12 +22,13 @@ import { Contatos } from "./Contatos";
 import { ConfigAdmin } from "./ConfigAdmin";
 import { SuporteAdmin } from "./SuporteAdmin";
 import { TutoriaisAdmin } from "./TutoriaisAdmin";
+import { FormatosAdmin } from "./FormatosAdmin";
 import { Marca } from "../Marca";
 import { AvisosGlobais, DialogosGlobais } from "../ui";
 import { contagemSuporte } from "../../lib/suporte";
 import type { ContagemSuporte } from "../../lib/suporte";
 
-export type AbaAdmin = "visao" | "empresas" | "suporte" | "planos" | "recursos" | "tutoriais" | "contatos" | "config" | "marca";
+export type AbaAdmin = "visao" | "empresas" | "suporte" | "planos" | "recursos" | "tutoriais" | "contatos" | "config" | "marca" | "formatos";
 
 export interface DadosAdmin {
   empresas: Empresa[];
@@ -67,6 +68,7 @@ const MENU: { secao: string; itens: { aba: AbaAdmin; rotulo: string; icone: stri
     secao: "Sistema",
     itens: [
       { aba: "config", rotulo: "Configurações", icone: ICO.config },
+      { aba: "formatos", rotulo: "Formatos de arquivo", icone: ICO.recursos },
       // só o superadmin: o guia da marca do Vertces não é assunto das empresas
       { aba: "marca", rotulo: "Guia da marca", icone: ICO.marca },
     ],
@@ -133,6 +135,7 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
       case "tutoriais": pagina = <TutoriaisAdmin />; break;
       case "contatos": pagina = <Contatos d={ctx} />; break;
       case "config": pagina = <ConfigAdmin />; break;
+      case "formatos": pagina = <FormatosAdmin />; break;
       case "marca": pagina = <Marca />; break;
       default: pagina = <VisaoGeral d={ctx} />;
     }

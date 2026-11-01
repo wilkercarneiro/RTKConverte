@@ -1,7 +1,12 @@
 // Tela de entrada do serviço 'geo': pergunta se confronta com área certificada
-// (CSV do SIGEF do vizinho → escolha dos vértices na planta) e depois recebe o
-// TXT → Edge Function parse-txt, que une os dois e cria o serviço.
+// (CSV do SIGEF do vizinho → escolha dos vértices na planta), recebe o arquivo
+// do levantamento em QUALQUER formato → Edge Function ler-arquivo (perfil,
+// regras, IA) → etapa "Leitura do arquivo" (prévia conferida pelo operador) →
+// parse-txt, que reexecuta a leitura confirmada, une os certificados e cria o
+// serviço.
 import { useRef, useState, type ReactNode } from "react";
+import { LeituraArquivo } from "./LeituraArquivo";
+import type { LeituraConfirmada, RespostaLeitura } from "./LeituraArquivo";
 import { chamarFuncao } from "../lib/supabase";
 import { UFS } from "../lib/domains";
 import { guardar, lembrar } from "../lib/ux";
@@ -38,7 +43,20 @@ interface GrupoCsv {
   selecionados: Set<string>;
 }
 
-type Fase = "pergunta" | "certificados" | "txt";
+type Fase = "pergunta" | "certificados" | "txt" | "leitura";
+
+/** Extensões aceitas: texto/planilha de coletora, formatos de troca e relatórios. */
+const ACEITOS = ".txt,.csv,.dat,.xyz,.pts,.asc,.gsi,.pos,.sum,.jxl,.xml,.kml,.kmz,.gpx,.geojson,.json,.dxf,.xlsx,.ods,.pdf";
+
+async function paraBase64(f: File): Promise<string> {
+  const b = new Uint8Array(await f.arrayBuffer());
+  let s = "";
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/** A função ler-arquivo ainda não publicada (ou fora do ar): cai no caminho antigo. */
+const leituraIndisponivel = (msg: string) => /^Erro \d{3}$/.test(msg) || /interrompeu o processamento|function not found|worker/i.test(msg);
 
 export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início" }: {
   definicao: DefinicaoServico;
@@ -69,6 +87,10 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
   // atravessa 23S e 24S) — por isso o operador pode fixar aqui, antes de tudo.
   const [fuso, setFuso] = useState(() => lembrar("fuso") ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
+  // etapa "Leitura do arquivo"
+  const [previa, setPrevia] = useState<{ arquivo: File; b64: string; resposta: RespostaLeitura } | null>(null);
+  const [criando, setCriando] = useState(false);
+  const [erroCriacao, setErroCriacao] = useState<string | null>(null);
 
   const gruposValidos = grupos.filter((g) => g.selecionados.size > 0);
   const totalSelecionados = gruposValidos.reduce((s, g) => s + g.selecionados.size, 0);
@@ -136,18 +158,24 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
       if (definicao.chave === "loteamento" && !(await loteamentoDisponivel())) {
         throw new Error("O banco ainda não tem a atualização do loteamento (migração 0021_loteamento). Peça para aplicá-la e tente de novo.");
       }
-      const conteudo = await file.text();
-      const r = await chamarFuncao<ResultadoParse>("parse-txt", {
-        nome_arquivo: file.name, conteudo, uf: uf || undefined,
-        // o serviço nasce já com a modalidade: é nela que o crédito do mês é gasto
-        campos: definicao.campos,
-        fuso: fuso ? Number(fuso) : undefined,
-        ...(usaCertificados ? {
-          certificados: gruposValidos.map((g) => ({ nome: g.nome, conteudo: g.conteudo, selecionados: [...g.selecionados] })),
-          tolerancia_certificados: Number(tolerancia.replace(",", ".")) || 0.5,
-        } : {}),
-      });
-      onParsed(r);
+      const b64 = await paraBase64(file);
+      let resposta: RespostaLeitura;
+      try {
+        resposta = await chamarFuncao<RespostaLeitura>("ler-arquivo", { nome_arquivo: file.name, arquivo_base64: b64 });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!leituraIndisponivel(msg)) throw e;
+        // servidor ainda sem a leitura universal: o caminho de sempre
+        onParsed(await chamarFuncao<ResultadoParse>("parse-txt", { ...corpoServico(), nome_arquivo: file.name, conteudo: await file.text() }));
+        return;
+      }
+      if (resposta.binario) {
+        setErro(`${resposta.binario.formato}: ${resposta.binario.orientacao}`);
+        return;
+      }
+      setErroCriacao(null);
+      setPrevia({ arquivo: file, b64, resposta });
+      setFase("leitura");
     } catch (e) {
       setErro(textoSemCredito(e instanceof Error ? e.message : String(e)));
     } finally {
@@ -155,10 +183,41 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
     }
   }
 
+  /** O que o serviço leva além do arquivo: UF, fuso, modalidade e certificados. */
+  function corpoServico() {
+    return {
+      uf: uf || undefined,
+      // o serviço nasce já com a modalidade: é nela que o crédito do mês é gasto
+      campos: definicao.campos,
+      fuso: fuso ? Number(fuso) : undefined,
+      ...(usaCertificados ? {
+        certificados: gruposValidos.map((g) => ({ nome: g.nome, conteudo: g.conteudo, selecionados: [...g.selecionados] })),
+        tolerancia_certificados: Number(tolerancia.replace(",", ".")) || 0.5,
+      } : {}),
+    };
+  }
+
+  /** Confirmação da prévia: o parse-txt reexecuta a leitura sobre o arquivo e cria o serviço. */
+  async function criar(l: LeituraConfirmada) {
+    if (!previa) return;
+    setCriando(true);
+    setErroCriacao(null);
+    try {
+      onParsed(await chamarFuncao<ResultadoParse>("parse-txt", {
+        ...corpoServico(), nome_arquivo: previa.arquivo.name, arquivo_base64: previa.b64, leitura: l,
+      }));
+    } catch (e) {
+      setErroCriacao(textoSemCredito(e instanceof Error ? e.message : String(e)));
+    } finally {
+      setCriando(false);
+    }
+  }
+
   // ---- trilha de etapas ----
   const passos: Passo[] = [
-    ...(perguntaCabe ? [{ rotulo: "Área certificada", estado: fase === "txt" ? "feita" as const : "ativa" as const }] : []),
-    { rotulo: "Upload do TXT", estado: fase === "txt" ? "ativa" : "futura" },
+    ...(perguntaCabe ? [{ rotulo: "Área certificada", estado: fase === "txt" || fase === "leitura" ? "feita" as const : "ativa" as const }] : []),
+    { rotulo: "Arquivo do levantamento", estado: fase === "txt" ? "ativa" : fase === "leitura" ? "feita" : "futura" },
+    { rotulo: "Leitura do arquivo", estado: fase === "leitura" ? "ativa" : "futura" },
     ...(definicao.chave === "loteamento"
       ? [{ rotulo: "Perguntas", estado: "futura" as const }, { rotulo: "Projeto", estado: "futura" as const }, { rotulo: "Entregas", estado: "futura" as const }]
       : [{ rotulo: "Conferência", estado: "futura" as const }, { rotulo: "Documentos", estado: "futura" as const }]),
@@ -280,12 +339,36 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
     );
   }
 
-  // ---- 3) TXT do levantamento ----
+  // ---- 4) Leitura do arquivo (prévia conferida) ----
+  if (fase === "leitura" && previa) {
+    return (
+      <div className="upload-tela fade">
+        {stepper}
+        <div className="upload-card leitura">
+          {cabecalhoCom(<>Confira como o arquivo foi lido antes de criar o serviço. O desenho, a tabela e os
+            avisos vêm do mesmo código que grava o serviço: o que está aqui é o que vai ser gravado. Formatos novos
+            ficam aprendidos — o próximo arquivo do mesmo aparelho entra sozinho.</>)}
+          <LeituraArquivo
+            nomeArquivo={previa.arquivo.name}
+            resposta={previa.resposta}
+            criando={criando}
+            erro={erroCriacao}
+            onConfirmar={criar}
+            onTrocarArquivo={() => { setPrevia(null); setErroCriacao(null); setFase("txt"); }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ---- 3) Arquivo do levantamento ----
   return (
     <div className="upload-tela fade">
       {stepper}
       <div className="upload-card">
-        {cabecalhoCom(<>Envie o TXT gerado pela máquina de topografia. O sistema detecta o fuso,
+        {cabecalhoCom(<>Envie o arquivo de pontos exportado pela coletora ou pelo software de
+          processamento — TXT/CSV de qualquer aparelho, planilha, GSI, KML/GPX, LandXML/JobXML, DXF ou o
+          relatório do IBGE-PPP. Na próxima tela você confere como ele foi lido. O sistema detecta o fuso,
           converte as coordenadas e sugere os trechos de confrontantes pelos rótulos.
           {usaCertificados && " Na próxima tela o perímetro já aparece com os vértices do vizinho encaixados."}</>)}
         {perguntaCabe && (
@@ -329,7 +412,7 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
           className={`dropzone ${arrastando ? "ativo" : ""}`}
           role="button"
           tabIndex={carregando ? -1 : 0}
-          aria-label="Enviar arquivo TXT do levantamento"
+          aria-label="Enviar o arquivo de pontos do levantamento"
           aria-busy={carregando}
           onDragOver={(e) => { e.preventDefault(); setArrastando(true); }}
           onDragLeave={() => setArrastando(false)}
@@ -347,19 +430,19 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
           {carregando ? (
             <>
               <span className="spinner" />
-              <b>Processando o levantamento…</b>
-              <span>validando pontos, detectando fuso e convertendo coordenadas{usaCertificados ? ", unindo os vértices certificados" : ""}</span>
+              <b>Lendo o arquivo…</b>
+              <span>reconhecendo o formato, as colunas e a ordem dos pontos — formatos novos podem levar alguns segundos a mais</span>
             </>
           ) : (
             <>
               <Icone d={ICONE.upload} size={36} traco={1.6} />
-              <b className="dz-titulo">Arraste o TXT aqui</b>
-              <span>ou clique para escolher o arquivo</span>
-              <code className="dz-formato">ID;E;N;h;σpos;σh</code>
+              <b className="dz-titulo">Arraste o arquivo do levantamento aqui</b>
+              <span>ou clique para escolher — qualquer aparelho, qualquer organização de colunas</span>
+              <code className="dz-formato">TXT · CSV · planilha · GSI · KML/GPX · XML · DXF · PPP</code>
             </>
           )}
-          <input ref={inputRef} type="file" accept=".txt" hidden
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) processar(f); }} />
+          <input ref={inputRef} type="file" accept={ACEITOS} hidden
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) processar(f); }} />
         </div>
         {erro && <div className="erro" role="alert">{erro}</div>}
       </div>

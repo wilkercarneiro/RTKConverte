@@ -56,6 +56,7 @@ const LaboratorioCar = lazy(() => import("./components/car/Laboratorio").then((m
 const LaboratorioAdmin = lazy(() => import("./components/admin/LaboratorioAdmin").then((m) => ({ default: m.LaboratorioAdmin })));
 const LaboratorioCasca = lazy(() => import("./components/LaboratorioCasca").then((m) => ({ default: m.LaboratorioCasca })));
 const LaboratorioSistema = lazy(() => import("./components/LaboratorioSistema").then((m) => ({ default: m.LaboratorioSistema })));
+const LaboratorioLeitura = lazy(() => import("./components/LaboratorioLeitura").then((m) => ({ default: m.LaboratorioLeitura })));
 // painel do superadmin: só quem administra o SaaS baixa este pedaço
 const PainelAdmin = lazy(() => import("./components/admin/PainelAdmin").then((m) => ({ default: m.PainelAdmin })));
 
@@ -184,6 +185,7 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/admin")) return <Suspense fallback={null}><LaboratorioAdmin /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/casca")) return <Suspense fallback={null}><LaboratorioCasca /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/sistema")) return <Suspense fallback={null}><LaboratorioSistema /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/leitura")) return <Suspense fallback={null}><LaboratorioLeitura /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vertces", href: "#/" }} />;

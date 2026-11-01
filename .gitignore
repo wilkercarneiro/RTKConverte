@@ -6,3 +6,6 @@ tests/out/
 
 .vercel
 .env*
+
+# corpus real de TXT de clientes (dados privados — nunca no Git)
+tests/corpus-real/

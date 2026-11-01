@@ -15,17 +15,30 @@
 //
 // Fuso: `fuso` explícito (tela) > candidato mais perto dos vértices certificados
 // > UF > prioridade histórica. O TXT sozinho é ambíguo perto de E = 500 km.
+//
+// LEITURA UNIVERSAL (0035): o arquivo pode vir em qualquer formato. A tela
+// manda os bytes (`arquivo_base64`) e a `leitura` confirmada na prévia (receita,
+// ordem, exclusões, σ declarado, confirmações); aqui a receita é REEXECUTADA
+// sobre o arquivo — a fonte da verdade é o arquivo, não a tela — e o serviço só
+// nasce sem bloqueio e com todas as confirmações. Cliente antigo (só
+// `conteudo`): lê sozinho, como sempre. Ver _shared/leitor/.
 import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
+import { extractText, getDocumentProxy } from "unpdf";
 import {
   GEO_DEF, ZONAS_BR, calcularAreaHa, calcularSegmentos, calcularPerimetroM, calcularVertices,
-  detectZoneCandidates, epsgForZone, escolherZona, fmtGmsPlanilha, parseGmsPlanilha, parseTxt, utmDef,
+  detectZoneCandidates, epsgForZone, escolherZona, fmtGmsPlanilha, parseGmsPlanilha, utmDef,
 } from "../_shared/geo.ts";
-import type { CandidatoZona, EntradaVertice, Proj4 } from "../_shared/geo.ts";
+import type { CandidatoZona, EntradaVertice, PontoTxt, Proj4 } from "../_shared/geo.ts";
 import { sugerirTrechos } from "../_shared/servico.ts";
 import {
-  blocosPorNumeracao, fusoPelosCertificados, montarVerticesUnidos, parseCsvSigef, unirEmBlocos,
+  fusoPelosCertificados, montarVerticesUnidos, parseCsvSigef, unirEmBlocos,
 } from "../_shared/certificados.ts";
+import { abrirArquivo } from "../_shared/leitor/arquivo.ts";
+import { separarLinhas } from "../_shared/leitor/abertura.ts";
+import { executarReceita, lerLinhas } from "../_shared/leitor/index.ts";
+import type { Leitura } from "../_shared/leitor/index.ts";
+import { validarReceita } from "../_shared/leitor/receita.ts";
 import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts";
 import { autorDaChamada, ehRecusa, escritorioDoUsuario, exigirPermissao } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
@@ -54,6 +67,98 @@ const entradaCalc = (l: VerticeUnido): EntradaVertice => l.inserido_manual
   ? { numTxt: l.num_txt, latGms: parseGmsPlanilha(l.lat_gms), lonGms: parseGmsPlanilha(l.lon_gms), h: l.h, sigmaPos: l.sigma_pos, sigmaH: l.sigma_h, inserido: true }
   : { numTxt: l.num_txt, e: l.e, n: l.n, h: l.h, sigmaPos: l.sigma_pos, sigmaH: l.sigma_h };
 
+function bytesDeBase64(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function textoDoPdf(bytes: Uint8Array): Promise<string> {
+  const proxy = await getDocumentProxy(bytes);
+  const { text } = await extractText(proxy, { mergePages: true });
+  return Array.isArray(text) ? text.join("\n") : text;
+}
+
+interface LeituraPedida { receita?: unknown; ordem?: unknown; excluir?: unknown; sigma_padrao?: unknown; confirmados?: unknown }
+
+/**
+ * Lê o arquivo: com a leitura confirmada na prévia, reexecuta a receita e exige
+ * as confirmações; sem ela (cliente antigo), lê sozinho. Devolve a leitura ou a
+ * recusa (status + mensagem).
+ */
+function lerPedido(linhas: string[], pedido: LeituraPedida | null, fusoTela: number | null): { leitura: Leitura; pedido: LeituraPedida | null } | { erro: string; status: number; faltam?: string[] } {
+  if (!pedido) {
+    let l = lerLinhas(linhas, { proj4 });
+    if (!l) return { erro: "Não foi possível encontrar as coordenadas no arquivo", status: 422 };
+    if (fusoTela !== null && l.fusoGeo !== null && l.fusoGeo !== fusoTela) l = executarReceita(linhas, { ...l.receita, fuso: fusoTela }, { proj4 });
+    return { leitura: l, pedido: null };
+  }
+  const validada = validarReceita(pedido.receita);
+  if (!validada.receita) return { erro: `Receita de leitura inválida: ${validada.erros.join("; ")}`, status: 400 };
+  const receita = fusoTela !== null ? { ...validada.receita, fuso: fusoTela } : validada.receita;
+  const ordem = pedido.ordem === "id" || pedido.ordem === "arquivo" || pedido.ordem === "auto" ? pedido.ordem : undefined;
+  const excluir = Array.isArray(pedido.excluir) ? pedido.excluir.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+  const sp = pedido.sigma_padrao as { pos?: unknown; h?: unknown } | null | undefined;
+  const sigmaPadrao = sp && Number(sp.pos) > 0 && Number(sp.h) > 0 && Number(sp.pos) <= 10 && Number(sp.h) <= 10 ? { pos: Number(sp.pos), h: Number(sp.h) } : null;
+  const leitura = executarReceita(linhas, receita, { proj4, ordem, excluir, sigmaPadrao });
+  const confirmados = new Set(Array.isArray(pedido.confirmados) ? pedido.confirmados.map(String) : []);
+  const faltam = leitura.aConfirmar.filter((c) => !confirmados.has(c));
+  if (faltam.length) {
+    const msgs = leitura.avisos.filter((a) => faltam.includes(a.codigo)).map((a) => a.mensagem);
+    return { erro: `Confirme na prévia antes de criar o serviço: ${msgs.join(" | ")}`, status: 422, faltam };
+  }
+  return { leitura, pedido: { ...pedido, ordem, excluir, sigma_padrao: sigmaPadrao } };
+}
+
+/**
+ * Grava como o arquivo foi lido (leituras_arquivo) e aprende o formato
+ * (perfis_leitura): perfil usado ganha um uso; receita nova das regras, da IA
+ * ou do operador vira perfil da empresa — o próximo arquivo igual entra sozinho.
+ * Formato padrão e formatos especiais (GSI, XML, DXF…) não precisam de perfil.
+ * Falha aqui nunca derruba a criação do serviço.
+ */
+// deno-lint-ignore no-explicit-any
+async function registrarLeitura(supa: any, x: { servicoId: string; escritorioId: string | null; autor: string | null; nomeArquivo: string; formato: string; codificacao: string; leitura: Leitura; pedido: LeituraPedida | null }) {
+  try {
+    const r = x.leitura.receita;
+    let perfilId: string | null = r.origem.startsWith("perfil:") ? r.origem.slice(7) : null;
+    const tabular = r.registro === "linha" || r.registro === "planilha";
+    if (x.escritorioId && tabular) {
+      const agora = new Date().toISOString();
+      if (perfilId) {
+        const { data: p } = await supa.from("perfis_leitura").select("usos, confirmacoes_sem_edicao").eq("id", perfilId).maybeSingle();
+        if (p) await supa.from("perfis_leitura").update({ usos: p.usos + 1, confirmacoes_sem_edicao: p.confirmacoes_sem_edicao + 1, ultimo_uso: agora, updated_at: agora }).eq("id", perfilId);
+        else perfilId = null;
+      } else if (r.origem !== "padrao") {
+        const origem = r.origem.startsWith("ia:") ? "ia" : r.origem === "operador" ? "operador" : "regras";
+        const { data: existente } = await supa.from("perfis_leitura").select("id, usos").eq("escritorio_id", x.escritorioId).eq("assinatura", x.leitura.assinatura).maybeSingle();
+        const receita = { ...r, origem };
+        if (existente) {
+          await supa.from("perfis_leitura").update({ receita, origem, usos: existente.usos + 1, ultimo_uso: agora, updated_at: agora }).eq("id", existente.id);
+          perfilId = existente.id;
+        } else {
+          const nome = `${x.formato.replace(/\s*\(.*\)$/, "")} — ${(r.explicacao || "").slice(0, 60) || x.nomeArquivo}`;
+          const { data: novo } = await supa.from("perfis_leitura").insert({
+            escritorio_id: x.escritorioId, assinatura: x.leitura.assinatura, receita, nome, origem,
+            usos: 1, ultimo_uso: agora, criado_por: x.autor,
+          }).select("id").single();
+          perfilId = novo?.id ?? null;
+        }
+      }
+    }
+    await supa.from("leituras_arquivo").insert({
+      servico_id: x.servicoId, escritorio_id: x.escritorioId, nome_arquivo: x.nomeArquivo, formato: x.formato,
+      codificacao: x.codificacao, assinatura: x.leitura.assinatura, perfil_id: perfilId, origem: r.origem,
+      receita: r, criterio_ordem: x.leitura.criterio, avisos: x.leitura.avisos,
+      ignoradas: x.leitura.ignoradas.map((i) => ({ linha: i.linha, motivo: i.motivo, tipo: i.tipo })),
+      confirmados: x.pedido ? x.leitura.aConfirmar : [], excluidas: (x.pedido?.excluir as number[] | undefined) ?? [],
+      criado_por: x.autor,
+    });
+  } catch (e) {
+    console.warn("parse-txt: leitura não registrada:", e);
+  }
+}
+
 /** Colunas da modalidade vindas da tela (sem elas, o default do banco: completo). */
 function camposDaModalidade(c: unknown): Record<string, unknown> {
   if (!c || typeof c !== "object") return {};
@@ -68,8 +173,9 @@ function camposDaModalidade(c: unknown): Record<string, unknown> {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { nome_arquivo, conteudo, uf, fuso, certificados, tolerancia_certificados, tolerancia_linha, campos } = await req.json();
-    if (typeof conteudo !== "string" || !conteudo.trim()) return json({ erro: "Conteúdo do TXT ausente" }, 400);
+    const { nome_arquivo, conteudo, arquivo_base64, leitura: leituraPedida, uf, fuso, certificados, tolerancia_certificados, tolerancia_linha, campos } = await req.json();
+    const temBytes = typeof arquivo_base64 === "string" && arquivo_base64.length > 0;
+    if (!temBytes && (typeof conteudo !== "string" || !conteudo.trim())) return json({ erro: "Conteúdo do TXT ausente" }, 400);
     // o serviço nasce no escritório de quem enviou (null = banco ainda sem escritórios)
     const acesso = await escritorioDoUsuario(clienteDoUsuario(req));
     if (ehRecusa(acesso)) return json({ erro: acesso.erro }, acesso.status);
@@ -99,21 +205,44 @@ Deno.serve(async (req) => {
     const tolLinhaNum = Number(tolerancia_linha);
     const toleranciaLinhaM = Number.isFinite(tolLinhaNum) && tolLinhaNum >= 0 ? tolLinhaNum : undefined;
 
-    const pontos = parseTxt(conteudo);
-    const blocos = blocosPorNumeracao(pontos);
+    // ---- leitura do arquivo (qualquer formato) ----
+    let bytesOriginais: Uint8Array, linhasArquivo: string[], formatoArquivo = "texto", codificacao = "utf-8";
+    if (temBytes) {
+      bytesOriginais = bytesDeBase64(arquivo_base64);
+      if (bytesOriginais.length > 20 * 1024 * 1024) return json({ erro: "Arquivo maior que 20 MB" }, 413);
+      const aberto = await abrirArquivo(bytesOriginais, nomeArquivo, { textoDoPdf });
+      if (aberto.tipo === "binario") return json({ erro: `${aberto.binario!.formato}: ${aberto.binario!.orientacao}` }, 422);
+      linhasArquivo = aberto.linhas; formatoArquivo = aberto.origem; codificacao = aberto.codificacao;
+    } else {
+      bytesOriginais = new TextEncoder().encode(conteudo);
+      linhasArquivo = separarLinhas(conteudo);
+    }
+    // fuso escolhido na tela vale também para converter lat/lon (se o arquivo for geográfico)
+    const fusoTela = ZONAS_BR.includes(Number(fuso)) ? Number(fuso) : null;
+    const lido = lerPedido(linhasArquivo, leituraPedida && typeof leituraPedida === "object" ? leituraPedida as LeituraPedida : null, fusoTela);
+    if ("erro" in lido) return json({ erro: lido.erro, ...(lido.faltam ? { faltam: lido.faltam } : {}) }, lido.status);
+    const leitura = lido.leitura;
+    const bloqueios = leitura.avisos.filter((a) => a.nivel === "bloqueio");
+    if (bloqueios.length) {
+      return json({ erro: bloqueios.map((b) => `${b.mensagem}${b.linhas?.length ? ` (linha${b.linhas.length > 1 ? "s" : ""} ${b.linhas.slice(0, 10).join(", ")})` : ""}`).join(" | ") }, 422);
+    }
+    // o anel lido, no formato de sempre do motor (PontoTxt), na ordem escolhida
+    const pontos: PontoTxt[] = leitura.anel.map((p) => ({ num: p.num, rotulo: p.rotulo, e: p.e, n: p.n, h: p.h, sigmaPos: p.sigmaPos, sigmaH: p.sigmaH }));
+    const blocos = leitura.blocos;
     const candidatos = detectZoneCandidates(pontos, proj4);
     if (!candidatos.length) return json({ erro: "Nenhum fuso UTM brasileiro compatível com as coordenadas" }, 422);
 
     // ---- fuso ----
     let escolhido: CandidatoZona, ambiguo = false, foraDaUf = false, origemFuso: OrigemFuso;
     const avisosFuso: string[] = [];
-    const fusoPedido = Number(fuso);
+    // arquivo geográfico: o E/N foi calculado num fuso — o serviço usa o mesmo
+    const fusoPedido = fusoTela ?? leitura.fusoGeo ?? NaN;
     if (ZONAS_BR.includes(fusoPedido)) {
       const c = candidatos.find((x) => x.zone === fusoPedido);
       if (!c) {
         return json({ erro: `Fuso ${fusoPedido}S não é compatível com as coordenadas do TXT (candidatos: ${candidatos.map((x) => `${x.zone}S`).join(", ")})` }, 422);
       }
-      escolhido = c; origemFuso = "informado";
+      escolhido = c; origemFuso = fusoTela !== null ? "informado" : "automatico";
     } else {
       const porCert = grupos.length ? fusoPelosCertificados(candidatos, grupos) : null;
       if (porCert && candidatos.length > 1) {
@@ -178,9 +307,23 @@ Deno.serve(async (req) => {
     if (eServ && autor) ({ data: servico, error: eServ } = await supa.from("servicos").insert(novo).select().single());
     if (eServ) throw eServ;
 
+    // o arquivo ORIGINAL, byte a byte (qualquer formato), e ao lado a leitura
+    // confirmada: é dela que a reunião de certificados e a regressão dos perfis
+    // partem — o arquivo de um formato novo não é relido pelo parser antigo
     const up = await supa.storage.from("uploads-txt")
-      .upload(`${servico.id}/${nomeArquivo}`, new Blob([conteudo], { type: "text/plain" }), { upsert: true });
+      .upload(`${servico.id}/${nomeArquivo}`, new Blob([bytesOriginais as BlobPart]), { upsert: true, contentType: temBytes ? "application/octet-stream" : "text/plain" });
     if (up.error) throw up.error;
+    const leituraGuardada = {
+      versao: 1, formato: formatoArquivo, codificacao,
+      receita: leitura.receita, criterio: leitura.criterio, blocos: leitura.blocos,
+      ordem: lido.pedido?.ordem ?? null, excluir: lido.pedido?.excluir ?? [], sigma_padrao: lido.pedido?.sigma_padrao ?? null,
+      confirmados: lido.pedido ? leitura.aConfirmar : [],
+      anel: leitura.anel.map((p) => ({ num: p.num, nome: p.nome, num_sintetico: p.numSintetico, rotulo: p.rotulo, e: p.e, n: p.n, h: p.h, sigma_pos: p.sigmaPos, sigma_h: p.sigmaH, linha: p.linha, sigma_declarado: p.sigmaDeclarado })),
+      avisos: leitura.avisos, ignoradas: leitura.ignoradas.map((i) => ({ linha: i.linha, motivo: i.motivo, tipo: i.tipo })),
+    };
+    const upL = await supa.storage.from("uploads-txt")
+      .upload(`${servico.id}/leitura.json`, new Blob([JSON.stringify(leituraGuardada)], { type: "application/json" }), { upsert: true });
+    if (upL.error) throw upL.error;
     // os CSVs dos vizinhos ficam ao lado do TXT: são a origem dos códigos
     // publicados, alimentam a reunião quando o fuso muda e servem à correção de
     // sobreposição. Com prefixo numérico: o SIGEF baixa todos como
@@ -193,9 +336,24 @@ Deno.serve(async (req) => {
 
     // a confrontação nasce já no vértice M: um M inicia um trecho, que vai até o
     // próximo M. Ver ARQUITETURA-TRECHOS.md. (montarVerticesUnidos aplica a regra.)
-    const linhasVert = linhas.map(({ txt_idx: _i, certificado: _c, ...l }) => ({ servico_id: servico.id, ...l }));
-    const { data: vertices, error: eVert } = await supa.from("vertices").insert(linhasVert).select().order("ordem");
+    // procedência de cada vértice lido do arquivo: nome original e linha (0035)
+    const linhasVert = linhas.map(({ txt_idx, certificado: _c, ...l }) => {
+      const p = txt_idx !== null && txt_idx !== undefined ? leitura.anel[txt_idx] : null;
+      return { servico_id: servico.id, ...l, nome_txt: p && p.nome ? p.nome : null, linha_txt: p ? p.linha : null };
+    });
+    let { data: vertices, error: eVert } = await supa.from("vertices").insert(linhasVert).select().order("ordem");
+    // banco ainda sem a 0035: grava sem as colunas de procedência
+    if (eVert && /nome_txt|linha_txt/.test(JSON.stringify(eVert))) {
+      ({ data: vertices, error: eVert } = await supa.from("vertices")
+        .insert(linhasVert.map(({ nome_txt: _n, linha_txt: _l, ...v }) => v)).select().order("ordem"));
+    }
     if (eVert) throw eVert;
+
+    // auditoria da leitura e o formato aprendido (0035; sem a migração, segue sem)
+    await registrarLeitura(supa, {
+      servicoId: servico.id, escritorioId: acesso.escritorioId, autor, nomeArquivo, formato: formatoArquivo, codificacao,
+      leitura, pedido: lido.pedido,
+    });
 
     // uma gleba ("PARTE n") por bloco, com o anel em E/N — é o que a conferência,
     // a planilha e a planta usam para tratar cada parte como um anel próprio

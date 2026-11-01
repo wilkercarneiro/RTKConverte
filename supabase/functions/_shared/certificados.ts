@@ -548,7 +548,7 @@ export interface VerticeUnido {
   certificado: string | null;
 }
 
-export interface SugestaoTrecho { verticeInicioOrdem: number; apelido: string; ehVia: boolean }
+export interface SugestaoTrecho { verticeInicioOrdem: number; apelido: string | null; ehVia: boolean }
 
 const arred3 = (v: number) => Math.round(v * 1000) / 1000;
 

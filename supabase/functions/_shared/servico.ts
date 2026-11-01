@@ -373,15 +373,24 @@ export const ehRioPorLimite = (tipoLimite?: string | null): boolean =>
 const RE_VIA_APELIDO =
   /\b(ESTRADA|RODOVIA|CORREDOR|SERVID[ÃA]O|LINHA\s+F[ÉE]RREA|FERROVIA|FERROVI[ÁA]RI[AO]|LEITO\s+FERROVI[ÁA]RIO|RIO|RIACHO|C[ÓO]RREGO|A[ÇC]UDE|FAIXA\s+DE\s+DOM[ÍI]NIO|(?:BR|BA|AL|SE|PE|PB|RN|CE|PI|MA|TO|GO|MG|ES|RJ|SP|PR|SC|RS|MS|MT|DF|RO|AC|AM|RR|PA|AP)[-\s]?\d{2,3})\b/i;
 
+/**
+ * Rótulo que é só anotação de campo, não nome de confrontante: o "V" (ou
+ * "virtual") que a equipe põe nos pontos digitados de vizinho/levantamento
+ * anterior. Decisão do Wilker (2026-11-01): o ponto continua marco M (como
+ * sempre), mas "V" não vira o nome do confrontante.
+ */
+export const RE_ROTULO_SO_ANOTACAO = /^(v|virtual)$/i;
+
 // Sugestões pós-parse: tipos (M nos inícios de trecho, P nos demais) e trechos
 // derivados dos rótulos do TXT (apelido = parte após "/").
-export function sugerirTrechos(pontos: { num: number; rotulo: string | null }[]): { verticeInicioOrdem: number; apelido: string; ehVia: boolean }[] {
-  const out: { verticeInicioOrdem: number; apelido: string; ehVia: boolean }[] = [];
+export function sugerirTrechos(pontos: { num: number; rotulo: string | null }[]): { verticeInicioOrdem: number; apelido: string | null; ehVia: boolean }[] {
+  const out: { verticeInicioOrdem: number; apelido: string | null; ehVia: boolean }[] = [];
   pontos.forEach((p, i) => {
     if (p.rotulo) {
       const partes = p.rotulo.split("/");
-      const apelido = (partes[1] ?? partes[0]).trim();
-      out.push({ verticeInicioOrdem: i, apelido, ehVia: RE_VIA_APELIDO.test(apelido) });
+      const bruto = (partes[1] ?? partes[0]).trim();
+      const apelido = RE_ROTULO_SO_ANOTACAO.test(p.rotulo.trim()) ? null : bruto;
+      out.push({ verticeInicioOrdem: i, apelido, ehVia: apelido !== null && RE_VIA_APELIDO.test(apelido) });
     }
   });
   return out;
