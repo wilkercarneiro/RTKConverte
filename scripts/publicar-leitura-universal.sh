@@ -100,9 +100,8 @@ PY
   chmod 600 /tmp/env-leitura.txt"
   if [ -n "$OPENAI" ]; then printf 'OPENAI_API_KEY=%s\n' "$OPENAI" | ssh_ "cat >> /tmp/env-leitura.txt"; fi
   ssh_ "set -e; ARGS=''; while IFS= read -r l; do ARGS=\"\$ARGS --env-add \$(printf %q \"\$l\")\"; done < /tmp/env-leitura.txt
-    eval docker service update --quiet \$ARGS sb_rtkconverte_functions >/dev/null
+    eval docker service update --quiet \$ARGS sb_rtkconverte_functions >/dev/null && echo 'funções reiniciadas (com os mapas novos)'
     rm -f /tmp/env-leitura.txt
-    docker service update --force --quiet sb_rtkconverte_functions >/dev/null && echo 'funções reiniciadas'
     uptime"
 else
   echo "   [simulação] FUNCTIONS_IMPORT_MAPS/FUNCTIONS_VERIFY_JWT_MAP += ler-arquivo; docker service update --force sb_rtkconverte_functions"
