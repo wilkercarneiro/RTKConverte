@@ -21,8 +21,9 @@ import { pathToFileURL } from "node:url";
 import JSZip from "jszip";
 import { extractText, getDocumentProxy } from "unpdf";
 import {
-  aplicarTimbreAutomatico, cabecalhoXml, formatarCnpjTimbre, identidadeDaEmpresa, precisaTimbreAutomatico, rodapeXml,
+  aplicarTimbreAutomatico, cabecalhoXml, dimensoesImagem, formatarCnpjTimbre, identidadeDaEmpresa, precisaTimbreAutomatico, rodapeXml, xmlEscape,
 } from "../supabase/functions/_shared/timbre_automatico.ts";
+import * as docx from "../supabase/functions/_shared/docx.ts";
 
 const OUT = new URL("./out/timbre/", import.meta.url);
 mkdirSync(OUT, { recursive: true });
@@ -112,6 +113,30 @@ async function conferirPacote(buf, rotulo) {
   }
   return { z, doc, partes, ct };
 }
+
+// ---------- publicação: o módulo não depende de outro _shared em execução ----------
+test("timbre_automatico.ts só importa TIPOS (no ar, o gerar-pecas não tem docx.ts e o memorial.ts dele é esboço)", () => {
+  const src = readFileSync(new URL("../supabase/functions/_shared/timbre_automatico.ts", import.meta.url), "utf8");
+  const imports = src.split(/\r?\n/).filter((l) => /^\s*import\s/.test(l));
+  assert.ok(imports.length > 0);
+  for (const l of imports) assert.match(l, /^\s*import type /, `import de execução: ${l}`);
+  assert.ok(!/from "\.\/docx\.ts"/.test(src), "nada de docx.ts");
+});
+
+test("escape de XML e medida da imagem: as cópias concordam com as de docx.ts", () => {
+  for (const s of ["A & B", "<x y=\"1\">", "d'água", "sem nada"]) assert.equal(xmlEscape(s), docx.xmlEscape(s));
+  const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 0x11, 8, 1, 0x2c, 2, 0x58]);
+  for (const [b, t] of [[LOGO.bytes, "png"], [pngLogo(7, 3), "png"], [jpg, "jpg"], [new Uint8Array(10), "png"], [new Uint8Array([0xff, 0xd8]), "jpg"]]) {
+    assert.deepEqual(dimensoesImagem(b, t), docx.dimensoesImagem(b, t));
+  }
+  assert.deepEqual(dimensoesImagem(jpg, "jpg"), { w: 600, h: 300 });
+});
+
+test("logo com cabeçalho ilegível entra quadrada, sem NaN no XML", () => {
+  const h = cabecalhoXml({ bytes: new Uint8Array(4), tipo: "png" }, IDENT);
+  assert.ok(!/NaN|Infinity/.test(h));
+  assert.match(h, /style="width:42pt;height:42pt"/);
+});
 
 // ---------- quem recebe o timbre ----------
 test("o timbre só entra no modelo neutro de empresa não legada", () => {

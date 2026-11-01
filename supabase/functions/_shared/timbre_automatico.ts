@@ -11,10 +11,41 @@
 // (D'Prol, modelos na raiz) NÃO passam por aqui: o timbre deles está no modelo.
 // Só cabeçalho, rodapé, a distância do rodapé e a mídia do pacote mudam — o
 // corpo do documento (o que o gerador escreveu) fica intacto.
+//
+// Módulo SEM dependência de execução de outros _shared: no ar, o gerar-pecas
+// não tem docx.ts e o memorial.ts dele é só um esboço de tipos (docx.ts importa
+// funções reais do memorial.ts). Por isso o escape de XML e a medida da imagem
+// estão aqui, iguais aos de docx.ts — o teste confere que os dois concordam.
 import type JSZip from "jszip";
-import { dimensoesImagem, xmlEscape } from "./docx.ts";
-import type { MarcaDagua } from "./docx.ts";
 import type { EscritorioModelos } from "./modelos.ts";
+
+/** Logo da empresa (mesma forma de `MarcaDagua` em docx.ts e de `carregarLogoPlanta`). */
+export interface LogoEmpresa {
+  bytes: Uint8Array;
+  tipo: "png" | "jpg";
+}
+type MarcaDagua = LogoEmpresa;
+
+export function xmlEscape(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+/** Largura × altura em pixels de um PNG (IHDR) ou JPEG (primeiro SOF). */
+export function dimensoesImagem(bytes: Uint8Array, tipo: "png" | "jpg"): { w: number; h: number } | null {
+  const u32 = (o: number) => (bytes[o] << 24 | bytes[o + 1] << 16 | bytes[o + 2] << 8 | bytes[o + 3]) >>> 0;
+  const u16 = (o: number) => bytes[o] << 8 | bytes[o + 1];
+  if (tipo === "png") return bytes.length < 24 ? null : { w: u32(16), h: u32(20) };
+  let i = 2;
+  while (i + 3 < bytes.length) {
+    if (bytes[i] !== 0xff) { i++; continue; }
+    const m = bytes[i + 1];
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+      return i + 8 < bytes.length ? { h: u16(i + 5), w: u16(i + 7) } : null;
+    }
+    i += 2 + u16(i + 2);
+  }
+  return null;
+}
 
 export interface IdentidadeEmpresa {
   nome: string;
@@ -72,7 +103,9 @@ export async function identidadeDaEmpresa(supa: Cliente, escritorioId: string | 
 
 /** Tamanho em pt: com `alturaPt`, a altura fixa (largura proporcional, limitada a `ladoMaxPt`); sem, o maior lado = `ladoMaxPt`. */
 function medidas(m: MarcaDagua, ladoMaxPt: number, alturaPt?: number): { w: number; h: number } {
-  const dim = dimensoesImagem(m.bytes, m.tipo) ?? { w: 1, h: 1 };
+  const lida = dimensoesImagem(m.bytes, m.tipo);
+  // cabeçalho ilegível: a logo entra quadrada (melhor levemente esticada do que sumir)
+  const dim = lida && lida.w > 0 && lida.h > 0 ? lida : { w: 1, h: 1 };
   let w: number, h: number;
   if (alturaPt) {
     h = alturaPt; w = (dim.w / dim.h) * h;
