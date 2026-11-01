@@ -385,3 +385,57 @@ test("a carta qualifica o vizinho pelo imóvel DELE (posse × matrícula)", asyn
   // e o imóvel de exemplo do modelo não sobra em lugar nenhum
   assert.ok(!t3.includes("FAZENDA LAMEIRO (POSSE) ,"), "rótulo de exemplo não substituído");
 });
+
+// ---------- empresa nova (modelos neutros templates/padrao) ----------
+// Os modelos da raiz são os da D'Prol (timbre, logo, rodapé com endereço e
+// CNPJ). Empresa nova sem modelo próprio gera pelos de templates/padrao/
+// (cópia em tests/fixtures/modelos-padrao, baixada da produção): nenhuma peça
+// pode levar dado da D'Prol nem sobra dos valores de exemplo do modelo.
+test("empresa nova: as 7 peças pelos modelos neutros não levam nada da D'Prol nem dos exemplos", async () => {
+  const PROIBIDOS = [
+    /d.?prol/i, /theognes/i, /8167-?2207/, /dprolprojetos/i,
+    /LARISSA LIMA/i, /GILBERTO GONCALVES/i, /FAZENDA VIBRA[ÇC][ÃA]O/i, /84,0638/, /4\.077,80/, /312\.010\.028\.860-1/,
+    /00\.803-7/, /BR20260601082/, /DANIEL NASCIMENTO/i, /0578839458/, /057\.883\.945-89/, /22\.106\.549-04/,
+    /Presidente Costa E Silva/i, /192,98/,
+  ];
+  const tpl = {};
+  for (let i = 1; i <= 7; i++) {
+    const zip = await JSZip.loadAsync(readFileSync(new URL(`./fixtures/modelos-padrao/pecas/${NOMES[i - 1]}.docx`, import.meta.url)));
+    tpl[String(i)] = { zip, xml: await zip.file("word/document.xml").async("string") };
+  }
+  // outra empresa: outro credenciado, outra área (a do teste base é a do exemplo)
+  const dn = { ...dados, codigoCredenciado: "XYZW", areaHa: "12,3456", perimetro: "1.234,56" };
+  PROIBIDOS.push(/credenciado:\s*DSBN/i, /c[óo]digo\s+DSBN/i, /INCRA\s+DSBN/i, /Credenciamento\s*-\s*DSBN/i, /P[óo]s Engenharia/i);
+  const xmls = gerarPecasXml(Object.fromEntries(Object.entries(tpl).map(([k, v]) => [k, v.xml])), dn);
+  const achados = [];
+  for (let i = 1; i <= 7; i++) {
+    const xml = xmls[String(i)];
+    if (!xml) continue;
+    const { zip } = tpl[String(i)];
+    zip.file("word/document.xml", xml);
+    const re = await JSZip.loadAsync(await zip.generateAsync({ type: "nodebuffer" }));
+    for (const nome of Object.keys(re.files).filter((n) => /^word\/(document|header\d*|footer\d*)\.xml$/.test(n))) {
+      const texto = dec((await re.file(nome).async("string")).replace(/<[^>]+>/g, ""));
+      for (const p of PROIBIDOS) if (p.test(texto)) achados.push(`${NOMES[i - 1]} ${nome}: ${p}`);
+    }
+    assert.ok(!Object.keys(re.files).some((n) => n.startsWith("word/media/") && !re.files[n].dir), `${NOMES[i - 1]}: o modelo neutro não traz imagem (logo/marca d'água de ninguém)`);
+    const t = dec(xml.replace(/<[^>]+>/g, ""));
+    if (i === 4) assert.ok(t.includes("TECNICO DE TESTE") && t.includes("Código do credenciado: XYZW"), "a declaração do técnico sai com o RT e o credenciado da empresa do serviço");
+    if (i === 5) assert.ok(t.includes("Tecnico de Teste") && t.includes("credenciamento no INCRA XYZW"), "a declaração do proprietário sai com o RT e o código da empresa");
+  }
+  assert.deepEqual(achados, [], "dado da D'Prol ou valor de exemplo vazou para a empresa nova");
+});
+
+test("D'Prol (RT e credenciado do exemplo): as peças saem idênticas às de antes da troca do credenciado", async () => {
+  const tpl = {};
+  for (let i = 1; i <= 7; i++) {
+    const zip = await JSZip.loadAsync(readFileSync(new URL(`../reference/pecas/${NOMES[i - 1]}.docx`, import.meta.url)));
+    tpl[String(i)] = await zip.file("word/document.xml").async("string");
+  }
+  const daniel = { nome: "DANIEL NASCIMENTO SANTOS", formacao: "Técnico em Agropecuária", conselhoSigla: "CFTA", conselhoNumero: "0578839458-9", identidade: "22.106.549-04 SSP/BA", cpf: "057.883.945-89" };
+  const semCodigo = gerarPecasXml(tpl, { ...dados, rt: daniel });
+  const comDsbn = gerarPecasXml(tpl, { ...dados, rt: daniel, codigoCredenciado: "DSBN" });
+  for (let i = 1; i <= 7; i++) assert.equal(comDsbn[String(i)], semCodigo[String(i)], `${NOMES[i - 1]} mudou para a D'Prol`);
+  const t5 = dec(comDsbn["5"].replace(/<[^>]+>/g, ""));
+  assert.ok(t5.includes("Técnico em Agropecuária com Pós Engenharia em Georreferenciamento, Daniel Nascimento Santos"), "o texto da D'Prol continua por extenso");
+});

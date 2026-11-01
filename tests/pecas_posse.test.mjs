@@ -125,3 +125,22 @@ test("sem estrada/corredor/rio → declaração de faixa não é gerada", async 
   const xmls = gerarPecasPosseXml(tpl, { ...dados, trechos: trechos.filter((t) => !t.ehVia) });
   assert.equal(xmls["7"], null);
 });
+
+test("empresa nova (posse, modelos neutros): nada do RT nem do código de credenciamento da D'Prol", async () => {
+  const tpl = {};
+  for (const [k, nome] of Object.entries(NOMES)) {
+    const zip = await JSZip.loadAsync(readFileSync(new URL(`./fixtures/modelos-padrao/pecas-posse/${nome}.docx`, import.meta.url)));
+    tpl[k] = await zip.file("word/document.xml").async("string");
+  }
+  const xmls = gerarPecasPosseXml(tpl, { ...dados, codigoCredenciado: "XYZW" });
+  const proibidos = [/DANIEL NASCIMENTO/i, /0578839458/, /22\.106\.549-04/, /credenciado:\s*DSBN/i, /c[óo]digo\s+DSBN/i, /INCRA\s+DSBN/i, /Credenciamento\s*-\s*DSBN/i, /d.?prol/i];
+  const achados = [];
+  for (const [k, xml] of Object.entries(xmls)) {
+    if (!xml) continue;
+    const t = xml.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&");
+    for (const p of proibidos) if (p.test(t)) achados.push(`${k}: ${p}`);
+  }
+  assert.deepEqual(achados, []);
+  const t3 = xmls["3"].replace(/<[^>]+>/g, "");
+  assert.ok(t3.includes("XYZW"), "a carta cita o código do credenciado do serviço");
+});

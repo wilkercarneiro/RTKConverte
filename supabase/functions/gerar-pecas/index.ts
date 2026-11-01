@@ -404,6 +404,8 @@ Deno.serve(async (req) => {
         identidade: rt!.identidade ?? "",
         cpf: rt!.cpf ?? "",
       },
+      // código do credenciado DO SERVIÇO ("Código do credenciado: …" nas peças)
+      codigoCredenciado: cred?.prefixo_vertice ?? "",
       sigef: sigefImovel, trechos, confrontacaoDe,
       unidades: unidades.length ? unidades : undefined,
     };

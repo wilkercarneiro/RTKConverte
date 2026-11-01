@@ -98,6 +98,8 @@ export function montarDadosPecasDoCalculo(ctx: ContextoPecas): DadosPecas {
       identidade: r?.identidade ?? "",
       cpf: r?.cpf ?? "",
     },
+    // código do credenciado DO SERVIÇO ("Código do credenciado: …" nas peças)
+    codigoCredenciado: cred?.prefixo_vertice ?? "",
     sigef,
     trechos,
     confrontacaoDe,

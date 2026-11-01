@@ -242,8 +242,16 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
           {tabular && (
             <div className="lt-linha-campos lt-controles">
               <label>Separador
-                <select value={receita.tokenizacao === "espacos" ? "espacos" : receita.delimitador ?? ";"}
-                  onChange={(e) => editar(e.target.value === "espacos" ? { tokenizacao: "espacos", delimitador: null, colunas: null, excedente_em: null } : { tokenizacao: "delimitado", delimitador: e.target.value, colunas: null, excedente_em: null, ...(e.target.value === "," ? { decimal: "." } : {}) })}>
+                <select value={receita.tokenizacao === "espacos" ? "espacos" : receita.tokenizacao === "regex" ? "regex" : receita.tokenizacao === "largura_fixa" ? "largura_fixa" : receita.delimitador ?? ";"}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "regex" || v === "largura_fixa") return; // modos da IA: só se sai deles escolhendo um separador
+                    editar(v === "espacos"
+                      ? { tokenizacao: "espacos", delimitador: null, colunas: null, excedente_em: null, regex: null, cortes: null }
+                      : { tokenizacao: "delimitado", delimitador: v, colunas: null, excedente_em: null, regex: null, cortes: null, ...(v === "," ? { decimal: "." } : {}) });
+                  }}>
+                  {receita.tokenizacao === "regex" && <option value="regex">padrão de texto (lido pela IA)</option>}
+                  {receita.tokenizacao === "largura_fixa" && <option value="largura_fixa">colunas de largura fixa</option>}
                   {SEPARADORES.map((s) => <option key={s.valor} value={s.valor}>{s.rotulo}</option>)}
                 </select>
               </label>
