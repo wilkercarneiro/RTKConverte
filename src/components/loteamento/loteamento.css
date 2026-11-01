@@ -153,6 +153,8 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 .lot-linha select, .lot-linha > input { height: 34px; font-size: 13px; width: 100%; }
 .lot-linha .lot-dica { grid-column: 2; margin: 0; font-size: 11.5px; }
 .lot-botoes { display: flex; gap: 6px; flex-wrap: wrap; }
+/* lotes selecionados: igualar as áreas (a soma dividida por igual) */
+.lot-igualar { width: 100%; height: 36px; font-size: 13px; }
 .lot-botoes button { height: 32px; font-size: 12.5px; padding: 0 10px; }
 .lot-botoes button.verde { border-color: #8CCB72; color: #2E6B1C; }
 .lot-botoes button.inst { border-color: #EFB86A; color: #8A4B00; }

@@ -10,7 +10,7 @@ import type { Corte, Lote, Quadra, Resultado } from "./calculo.ts";
 import { paraPlano, paraUtm } from "./plano.ts";
 import { ROTULO_AREA, mudarLote, novoId } from "./modelo.ts";
 import {
-  acertarMedida, apagarLotes, desenharLote, dividirLote, mudarDestino, posicaoNoDesenho, quadraDesenhada, unirComVizinho, unirLotes, voltarAoAutomatico,
+  acertarMedida, apagarLotes, desenharLote, dividirLote, igualarAreas, mudarDestino, posicaoNoDesenho, quadraDesenhada, unirComVizinho, unirLotes, voltarAoAutomatico,
 } from "./edicao.ts";
 import type { Edicao } from "./edicao.ts";
 import type { AjusteLote, AreaDesenhada, Esquina, Parametros, Projeto, QuadraCfg, Rua, Sobra, TipoArea } from "./modelo.ts";
@@ -274,6 +274,7 @@ export const COMANDOS: { cmd: string; exemplo: string; desc: string; contexto: (
   { cmd: "frente", exemplo: "frente 12", desc: "deixa o lote com esta frente (a divisa desliza e o vizinho se ajusta) · na quadra, muda a frente padrão · \"frente padrão 12\" muda a do projeto", contexto: ["lote", "quadra", "nada"] },
   { cmd: "area", exemplo: "area 300", desc: "deixa o lote com esta área (a divisa desliza) · na quadra, divide em áreas iguais deste tamanho", contexto: ["lote", "quadra"] },
   { cmd: "unir", exemplo: "unir", desc: "une os lotes selecionados (um só: une ao vizinho de maior divisa)", contexto: ["lote"] },
+  { cmd: "igualar", exemplo: "igualar", desc: "lotes selecionados da mesma quadra ficam com a mesma área (a soma dividida por igual; só as divisas entre eles deslizam)", contexto: ["lote"] },
   { cmd: "dividir", exemplo: "dividir 2", desc: "divide o lote em partes iguais, com as divisas na direção das laterais dele", contexto: ["lote"] },
   { cmd: "apagar", exemplo: "apagar", desc: "apaga o lote (a área fica livre para desenhar outro) · Delete", contexto: ["lote", "rua", "area"] },
   { cmd: "desenhar lote", exemplo: "desenhar lote", desc: "desenha um lote: clique as quinas, Enter fecha (L) · duplo clique na área livre rosa vira lote", contexto: ["nada", "lote", "quadra"] },
@@ -436,7 +437,18 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       if (!Number.isFinite(n1) || n1 < 1) return numErr("qtd 8");
       return { pr: ajustarQuadra(pr, res, quadra, { modo: "quantidade", valor: Math.round(n1) }), msg: `Quadra ${quadra.nome}: ${Math.round(n1)} lotes por fileira.` };
     }
-    case "iguais": {
+    case "igualar": case "equalizar": case "iguais": {
+      // vários lotes selecionados: a soma deles dividida por igual (só as divisas entre eles andam)
+      if (lotes.length >= 2 || cmd !== "iguais") {
+        if (lotes.length < 2) return precisa("dois ou mais lotes vizinhos da mesma quadra (Shift + clique em cada um)");
+        if (new Set(lotes.map((l) => l.quadra)).size > 1) return { msg: "Só dá para igualar lotes da mesma quadra — selecione os lotes de uma quadra só.", erro: true };
+        const qI = quadraDe(res, lotes[0].quadra)!;
+        const ed = igualarAreas(pr, res, qI, lotes.map((l) => posicaoNoDesenho(pr, res, l)));
+        if (!ed) return { msg: "Não consegui igualar estes lotes.", erro: true };
+        if (ed.erro) return { msg: ed.msg, erro: true };
+        const avI = conferirMedida(p, "area", lotes.reduce((s2, l) => s2 + l.area, 0) / lotes.length);
+        return { pr: ed.pr, sel: selDe(ed, lotes), msg: avI ? `${ed.msg} Atenção: ${avI}` : ed.msg };
+      }
       if (!quadra) return precisa("a quadra");
       return { pr: ajustarQuadra(pr, res, quadra, { modo: "area", valor: Number.isFinite(n1) ? n1 : p.areaPadrao }), msg: `Quadra ${quadra.nome} em áreas iguais.` };
     }

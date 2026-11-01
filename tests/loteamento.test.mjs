@@ -356,6 +356,59 @@ test("quina entre quadras: o projeto real do EDILSON — as duas quinas rosa vir
   conferirPlanta(r, "EDILSON");
 });
 
+// ---- igualar áreas: vários lotes da mesma quadra com a mesma área ----------
+const igualarEConferir = (pr, r0, per, sel, rotulo) => {
+  const s = executar("igualar", pr, r0, { tipo: "lotes", chaves: sel.map(chaveDoLote) });
+  assert.ok(s.pr, `${rotulo}: ${s.msg}`);
+  const media = sel.reduce((s2, l) => s2 + l.area, 0) / sel.length;
+  const r = calcular(s.pr, per);
+  const novos = s.sel.chaves.map((c) => r.lotes.find((l) => l.quadra === c.quadra && l.fileira === c.fileira && Math.abs(l.indice - c.indice) < 1e-9));
+  for (const l of novos) assert.ok(Math.abs(l.area - media) < 0.05, `${rotulo}: ${l.id} com ${l.area} m² (alvo ${media})`);
+  // os lotes de fora da seleção não mudam (nem somem)
+  const ids = new Set(sel.map((l) => l.id));
+  for (const l of r0.lotes.filter((x) => !ids.has(x.id))) {
+    const d = r.lotes.find((x) => x.id === l.id);
+    assert.ok(d && Math.abs(d.area - l.area) < 0.05, `${rotulo}: o lote de fora ${l.id} mudou (${l.area} → ${d?.area})`);
+  }
+  assert.equal(r.lotes.length, r0.lotes.length);
+  conferirPlanta(r, rotulo);
+  assert.match(s.msg, /m² cada/);
+  return r;
+};
+
+test("igualar áreas: lotes vizinhos da mesma quadra ficam com a soma dividida por igual, sem mexer nos de fora", () => {
+  const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
+  const ord = [...q.lotes].sort((a, b) => a.numero - b.numero);
+  // fileira: a esquina (maior) e os vizinhos
+  igualarEConferir(pr0, r0, perimetro, ord.slice(0, 5), "fileira");
+  // duas fileiras, fundo com fundo (a árvore passa pela linha de fundo)
+  igualarEConferir(pr0, r0, perimetro, [ord[0], ord[1], ord[ord.length - 1], ord[ord.length - 2]], "duas fileiras");
+  // lotes que não se encostam: recusa, sem mexer em nada
+  const solto = executar("igualar", pr0, r0, { tipo: "lotes", chaves: [ord[0], ord[2]].map(chaveDoLote) });
+  assert.ok(solto.erro && !solto.pr, "lotes separados não podem ser igualados");
+  assert.match(solto.msg, /encostados/);
+  // quadras diferentes: recusa
+  const outra = r0.quadras.find((x) => x !== q && x.lotes.length);
+  const misto = executar("igualar", pr0, r0, { tipo: "lotes", chaves: [ord[0], outra.lotes[0]].map(chaveDoLote) });
+  assert.ok(misto.erro && /mesma quadra/.test(misto.msg));
+  // um lote só: pede mais
+  assert.ok(executar("igualar", pr0, r0, { tipo: "lotes", chaves: [chaveDoLote(ord[0])] }).erro);
+});
+
+test("igualar áreas: o projeto real do EDILSON — fileira desenhada e quadra em leque na estrada torta", { skip: !existsSync(new URL("loteamento.json", EDILSON)) && "sem o corpus real" }, async () => {
+  const { normalizarProjeto } = await import("../src/lib/loteamento/modelo.ts");
+  const txt = readFileSync(new URL("Arquivo_de_Coordenadas_Formatado.txt", EDILSON), "utf8").split(/\r?\n/).filter((l) => /^\d/.test(l));
+  const n = (s2) => Number(s2.replace(",", "."));
+  const per = { pts: txt.map((l) => [n(l.split(";")[1]), n(l.split(";")[2])]), altitudes: txt.map((l) => n(l.split(";")[3])), confrontantes: txt.map((_, i) => (i >= 3 && i <= 14 ? "ESTRADA" : "DIVISA")) };
+  const bruto = JSON.parse(readFileSync(new URL("loteamento.json", EDILSON), "utf8"));
+  const pr = normalizarProjeto(bruto, bruto.nome, per.pts.length);
+  const r = calcular(pr, per);
+  const da = (quadra, nums) => nums.map((x) => r.lotes.find((l) => l.quadra === quadra && l.numero === x));
+  igualarEConferir(pr, r, per, da("F", [10, 11, 12, 13, 14]), "EDILSON F10–F14");
+  // leque na estrada torta: a ponta da divisa vira a dobra (antes saía da quadra e sobrepunha o vizinho)
+  igualarEConferir(pr, r, per, da("A", [1, 2, 3, 4, 5, 6]), "EDILSON A1–A6");
+});
+
 test("comandos: unir, dividir e virar área verde", () => {
   // lote cujo vizinho da fileira cabe junto com ele na área máxima
   const prox = (x) => r0.lotes.filter((y) => y.quadra === x.quadra && y.fileira === x.fileira && y.indice > x.indice).sort((a, b) => a.indice - b.indice)[0];

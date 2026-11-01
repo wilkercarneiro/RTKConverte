@@ -184,6 +184,16 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
         <section className="lot-cartao">
           <header><span className="lot-tag">Lotes</span><h3>{lotes.length} selecionados</h3></header>
           <p className="lot-dica">{lotes.map((l) => l.id).join(", ")} · {fmt(lotes.reduce((s, l) => s + l.area, 0))} m²</p>
+          {(() => {
+            const umaQuadra = new Set(lotes.map((l) => l.quadra)).size === 1;
+            const media = lotes.reduce((s, l) => s + l.area, 0) / lotes.length;
+            return (
+              <button className="principal lot-igualar" disabled={!umaQuadra} onClick={() => onComando("igualar")}
+                title={umaQuadra ? `Todos ficam com ${fmt(media)} m² (a soma dividida por igual). Só as divisas entre eles deslizam; os lotes de fora não mudam.` : "Selecione lotes de uma quadra só"}>
+                Igualar áreas · {fmt(media)} m² cada
+              </button>
+            );
+          })()}
           <div className="lot-linha">
             <label>Frente de todos</label>
             <CampoNum valor={undefined} sufixo="m" onAplicar={(v) => { if (v !== undefined) onComando(`frente ${String(v).replace(".", ",")}`); }} />

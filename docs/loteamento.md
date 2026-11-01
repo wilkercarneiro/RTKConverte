@@ -25,6 +25,13 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
        - O lote fica na quadra de que ele tem mais terra (`LoteDesenhado.livre`); a quadra cresce e as vizinhas encolhem. As quadras não mudam de nome.
      - **C** corta lotes com uma linha (clique o início e o fim). **Delete** apaga o lote (a área fica livre).
      - `frente 12` e `area 300` deslizam a divisa lateral até o valor exato (no lote de esquina, vale a frente da rua da fileira). `unir` junta os selecionados (um só: ao vizinho de maior divisa). `dividir 3` divide em partes de área igual, com as divisas na direção das laterais do lote.
+     - **Igualar áreas** (botão no cartão de vários lotes, ou o comando `igualar`; desde 2026-11-01). Funciona com lotes vizinhos da mesma quadra, selecionados com Shift + clique.
+       - Todos ficam com a soma das áreas dividida por igual.
+       - Só as divisas **entre** os selecionados deslizam: paralelas a si mesmas, com as pontas correndo pela rua e pela linha de fundo. A ponta vira as dobras do contorno.
+       - Os lotes de fora da seleção não mudam de área.
+       - A seleção pode ter duas fileiras (fundo com fundo). Lotes que não se encostam, ou de quadras diferentes, são recusados com o motivo.
+       - Se a forma da quadra não deixar chegar exato, a mensagem diz entre quais áreas os lotes ficaram.
+       - Código: `igualarAreas` em `edicao.ts`. A árvore de divisas entre os selecionados leva cada parte da árvore a n × alvo. Cada passo é recusado se sobrepuser lotes, sair da quadra ou deixar um lote com contorno degenerado.
      - A primeira mexida geométrica torna a quadra **desenhada à mão**: o sistema não a redivide mais. `automatico` (ou "Voltar ao automático" no painel) descarta o desenho; `preencher` faz lote de cada área livre da quadra.
      - **Nada é bloqueado.** O lote que sair das medidas (frente, fundo, área, mais de 4 quinas, sem frente) fica vermelho com ⚠ e aparece na **coluna de avisos, à esquerda**, com as medidas e o motivo. Clique leva ao lote.
    - **Ferramentas:** R desenha rua (Shift trava o ângulo; os pontos grudam em vértices e eixos), A desenha área pública e M mede.
