@@ -163,6 +163,46 @@ test("com IA: chama a OpenAI, registra o custo, exige confirmação, aprende —
   }
 });
 
+const chaveReal = (() => {
+  try { return readFileSync(new URL("../.env", import.meta.url), "utf8").match(/^OPENAI_API_KEY\s*=\s*"?([^"\r\n]+)/m)?.[1].trim() ?? null; } catch { return null; }
+})();
+
+test("AO VIVO (OpenAI de verdade): formato novo → IA → confirmação → serviço → 2º arquivo pelo perfil, sem IA", { skip: (!chaveReal && "sem OPENAI_API_KEY no .env") || (!process.env.IA_AO_VIVO && "só em npm run test:ia"), timeout: 600_000 }, async () => {
+  const banco = bancoNovo();
+  env.OPENAI_API_KEY = chaveReal;
+  try {
+    const pts = verdade.map((p) => ({ ...p, num: p.num * 3 + 100 }));
+    const relatorio = (lista) => ["RELATORIO DE PONTOS - FAZENDA BOA VISTA", "Sistema: SIRGAS2000 UTM 24S", "",
+      ...lista.map((p) => `Ponto ${p.num}  Este=${p.e.toFixed(3)}m  Norte=${p.n.toFixed(3)}m  Elev=${p.h.toFixed(3)}m  PrecH=${(p.sigmaPos * 100).toFixed(2)}cm  PrecV=${(p.sigmaH * 100).toFixed(2)}cm`), "", "Fim do relatório"].join("\n");
+    const a = await enviar("relatorio-1.txt", relatorio(pts));
+    console.log("\n[ponta a ponta ao vivo] 1º arquivo:", a.lida.receita.origem, "·", a.lida.ia.tentativas.map((t) => `${t.modelo} ${t.aprovada ? "✓" : "✕"} ${t.ms} ms`).join(" → "), "· US$", a.lida.ia.custoUsd.toFixed(5));
+    assert.equal(a.lida.ia.usada, true);
+    assert.match(a.lida.receita.origem, /^ia:/);
+    assert.equal(a.criado.status, 200, JSON.stringify(a.criado.corpo));
+    const verts = a.criado.corpo.vertices;
+    assert.equal(verts.length, pts.length);
+    const porNum = new Map(pts.map((p) => [p.num, p]));
+    for (const v of verts) {
+      const p = porNum.get(v.num_txt);
+      assert.ok(p, `vértice ${v.num_txt}`);
+      assert.equal(Number(v.e), p.e); assert.equal(Number(v.n), p.n);
+      assert.ok(Math.abs(Number(v.sigma_pos) - p.sigmaPos) < 1e-9, `σ do ${v.num_txt}`);
+    }
+    assert.equal(banco.tabelas.perfis_leitura[0].origem, "ia");
+    assert.ok(banco.tabelas.chamadas_ia.length >= 1 && banco.tabelas.chamadas_ia.every((c) => c.custo_usd > 0));
+    // outro levantamento do mesmo aparelho: entra pelo perfil, sem chamar a IA
+    const chamadasAntes = banco.tabelas.chamadas_ia.length;
+    const b = await enviar("relatorio-2.txt", relatorio(pts.slice(5, 40)));
+    console.log("[ponta a ponta ao vivo] 2º arquivo:", b.lida.receita.origem, "· IA usada:", b.lida.ia.usada);
+    assert.equal(b.lida.receita.origem, `perfil:${banco.tabelas.perfis_leitura[0].id}`);
+    assert.equal(b.lida.ia.usada, false);
+    assert.equal(banco.tabelas.chamadas_ia.length, chamadasAntes);
+    assert.equal(b.criado.status, 200, JSON.stringify(b.criado.corpo));
+  } finally {
+    delete env.OPENAI_API_KEY;
+  }
+});
+
 test("binário de aparelho: orientação de exportação e o arquivo guardado para análise", async () => {
   const banco = bancoNovo();
   const bin = new Uint8Array(3000).map((_, i) => (i * 13) % 256);

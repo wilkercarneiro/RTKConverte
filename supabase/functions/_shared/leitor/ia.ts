@@ -9,6 +9,8 @@ import type { Proj4 } from "../geo.ts";
 import { esquemaJsonReceita, validarReceita } from "./receita.ts";
 import type { Receita } from "./receita.ts";
 import { executarReceita, notaDaLeitura } from "./index.ts";
+import { dividirDelimitado, dividirEspacos } from "./executor.ts";
+import { lerNumero } from "./numeros.ts";
 import type { Leitura } from "./index.ts";
 
 export interface ConfigIA {
@@ -62,6 +64,8 @@ Como escrever a receita:
 - registro = "linha" (um ponto por linha).
 - tokenizacao: "delimitado" (com delimitador), "espacos" (colunas separadas por um ou mais espaços), "largura_fixa" (cortes = posição inicial, 0-based, de cada coluna) ou "regex" (uma expressão com grupos nomeados (?<nome>…)(?<e>…)(?<n>…)(?<h>…)(?<lat>…)(?<lon>…)(?<sigma_pos>…)(?<sigma_h>…)(?<sigma_n>…)(?<sigma_e>…)(?<codigo>…) que case a LINHA INTEIRA de cada ponto; use regex quando nenhum dos outros modos servir). Nada de repetição aninhada como (a+)+.
 - campos: índice 0-based da coluna de cada papel depois de dividir a linha; null se o papel não existe. Em modo regex os campos são ignorados (valem os grupos).
+- campos.nome é a coluna que IDENTIFICA o ponto (número ou nome: 12, M-01, P5, postp_1) — mesmo que venha depois de um prefixo de registro como "CP". campos.codigo é só para descrição/atributo (MARCO, cerca, estrada, joao/maria). Nunca ponha o número do ponto em codigo.
+- Expressões regulares no padrão JavaScript, sem flags embutidas: escreva "^base", não "(?i)^base" nem "/base/i" (o sistema já ignora maiúsculas).
 - colunas: quantas colunas uma linha de ponto tem. excedente_em: a coluna de texto que recebe tokens a mais quando um rótulo contém o próprio delimitador (normalmente a de nome ou a de código); null se não houver.
 - pular_inicio: quantas linhas físicas pular no topo (cabeçalho e metadados) = número da primeira linha de ponto menos 1.
 - ignorar: regex de linhas DENTRO do bloco de pontos que não são ponto (cabeçalho repetido, régua de traços, comentário). Rodapé no fim pode ficar de fora.
@@ -183,14 +187,72 @@ const custo = (modelo: string, ent: number, sai: number): number | null => {
 /** Bloqueios que não reprovam a RECEITA (o arquivo é que não traz o dado). */
 const BLOQUEIOS_DO_ARQUIVO = new Set(["sem_precisao", "sem_altura", "nome_repetido", "V3_sigma_unidade"]);
 
-function conferir(l: Leitura): string | null {
+/** Como a receita leu as primeiras linhas de ponto — devolvido à IA quando ela erra. */
+function amostraLida(l: Leitura): string {
+  const fmt = (v: number | null) => (v === null || !Number.isFinite(v) ? "∅" : String(v));
+  const pts = l.pontos.slice(0, 3).map((p) =>
+    `linha ${p.linha}: nome="${p.nome}"${p.rotulo ? ` código="${p.rotulo}"` : ""} E=${fmt(p.e)} N=${fmt(p.n)} h=${fmt(p.h)} σpos=${fmt(p.sigmaPos)} σh=${fmt(p.sigmaH)}`);
+  const ileg = l.ignoradas.filter((i) => i.tipo === "ilegivel").slice(0, 3).map((i) => `linha ${i.linha} não lida: ${i.motivo}`);
+  return [...pts, ...ileg].map((x) => `  - ${x}`).join("\n");
+}
+
+/** Colunas numéricas das linhas de ponto que a receita deixou sem papel. */
+function colunasSoltas(linhas: string[], l: Leitura): { coluna: number; exemplos: string[] }[] {
+  const r = l.receita;
+  if (r.registro !== "linha" || (r.tokenizacao !== "delimitado" && r.tokenizacao !== "espacos")) return [];
+  const usadas = new Set(Object.values(r.campos).filter((j): j is number => j !== null));
+  const cels = l.pontos.slice(0, 200).map((p) => (r.tokenizacao === "espacos" ? dividirEspacos(linhas[p.linha - 1]) : dividirDelimitado(linhas[p.linha - 1], r.delimitador!)));
+  const k = Math.max(0, ...cels.map((c) => c.length));
+  const out: { coluna: number; exemplos: string[] }[] = [];
+  for (let j = 0; j < k; j++) {
+    if (usadas.has(j)) continue;
+    const vals = cels.map((c) => (c[j] ?? "").trim()).filter(Boolean);
+    const num = vals.filter((v) => lerNumero(v, r.decimal) !== null);
+    if (vals.length >= cels.length * 0.8 && num.length >= vals.length * 0.8) out.push({ coluna: j, exemplos: num.slice(0, 3) });
+  }
+  return out;
+}
+
+function conferir(l: Leitura, linhas: string[]): string | null {
   const problemas: string[] = [];
   if (l.pontos.length < 3) problemas.push(`só ${l.pontos.length} ponto(s) lido(s)`);
+  // falta σ/altura com coluna numérica sobrando: o papel está no lugar errado, não falta no arquivo
+  if (l.avisos.some((a) => a.codigo === "sem_precisao" || a.codigo === "sem_altura")) {
+    const soltas = colunasSoltas(linhas, l);
+    if (soltas.length) {
+      problemas.push(`Os pontos ficaram sem ${l.avisos.some((a) => a.codigo === "sem_altura") ? "altitude/" : ""}precisão, mas o arquivo tem coluna(s) numérica(s) sem papel: ${soltas.map((s) => `coluna ${s.coluna} (ex.: ${s.exemplos.join(", ")})`).join("; ")}. Confira campos.h, sigma_pos e sigma_h.`);
+    }
+  }
   for (const a of l.avisos) {
     if (a.nivel === "bloqueio" && !BLOQUEIOS_DO_ARQUIVO.has(a.codigo)) problemas.push(`${a.mensagem}${a.linhas ? ` (linhas ${a.linhas.slice(0, 8).join(", ")})` : ""}`);
+    // nome repetido em boa parte dos pontos é coluna de nome errada, não arquivo ruim
+    if (a.codigo === "nome_repetido" && (a.linhas?.length ?? 0) > Math.max(2, l.pontos.length * 0.2)) problemas.push(`Quase todos os pontos saíram com o mesmo nome: a coluna escolhida para "nome" não identifica o ponto.`);
     if (a.codigo === "linhas_ilegiveis") problemas.push(`${a.mensagem} (linhas ${a.linhas?.slice(0, 8).join(", ")}): ${l.ignoradas.filter((i) => a.linhas?.includes(i.linha)).slice(0, 3).map((i) => `${i.linha}: ${i.motivo}`).join("; ")}`);
   }
-  return problemas.length ? problemas.join("\n") : null;
+  // o número do ponto foi parar no "código": os pontos perderiam a numeração real
+  const r = l.receita;
+  if (r.campos.nome === null && l.pontos.length >= 3) {
+    const cods = l.pontos.map((p) => (p.rotulo ?? "").trim()).filter(Boolean);
+    const unicos = new Set(cods).size;
+    if (cods.length >= l.pontos.length * 0.9 && unicos >= cods.length * 0.9 && cods.filter((c) => /^[A-Za-z]{0,4}[-_ ]?\d+[A-Za-z]?$/.test(c)).length >= cods.length * 0.8) {
+      problemas.push(`A coluna usada como "codigo" tem um valor diferente em cada linha (ex.: ${cods.slice(0, 3).join(", ")}): ela é o identificador do ponto e deve ir em campos.nome, não em campos.codigo.`);
+    }
+  }
+  if (!problemas.length) return null;
+  return `${problemas.join("\n")}\nComo a sua receita leu as primeiras linhas:\n${amostraLida(l)}`;
+}
+
+/** A IA às vezes escreve regex no estilo de outras linguagens: "(?i)base", "/base/i". */
+function normalizarPadrao(p: unknown): unknown {
+  if (typeof p !== "string") return p;
+  let s = p.trim().replace(/^\(\?[imsux]+\)/, "");
+  const lit = s.match(/^\/(.*)\/[a-z]*$/s);
+  if (lit) s = lit[1];
+  return s;
+}
+function normalizarBruta(b: Record<string, unknown>): Record<string, unknown> {
+  const lista = (v: unknown) => (Array.isArray(v) ? v.map(normalizarPadrao) : v);
+  return { ...b, ignorar: lista(b.ignorar), apoio: lista(b.apoio), regex: normalizarPadrao(b.regex) };
 }
 
 export interface ResultadoIA {
@@ -227,7 +289,7 @@ export async function interpretarComIA(
       continue;
     }
     const base = { modelo, tentativa: k + 1, tokensEntrada: r.tokensEntrada, tokensSaida: r.tokensSaida, custoUsd: custo(modelo, r.tokensEntrada, r.tokensSaida), ms: Date.now() - t0 };
-    const bruta = r.receitaBruta as Record<string, unknown>;
+    const bruta = normalizarBruta(r.receitaBruta as Record<string, unknown>);
     const { receita, erros } = validarReceita({ ...bruta, versao: 1, origem: `ia:${modelo}` });
     if (!receita) {
       erroAnterior = `A receita não é válida: ${erros.join("; ")}`;
@@ -243,7 +305,7 @@ export async function interpretarComIA(
       tentativas.push({ ...base, aprovada: false, motivo: erroAnterior });
       continue;
     }
-    const problema = conferir(leitura);
+    const problema = conferir(leitura, linhas);
     tentativas.push({ ...base, aprovada: !problema, motivo: problema ?? "aprovada" });
     if (!melhor || notaDaLeitura(leitura) > notaDaLeitura(melhor)) melhor = leitura;
     if (!problema) return { leitura, tentativas, erro: null };

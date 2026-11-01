@@ -1,6 +1,6 @@
 # Leitura universal do arquivo de pontos
 
-Estado em 2026-11-01: **implementado e testado; ainda não publicado** (falta o aval para a VPS, o push e a chave da OpenAI).
+Estado em 2026-11-01: **implementado e testado, inclusive com a OpenAI de verdade; ainda não publicado** (falta o aval para a VPS e o push).
 Plano original: [plano-leitura-universal.md](plano-leitura-universal.md).
 
 ## O que mudou para o operador
@@ -79,14 +79,15 @@ Antes, o sistema aceitava um único layout (`ID[rótulo];E;N;h;σ;σ`), recusava
 - **Rótulo de uma palavra** ("estrada", "muro", "DIVISÃO"): fica como hoje, ou seja, vira M com a palavra como confrontante.
 - **IA**: OpenAI, `gpt-6-luna`, com `gpt-6.1-sol` nos casos difíceis.
 
-## Evidência (testes: `npm test`, 527 passando)
+## Evidência (`npm test`: 530 passando; `npm run test:ia`: IA ao vivo)
 
 | Teste | O que prova |
 |---|---|
 | `leitor_corpus` | Os **119 arquivos reais distintos** (220 envios, da VPS, fora do Git) dão exatamente o resultado do parser antigo, ponto a ponto, salvo as correções intencionais. **Ordem:** a escolhida bate com a ordem final que a equipe deixou no banco em **49 de 51** serviços (o parser antigo, 36). Em 13 a equipe tinha corrigido à mão o que agora sai sozinho, e nenhum piorou. **Correções:** o σ de 221 m (era "0221") de dois arquivos, antes gravado calado, agora é barrado; o rótulo lixo do JACO LOTE sai. |
 | `leitor_sintetico` | **~2.350 arquivos gerados** a partir dos levantamentos reais, em 29 formatos e variações (PNEZD, Trimble, Emlid, Emlid Studio só lat/lon, cabeçalho chinês X/Y, GMS, σ em mm, base no meio, cabeçalho repetido, cp1252, UTF-16, GSI-16, KML, GPX, LandXML, JobXML, DXF, GeoJSON, memorial, chave=valor, 8 embaralhamentos de colunas): **zero leituras dadas como certas que estejam erradas**. O que o sistema não tem certeza vai para a IA ou para o operador. |
 | `leitor_formatos` | xlsx (com o ruído binário do Excel), ods (com as linhas repetidas), KMZ, PDF com texto, PDF escaneado (recusado), RTKLIB `.pos`, relatório IBGE-PPP. |
-| `leitor_ia` | A cascata com a API simulada: aprovação, reprovação com motivo e nova tentativa, JSON inválido, regex perigosa, modelo sem esquema estrito, chave inválida. **Ao vivo:** roda sozinho quando houver `OPENAI_API_KEY` no `.env`. |
+| `leitor_ia` | A cascata com a API simulada: aprovação, reprovação com motivo e nova tentativa, JSON inválido, regex `(?i)` normalizada, número do ponto posto no "código", σ no lugar errado com coluna numérica sobrando, modelo sem esquema estrito, chave inválida. |
+| `npm run test:ia` (ao vivo, fora do `npm test`) | **OpenAI de verdade.** Quatro formatos que as regras não resolvem (sem cabeçalho com σN/σE/σh, colunas fixas, registros estilo Nikon, relatório com rótulos e σ em cm) e o fluxo completo nas funções: IA → confirmação → serviço → 2º arquivo pelo perfil, sem IA. Três rodadas seguidas, 12 de 12 aprovadas de primeira no `gpt-6-luna`, valores exatos, 3 a 5 s e ~US$ 0,0006 por arquivo. |
 | `funcoes_ponta_a_ponta` | O código **real** de `ler-arquivo` e `parse-txt` no Node, com o Supabase falso em memória: formato da equipe, perfil aprendido, confirmação obrigatória, σ declarado, IA (custo, aprendizado, 2º arquivo sem IA), binário, cliente antigo e falta de login. |
 | `leitor_unidade` | Números, ângulos, codificações, receita não confiável, executor, ordem, validador (V1 adulterado, V2), assinatura e a regra do "V". |
 

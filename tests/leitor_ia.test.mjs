@@ -106,11 +106,47 @@ function chave() {
 }
 const KEY = chave();
 
-test("AO VIVO: a IA de verdade lê formatos que as regras não resolvem", { skip: !KEY && "sem OPENAI_API_KEY no .env", timeout: 600_000 }, async () => {
+test("conferência da IA: número do ponto posto no 'código' é reprovado e volta explicado", async () => {
+  const comPrefixo = verdade.map((p) => `CP,${p.num * 3 + 100},${p.n.toFixed(3)},${p.e.toFixed(3)},${p.h.toFixed(3)},${p.sigmaPos},${p.sigmaH}`);
+  const errada = { ...receitaBoa, tokenizacao: "delimitado", delimitador: ",", colunas: 7, campos: { ...camposVazios(), codigo: 1, n: 2, e: 3, h: 4, sigma_pos: 5, sigma_h: 6 }, nome_formato: "texto" };
+  const certa = { ...errada, campos: { ...errada.campos, codigo: null, nome: 1 } };
+  const { f, pedidos } = apiFalsa([errada, certa]);
+  const r = await interpretarComIA(comPrefixo, "cp.txt", proj4, { apiKey: "x", fetch: f }, null);
+  assert.equal(r.tentativas[0].aprovada, false);
+  assert.match(r.tentativas[0].motivo, /identificador do ponto/);
+  assert.match(pedidos[1].input[1].content, /Como a sua receita leu as primeiras linhas/);
+  assert.ok(r.tentativas[1].aprovada);
+  assert.equal(r.leitura.anel[0].num, verdade[0].num * 3 + 100);
+  assert.ok(r.leitura.anel.every((p) => !p.numSintetico));
+});
+
+test("conferência da IA: σ no lugar errado (coluna numérica sobrando) é reprovado, não vira 'arquivo sem σ'", async () => {
+  const sigmaTrocado = { ...receitaBoa, campos: { ...receitaBoa.campos, sigma_n: null, sigma_e: null, sigma_pos: 6, sigma_h: null } };
+  const { f, pedidos } = apiFalsa([sigmaTrocado, receitaBoa]);
+  const r = await interpretarComIA(linhasDificeis, "p.txt", proj4, { apiKey: "x", fetch: f }, null);
+  assert.equal(r.tentativas[0].aprovada, false);
+  assert.match(r.tentativas[0].motivo, /coluna\(s\) numérica\(s\) sem papel: coluna 4/);
+  assert.match(pedidos[1].input[1].content, /sem papel/);
+  assert.ok(r.tentativas[1].aprovada);
+  assert.equal(r.leitura.anel[0].sigmaH, verdade[0].sigmaH);
+});
+
+test("IA: regex no estilo de outras linguagens ((?i), /x/i) é normalizada, não reprovada", async () => {
+  const comFlags = { ...receitaBoa, apoio: ["(?i)^base", "/rtcm/i"], ignorar: ["(?i)^#"] };
+  const { f } = apiFalsa([comFlags]);
+  const r = await interpretarComIA(linhasDificeis, "p.txt", proj4, { apiKey: "x", fetch: f }, null);
+  assert.ok(r.tentativas[0].aprovada, r.tentativas[0].motivo);
+  assert.deepEqual(r.leitura.receita.apoio, ["^base", "rtcm"]);
+});
+
+test("AO VIVO: a IA de verdade lê formatos que as regras não resolvem", { skip: (!KEY && "sem OPENAI_API_KEY no .env") || (!process.env.IA_AO_VIVO && "só em npm run test:ia"), timeout: 900_000 }, async () => {
+  // números NÃO sequenciais: um número perdido não se disfarça de sequência
+  const pts = verdade.map((p) => ({ ...p, num: p.num * 3 + 100 }));
   const casos = {
-    "sem cabeçalho, σN σE σh": linhasDificeis,
-    "colunas fixas sem separador": verdade.map((p) => `${String(p.num).padStart(5)}${p.e.toFixed(3).padStart(12)}${p.n.toFixed(3).padStart(13)}${p.h.toFixed(3).padStart(9)}${p.sigmaPos.toFixed(4).padStart(8)}${p.sigmaH.toFixed(4).padStart(8)}`),
-    "Nikon-like CP registros": ["CO,Projeto Fazenda", "CO,Unidades: metros", ...verdade.flatMap((p) => [`CP,${p.num},${p.n.toFixed(3)},${p.e.toFixed(3)},${p.h.toFixed(3)},MARCO,${p.sigmaPos},${p.sigmaH}`, `SS,${p.num},1.800,0.0000,90.0000,10.000`])],
+    "sem cabeçalho, σN σE σh": pts.map((p) => `${p.num} ${p.e.toFixed(3)} ${p.n.toFixed(3)} ${p.h.toFixed(3)} ${p.sigmaPos} ${p.sigmaPos} ${p.sigmaH}`),
+    "colunas fixas sem separador": pts.map((p) => `${String(p.num).padStart(5)}${p.e.toFixed(3).padStart(12)}${p.n.toFixed(3).padStart(13)}${p.h.toFixed(3).padStart(9)}${p.sigmaPos.toFixed(4).padStart(8)}${p.sigmaH.toFixed(4).padStart(8)}`),
+    "Nikon-like CP registros": ["CO,Projeto Fazenda", "CO,Unidades: metros", ...pts.flatMap((p) => [`CP,${p.num},${p.n.toFixed(3)},${p.e.toFixed(3)},${p.h.toFixed(3)},MARCO,${p.sigmaPos},${p.sigmaH}`, `SS,${p.num},1.800,0.0000,90.0000,10.000`])],
+    "relatório com rótulos por linha": ["RELATORIO DE PONTOS - FAZENDA BOA VISTA", "Sistema: SIRGAS2000 UTM 24S", "", ...pts.map((p) => `Ponto ${p.num}  Este=${p.e.toFixed(3)}m  Norte=${p.n.toFixed(3)}m  Elev=${p.h.toFixed(3)}m  PrecH=${(p.sigmaPos * 100).toFixed(2)}cm  PrecV=${(p.sigmaH * 100).toFixed(2)}cm`), "", "Fim do relatório"],
   };
   for (const [nome, linhas] of Object.entries(casos)) {
     const regras = lerLinhas(linhas, { proj4 });
@@ -118,12 +154,15 @@ test("AO VIVO: a IA de verdade lê formatos que as regras não resolvem", { skip
     console.log(`\n[IA ao vivo] ${nome}:`, r.tentativas.map((t) => `${t.modelo} #${t.tentativa} ${t.aprovada ? "APROVADA" : "reprovada"} ${t.ms} ms US$ ${t.custoUsd?.toFixed(5)} — ${t.motivo.slice(0, 160)}`).join(" | "), "\n   explicação:", r.leitura?.receita.explicacao);
     assert.ok(r.leitura, `${nome}: sem leitura (${r.erro})`);
     assert.ok(r.tentativas.some((t) => t.aprovada), `${nome}: nenhuma receita aprovada`);
-    assert.equal(r.leitura.anel.length, verdade.length, `${nome}: nº de pontos`);
-    const porNum = new Map(verdade.map((p) => [p.num, p]));
-    for (const p of r.leitura.anel) {
+    const final = r.tentativas.some((t) => t.aprovada) ? r.leitura : null;
+    assert.equal(final.anel.length, pts.length, `${nome}: nº de pontos`);
+    assert.ok(final.anel.every((p) => !p.numSintetico), `${nome}: o número real dos pontos se perdeu`);
+    const porNum = new Map(pts.map((p) => [p.num, p]));
+    for (const p of final.anel) {
       const v = porNum.get(p.num);
       assert.ok(v, `${nome}: ponto ${p.nome}`);
       assert.equal(p.e, v.e); assert.equal(p.n, v.n); assert.equal(p.h, v.h);
+      assert.ok(Math.abs(p.sigmaPos - v.sigmaPos) < 1e-9 && Math.abs(p.sigmaH - v.sigmaH) < 1e-9, `${nome}: σ do ponto ${p.num}: ${p.sigmaPos}/${p.sigmaH} ≠ ${v.sigmaPos}/${v.sigmaH}`);
     }
   }
 });

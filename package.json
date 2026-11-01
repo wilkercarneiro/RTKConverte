@@ -14,7 +14,8 @@
     "make:docx-template": "node scripts/make-docx-template.mjs",
     "upload:templates": "node scripts/upload-templates.mjs",
     "e2e": "node scripts/e2e.mjs",
-    "importar:sigef": "node scripts/importar-sigef.mjs"
+    "importar:sigef": "node scripts/importar-sigef.mjs",
+    "test:ia": "node scripts/testar-ia.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.0",
