@@ -38,9 +38,12 @@ export interface PontoLido {
   fontes: Partial<Record<Papel, Fonte>>;
   /** Ponto de apoio (base/referência): fora do perímetro. */
   apoio: boolean;
+  /** Outra versão do mesmo ponto (ex.: `postp_3` com o `3` no arquivo) que
+   *  não entra no perímetro — ver versoes.ts. */
+  foraDaVersao?: boolean;
 }
 
-export type TipoIgnorada = "topo" | "padrao" | "cabecalho" | "ilegivel" | "repetido" | "excluido";
+export type TipoIgnorada = "topo" | "padrao" | "cabecalho" | "ilegivel" | "repetido" | "excluido" | "versao";
 
 export interface LinhaIgnorada { linha: number; texto: string; motivo: string; tipo: TipoIgnorada }
 

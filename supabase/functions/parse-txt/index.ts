@@ -79,7 +79,7 @@ async function textoDoPdf(bytes: Uint8Array): Promise<string> {
   return Array.isArray(text) ? text.join("\n") : text;
 }
 
-interface LeituraPedida { receita?: unknown; ordem?: unknown; excluir?: unknown; sigma_padrao?: unknown; confirmados?: unknown }
+interface LeituraPedida { receita?: unknown; ordem?: unknown; excluir?: unknown; sigma_padrao?: unknown; confirmados?: unknown; versao?: unknown }
 
 /**
  * Lê o arquivo: com a leitura confirmada na prévia, reexecuta a receita e exige
@@ -100,14 +100,16 @@ function lerPedido(linhas: string[], pedido: LeituraPedida | null, fusoTela: num
   const excluir = Array.isArray(pedido.excluir) ? pedido.excluir.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
   const sp = pedido.sigma_padrao as { pos?: unknown; h?: unknown } | null | undefined;
   const sigmaPadrao = sp && Number(sp.pos) > 0 && Number(sp.h) > 0 && Number(sp.pos) <= 10 && Number(sp.h) <= 10 ? { pos: Number(sp.pos), h: Number(sp.h) } : null;
-  const leitura = executarReceita(linhas, receita, { proj4, ordem, excluir, sigmaPadrao });
+  // versão dos pontos escolhida na prévia ("" = levantamento; "postp_"…); ausente = automática
+  const versao = typeof pedido.versao === "string" && pedido.versao.length <= 40 ? pedido.versao : null;
+  const leitura = executarReceita(linhas, receita, { proj4, ordem, excluir, sigmaPadrao, versao });
   const confirmados = new Set(Array.isArray(pedido.confirmados) ? pedido.confirmados.map(String) : []);
   const faltam = leitura.aConfirmar.filter((c) => !confirmados.has(c));
   if (faltam.length) {
     const msgs = leitura.avisos.filter((a) => faltam.includes(a.codigo)).map((a) => a.mensagem);
     return { erro: `Confirme na prévia antes de criar o serviço: ${msgs.join(" | ")}`, status: 422, faltam };
   }
-  return { leitura, pedido: { ...pedido, ordem, excluir, sigma_padrao: sigmaPadrao } };
+  return { leitura, pedido: { ...pedido, ordem, excluir, sigma_padrao: sigmaPadrao, versao } };
 }
 
 /**
@@ -317,6 +319,8 @@ Deno.serve(async (req) => {
       versao: 1, formato: formatoArquivo, codificacao,
       receita: leitura.receita, criterio: leitura.criterio, blocos: leitura.blocos,
       ordem: lido.pedido?.ordem ?? null, excluir: lido.pedido?.excluir ?? [], sigma_padrao: lido.pedido?.sigma_padrao ?? null,
+      // a versão dos pontos que entrou (a regressão dos perfis relê com ela)
+      versao_pontos: leitura.versoes.escolhida,
       confirmados: lido.pedido ? leitura.aConfirmar : [],
       anel: leitura.anel.map((p) => ({ num: p.num, nome: p.nome, num_sintetico: p.numSintetico, rotulo: p.rotulo, e: p.e, n: p.n, h: p.h, sigma_pos: p.sigmaPos, sigma_h: p.sigmaH, linha: p.linha, sigma_declarado: p.sigmaDeclarado })),
       avisos: leitura.avisos, ignoradas: leitura.ignoradas.map((i) => ({ linha: i.linha, motivo: i.motivo, tipo: i.tipo })),

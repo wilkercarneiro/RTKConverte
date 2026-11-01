@@ -4,6 +4,7 @@
 //   #/lab/leitura/ia       formato novo interpretado pela IA (receita simulada)
 //   #/lab/leitura/cruza    numeração que cruza o desenho (ordem do arquivo)
 //   #/lab/leitura/semsigma PNEZD sem precisões (σ declarado na prévia)
+//   #/lab/leitura/versoes  levantamento + os mesmos pontos "postp_" (só uma versão entra)
 //   #/lab/leitura/manual   formato não reconhecido: o operador mapeia as colunas
 // A leitura é feita aqui mesmo, pelo leitor de verdade; nada sai do navegador.
 import { useMemo, useState } from "react";
@@ -39,6 +40,18 @@ function caso(nome: string): { arquivo: string; linhas: string[]; receita?: Rece
     }
     case "cruza":
       return { arquivo: "EZAU ROCINHA.TXT", linhas: ["110,480317.467,8733797.440,387.499,0.00,0.00", "114,480362.737,8733767.483,385.441,0.00,0.00", "20,480368.349,8733773.423,385.776,0.008500,0.008500", "19,480391.464,8733798.527,387.058,0.009400,0.009400", "115,480387.181,8733835.316,386.997,0.00,0.00", "109,480368.005,8733841.113,387.441,0.00,0.00"] };
+    case "versoes": {
+      // o levantamento + os mesmos marcos pós-processados ("postp_"), deslocados
+      // ~216 m e sem alguns pontos — como o arquivo do EDILSON (2026-11-01)
+      const v = (x: number) => x.toFixed(3).replace(".", ",");
+      const lin = (nome: string, e: number, n: number, h: number, s: number) => `${nome};${v(e)};${v(n)};${v(h)};${s.toFixed(6).replace(".", ",")};${(s * 1.8).toFixed(6).replace(".", ",")}`;
+      const lev = base.slice(0, 30);
+      return { arquivo: "EDILSON.txt", linhas: [
+        ...lev.map((p) => lin(`${p.num}${p.rotulo ?? ""}`, p.e, p.n, p.h, p.sigmaPos)),
+        lin("postp_RTCM-Ref 1", lev[0].e + 120, lev[0].n - 460, lev[0].h + 60, 0.4),
+        ...lev.filter((p) => p.num % 5 !== 1).map((p) => lin(`postp_${p.num}${p.rotulo ?? ""}`, p.e - 145.6 + (p.num % 3) * 0.4, p.n + 159.2 - (p.num % 4) * 0.3, p.h + 42.7, 0.12)),
+      ] };
+    }
     case "semsigma":
       return { arquivo: "pontos_pnezd.csv", linhas: base.map((p) => `${p.num},${p.n.toFixed(3)},${p.e.toFixed(3)},${p.h.toFixed(3)},${p.rotulo ?? ""}`) };
     case "manual":
@@ -73,7 +86,7 @@ export function LaboratorioLeitura() {
         </div>
         <LeituraArquivo key={nome} nomeArquivo={c.arquivo} resposta={resposta} criando={false} erro={null}
           onConfirmar={setConfirmada} onTrocarArquivo={() => setConfirmada(null)} />
-        {confirmada && <pre className="mono pequeno" data-testid="confirmada">{JSON.stringify({ origem: confirmada.receita.origem, ordem: confirmada.ordem, excluir: confirmada.excluir, sigma: confirmada.sigma_padrao, confirmados: confirmada.confirmados }, null, 1)}</pre>}
+        {confirmada && <pre className="mono pequeno" data-testid="confirmada">{JSON.stringify({ origem: confirmada.receita.origem, ordem: confirmada.ordem, excluir: confirmada.excluir, sigma: confirmada.sigma_padrao, confirmados: confirmada.confirmados, versao: confirmada.versao }, null, 1)}</pre>}
       </div>
     </div>
   );

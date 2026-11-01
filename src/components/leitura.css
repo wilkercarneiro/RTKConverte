@@ -27,6 +27,11 @@
 .lt-ponto:hover .lt-p { fill: var(--perigo); }
 .lt-p-excluido { fill: #fff; stroke: var(--texto-3); stroke-width: 1.6; stroke-dasharray: 2 2; }
 .lt-p-apoio { fill: var(--alerta); stroke: #fff; stroke-width: 1.2; cursor: default; }
+/* outra versão do mesmo ponto (ex.: postp_3 com o 3 no arquivo): fora do perímetro */
+.lt-p-versao { fill: #c9cfcb; stroke: #8a938d; stroke-width: 1.2; cursor: default; }
+.lt-leg-versao { background: #c9cfcb; border: 1px solid #8a938d; border-radius: 50%; }
+.lt-opcao-versao { align-items: flex-start; }
+.lt-opcao-versao small { display: block; font-weight: 400; }
 .lt-rotulo { font: 600 11px var(--fonte); fill: var(--texto-2); paint-order: stroke; stroke: #fff; stroke-width: 3px; pointer-events: none; }
 .lt-legenda { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; font-size: 12px; color: var(--texto-2); align-items: center; }
 .lt-legenda i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px; }

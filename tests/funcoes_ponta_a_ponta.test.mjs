@@ -33,7 +33,7 @@ async function enviar(nome, bytes, { confirmar = true, extra = {} } = {}) {
   assert.equal(lida.status, 200, JSON.stringify(lida.corpo));
   const previa = lerLinhas(lida.corpo.linhas, { proj4 }); // só para saber os avisos que a tela pediria
   const { executarReceita } = await import("../supabase/functions/_shared/leitor/index.ts");
-  const local = executarReceita(lida.corpo.linhas, lida.corpo.receita, { proj4, ...(extra.sigma_padrao ? { sigmaPadrao: extra.sigma_padrao } : {}) });
+  const local = executarReceita(lida.corpo.linhas, lida.corpo.receita, { proj4, ...(extra.sigma_padrao ? { sigmaPadrao: extra.sigma_padrao } : {}), ...("versao" in extra ? { versao: extra.versao } : {}) });
   void previa;
   const criado = await chamar(parseTxt, {
     nome_arquivo: nome, arquivo_base64: b64(bytes), uf: "BA",
@@ -97,6 +97,36 @@ test("ordem do arquivo: sem a confirmação o serviço NÃO nasce; confirmando, 
   assert.deepEqual(com.criado.corpo.vertices.map((v) => v.num_txt).sort((a, b) => a - b), [1, 2, 3, 4]);
   const anel = JSON.parse(new TextDecoder().decode(globalThis.__banco.storage[`uploads-txt/${com.criado.corpo.servico.id}/leitura.json`])).anel.map((p) => p.num);
   assert.deepEqual(anel, [1, 3, 2, 4]);
+});
+
+test("duas versões dos mesmos pontos (levantamento + postp_): o serviço nasce com UMA versão inteira", async () => {
+  // levantamento 1–8 (quadrado de 100 m) + "postp_" dos 1–6 a ~200 m, + a base
+  const lev = [[0, 0], [50, -5], [100, 0], [105, 50], [100, 100], [50, 105], [0, 100], [-5, 50]];
+  const l = (nome, [x, y], dx = 0, dy = 0, s = 0.012) => `${nome};${(500000 + x + dx).toFixed(3).replace(".", ",")};${(8700000 + y + dy).toFixed(3).replace(".", ",")};300,000;${String(s).replace(".", ",")};0,020000`;
+  const txt = [
+    ...lev.map((p, i) => l(`${i + 1}${i === 2 ? "ana/estrada" : i === 6 ? "estrada/ana" : ""}`, p)),
+    l("postp_RTCM-Ref 1", [50, -400], 0, 0, 0.4),
+    ...lev.slice(0, 6).map((p, i) => l(`postp_${i + 1}${i === 2 ? "ana/estrada" : ""}`, p, -140, 150, 0.1)),
+  ].join("\n") + "\n";
+  bancoNovo();
+  const sem = await enviar("versoes.txt", txt, { confirmar: false });
+  assert.equal(sem.criado.status, 422);
+  assert.ok(sem.criado.corpo.faltam.includes("versoes"), JSON.stringify(sem.criado.corpo));
+  const com = await enviar("versoes.txt", txt);
+  assert.equal(com.criado.status, 200, JSON.stringify(com.criado.corpo));
+  const sid = com.criado.corpo.servico.id;
+  const verts = globalThis.__banco.tabelas.vertices.filter((v) => v.servico_id === sid);
+  assert.equal(verts.length, 8, "só o levantamento, nunca as duas versões juntas");
+  assert.ok(verts.every((v) => !String(v.nome_txt).startsWith("postp_")));
+  const lj = JSON.parse(new TextDecoder().decode(globalThis.__banco.storage[`uploads-txt/${sid}/leitura.json`]));
+  assert.equal(lj.versao_pontos, "");
+  assert.equal(lj.ignoradas.filter((i) => i.tipo === "versao").length, 6);
+  // o operador pediu a outra versão: o servidor relê com ela
+  const pp = await enviar("versoes.txt", txt, { extra: { versao: "postp_" } });
+  assert.equal(pp.criado.status, 200, JSON.stringify(pp.criado.corpo));
+  const vpp = globalThis.__banco.tabelas.vertices.filter((v) => v.servico_id === pp.criado.corpo.servico.id);
+  assert.deepEqual(vpp.map((v) => v.num_txt).sort((a, b) => a - b), [1, 2, 3, 4, 5, 6]);
+  assert.ok(vpp.every((v) => String(v.nome_txt).startsWith("postp_")));
 });
 
 test("arquivo sem σ: bloqueado até a precisão ser declarada na prévia", async () => {

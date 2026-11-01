@@ -15,6 +15,7 @@ import { APOIO_PADRAO, camposVazios, PAPEIS } from "../../supabase/functions/_sh
 import type { Papel } from "../../supabase/functions/_shared/leitor/receita.ts";
 import { dividirDelimitado, dividirEspacos } from "../../supabase/functions/_shared/leitor/executor.ts";
 import { cruzamentos } from "../../supabase/functions/_shared/leitor/ordem.ts";
+import { VERSAO_TODAS } from "../../supabase/functions/_shared/leitor/versoes.ts";
 import { Dica } from "./ui";
 import "./leitura.css";
 
@@ -39,6 +40,9 @@ export interface LeituraConfirmada {
   excluir: number[];
   sigma_padrao: { pos: number; h: number } | null;
   confirmados: string[];
+  /** Versão dos pontos que entra no perímetro ("" = levantamento, "postp_"…);
+   *  null quando o arquivo tem uma versão só. */
+  versao: string | null;
 }
 
 const NOME_PAPEL: Record<Papel, string> = {
@@ -85,6 +89,8 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
   const [receita, setReceita] = useState<Receita>(() => resposta.receita ?? receitaManual(linhas));
   const [ordem, setOrdem] = useState<"auto" | "id" | "arquivo">("auto");
   const [excluir, setExcluir] = useState<Set<number>>(new Set());
+  // versão dos pontos (levantamento × "postp_"…): null = a automática, a mais completa
+  const [versao, setVersao] = useState<string | null>(null);
   const [sigmaTexto, setSigmaTexto] = useState({ pos: "", h: "" });
   const [confirmados, setConfirmados] = useState<Set<string>>(new Set());
   const [verTodas, setVerTodas] = useState(false);
@@ -97,9 +103,15 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
   }, [sigmaTexto]);
 
   const leitura: Leitura | null = useMemo(() => {
-    try { return executarReceita(linhas, receita, { proj4, ordem, excluir: [...excluir], sigmaPadrao }, resposta.confianca, resposta.duvidas); }
+    try { return executarReceita(linhas, receita, { proj4, ordem, excluir: [...excluir], sigmaPadrao, versao }, resposta.confianca, resposta.duvidas); }
     catch { return null; }
-  }, [linhas, receita, ordem, excluir, sigmaPadrao, resposta.confianca, resposta.duvidas]);
+  }, [linhas, receita, ordem, excluir, sigmaPadrao, versao, resposta.confianca, resposta.duvidas]);
+  // a versão que o sistema escolheria sozinho (marcada "sugerida" na lista)
+  const versaoSugerida = useMemo(() => {
+    if (versao === null) return leitura?.versoes.escolhida ?? null;
+    try { return executarReceita(linhas, receita, { proj4, ordem, excluir: [...excluir], sigmaPadrao }).versoes.escolhida; }
+    catch { return null; }
+  }, [versao, leitura, linhas, receita, ordem, excluir, sigmaPadrao]);
 
   const editar = (mud: Partial<Receita>) => {
     setReceita((r) => ({ ...r, ...mud, origem: "operador" }));
@@ -160,6 +172,7 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
             <span><i className="lt-leg-ponto" /> vértice</span>
             <span><i className="lt-leg-apoio" /> apoio (fora do perímetro)</span>
             <span><i className="lt-leg-excluido" /> excluído</span>
+            {leitura && leitura.versoes.versoes.length > 1 && <span><i className="lt-leg-versao" /> outra versão dos pontos</span>}
             <span><i className="lt-leg-cruza" /> lado que cruza</span>
             <span className="sub">clique num ponto para excluí-lo ou trazê-lo de volta</span>
           </p>
@@ -184,6 +197,35 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
               <ul className="lt-duvidas">{resposta.duvidas.map((d, i) => <li key={i}>{d}</li>)}</ul>
             )}
           </div>
+
+          {leitura && leitura.versoes.versoes.length > 1 && (
+            <div className="lt-bloco">
+              <h4>Versão dos pontos<Dica>O arquivo traz os mesmos pontos duas vezes: o levantamento (nome começando pelo número, ex.: “3jorge/davino”) e outra solução com um prefixo no nome (ex.: “postp_3jorge/davino”, pós-processado). Só uma versão entra no perímetro, inteira — misturar as duas desenha um polígono errado. A sugerida é a mais completa; empatando, a de melhor precisão.</Dica></h4>
+              <div className="lt-opcoes">
+                {leitura.versoes.versoes.map((v) => {
+                  const sugerida = versaoSugerida === v.chave;
+                  return (
+                    <label key={v.chave || "levantamento"} className="lt-opcao lt-opcao-versao">
+                      <input type="radio" name="versao" checked={leitura.versoes.escolhida === v.chave}
+                        onChange={() => { setVersao(v.chave); setConfirmados(new Set()); }} />
+                      <span>
+                        {v.chave === "" ? "Levantamento" : `“${v.nome}”`} · {v.numeros.length} ponto{v.numeros.length === 1 ? "" : "s"}{sugerida ? " (sugerida)" : ""}
+                        <small className="sub">
+                          {v.sigmaMediano !== null ? `σ mediano ${v.sigmaMediano < 1 ? `${Math.round(v.sigmaMediano * 100)} cm` : `${v.sigmaMediano.toFixed(2)} m`}` : "sem σ"}
+                          {v.faltam.length ? ` · sem ${v.faltam.length > 1 ? "os pontos" : "o ponto"} ${v.faltam.slice(0, 10).join(", ")}${v.faltam.length > 10 ? "…" : ""}` : " · completa"}
+                        </small>
+                      </span>
+                    </label>
+                  );
+                })}
+                <label className="lt-opcao lt-opcao-versao">
+                  <input type="radio" name="versao" checked={leitura.versoes.escolhida === VERSAO_TODAS}
+                    onChange={() => { setVersao(VERSAO_TODAS); setConfirmados(new Set()); }} />
+                  <span>Todos os pontos (não separar)<small className="sub">as versões entram juntas, como pontos diferentes</small></span>
+                </label>
+              </div>
+            </div>
+          )}
 
           {leitura && leitura.candidatos.length > 1 && (
             <div className="lt-bloco">
@@ -286,7 +328,7 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
         <span className="esticar" />
         {faltaConfirmar.length > 0 && leitura?.ok && <span className="sub pequeno">marque “conferi” nos avisos destacados para seguir</span>}
         <button type="button" className="principal" disabled={!pode}
-          onClick={() => leitura && onConfirmar({ receita, ordem, excluir: [...excluir], sigma_padrao: sigmaPadrao, confirmados: [...confirmados] })}>
+          onClick={() => leitura && onConfirmar({ receita, ordem, excluir: [...excluir], sigma_padrao: sigmaPadrao, confirmados: [...confirmados], versao: leitura.versoes.escolhida })}>
           {criando ? "Criando o serviço…" : `Criar o serviço com ${leitura?.anel.length ?? 0} pontos →`}
         </button>
       </div>
@@ -328,10 +370,12 @@ function MapaLeitura({ leitura, excluir, onAlternar }: { leitura: Leitura; exclu
       {pts.map((p) => {
         const noAnel = porLinha.get(p.linha);
         const fora = excluir.has(p.linha);
-        const cls = p.apoio ? "lt-p-apoio" : fora ? "lt-p-excluido" : noAnel ? "lt-p" : "lt-p-excluido";
+        // outra versão do mesmo ponto: troca-se no bloco "Versão dos pontos", não aqui
+        const versao = !!p.foraDaVersao && !fora;
+        const cls = p.apoio ? "lt-p-apoio" : fora ? "lt-p-excluido" : versao ? "lt-p-versao" : noAnel ? "lt-p" : "lt-p-excluido";
         return (
-          <g key={`${p.linha}-${p.idx}`} className="lt-ponto" onClick={() => !p.apoio && onAlternar(p.linha)}>
-            <title>{`${p.nome || "(sem nome)"} · linha ${p.linha}\nE ${p.e.toFixed(3)}  N ${p.n.toFixed(3)}${p.h !== null ? `  h ${p.h}` : ""}${p.apoio ? "\napoio: fora do perímetro" : fora ? "\nexcluído — clique para trazer de volta" : "\nclique para excluir"}`}</title>
+          <g key={`${p.linha}-${p.idx}`} className="lt-ponto" onClick={() => !p.apoio && !versao && onAlternar(p.linha)}>
+            <title>{`${p.nome || "(sem nome)"} · linha ${p.linha}\nE ${p.e.toFixed(3)}  N ${p.n.toFixed(3)}${p.h !== null ? `  h ${p.h}` : ""}${p.apoio ? "\napoio: fora do perímetro" : fora ? "\nexcluído — clique para trazer de volta" : versao ? "\noutra versão do mesmo ponto: fora do perímetro (troque em “Versão dos pontos”)" : "\nclique para excluir"}`}</title>
             {p.apoio
               ? <rect x={x(p.e) - 5} y={y(p.n) - 5} width={10} height={10} className={cls} />
               : <circle cx={x(p.e)} cy={y(p.n)} r={fora ? 5 : 4} className={cls} />}
@@ -354,7 +398,7 @@ function TabelaArquivo({ linhas, receita, leitura, verTodas, tabular, onPapel }:
   const status = useMemo(() => {
     const m = new Map<number, { tipo: string; motivo: string }>();
     for (const p of leitura?.pontos ?? []) m.set(p.linha, { tipo: p.apoio ? "apoio" : "ponto", motivo: p.apoio ? "ponto de apoio (fora do perímetro)" : `ponto ${p.nome}` });
-    for (const i of leitura?.ignoradas ?? []) if (!m.has(i.linha) || i.tipo === "excluido" || i.tipo === "repetido") m.set(i.linha, { tipo: i.tipo, motivo: i.motivo });
+    for (const i of leitura?.ignoradas ?? []) if (!m.has(i.linha) || i.tipo === "excluido" || i.tipo === "repetido" || i.tipo === "versao") m.set(i.linha, { tipo: i.tipo, motivo: i.motivo });
     return m;
   }, [leitura]);
   const mostradas = linhas.map((t, i) => ({ t, n: i + 1 })).filter((x) => x.t.trim()).slice(0, verTodas ? undefined : 300);

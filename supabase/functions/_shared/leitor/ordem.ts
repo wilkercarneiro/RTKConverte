@@ -1,5 +1,6 @@
 // Do conjunto de pontos lidos ao anel do perímetro:
-// 1. apoio (base/referência) fica fora;
+// 1. apoio (base/referência) e a versão de pontos que não foi escolhida
+//    (versoes.ts) ficam fora;
 // 2. repetidos: mesmo nome e mesma posição → a cópia sai; mesmo nome em lugares
 //    diferentes → bloqueio (o operador escolhe);
 // 3. ordem: candidatos "id" (número, com blocos por centena = partes) e
@@ -131,6 +132,8 @@ export function montarAnel(pontos: PontoLido[], ordemPedida: "auto" | "id" | "ar
   for (const p of pontos) {
     if (excluir.has(p.linha)) { ignoradas.push({ linha: p.linha, texto: p.nome, motivo: "excluído na prévia pelo operador", tipo: "excluido" }); continue; }
     if (p.apoio) { apoio.push(p); continue; }
+    // outra versão do mesmo ponto (versoes.ts): só uma versão entra no anel
+    if (p.foraDaVersao) { ignoradas.push({ linha: p.linha, texto: p.nome, motivo: `outra versão do mesmo ponto (${p.nome}): fora do perímetro`, tipo: "versao" }); continue; }
     ativos.push(p.idx);
   }
   if (apoio.length) {

@@ -10,6 +10,8 @@ import type { Proj4 } from "../geo.ts";
 import { mapearTabela, tabelaDeLinhas } from "./executor.ts";
 import type { Aviso, LinhaIgnorada, PontoLido, Tabela } from "./executor.ts";
 import { marcarApoio, montarAnel } from "./ordem.ts";
+import { separarVersoes } from "./versoes.ts";
+import type { ResultadoVersoes } from "./versoes.ts";
 import { validar } from "./validador.ts";
 import { receitaPadrao, validarReceita } from "./receita.ts";
 import type { Receita } from "./receita.ts";
@@ -20,6 +22,7 @@ import { formatoEspecial, receitaEspecial, tabelaDoFormato } from "./formatos.ts
 
 export type { Receita } from "./receita.ts";
 export type { Aviso, LinhaIgnorada, PontoLido } from "./executor.ts";
+export type { ResultadoVersoes, Versao } from "./versoes.ts";
 
 export interface OpcoesLeitura {
   proj4: Proj4;
@@ -29,6 +32,9 @@ export interface OpcoesLeitura {
   excluir?: number[];
   /** Precisão declarada pelo operador para pontos sem σ no arquivo. */
   sigmaPadrao?: { pos: number; h: number } | null;
+  /** Versão dos pontos escolhida na prévia ("" = levantamento, "postp_"…);
+   *  ausente = automática (a mais completa). Ver versoes.ts. */
+  versao?: string | null;
 }
 
 /** Ponto do perímetro, pronto para o parse-txt (formato de `PontoTxt` + origem). */
@@ -63,6 +69,8 @@ export interface Leitura {
   avisos: Aviso[];
   /** Avisos que o operador precisa confirmar com um clique antes de seguir. */
   aConfirmar: string[];
+  /** Versões dos mesmos pontos no arquivo (vazio quando há uma só). */
+  versoes: ResultadoVersoes;
   fusoGeo: number | null;
   assinatura: string;
   totalLinhas: number;
@@ -71,6 +79,7 @@ export interface Leitura {
 /** Avisos de alerta que exigem confirmação explícita (nunca seguem calados). */
 export const AVISOS_A_CONFIRMAR = new Set([
   "desenho_cruza", "linhas_ilegiveis", "V5_utm_geo", "lat_sem_sinal", "sigma_95", "apoio_fora", "ordem_do_arquivo", "ordem_ambigua", "texto_livre", "dxf_nomes_por_texto", "dxf_nomes_ambiguos", "gpx_trilha", "receita_ia", "receita_operador",
+  "versoes", "versao_incompleta",
 ]);
 
 /** Avisos que tiram a confiança "alta" da leitura (dedução, não leitura direta). */
@@ -87,6 +96,8 @@ export function executarReceita(linhas: string[], receita: Receita, op: OpcoesLe
   const { tabela, semCobertura, consumidas } = tabelaDe(linhas, receita);
   const exec = mapearTabela(tabela, receita, op.proj4);
   marcarApoio(exec.pontos, receita.apoio);
+  // o mesmo ponto em duas soluções (levantamento × "postp_"): entra UMA versão inteira
+  const versoes = separarVersoes(exec.pontos, op.versao, receita.nome_formato === "numero_e_rotulo");
 
   // σ declarado pelo operador para quem veio sem precisão
   const sigmaDeclarado = new Set<number>();
@@ -103,7 +114,7 @@ export function executarReceita(linhas: string[], receita: Receita, op: OpcoesLe
     linhas, receita, pontos: exec.pontos, anel: ordem.anel, blocos: ordem.blocos, ignoradas,
     semCobertura, consumidas, proj4: op.proj4,
   });
-  const avisos = [...exec.avisos, ...ordem.avisos, ...validacao];
+  const avisos = [...exec.avisos, ...versoes.avisos, ...ordem.avisos, ...validacao];
   if (receita.origem.startsWith("ia:")) {
     avisos.push({
       codigo: "receita_ia", nivel: "alerta",
@@ -133,6 +144,7 @@ export function executarReceita(linhas: string[], receita: Receita, op: OpcoesLe
     candidatos: ordem.candidatos.map((c) => ({ criterio: c.criterio, simples: c.simples, cruzamentos: c.cruzamentos.reduce((s, x) => s + x.length, 0) })),
     ignoradas, avisos,
     aConfirmar: [...new Set(avisos.filter((a) => a.nivel === "alerta" && AVISOS_A_CONFIRMAR.has(a.codigo)).map((a) => a.codigo))],
+    versoes,
     fusoGeo: exec.fusoGeo,
     assinatura: assinatura(linhas, receita),
     totalLinhas: linhas.length,

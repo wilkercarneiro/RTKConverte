@@ -1,6 +1,6 @@
 # Leitura universal do arquivo de pontos
 
-Estado em 2026-11-01: **implementado e testado, inclusive com a OpenAI de verdade; ainda não publicado** (falta o aval para a VPS e o push).
+Estado em 2026-11-01: **no ar desde ~10h14** (VPS: 0035, parse-txt, reunir-certificados e ler-arquivo; front na Vercel). Testado também com a OpenAI de verdade. A **regra das versões** (seção "Regra do arquivo") foi escrita depois disso.
 Plano original: [plano-leitura-universal.md](plano-leitura-universal.md).
 
 ## O que mudou para o operador
@@ -73,6 +73,21 @@ Antes, o sistema aceitava um único layout (`ID[rótulo];E;N;h;σ;σ`), recusava
 | `OPENAI_MODELO_FORTE` | `gpt-6.1-sol` | 3ª tentativa (US$ 2 / 10 por milhão). |
 | `OPENAI_LIMITE_DIARIO` | `60` | Chamadas por empresa a cada 24 h. |
 
+## Regra do arquivo: quais pontos são os do perímetro
+
+Regra adotada em 2026-11-01, depois do arquivo do EDILSON. Esse arquivo trazia o levantamento (1 a 16) e, embaixo, os mesmos marcos pós-processados com o prefixo `postp_`: só 12 deles, a ~216 m. O leitor juntava os 28 num polígono cruzado de 8,6 ha, quando o certo era 4,2 ha. Na imagem de satélite, os 16 do levantamento seguem a estrada e a cerca; os `postp_` caem no mato. O código fica em `supabase/functions/_shared/leitor/versoes.ts`.
+
+| No arquivo | Como o sistema trata |
+|---|---|
+| Nome começando pelo número do ponto, com o rótulo colado ou não (`3jorge/davino`, `16estrada/`, `7`) | **Vértice do perímetro (levantamento).** O rótulo `a/b` marca a mudança de confrontante no marco (M). |
+| O mesmo nome com um prefixo (`postp_3jorge/davino`, `pp_7`) | **Outra versão do mesmo ponto** (pós-processada, corrigida…). O prefixo vale como versão quando repete ao menos 2 pontos numerados do arquivo e a maioria dos pontos com aquele prefixo. |
+| Base / referência (`RTCM-Ref`, `base`, `ref`, `estação`) | **Apoio**: fica fora do perímetro. |
+
+- **Uma versão inteira, nunca pedaços de duas.** A escolha automática é a **mais completa** (a que tem mais pontos do perímetro). Se empatar, ganha a de **menor σ mediano**; se empatar de novo, o levantamento.
+- **A prévia mostra e pede o "conferi".** O bloco "Versão dos pontos" lista cada versão com o número de pontos, o σ mediano e os pontos que faltam. O operador pode trocar a versão ou escolher "Todos os pontos (não separar)", que é o comportamento antigo. A outra versão aparece em cinza no desenho.
+- **Na versão com prefixo, o número e o rótulo vêm do nome sem o prefixo.** `postp_4davino/estrada` vira o ponto 4, marco davino/estrada. O nome original fica em `nome_txt` (procedência).
+- **O `parse-txt` reexecuta com a versão confirmada** (`leitura.versao`), que fica gravada em `leitura.json` como `versao_pontos`.
+
 ## Decisões (Wilker, 2026-11-01)
 
 - **Rótulo "V"** (σ 0): continua marco **M**, como sempre, mas o "V" deixa de virar nome de confrontante.
@@ -90,6 +105,7 @@ Antes, o sistema aceitava um único layout (`ID[rótulo];E;N;h;σ;σ`), recusava
 | `npm run test:ia` (ao vivo, fora do `npm test`) | **OpenAI de verdade.** Quatro formatos que as regras não resolvem (sem cabeçalho com σN/σE/σh, colunas fixas, registros estilo Nikon, relatório com rótulos e σ em cm) e o fluxo completo nas funções: IA → confirmação → serviço → 2º arquivo pelo perfil, sem IA. Três rodadas seguidas, 12 de 12 aprovadas de primeira no `gpt-6-luna`, valores exatos, 3 a 5 s e ~US$ 0,0006 por arquivo. |
 | `funcoes_ponta_a_ponta` | O código **real** de `ler-arquivo` e `parse-txt` no Node, com o Supabase falso em memória: formato da equipe, perfil aprendido, confirmação obrigatória, σ declarado, IA (custo, aprendizado, 2º arquivo sem IA), binário, cliente antigo e falta de login. |
 | `leitor_unidade` | Números, ângulos, codificações, receita não confiável, executor, ordem, validador (V1 adulterado, V2), assinatura e a regra do "V". |
+| `leitor_versoes` | Levantamento + `postp_` incompleto (entra o levantamento), troca para o `postp_` (números e rótulos sem o prefixo), as duas completas (vence o melhor σ), "não separar", sem falso positivo (M-/P- com contadores próprios, ponto avulso) e o arquivo real do EDILSON (16 pontos, 4,2438 ha, se o corpus existir). |
 
 ## Como publicar
 
