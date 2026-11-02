@@ -443,6 +443,24 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
   // o candidato que joga o degrau do contorno no meio de um lote sai da disputa)
   const q5antes = ks.filter((k) => quinasAviso(aneis[k]) > 4).length;
   const quebra = (an: Pt[][]) => an.filter((x) => quinasAviso(x) > 4).length > q5antes;
+  // "fundo com fundo" em lotes que já estão fundo com fundo (cada um encosta o fundo num lote
+  // só da seleção) e com a mesma área: nada a fazer — redesenhar só mexeria nas divisas
+  if (modo === "fundo") {
+    const areasSel = ks.map((k) => areaDe(aneis[k]));
+    if (Math.max(...areasSel) - Math.min(...areasSel) < 0.05) {
+      // fundo com fundo = nenhuma junção em "T" dentro da seleção (ponto de dentro da união
+      // que é vértice de exatamente 3 lotes selecionados) e pelo menos um cruzamento de 4
+      const chave = (p: Pt) => `${Math.round(p[0] * 50)},${Math.round(p[1] * 50)}`;
+      const conta = new Map<string, { p: Pt; n: number }>();
+      for (const k of ks) {
+        const doLote = new Map(aneis[k].map((p) => [chave(p), p] as const));
+        for (const [c, p] of doLote) conta.set(c, { p, n: (conta.get(c)?.n ?? 0) + 1 });
+      }
+      const dentroR = (p: Pt) => !R.some((a, i) => distSegmento(p, a, R[(i + 1) % R.length]).d < 0.02);
+      const juncoes = [...conta.values()].filter((v) => dentroR(v.p));
+      if (juncoes.some((v) => v.n >= 4) && !juncoes.some((v) => v.n === 3)) return { pr: pr0, msg: `Os ${N} lotes já estão fundo com fundo e com a mesma área (${fmt(areasSel[0])} m²) — nada mudou.` };
+    }
+  }
 
   // lados de rua da quadra (dos lotes do resultado)
   const ladosRua = res.lotes.filter((l) => l.quadra === q.nome).flatMap((l) => l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via"));
@@ -566,9 +584,9 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
       const naLinhaAtual = melhor.esq.includes("linha atual");
       const porFila = (z: string[]) => melhor.L.lotes.filter((l) => z.includes(l.zona)).map((l) => l.area);
       const fr = porFila(["f1", "ponta1", "testa1"]), tr = porFila(["f2", "ponta2", "testa2"]);
-      const media = (v: number[]) => v.reduce((s2, x) => s2 + x, 0) / Math.max(1, v.length);
+      const fila = (v: number[]) => (Math.max(...v) - Math.min(...v) < 0.05 ? `${v.length} com ${fmt(v[0])} m²` : `${v.length} de ${fmt(Math.min(...v))} a ${fmt(Math.max(...v))} m²`);
       resumo = (Math.max(...ar) - Math.min(...ar) < 0.05 ? `${N} lotes com ${fmt(ar[0])} m² cada`
-        : naLinhaAtual && fr.length && tr.length ? `${N} lotes — ${fr.length} com ${fmt(media(fr))} m² de um lado e ${tr.length} com ${fmt(media(tr))} m² do outro (cada fileira por igual; a linha de fundo ficou onde estava, sobre os degraus das pontas)`
+        : naLinhaAtual && fr.length && tr.length ? `${N} lotes — ${fila(fr)} de um lado e ${fila(tr)} do outro (a linha de fundo ficou onde estava, sobre os degraus das pontas)`
         : `${N} lotes de ${fmt(Math.min(...ar))} a ${fmt(Math.max(...ar))} m² (a ponta inclinada fica com a diferença)`)
         + ` — fundo com fundo pela linha central, laterais a até ${fmt(giros.length ? Math.max(...giros) : 0, 1)}° do esquadro da rua`;
     }
@@ -711,7 +729,9 @@ function linhaDeFundoDaSelecao(aneis: Pt[][], ks: number[], q: Quadra, R: Pt[]):
   if (!naBorda(linha[0]) || !naBorda(linha[linha.length - 1])) return null;
   // pontos alinhados (junções no meio de um lado reto) saem: a linha fica com as dobras
   const limpa = [linha[0]];
-  for (let i = 1; i < linha.length - 1; i++) if (Math.abs(ang(sub(linha[i], limpa[limpa.length - 1]), sub(linha[i + 1], linha[i]))) > 0.2 * GRAU) limpa.push(linha[i]);
+  // (até 3°: a linha de fundo antiga tem uma dobrinha em cada junção, e o motor puxava as
+  // divisas novas para elas — os lotes da fileira saíam 182 e 186 m² em vez de iguais)
+  for (let i = 1; i < linha.length - 1; i++) if (Math.abs(ang(sub(linha[i], limpa[limpa.length - 1]), sub(linha[i + 1], linha[i]))) > 3 * GRAU) limpa.push(linha[i]);
   limpa.push(linha[linha.length - 1]);
   return limpa;
 }

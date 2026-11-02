@@ -324,9 +324,16 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
    */
   function fundoComFundoEmTodas() {
     if (!projeto || !res) return;
-    const { pr, feitas, ficaram } = fundoComFundoEmTodasAsQuadras(projeto, res, calc);
-    if (!feitas.length) { mostrar(`Nenhuma quadra melhorou pela linha central${ficaram.length ? ` (${ficaram.join(", ")}: uma fileira só, ou a linha central deixaria pior)` : ""}.`, true); return; }
-    if (mudar(pr)) mostrar(`Fundo com fundo pela linha central em ${feitas.length} quadra${feitas.length > 1 ? "s" : ""}: ${feitas.join(", ")}.${ficaram.length ? ` Ficaram como estavam: ${ficaram.join(", ")}.` : ""} Ctrl+Z desfaz.`);
+    const { pr, feitas, ficaram, editadas, jaEstavam, comArea } = fundoComFundoEmTodasAsQuadras(projeto, res, calc);
+    const lista = (v: string[]) => (v.length > 1 ? `${v.slice(0, -1).join(", ")} e ${v[v.length - 1]}` : v[0]);
+    const porque = [
+      ficaram.length ? `${lista(ficaram)}: a linha central deixaria pior` : "",
+      jaEstavam.length ? `${lista(jaEstavam)}: já ${jaEstavam.length > 1 ? "estão" : "está"} pela linha central` : "",
+      editadas.length ? `${lista(editadas)}: ${editadas.length > 1 ? "foram editadas" : "foi editada"} à mão (para refazer, selecione a quadra e use Ajustar fundo com fundo)` : "",
+      comArea.length ? `${lista(comArea)}: ${comArea.length > 1 ? "têm" : "tem"} área pública feita de lotes` : "",
+    ].filter(Boolean).join("; ");
+    if (!feitas.length) { mostrar(`Nenhuma quadra mudou${porque ? ` — ${porque}` : " (as quadras de uma fileira não têm fundo com fundo)"}.`, true); return; }
+    if (mudar(pr)) mostrar(`Fundo com fundo pela linha central em ${feitas.length} quadra${feitas.length > 1 ? "s" : ""}: ${feitas.join(", ")}.${porque ? ` Ficaram como estavam — ${porque}.` : ""} Ctrl+Z desfaz.`);
   }
 
   function rodarComando(texto: string) {

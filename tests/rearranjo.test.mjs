@@ -136,6 +136,22 @@ test("quadra da linha central: o comando cai no lote selecionado (o índice dela
   assert.equal(outros0.filter((x) => !tem(depois, x)).length, 0, "outro lote mudou");
 });
 
+test("fundo com fundo em lotes que já estão fundo com fundo e iguais: nada muda", () => {
+  const q = rG.quadras.find((x) => x.estruturada && x.lotes.filter((l) => l.fileira === 0).length >= 6);
+  assert.ok(q, "a geração tem quadra pela linha central");
+  // um par de colunas do miolo: lotes iguais, cada um encostando o fundo num só
+  const aneis = normalizar(ordemDoDesenho(prop.projeto, q).map((l) => l.pol.ext));
+  const est = estruturaDeDivisas(aneis, q);
+  const ord = ordemDoDesenho(prop.projeto, q);
+  const pares = est.comuns.filter((c) => est.ehFundo(c.a, c.b)).map((c) => c.lotes.map((k) => ord[k]));
+  const iguais = pares.filter(([a, b]) => Math.abs(a.area - b.area) < 0.05 && Math.abs(a.area - pares[0][0].area) < 0.05);
+  if (iguais.length < 2) return; // (sem miolo de lotes iguais nesta gleba)
+  const sel = [...new Set(iguais.slice(1, 3).flat())];
+  const s = executar("fundo com fundo", prop.projeto, rG, { tipo: "lotes", chaves: sel.map(chaveDoLote) });
+  assert.ok(!s.erro, s.msg);
+  if (!s.pr) assert.match(s.msg, /já estão fundo com fundo e com a mesma área/);
+});
+
 test("geração: área verde no ponto mais longe das estradas e institucional no centro do terreno", () => {
   const via = rG.ladosGleba.find((l) => l.tipo === "via");
   const dSeg = (p, a, b) => { const ab = [b[0] - a[0], b[1] - a[1]], l2 = ab[0] ** 2 + ab[1] ** 2; const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / l2)); return Math.hypot(p[0] - a[0] - ab[0] * t, p[1] - a[1] - ab[1] * t); };
@@ -178,7 +194,7 @@ test("EDILSON: duas fileiras com as pontas inclinadas (quadra C) — iguais e fu
   for (const l of ff.novos) assert.ok(quinasAviso(l.pol.ext) <= 4, `fundo com fundo: ${l.id} com ${quinasAviso(l.pol.ext)} quinas`);
   const ar = ff.novos.map((l) => l.area).sort((a, b) => a - b);
   assert.ok(ar[4] - ar[0] < 0.05 && ar[9] - ar[5] < 0.05, `cada fileira por igual: ${ar.map((x) => x.toFixed(2)).join(" ")}`);
-  assert.match(ff.s.msg, /cada fileira por igual/);
+  assert.match(ff.s.msg, /5 com .* m² de um lado e 5 com .* m² do outro \(a linha de fundo ficou onde estava/);
   // igualar: as fileiras se igualam por dentro, a linha de fundo e os de fora ficam
   const ig = rearranjar(pr, r0, sel, "igualar", per);
   for (const l of ig.novos) assert.ok(quinasAviso(l.pol.ext) <= 4, `igualar: ${l.id} com ${quinasAviso(l.pol.ext)} quinas`);

@@ -67,12 +67,16 @@ export function perimetroDoServico(vertices: Vertice[], fuso: number): Perimetro
   if (pts.length > 3 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 0.005) {
     pts.pop(); altitudes.pop(); nomes.pop(); doVertice.pop();
   }
-  // confrontação: começa no último M do anel (dá a volta)
-  let atual: Vertice | null = [...doVertice].reverse().find((v) => v.tipo === "M" && (v.descritivo || v.apelido_txt)) ?? null;
+  // confrontação: começa no último M do anel (dá a volta). O marco com rótulo do TXT é
+  // ponto de troca mesmo sem nome depois da barra: "16estrada/" ENCERRA a estrada (o
+  // lado seguinte é de vizinho sem nome) — antes ele era pulado e a estrada continuava
+  // pelos lados 16, 1 e 2 do EDILSON, que são divisa
+  const troca = (v: Vertice) => v.tipo === "M" && (!!v.descritivo || v.apelido_txt !== null || !!v.rotulo_txt);
+  let atual: Vertice | null = [...doVertice].reverse().find(troca) ?? null;
   const confrontantes: (string | null)[] = [];
   const vias: boolean[] = [];
   for (const v of doVertice) {
-    if (v.tipo === "M" && (v.descritivo || v.apelido_txt)) atual = v;
+    if (troca(v)) atual = v;
     confrontantes.push(nomeConfrontante(atual?.descritivo ?? atual?.apelido_txt));
     vias.push(!!atual?.eh_via);
   }

@@ -415,7 +415,7 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
               </p>
               <div className="aviso-fuso-opcoes">
                 {perguntaFuso.opcoes.map((o) => (
-                  <button key={o.zone} className={o.zone === perguntaFuso.sugerido ? "primario" : ""} disabled={criando}
+                  <button key={o.zone} className={o.zone === perguntaFuso.sugerido ? "principal" : ""} disabled={criando}
                     onClick={() => { setFuso(String(o.zone)); guardar("fuso", String(o.zone)); void criar(perguntaFuso.l, o.zone); }}>
                     Fuso {o.zone}S — imóvel em {fmtLon(o.lon)}{o.zone === perguntaFuso.sugerido ? " (sugerido)" : ""}
                   </button>

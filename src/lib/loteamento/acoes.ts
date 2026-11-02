@@ -458,6 +458,7 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       if (!quadra && lotes.length >= 2 && lotes.length < qF.lotes.length) {
         const ed = rearranjarSelecao(pr, res, qF, lotes.map((l) => posicaoNoDesenho(pr, res, l)), "fundo");
         if (ed.erro) return { msg: ed.msg, erro: true };
+        if (ed.pr === pr) return { msg: ed.msg }; // já estavam fundo com fundo e iguais
         const avR = conferirMedida(p, "area", lotes.reduce((s2, l) => s2 + l.area, 0) / lotes.length);
         return { pr: ed.pr, sel: selDe(ed, lotes), msg: avR ? `${ed.msg} Atenção: ${avR}` : ed.msg };
       }

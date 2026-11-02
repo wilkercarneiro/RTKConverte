@@ -317,10 +317,16 @@ export function encaixarQuadraGravada(pr: Projeto, res: Resultado, q: Quadra): P
  * piora os avisos; as outras não mudam.
  */
 export function fundoComFundoEmTodasAsQuadras(pr0: Projeto, res0: Resultado, calc: (p: Projeto) => Resultado | null):
-  { pr: Projeto; r: Resultado; feitas: string[]; ficaram: string[] } {
+  { pr: Projeto; r: Resultado; feitas: string[]; ficaram: string[]; editadas: string[]; jaEstavam: string[]; comArea: string[] } {
   let pr = pr0, r = res0;
   const feitas: string[] = [], ficaram: string[] = [];
-  for (const nome of res0.quadras.filter((q) => !q.estruturada && q.fileiras >= 2 && q.lotes.length >= 4).map((q) => q.nome)) {
+  // as que ficam de fora, para a mensagem dizer por quê: editada à mão (refazer apagaria a
+  // edição — a quadra pode ser refeita sozinha, pelo botão dela), já pela linha central e
+  // com área pública feita dos lotes dela
+  const editadas = res0.quadras.filter((q) => !q.estruturada && q.lotes.length >= 4 && q.lotes.some((l) => l.manual)).map((q) => q.nome);
+  const jaEstavam = res0.quadras.filter((q) => q.estruturada).map((q) => q.nome);
+  const comArea = res0.quadras.filter((q) => !q.estruturada && q.fileiras >= 2 && q.lotes.length >= 4 && temAreaPublicaDeLotes(res0, q)).map((q) => q.nome);
+  for (const nome of res0.quadras.filter((q) => !q.estruturada && q.fileiras >= 2 && q.lotes.length >= 4 && !comArea.includes(q.nome)).map((q) => q.nome)) {
     const q = r.quadras.find((x) => x.nome === nome);
     if (!q) continue;
     const m = melhorEstrutura(pr, r, q, calc);
@@ -333,7 +339,7 @@ export function fundoComFundoEmTodasAsQuadras(pr0: Projeto, res0: Resultado, cal
     feitas.push(`${q2.nome} (avisos ${m.avisosAntes} → ${r2.lotes.filter((l) => l.quadra === q2.nome && l.problemas.length).length})`);
     pr = p2; r = r2;
   }
-  return { pr, r, feitas, ficaram };
+  return { pr, r, feitas, ficaram, editadas, jaEstavam, comArea };
 }
 
 /** Grava a linha central e as cabeceiras que o cálculo escolheu: o recálculo fica rápido e dá o mesmo arranjo. */
