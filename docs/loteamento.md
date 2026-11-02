@@ -46,6 +46,23 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
        - A seleção pode ter duas fileiras (fundo com fundo). Lotes que não se encostam, ou de quadras diferentes, são recusados com o motivo.
        - Se a forma da quadra não deixar chegar exato, a mensagem diz entre quais áreas os lotes ficaram.
        - Código: `igualarAreas` em `edicao.ts`. A árvore de divisas entre os selecionados leva cada parte da árvore a n × alvo. Cada passo é recusado se sobrepuser lotes, sair da quadra ou deixar um lote com contorno degenerado.
+     - **Fundo com fundo pela linha central** (desde 2026-11-02; plano em [plano-linha-central.md](plano-linha-central.md)). Botão **Ajustar fundo com fundo** no cartão da quadra e no de vários lotes, ou o comando `fundo com fundo [N] [iguais|absorver]`. Sem nada selecionado, **Ajustar fundo com fundo em todas as quadras** faz o projeto inteiro: só fica a quadra que melhora, e as outras não mudam.
+       - A quadra de duas fileiras passa a ser gerada da **linha central** (`QuadraCfg.estrutura`, motor em `linhaCentral.ts`). Cada divisa é um par de laterais no esquadro da própria rua que se encontram no mesmo ponto da linha: o fundo com fundo sai alinhado por construção, e os lotes saem com a mesma área.
+       - **Cabeceiras:** o sistema testa as opções e escolhe uma para cada ponta:
+         - esquina direta;
+         - ponta em fileira única (rua a rua), onde a quadra afina;
+         - lotes de frente para a rua da ponta ("testa"), quando a ponta é muito inclinada.
+       - **Cabeceira inclinada:** a esquina da fileira mais comprida absorve a diferença ou ganha um lote a mais. Com "iguais", todos ficam com a mesma área e as laterais giram um pouco.
+       - **Dobra da rua** (12° ou mais) recebe uma divisa: nenhum lote ganha a 5ª quina.
+       - **Na prancheta,** a linha central aparece em laranja:
+         - cada **losango** numa junção corre pela divisa e dobra a linha ali;
+         - a **ponta** corre pela rua da cabeceira e gira a linha;
+         - durante o arraste, cada fileira se iguala por si;
+         - ao soltar, a linha desliza de lado até todos terem a mesma área;
+         - se a quadra não fechar, o ponto vai só até onde ela deixa (100/75/50/25% do puxão), com o motivo na mensagem;
+         - **Esc** cancela o arraste.
+       - O cartão da quadra mostra a área dos lotes, as cabeceiras e o maior giro das laterais, com ±2 lotes, a regra da cabeceira inclinada, "Linha automática" e "Voltar ao automático". O DXF ganha a camada `LINHA_CENTRAL`.
+       - Mexer à mão num lote da quadra estruturada (quina, divisa) volta a quadra para o desenho livre.
      - A primeira mexida geométrica torna a quadra **desenhada à mão**: o sistema não a redivide mais. `automatico` (ou "Voltar ao automático" no painel) descarta o desenho; `preencher` faz lote de cada área livre da quadra.
      - **Nada é bloqueado.** O lote que sair das medidas (frente, fundo, área, mais de 4 quinas, sem frente) fica vermelho com ⚠ e aparece na **coluna de avisos, à esquerda**, com as medidas e o motivo. Clique leva ao lote.
    - **Ferramentas:** R desenha rua (Shift trava o ângulo; os pontos grudam em vértices e eixos), A desenha área pública e M mede.
@@ -135,6 +152,15 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - Junto à estrada ou rodovia, o gerador testa também a via paralela (minuta do código de parcelamento de Goiânia, 2014, art. 13, XVI): faixa de duas fileiras, uma de frente para a estrada.
 - **Área verde 0%.** Com a meta de verde em zero, nenhum retalho vira área pública: fica como **área remanescente** (do proprietário), desenhada e cotada na planta. O mesmo vale para institucional 0%.
 - **Forma do lote.** No máximo 4 quinas (o de ponta pode ter 3); lote com 5 ou mais quinas é erro na planta gerada e aviso no lote desenhado à mão — 5 quinas ou mais só com aprovação específica do órgão (Milton, WA; Cupertino chama de "pie-shaped" o lote com 5 divisas).
+  - **Arco e chanfro da esquina contam como UMA quina, no PI** (`geom.quinasDetalhe`, desde 2026-11-02). O PI é o cruzamento das tangentes.
+    - O arco é reconhecido por tangência (raio de até 40 m, com PC e PT), não por corda curta.
+    - Chanfro de até ~4 m em cada alinhamento é uma quina.
+    - Canto com uma dobra vizinha são duas quinas.
+    - Curva aberta de estrada não é quina.
+  - O aviso de 5 quinas só aparece quando a regra antiga e a nova concordam; o gerador e o igualar seguem com a antiga.
+  - **Esquina** é o encontro de duas ruas numa quina. A estrada levantada que dobra e o lote de rua a rua não são esquina, nem ganham o acréscimo no VGV.
+  - O lote de esquina mede a **testada** até o PI (como a Res. CPPU 003/2018 de São Paulo) e o **fundo** a partir da frente principal.
+  - O memorial e o quadro trazem frente, laterais, fundos e a **curva de concordância** à parte.
 - **Edição livre.** Nada é recusado: o que sair das medidas vira aviso no lote (vermelho no desenho e na coluna da esquerda).
 
 ## Como funciona por dentro

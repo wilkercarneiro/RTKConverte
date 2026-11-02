@@ -6,6 +6,23 @@ Pedido do Wilker (2026-11-01, depois do igualar v3):
 
 **Versão visual com demonstração interativa:** [Loteamento por linha central](https://claude.ai/artifact/HY9QcHzdkfLB3hh72gRch4) (artifact privado do Wilker).
 
+**Andamento (2026-11-02, "Pronto, aplique o plano")** — as 6 decisões ficaram com as propostas.
+
+No ar (push → Vercel):
+
+| Etapa | Commit | O que entrou |
+|---|---|---|
+| 0 | `ca5445f` | quinas, esquina, testada, fundo e memorial com a curva |
+| 1 a 3 | `52fcf5e` | motor no sistema, quadra estruturada, botão "Ajustar fundo com fundo" e linha central editável na prancheta |
+| (sem número) | `1b298f9` | "em todas as quadras", camada `LINHA_CENTRAL` no DXF, Esc cancela |
+| 4, parte | `362e389` | testa em ponta de estrada inclinada |
+
+Ficou para depois:
+- regra municipal de esquina (+% ou +m na testada);
+- lote travado (área/frente) dentro da quadra estruturada;
+- o gerador já sair estruturado (hoje é um clique depois de gerar: "em todas as quadras");
+- divisa arrastada à mão andar de rua a rua sem sair da estrutura.
+
 **Protótipo:** `docs/prototipos/linha-central/` (ver "Protótipo", mais abaixo).
 
 ## Resumo
