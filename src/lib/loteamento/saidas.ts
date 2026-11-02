@@ -449,7 +449,8 @@ export function quadroDeLotesCsv(res: Resultado, pr: Projeto): string {
   for (const q of res.quadras) for (const l of [...q.lotes].sort((a, b) => a.numero - b.numero)) {
     const r = resumoLote(l);
     const preco = l.area * p.precoM2 * (l.esquina ? 1 + p.acrescimoEsquina / 100 : 1);
-    const cel = [q.nome, String(l.numero).padStart(2, "0"), fmt(l.area), fmt(r.medidas[0]), fmt(r.medidas[1]), fmt(r.medidas[2]), fmt(r.medidas[3]),
+    const m = (v: number) => (v > 0.005 ? fmt(v) : "—");
+    const cel = [q.nome, String(l.numero).padStart(2, "0"), fmt(l.area), m(r.medidas[0]), m(r.medidas[1]), m(r.medidas[2]), m(r.medidas[3]),
       l.rua, l.esquina ? "sim" : "não", `Frente: ${r.frente} | Direito: ${r.direito} | Fundos: ${r.fundos} | Esquerdo: ${r.esquerdo}${r.curva ? ` | Curva da esquina: ${r.curva}` : ""}`];
     if (p.precoM2 > 0) cel.push(fmt(preco));
     linhas.push(cel.map((c) => (/[;"\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(";"));

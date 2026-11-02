@@ -587,7 +587,9 @@ function desenharQuadroDeLotes(pdf: PDFDocument, res: Resultado, pr: Projeto, fo
     itens.push({ t: "q", nome: q.nome });
     for (const l of [...q.lotes].sort((a, b) => a.numero - b.numero)) {
       const r = resumoLote(l);
-      itens.push({ t: "l", cel: [String(l.numero).padStart(2, "0"), fmt(r.medidas[0]), fmt(r.medidas[1]), fmt(r.medidas[2]), fmt(r.medidas[3]), fmt(l.area)] });
+      // lado que o lote não tem (o triângulo da ponta) sai "—", não 0,00
+      const m = (v: number) => (v > 0.005 ? fmt(v) : "—");
+      itens.push({ t: "l", cel: [String(l.numero).padStart(2, "0"), m(r.medidas[0]), m(r.medidas[1]), m(r.medidas[2]), m(r.medidas[3]), fmt(l.area)] });
     }
   }
   const larg = [42, 66, 66, 66, 66, 99];

@@ -16,7 +16,7 @@ import { carregarProjeto, perimetroDoServico, projetoInicial, salvarProjeto } fr
 import { COMANDOS, chaveDoLote, contextoDe, executar, lotesDaSelecao } from "../../lib/loteamento/acoes.ts";
 import { dentroPol } from "../../lib/loteamento/geom.ts";
 import { pontoInterno } from "../../lib/loteamento/auto.ts";
-import { fixarEstrutura, pedirEstrutura } from "../../lib/loteamento/edicao.ts";
+import { fixarEstrutura, fundoComFundoEmTodasAsQuadras, melhorEstrutura, pedirEstrutura } from "../../lib/loteamento/edicao.ts";
 import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { Passos, StatusSalvamento } from "../ui";
@@ -286,14 +286,24 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
    * rápido e repete o arranjo. Quadra que não é de duas fileiras não muda.
    */
   function concluirEstrutura(s: ReturnType<typeof executar>): ReturnType<typeof executar> {
-    if (!s.pr || s.estruturar === undefined || !res) return s;
-    const r1 = calc(s.pr);
-    const q1 = r1?.quadras.find((x) => x.cfg === s.estruturar);
+    if (!s.pr || s.estruturar === undefined || !res || !projeto) return s;
+    const avisos = (r: Resultado, nome: string) => r.lotes.filter((l) => l.quadra === nome && l.problemas.length).length;
+    // sem número nem modo pedidos: testa as variantes e fica com a melhor; se nenhuma
+    // deixa a quadra sem piorar, ela fica como estava (o comando com número força)
+    const qAntes = s.escolherEstrutura ? res.quadras.find((x) => x.nome === s.escolherEstrutura) : undefined;
+    const m = qAntes ? melhorEstrutura(projeto, res, qAntes, calc) : null;
+    if (qAntes && m && m.avisosDepois > m.avisosAntes) {
+      const fora = m.r.lotes.filter((l) => l.quadra === m.r.quadras.find((x) => x.cfg === m.i)?.nome && l.problemas.length).slice(0, 3).map((l) => `${l.id} (${l.problemas[0]})`);
+      return { msg: `Quadra ${qAntes.nome}: pela linha central ficariam ${m.avisosDepois} lote(s) fora das medidas (${fora.join("; ")}) e hoje são ${m.avisosAntes}. A quadra ficou como estava. Para forçar, digite "fundo com fundo ${qAntes.lotes.length}".`, erro: true };
+    }
+    const prE = m ? m.pr : s.pr;
+    const iE = m ? m.i : s.estruturar;
+    const r1 = m ? m.r : calc(s.pr);
+    const q1 = r1?.quadras.find((x) => x.cfg === iE);
     if (!r1 || !q1?.estruturada) {
       const motivo = q1?.problemas.find((x) => x.includes("linha central"));
       return { msg: motivo ? `Quadra ${q1?.nome}: ${motivo}.` : "Essa quadra não fecha pela linha central: ela precisa de duas ruas que se olham (quadra de duas fileiras).", erro: true };
     }
-    const avisos = (r: Resultado, nome: string) => r.lotes.filter((l) => l.quadra === nome && l.problemas.length).length;
     const nomeAntes = s.sel && s.sel.tipo === "quadra" ? s.sel.nome : q1.nome;
     const ar = q1.lotes.map((l) => l.area);
     const mn = Math.min(...ar), mx = Math.max(...ar);
@@ -301,7 +311,8 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     const giro = q1.estruturada.giroMax;
     return {
       ...s,
-      pr: fixarEstrutura(s.pr, r1, s.estruturar),
+      // (o melhor arranjo já vem com a linha gravada; o pedido com número grava aqui)
+      pr: m ? prE : fixarEstrutura(prE, r1, iE),
       sel: { tipo: "quadra", nome: q1.nome },
       msg: `Quadra ${q1.nome}: ${q1.lotes.length} lotes fundo com fundo pela linha central, ${areas}. Avisos da quadra: ${avisos(res, nomeAntes)} → ${avisos(r1, q1.nome)}. Laterais a até ${fmt(giro, 1)}° do esquadro da rua. Arraste a linha laranja para mudar as fileiras; Ctrl+Z desfaz.`,
     };
@@ -313,22 +324,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
    */
   function fundoComFundoEmTodas() {
     if (!projeto || !res) return;
-    const avisos = (r: Resultado, nome: string) => r.lotes.filter((l) => l.quadra === nome && l.problemas.length).length;
-    let pr = projeto, r: Resultado = res;
-    const feitas: string[] = [], ficaram: string[] = [];
-    for (const nome of res.quadras.filter((q) => !q.estruturada && q.lotes.length >= 4).map((q) => q.nome)) {
-      const q = r.quadras.find((x) => x.nome === nome);
-      if (!q) continue;
-      const { pr: p1, i } = pedirEstrutura(pr, r, q);
-      const r1 = calc(p1);
-      const q1 = r1?.quadras.find((x) => x.cfg === i);
-      if (!r1 || !q1?.estruturada || q1.estruturada.cruzamentos > 0 || q1.lotes.length !== q.lotes.length || avisos(r1, q1.nome) > avisos(r, nome)) { ficaram.push(nome); continue; }
-      const p2 = fixarEstrutura(p1, r1, i);
-      const r2 = calc(p2);
-      if (!r2) { ficaram.push(nome); continue; }
-      feitas.push(`${q1.nome} (avisos ${avisos(r, nome)} → ${avisos(r2, q1.nome)})`);
-      pr = p2; r = r2;
-    }
+    const { pr, feitas, ficaram } = fundoComFundoEmTodasAsQuadras(projeto, res, calc);
     if (!feitas.length) { mostrar(`Nenhuma quadra melhorou pela linha central${ficaram.length ? ` (${ficaram.join(", ")}: uma fileira só, ou a linha central deixaria pior)` : ""}.`, true); return; }
     if (mudar(pr)) mostrar(`Fundo com fundo pela linha central em ${feitas.length} quadra${feitas.length > 1 ? "s" : ""}: ${feitas.join(", ")}.${ficaram.length ? ` Ficaram como estavam: ${ficaram.join(", ")}.` : ""} Ctrl+Z desfaz.`);
   }

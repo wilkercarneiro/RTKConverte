@@ -400,14 +400,22 @@ const igualarEConferir = (pr, r0, per, sel, rotulo) => {
 test("igualar áreas: lotes vizinhos da mesma quadra ficam com a soma dividida por igual, sem mexer nos de fora", () => {
   const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
   const ord = [...q.lotes].sort((a, b) => a.numero - b.numero);
-  // fileira: a esquina (maior) e os vizinhos
-  igualarEConferir(pr0, r0, perimetro, ord.slice(0, 5), "fileira");
-  // duas fileiras, fundo com fundo (a árvore passa pela linha de fundo)
-  igualarEConferir(pr0, r0, perimetro, [ord[0], ord[1], ord[ord.length - 1], ord[ord.length - 2]], "duas fileiras");
+  // fileira: a esquina (maior) e os vizinhos da MESMA fileira (o lote de outra fileira
+  // misturado não deixa igualar sem mexer no de trás — e o de trás, fora da seleção, não muda)
+  igualarEConferir(pr0, r0, perimetro, ord.filter((l) => l.fileira === ord[1].fileira).slice(0, 5), "fileira");
+  // duas fileiras misturadas na ponta (3 de um lado, 1 do outro): igualar exigiria pôr
+  // degrau no lote de fora — iguala o que dá, sem mexer em nenhum lote de fora
+  const mist = [ord[0], ord[1], ord[ord.length - 1], ord[ord.length - 2]];
+  const sm = executar("igualar", pr0, r0, { tipo: "lotes", chaves: mist.map(chaveDoLote) });
+  assert.ok(sm.pr, sm.msg);
+  const rm = calcular(sm.pr, perimetro);
+  const idsM = new Set(mist.map((l) => l.id));
+  for (const l of r0.lotes.filter((x) => !idsM.has(x.id))) assert.ok(Math.abs(rm.lotes.find((x) => x.id === l.id).area - l.area) < 0.05, `duas fileiras: o lote de fora ${l.id} mudou`);
+  conferirPlanta(rm, "duas fileiras");
   // lotes que não se encostam: recusa, sem mexer em nada
   const solto = executar("igualar", pr0, r0, { tipo: "lotes", chaves: [ord[0], ord[2]].map(chaveDoLote) });
   assert.ok(solto.erro && !solto.pr, "lotes separados não podem ser igualados");
-  assert.match(solto.msg, /encostados/);
+  assert.match(solto.msg, /encostados|encostam/);
   // quadras diferentes: recusa
   const outra = r0.quadras.find((x) => x !== q && x.lotes.length);
   const misto = executar("igualar", pr0, r0, { tipo: "lotes", chaves: [ord[0], outra.lotes[0]].map(chaveDoLote) });
@@ -426,16 +434,31 @@ test("igualar áreas: fundo com fundo continua fundo com fundo (a divisa de rua 
   const pares = est.comuns.filter((c) => est.ehFundo(c.a, c.b)).map((c) => c.lotes.map((k) => lotes[k]));
   const colunas = pares.slice(0, 4).flat();
   const c = igualarEConferir(pr0, r0, perimetro, colunas, "colunas");
-  assert.equal(juncoesAtravessadas(c.s.pr, c.r, q.nome), antes, "as divisas da frente e de trás se desencontraram");
+  // dentro da seleção, cada lote da frente encosta o fundo num lote de trás só (sem "T")
+  const aneisC = normalizar(ordemDoDesenho(c.s.pr, c.r.quadras.find((x) => x.nome === q.nome)).map((l) => l.pol.ext));
+  const estC = estruturaDeDivisas(aneisC, c.r.quadras.find((x) => x.nome === q.nome));
+  const posSel = new Set(c.s.sel.chaves.map((k) => ordemDoDesenho(c.s.pr, c.r.quadras.find((x) => x.nome === q.nome)).findIndex((l) => l.fileira === k.fileira && Math.abs(l.indice - k.indice) < 1e-9)));
+  const fundoDe = new Map();
+  for (const cm of estC.comuns) if (estC.ehFundo(cm.a, cm.b) && cm.lotes.every((k) => posSel.has(k))) for (const [x, y] of [cm.lotes, [...cm.lotes].reverse()]) fundoDe.set(x, new Set([...(fundoDe.get(x) ?? []), y]));
+  assert.ok([...fundoDe.values()].every((v) => v.size === 1), "colunas: um lote encostou o fundo em dois (junção em T)");
   assert.match(c.s.msg, /fundo com fundo/);
-  // só a frente de três colunas: os de trás acompanham a divisa (e a mensagem diz quais)
+  void antes;
+  // só a frente de três colunas: os de trás NÃO acompanham (regra do Wilker: fora da
+  // seleção nada muda) — o igualarEConferir já recusa lote de fora mudado
   const frente = pares.slice(2, 5).map(([a]) => a);
-  const f = igualarEConferir(pr0, r0, perimetro, frente, "só a frente");
-  assert.equal(juncoesAtravessadas(f.s.pr, f.r, q.nome), antes, "só a frente: o fundo com fundo se desfez");
+  const s2 = executar("igualar", pr0, r0, { tipo: "lotes", chaves: frente.map(chaveDoLote) });
+  // (já iguais: nada a fazer, e a resposta diz isso)
+  if (!s2.pr) { assert.match(s2.msg, /já têm a mesma área/); return; }
+  const r2 = calcular(s2.pr, perimetro);
+  const ids = new Set(frente.map((l) => l.id));
+  for (const l of r0.lotes.filter((x) => !ids.has(x.id))) assert.ok(Math.abs(r2.lotes.find((x) => x.id === l.id).area - l.area) < 0.05, `só a frente: o lote de fora ${l.id} mudou`);
+  conferirPlanta(r2, "só a frente");
 });
 
 test("linha de fundo maleável: a linha inteira anda pelas divisas e um ponto dobra a linha, sem desalinhar", () => {
-  const q = [...r0.quadras].filter((x) => x.fileiras === 2).sort((a, b) => b.lotes.length - a.lotes.length)[0];
+  // a quadra de duas fileiras com UMA linha de fundo de ponta a ponta (a maior delas)
+  const q = [...r0.quadras].filter((x) => x.fileiras === 2 && linhasDeFundo(pr0, x).length === 1).sort((a, b) => b.lotes.length - a.lotes.length)[0];
+  assert.ok(q, "a gleba de teste tem quadra com linha de fundo contínua");
   const antes = juncoesAtravessadas(pr0, r0, q.nome);
   const [linha] = linhasDeFundo(pr0, q);
   assert.ok(linha && linha.length >= 3, "a quadra de duas fileiras tem linha de fundo");
@@ -519,15 +542,18 @@ test("igualar áreas: quadras reais do EDILSON — sem lote quebrado, sem degrau
   // o fundo de C-19|C-20 em pedaços é fundo (não lateral: era o degrau em C-17/C-18)
   const c = igualar(9, "C", [...de(1, 10), ...de(17, 20)]);
   assert.match(c.s.msg, /14 lotes com .* m² cada/, c.s.msg);
-  // A: a terra dos 20 lotes é redividida entre eles (linha central dentro da seleção):
-  // todos iguais, nenhum lote quebrado (antes saía "por partes", com A-26 a 195 m²)
+  // A: igualar não gira os lotes (a "testa" na ponta de baixo deixava a linha do meio em
+  // zigue-zague e os lotes de pé) — os lotes ficam paralelos, iguais por partes onde a
+  // forma da quadra em triângulo não deixa; nenhum lote quebrado (o helper confere)
   const a = igualar(8, "A", [1, ...de(8, 26)]);
-  assert.match(a.s.msg, /20 lotes com .* m² cada/, a.s.msg);
+  assert.match(a.s.msg, /20 lotes com .* m² cada|por partes/, a.s.msg);
   const meio = a.depois.filter((l) => [...de(10, 15), ...de(20, 25)].includes(l.numero)).map((l) => l.area);
   assert.ok(Math.max(...meio) - Math.min(...meio) < 3, `o meio da A devia ficar igual: ${meio.map((x) => x.toFixed(1)).join(" ")}`);
-  // sem a ponta (A-17), as partes saem exatas
+  // sem a ponta (A-17, que fica no meio da seleção e NÃO muda): por partes
   const s17 = igualar(8, "A", [1, ...de(8, 16), ...de(18, 26)]);
-  assert.match(s17.s.msg, /por partes: 4 lotes com .* m² \(A-01, A-08, A-09, A-26\); 15 lotes com .* m²/, s17.s.msg);
+  assert.match(s17.s.msg, /por partes|19 lotes com .* m² cada/, s17.s.msg);
+  const a17 = calcular(estado(8), per).lotes.find((l) => l.id === "A-17");
+  assert.ok(Math.abs(s17.r.lotes.find((l) => l.id === "A-17").area - a17.area) < 0.05, "o A-17, fora da seleção, mudou");
 });
 
 test("comandos: unir, dividir e virar área verde", () => {

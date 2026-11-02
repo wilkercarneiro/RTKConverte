@@ -15,7 +15,7 @@ import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
 import { estruturaDeDivisas, fixarEstrutura, normalizar, ordemDoDesenho } from "../src/lib/loteamento/edicao.ts";
 import { contornoUniao } from "../src/lib/loteamento/rearranjo.ts";
 import { alongamento } from "../src/lib/loteamento/linhaCentral.ts";
-import { areaPols, centroide, quinasAviso, uniao } from "../src/lib/loteamento/geom.ts";
+import { areaPol, areaPols, centroide, intersecao, quinasAviso, uniao } from "../src/lib/loteamento/geom.ts";
 
 function base() {
   const pr = projetoNovo("TESTE", perimetro.pts.length);
@@ -25,7 +25,11 @@ function base() {
 const auto0 = gerarPropostas(base(), perimetro, { quantas: 1, estruturar: false })[0].projeto;
 const rA = calcular(auto0, perimetro);
 
-const assinatura = (l) => { const c = centroide(l.pol.ext); return `${l.area.toFixed(2)}@${c[0].toFixed(2)},${c[1].toFixed(2)}`; };
+// área e centroide de cada lote, comparados com tolerância de 2 cm / 0,02 m² (o texto
+// arredondado em 2 casas virava ao recalcular e acusava lote de fora "mudado" à toa)
+const assinatura = (l) => ({ a: l.area, c: centroide(l.pol.ext) });
+const mesmo = (x, y) => Math.abs(x.a - y.a) < 0.02 && Math.hypot(x.c[0] - y.c[0], x.c[1] - y.c[1]) < 0.02;
+const tem = (lista, x) => lista.some((y) => mesmo(x, y));
 
 /** roda o comando com os lotes e confere: iguais, os de fora intactos, planta fechando */
 function rearranjar(pr, r0, sel, cmd, per = perimetro) {
@@ -33,12 +37,12 @@ function rearranjar(pr, r0, sel, cmd, per = perimetro) {
   assert.ok(s.pr && !s.erro, s.msg);
   const r = calcular(s.pr, per);
   const ids = new Set(sel.map((l) => l.id));
-  const fora0 = new Set(r0.lotes.filter((l) => !ids.has(l.id)).map(assinatura));
-  const depois = new Set(r.lotes.map(assinatura));
-  const mudaram = [...fora0].filter((x) => !depois.has(x));
+  const fora0 = r0.lotes.filter((l) => !ids.has(l.id)).map(assinatura);
+  const depois = r.lotes.map(assinatura);
+  const mudaram = fora0.filter((x) => !tem(depois, x));
   assert.equal(mudaram.length, 0, `${mudaram.length} lotes de fora da seleção mudaram`);
   assert.equal(r.lotes.length, r0.lotes.length);
-  const novos = r.lotes.filter((l) => l.quadra === sel[0].quadra && !fora0.has(assinatura(l)));
+  const novos = r.lotes.filter((l) => l.quadra === sel[0].quadra && !tem(fora0, assinatura(l)));
   assert.equal(novos.length, sel.length);
   const soma0 = sel.reduce((s2, l) => s2 + l.area, 0), soma = novos.reduce((s2, l) => s2 + l.area, 0);
   assert.ok(Math.abs(soma - soma0) < 0.05, `a terra dos selecionados mudou: ${soma0} → ${soma}`);
@@ -116,6 +120,22 @@ test("geração: quadras de duas fileiras já saem fundo com fundo pela linha ce
   assert.equal(rG.sobras.length, 0);
 });
 
+test("quadra da linha central: o comando cai no lote selecionado (o índice dela é por fileira)", () => {
+  const q = rG.quadras.find((x) => x.estruturada && x.lotes.filter((l) => l.fileira === 1).length >= 3 && x.lotes.filter((l) => l.fileira === 0).length >= 3);
+  assert.ok(q, "a geração tem quadra pela linha central");
+  // um lote do meio da SEGUNDA fileira: o índice dele se repete na primeira
+  const alvo = q.lotes.filter((l) => l.fileira === 1).sort((a, b) => a.indice - b.indice)[2];
+  const s = executar("dividir 2", prop.projeto, rG, { tipo: "lotes", chaves: [chaveDoLote(alvo)] });
+  assert.ok(s.pr && !s.erro, s.msg);
+  const r = calcular(s.pr, perimetro);
+  assert.equal(r.lotes.length, rG.lotes.length + 1);
+  // os dois pedaços ficam dentro do lote escolhido; todos os outros lotes continuam iguais
+  const dentro = r.lotes.filter((l) => intersecao([l.pol], [alvo.pol]).reduce((s2, x) => s2 + areaPol(x), 0) > 0.5 * l.area);
+  assert.equal(dentro.length, 2, "o dividir não caiu no lote selecionado");
+  const outros0 = rG.lotes.filter((l) => l !== alvo).map(assinatura), depois = r.lotes.map(assinatura);
+  assert.equal(outros0.filter((x) => !tem(depois, x)).length, 0, "outro lote mudou");
+});
+
 test("geração: área verde no ponto mais longe das estradas e institucional no centro do terreno", () => {
   const via = rG.ladosGleba.find((l) => l.tipo === "via");
   const dSeg = (p, a, b) => { const ab = [b[0] - a[0], b[1] - a[1]], l2 = ab[0] ** 2 + ab[1] ** 2; const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / l2)); return Math.hypot(p[0] - a[0] - ab[0] * t, p[1] - a[1] - ab[1] * t); };
@@ -150,12 +170,18 @@ test("EDILSON: duas fileiras com as pontas inclinadas (quadra C) — iguais e fu
   const { per, pr } = edilson();
   const r0 = calcular(pr, per);
   const sel = [15, 14, 13, 12, 11, 16, 17, 18, 19, 20].map((x) => r0.lotes.find((l) => l.quadra === "C" && l.numero === x));
-  for (const cmd of ["fundo com fundo", "igualar"]) {
-    const { novos } = rearranjar(pr, r0, sel, cmd, per);
-    const ar = novos.map((l) => l.area);
-    assert.ok(Math.max(...ar) - Math.min(...ar) < 0.05, `${cmd}: ${ar.map((x) => x.toFixed(2)).join(" ")}`);
-    assert.equal(emT(novos), 0, `${cmd}: junção em T`);
-  }
+  // as fileiras da C são desencontradas: a seleção tem degrau nas duas pontas. Fundo com
+  // fundo fica na linha de fundo atual (os degraus sobre ela): cada fileira por igual,
+  // divisas de rua a rua, nenhum lote quebrado (antes o lote da ponta saía com 6 quinas)
+  const ff = rearranjar(pr, r0, sel, "fundo com fundo", per);
+  assert.equal(emT(ff.novos), 0, "fundo com fundo: junção em T");
+  for (const l of ff.novos) assert.ok(quinasAviso(l.pol.ext) <= 4, `fundo com fundo: ${l.id} com ${quinasAviso(l.pol.ext)} quinas`);
+  const ar = ff.novos.map((l) => l.area).sort((a, b) => a - b);
+  assert.ok(ar[4] - ar[0] < 0.05 && ar[9] - ar[5] < 0.05, `cada fileira por igual: ${ar.map((x) => x.toFixed(2)).join(" ")}`);
+  assert.match(ff.s.msg, /cada fileira por igual/);
+  // igualar: as fileiras se igualam por dentro, a linha de fundo e os de fora ficam
+  const ig = rearranjar(pr, r0, sel, "igualar", per);
+  for (const l of ig.novos) assert.ok(quinasAviso(l.pol.ext) <= 4, `igualar: ${l.id} com ${quinasAviso(l.pol.ext)} quinas`);
 });
 
 test("EDILSON: uma fileira (quadra C, frente de baixo) — laterais no esquadro, iguais", { skip: !temEdilson && "sem o corpus real" }, () => {

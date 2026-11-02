@@ -16,7 +16,7 @@ import {
 } from "./geom.ts";
 import type { Poligono, Pt } from "./geom.ts";
 import { ancoraDaQuadra } from "./auto.ts";
-import { fmt, partirIgual } from "./calculo.ts";
+import { encaixarNasQuinas, fmt, partirIgual } from "./calculo.ts";
 import type { Lote, Quadra, Resultado } from "./calculo.ts";
 import { paraPlano, paraUtm } from "./plano.ts";
 import type { LoteDesenhado, Projeto, QuadraCfg } from "./modelo.ts";
@@ -61,14 +61,23 @@ export const quadraDesenhada = (pr: Projeto, q: Quadra, pl?: Resultado["plano"])
  * de antes do congelamento) vai pela numeração — é nessa ordem que ela congela.
  */
 export function ordemDoDesenho(_pr: Projeto, q: Quadra): Lote[] {
-  return q.lotes.some((l) => l.manual) ? [...q.lotes].sort((a, b) => a.indice - b.indice) : [...q.lotes].sort((a, b) => a.numero - b.numero);
+  return desenhadaAMao(q) ? [...q.lotes].sort((a, b) => a.indice - b.indice) : [...q.lotes].sort((a, b) => a.numero - b.numero);
 }
+
+/**
+ * Quadra com os lotes gravados (desenho à mão): o índice do lote É a posição no desenho.
+ * A quadra da linha central também marca os lotes como "manual" (nenhum ajuste
+ * automático mexe neles), mas o índice dela é a posição DENTRO da fileira (ida e
+ * volta) — repetido nas duas fileiras. Tratada como desenhada, a operação caía no
+ * lote errado (igualar A-03…A-06 mexia em A-08, A-09, A-23 e A-24).
+ */
+const desenhadaAMao = (q: Quadra) => !q.estruturada && q.lotes.some((l) => l.manual);
 
 /** Posição do lote no desenho da quadra (o índice que as operações usam). */
 export function posicaoNoDesenho(pr: Projeto, res: Resultado, l: Lote): number {
   const q = res.quadras.find((x) => x.nome === l.quadra);
   if (!q) return -1;
-  return l.manual ? l.indice : ordemDoDesenho(pr, q).indexOf(l);
+  return desenhadaAMao(q) ? l.indice : ordemDoDesenho(pr, q).indexOf(l);
 }
 
 /**
@@ -92,11 +101,25 @@ export function contornos(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto
     });
     return { pr, i: ic, aneis: normalizar(aneis), destinos: c.lotes!.map((l) => ({ destino: l.destino, frente: l.frente ? [paraPlano(pl, l.frente[0]), paraPlano(pl, l.frente[1])] as [Pt, Pt] : undefined, livre: l.livre })) };
   }
-  const aneis: Pt[][] = ordemDoDesenho(pr, q).map((l) => l.pol.ext.slice());
+  // o lote que absorveu um retalho de fora da quadra (o canto que sobrou da quadra
+  // vizinha) congela RECORTADO pela quadra: o retalho volta a ser retalho e o cálculo
+  // o junta de novo ao lote — guardado inteiro, ele ficava em duas quadras ao mesmo
+  // tempo e a vizinha se redividia por baixo dele (lotes sobrepostos)
+  const aneis: Pt[][] = ordemDoDesenho(pr, q).map((l) => {
+    if (diferenca([l.pol], [q.pol]).reduce((s2, x) => s2 + areaPol(x), 0) < 0.05) return l.pol.ext.slice();
+    const dentro = intersecao([l.pol], [q.pol]).sort((x, y) => areaPol(y) - areaPol(x))[0];
+    return dentro ? limparAnel(dentro.ext, 0.003) : l.pol.ext.slice();
+  });
   const destinos: Meta[] = aneis.map(() => ({}));
+  // áreas públicas feitas de lotes desta quadra: pela geometria — a área verde que
+  // juntou lotes de duas quadras vizinhas fica registrada numa só, e o pedaço desta
+  // sumia ao congelá-la (virava "sobra" por cima do lote vizinho)
   for (const a of res.areas) {
-    if (a.origem !== "lotes" || a.cfg !== q.cfg || q.cfg < 0) continue;
-    for (const pg of a.pols) { aneis.push(pg.ext.slice()); destinos.push({ destino: a.tipo }); }
+    if (a.origem !== "lotes") continue;
+    for (const pg of a.pols) {
+      const pedacos = a.cfg === q.cfg && q.cfg >= 0 && diferenca([pg], [q.pol]).reduce((s2, x) => s2 + areaPol(x), 0) < 0.05 ? [pg] : intersecao([pg], [q.pol]);
+      for (const pc of pedacos) if (areaPol(pc) > 0.5) { aneis.push(pc === pg ? pg.ext.slice() : limparAnel(pc.ext, 0.003)); destinos.push({ destino: a.tipo }); }
+    }
   }
   const base: QuadraCfg = ic >= 0 ? { ...pr.quadras[ic] } : { ancora: paraUtm(pl, ancoraDaQuadra(q)), ajustes: [] };
   base.ajustes = [];
@@ -194,6 +217,123 @@ export function pedirEstrutura(pr0: Projeto, res: Resultado, q: Quadra, op: { lo
   };
   if (i >= 0) quadras[i] = base; else { quadras.push(base); i = quadras.length - 1; }
   return { pr: { ...pr0, quadras }, i };
+}
+
+/**
+ * A quadra tem área pública feita dos lotes dela (institucional, verde)? Refazer a
+ * quadra inteira pela linha central apagaria essa reserva — o "fundo com fundo" da
+ * quadra inteira fica para as quadras sem ela (os lotes selecionados ainda podem).
+ */
+export function temAreaPublicaDeLotes(res: Resultado, q: Quadra): string | null {
+  for (const a of res.areas) {
+    if (a.origem !== "lotes") continue;
+    if (a.pols.some((pg) => intersecao([pg], [q.pol]).reduce((s2, x) => s2 + areaPol(x), 0) > 1)) return a.tipo === "institucional" ? "institucional" : a.tipo === "verde" ? "verde" : a.tipo;
+  }
+  return null;
+}
+
+/**
+ * "Ajustar fundo com fundo" sem número nem modo pedidos: testa a quantidade atual, um
+ * lote a mais e um a menos, com a esquina absorvendo ou com todos iguais (as cabeceiras
+ * já são escolhidas pelo motor), e fica com o arranjo de menos lotes fora das medidas —
+ * sem perder lote, sem cruzar divisa e sem deixar sobra. `calc` é o cálculo da planta.
+ * Devolve também quantos avisos a quadra tinha e passa a ter, para quem chama decidir.
+ */
+export function melhorEstrutura(pr0: Projeto, res: Resultado, q: Quadra, calc: (p: Projeto) => Resultado | null, op: { rapido?: boolean } = {}):
+  { pr: Projeto; i: number; r: Resultado; avisosAntes: number; avisosDepois: number; tentativas: number } | null {
+  const avisos = (r: Resultado, nome: string) => r.lotes.filter((l) => l.quadra === nome && l.problemas.length).length;
+  // a reserva de área pública feita com lotes desta quadra se perderia
+  if (temAreaPublicaDeLotes(res, q)) return null;
+  const antes = avisos(res, q.nome);
+  const n = q.lotes.length;
+  type Cand = { pr: Projeto; i: number; r: Resultado; custo: number; av: number };
+  const cands: Cand[] = [];
+  let tentativas = 0;
+  // nota de um arranjo calculado: menos avisos primeiro; depois a mesma quantidade de
+  // lotes, áreas parecidas e laterais no esquadro — o giro pesa ao quadrado (26° na ponta
+  // salta aos olhos; 3° ninguém vê). Null se não serve (cruza, perde lote, deixa sobra).
+  const avaliar = (pr: Projeto, r: Resultado | null, i: number): Cand | null => {
+    const q1 = r?.quadras.find((x) => x.cfg === i);
+    if (!r || !q1?.estruturada || q1.estruturada.cruzamentos > 0 || q1.lotes.length < n) return null;
+    if (r.quadro.sobras > res.quadro.sobras + 1) return null;
+    const av = avisos(r, q1.nome);
+    const ar = q1.lotes.map((l) => l.area);
+    const espalho = (Math.max(...ar) - Math.min(...ar)) / Math.max(1, ar.reduce((s, a) => s + a, 0) / ar.length);
+    const g = q1.estruturada.giroMax;
+    return { pr, i, r, av, custo: 1000 * av + 40 * Math.abs(q1.lotes.length - n) + 100 * espalho + 0.1 * g * g };
+  };
+  const tentar = (N: number, esquinas: "absorver" | "iguais") => {
+    const { pr, i } = pedirEstrutura(pr0, res, q, { lotes: N, esquinas });
+    let r: Resultado | null = null;
+    try { r = calc(pr); } catch { r = null; }
+    tentativas++;
+    const c = avaliar(pr, r, i);
+    if (c) cands.push(c);
+  };
+  const melhorAte = () => cands.reduce<Cand | null>((m, c) => (!m || c.custo < m.custo ? c : m), null);
+  tentar(n, "absorver");
+  // a esquina absorvendo já sem aviso e com as laterais no esquadro: "todos iguais" só
+  // giraria as laterais da ponta — não vale o cálculo
+  const m0 = melhorAte();
+  // (rápido = a geração: cada variante é um cálculo inteiro da linha central — "iguais" só
+  // quando a esquina deixa aviso, e um lote a mais só na quantidade ímpar, como antes)
+  if (!m0 || m0.av > 0 || (!op.rapido && m0.custo > 40)) tentar(n, "iguais");
+  // um lote a mais ou a menos só quando a quantidade atual não fecha sem aviso
+  const m1 = melhorAte();
+  if (!m1 || m1.av > 0) for (const N of (op.rapido ? (n % 2 ? [n + 1] : []) : [n + 1, n - 1]).filter((x) => x >= 4)) { tentar(N, "absorver"); if (!op.rapido) tentar(N, "iguais"); }
+  // vale o arranjo GRAVADO (a linha fixada, como fica no projeto): o recálculo com a linha
+  // gravada realoca as junções e pode dar outro desenho — divisas cruzadas na quadra F da
+  // gleba de teste. Fixa só o melhor (e, se ele não se sustenta, o seguinte): fixar todas
+  // as variantes dobrava o custo e a geração do IRAN passava de 80 s.
+  cands.sort((a, b) => a.custo - b.custo);
+  for (const c of cands.slice(0, 3)) {
+    const prF = fixarEstrutura(c.pr, c.r, c.i);
+    let rF: Resultado | null = null;
+    try { rF = calc(prF); } catch { rF = null; }
+    tentativas++;
+    const f = avaliar(prF, rF, c.i);
+    if (f && f.av <= c.av) return { pr: f.pr, i: f.i, r: f.r, avisosAntes: antes, avisosDepois: f.av, tentativas };
+  }
+  return null;
+}
+
+/**
+ * Quadra com os lotes gravados (a geração congelou ao igualar um lote largo): o lote
+ * que ficou com 5 quinas porque a divisa morre a poucos metros da quina do contorno
+ * tem o pé dela levado à quina (`encaixarNasQuinas`). As áreas mudam um pouco — vale
+ * a forma. Devolve o mesmo projeto se nada mudou.
+ */
+export function encaixarQuadraGravada(pr: Projeto, res: Resultado, q: Quadra): Projeto {
+  const c = contornos(pr, res, q);
+  const objs = c.aneis.map((a) => ({ pol: { ext: a, furos: [] } as Poligono, area: Math.abs(areaAssinada(a)) }));
+  encaixarNasQuinas(objs, q.pol, pr.params);
+  if (objs.every((o, k) => o.pol.ext === c.aneis[k])) return pr;
+  return gravar(c.pr, res, c.i, normalizar(objs.map((o) => o.pol.ext)), c.destinos);
+}
+
+/**
+ * "Fundo com fundo em todas": cada quadra de duas fileiras vira estruturada pela linha
+ * central (o melhor arranjo de `melhorEstrutura`), uma de cada vez. Só fica a que não
+ * piora os avisos; as outras não mudam.
+ */
+export function fundoComFundoEmTodasAsQuadras(pr0: Projeto, res0: Resultado, calc: (p: Projeto) => Resultado | null):
+  { pr: Projeto; r: Resultado; feitas: string[]; ficaram: string[] } {
+  let pr = pr0, r = res0;
+  const feitas: string[] = [], ficaram: string[] = [];
+  for (const nome of res0.quadras.filter((q) => !q.estruturada && q.fileiras >= 2 && q.lotes.length >= 4).map((q) => q.nome)) {
+    const q = r.quadras.find((x) => x.nome === nome);
+    if (!q) continue;
+    const m = melhorEstrutura(pr, r, q, calc);
+    if (!m || m.avisosDepois > m.avisosAntes) { ficaram.push(nome); continue; }
+    // (o arranjo já vem gravado: a linha fixada é a que foi avaliada)
+    const p2 = m.pr;
+    const r2: Resultado | null = m.r;
+    const q2 = r2?.quadras.find((x) => x.cfg === m.i);
+    if (!r2 || !q2) { ficaram.push(nome); continue; }
+    feitas.push(`${q2.nome} (avisos ${m.avisosAntes} → ${r2.lotes.filter((l) => l.quadra === q2.nome && l.problemas.length).length})`);
+    pr = p2; r = r2;
+  }
+  return { pr, r, feitas, ficaram };
 }
 
 /** Grava a linha central e as cabeceiras que o cálculo escolheu: o recálculo fica rápido e dá o mesmo arranjo. */
@@ -1240,6 +1380,10 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
     }
     // a divisa de trás não continua a da frente (ou dobra na junção): só o trecho da frente
     if (!b || distSegmento(m, a, b).d > 0.05) return { ...simples, a, b: m };
+    // o lote de trás não está na seleção: ele não muda (regra do Wilker — a terra dos
+    // selecionados fica entre eles). Só o trecho da frente desliza; a junção corre pela
+    // linha de fundo, que fica onde está. Fundo com fundo, selecionando as duas fileiras.
+    if ([...junto].some((k) => !selecionado.has(k))) return { ...simples, a, b: m };
     return { a, b, m, dirFundo, lotes: [...junto] };
   };
 
@@ -1422,8 +1566,17 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
   };
   const nosColunas = cols.map((_, j) => j);
   const criterios: ((e: Aresta) => number)[] = [(e) => -Math.min(e.comp, 999), (e) => Math.min(e.comp, 999)];
-  if (!arvore(nosColunas, arestasColunas(), criterios[0])) {
+  // sem árvore única: ou os lotes não se encostam (recusa), ou são duas fileiras encostadas só
+  // pelo fundo e desencontradas (o da frente não fica bem atrás do de trás) — aí cada
+  // fileira se iguala por dentro e a linha de fundo fica onde está
+  const porFileira = !arvore(nosColunas, arestasColunas(), criterios[0]);
+  if (porFileira && uniaoFechada(ks.map((k) => ({ ext: aneis[k], furos: [] as Pt[][] }))).length !== 1) {
     return { pr: pr0, erro: true, msg: "Os lotes selecionados precisam estar encostados uns nos outros (divisa em comum) — selecione lotes vizinhos, sem pular nenhum." };
+  }
+  // encostados só pelo fundo, cada um numa fileira e sem vizinho de lado na seleção: não
+  // há divisa lateral entre eles para andar (a linha de fundo é dos lotes de fora também)
+  if (porFileira && arestasColunas().length === 0) {
+    return { pr: pr0, erro: true, msg: "Estes lotes só se encostam pelo fundo, cada um numa fileira — não há divisa lateral entre eles para igualar. Selecione lotes vizinhos da mesma fileira, ou os das duas fileiras em pares e use \"Ajustar fundo com fundo\"." };
   }
   const minimo = () => Math.max(1, 0.1 * alvo);
   // divisa travada (não anda no sentido que a conta pede sem deformar um lote): vira
@@ -1801,6 +1954,8 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
   };
   const msg = desvio < 0.05
     ? `${ks.length} lotes com ${fmt(alvo)} m² cada — as divisas entre eles deslizaram${cols.some((c) => c.length > 1) ? " e o fundo com fundo continua alinhado" : ""}.${extra || " Os lotes de fora da seleção não mudaram."}`
+    : porFileira && !travadas.length && ps.length > 1
+    ? `As fileiras selecionadas estão desencontradas (o lote da frente não fica bem atrás do de trás), então cada uma se igualou por dentro e a linha de fundo ficou onde estava: ${ps.map(descParte).join("; ")}. Os lotes de fora da seleção não mudaram. Para todos com a mesma área, use "Ajustar fundo com fundo" nestes lotes.`
     : travadas.length && ps.length > 1
     ? `Não deu para todos ficarem iguais: ${travadas.length === 1 ? "a divisa" : "as divisas"} ${travadas.join(" e ")} não ${travadas.length === 1 ? "anda" : "andam"} sem deformar um lote (ganharia quina, perderia a testada ou ficaria comprido demais). Os lotes se igualaram por partes: ${ps.map(descParte).join("; ")}.${extra}`
     : `Os lotes ficaram entre ${fmt(Math.min(...areas))} e ${fmt(Math.max(...areas))} m² (o alvo era ${fmt(alvo)} m²): igualar mais deformaria os lotes (lote sem testada, comprido demais ou com degrau) — a forma da quadra não deixa. Ajuste as quinas que faltam ou tire da seleção os lotes da ponta.${extra}`;

@@ -7,7 +7,11 @@
 import { useRef, useState, type ReactNode } from "react";
 import { LeituraArquivo } from "./LeituraArquivo";
 import type { LeituraConfirmada, RespostaLeitura } from "./LeituraArquivo";
-import { chamarFuncao } from "../lib/supabase";
+import { chamarFuncao, supabase } from "../lib/supabase";
+import proj4lib from "proj4";
+import { detectZoneCandidates, UF_BBOX } from "../../supabase/functions/_shared/geo.ts";
+import type { Proj4 } from "../../supabase/functions/_shared/geo.ts";
+import { executarReceita } from "../../supabase/functions/_shared/leitor/index.ts";
 import { UFS } from "../lib/domains";
 import { guardar, lembrar } from "../lib/ux";
 import type { DefinicaoServico } from "../lib/modalidades";
@@ -56,6 +60,38 @@ async function paraBase64(f: File): Promise<string> {
   return btoa(s);
 }
 
+/**
+ * Fusos em que o arquivo lido cabe dentro da UF. Com E/N (UTM) a longitude é a mesma
+ * distância ao meridiano central em qualquer fuso — só a UF separa, e a Bahia, Minas,
+ * Pará… atravessam dois. Arquivo em lat/lon já traz o fuso (lista vazia).
+ */
+function fusosNaUf(linhas: string[], l: LeituraConfirmada, uf: string): { zone: number; lon: number }[] {
+  const proj4 = proj4lib as unknown as Proj4;
+  try {
+    const lt = executarReceita(linhas, l.receita, { proj4, ordem: l.ordem, excluir: l.excluir, sigmaPadrao: l.sigma_padrao ?? undefined, versao: l.versao ?? undefined });
+    if (lt.fusoGeo || lt.anel.length < 3) return [];
+    const bb = uf ? UF_BBOX[uf] : undefined;
+    return detectZoneCandidates(lt.anel.map((p) => ({ e: p.e, n: p.n })), proj4)
+      .filter((c) => !bb || (c.lonCentroide >= bb[0] && c.lonCentroide <= bb[1] && c.latCentroide >= bb[2] && c.latCentroide <= bb[3]))
+      .map((c) => ({ zone: c.zone, lon: c.lonCentroide }));
+  } catch { return []; }
+}
+
+/** O fuso que a empresa mais usou nos serviços desta UF (sugestão; null se não há histórico). */
+async function fusoMaisUsado(uf: string, opcoes: number[]): Promise<number | null> {
+  try {
+    let q = supabase.from("servicos").select("fuso_utm").order("created_at", { ascending: false }).limit(60);
+    if (uf) q = q.eq("uf", uf);
+    const { data } = await q;
+    const conta = new Map<number, number>();
+    for (const s of (data ?? []) as { fuso_utm: number | null }[]) if (s.fuso_utm && opcoes.includes(s.fuso_utm)) conta.set(s.fuso_utm, (conta.get(s.fuso_utm) ?? 0) + 1);
+    const [melhor] = [...conta].sort((a, b) => b[1] - a[1]);
+    return melhor ? melhor[0] : null;
+  } catch { return null; }
+}
+
+const fmtLon = (lon: number) => { const a = Math.abs(lon); const g = Math.floor(a); return `${g}°${String(Math.round((a - g) * 60)).padStart(2, "0")}′ ${lon < 0 ? "O" : "L"}`; };
+
 /** A função ler-arquivo ainda não publicada (ou fora do ar): cai no caminho antigo. */
 const leituraIndisponivel = (msg: string) => /^Erro \d{3}$/.test(msg) || /interrompeu o processamento|function not found|worker/i.test(msg);
 
@@ -92,6 +128,8 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
   const [previa, setPrevia] = useState<{ arquivo: File; b64: string; resposta: RespostaLeitura } | null>(null);
   const [criando, setCriando] = useState(false);
   const [erroCriacao, setErroCriacao] = useState<string | null>(null);
+  // o arquivo cabe em mais de um fuso dentro da UF: o operador escolhe antes de criar
+  const [perguntaFuso, setPerguntaFuso] = useState<{ l: LeituraConfirmada; opcoes: { zone: number; lon: number }[]; sugerido: number | null } | null>(null);
 
   const gruposValidos = grupos.filter((g) => g.selecionados.size > 0);
   const totalSelecionados = gruposValidos.reduce((s, g) => s + g.selecionados.size, 0);
@@ -198,14 +236,28 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
     };
   }
 
-  /** Confirmação da prévia: o parse-txt reexecuta a leitura sobre o arquivo e cria o serviço. */
-  async function criar(l: LeituraConfirmada) {
+  /**
+   * Confirmação da prévia: o parse-txt reexecuta a leitura sobre o arquivo e cria o serviço.
+   * Fuso no automático e o arquivo cabendo em mais de um fuso dentro da UF (a Bahia
+   * atravessa 23S e 24S; com E/N só, qualquer fuso serve): pergunta antes de criar —
+   * o desempate "mais perto do centro da UF" punha o leste baiano no 23S, e memoriais,
+   * KML e planta de situação saíam a 600 km do imóvel.
+   */
+  async function criar(l: LeituraConfirmada, fusoEscolhido?: number) {
     if (!previa) return;
+    if (fusoEscolhido === undefined && !fuso && !usaCertificados) {
+      const opcoes = fusosNaUf(previa.resposta.linhas, l, uf);
+      if (opcoes.length > 1) {
+        setPerguntaFuso({ l, opcoes, sugerido: await fusoMaisUsado(uf, opcoes.map((o) => o.zone)) });
+        return;
+      }
+    }
+    setPerguntaFuso(null);
     setCriando(true);
     setErroCriacao(null);
     try {
       onParsed(await chamarFuncao<ResultadoParse>("parse-txt", {
-        ...corpoServico(), nome_arquivo: previa.arquivo.name, arquivo_base64: previa.b64, leitura: l,
+        ...corpoServico(), ...(fusoEscolhido !== undefined ? { fuso: fusoEscolhido } : {}), nome_arquivo: previa.arquivo.name, arquivo_base64: previa.b64, leitura: l,
       }));
     } catch (e) {
       setErroCriacao(textoSemCredito(e instanceof Error ? e.message : String(e)));
@@ -353,6 +405,25 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
           {cabecalhoCom(<>Confira como o arquivo foi lido antes de criar o serviço. O desenho, a tabela e os
             avisos vêm do mesmo código que grava o serviço: o que está aqui é o que vai ser gravado. Formatos novos
             ficam aprendidos — o próximo arquivo do mesmo aparelho entra sozinho.</>)}
+          {perguntaFuso && (
+            <div className="aviso-fuso" role="alertdialog" aria-label="Escolha o fuso UTM">
+              <strong>Em qual fuso UTM o levantamento foi feito?</strong>
+              <p className="sub">
+                As coordenadas do arquivo (E/N) servem para {perguntaFuso.opcoes.length} fusos dentro {uf ? `da ${uf}` : "do Brasil"} — cada um põe o imóvel num lugar diferente.
+                O fuso decide as coordenadas geográficas do memorial, o KML e a planta de situação.
+                {perguntaFuso.sugerido ? " Sugerido: o fuso que a empresa mais usa nesta UF." : ""}
+              </p>
+              <div className="aviso-fuso-opcoes">
+                {perguntaFuso.opcoes.map((o) => (
+                  <button key={o.zone} className={o.zone === perguntaFuso.sugerido ? "primario" : ""} disabled={criando}
+                    onClick={() => { setFuso(String(o.zone)); guardar("fuso", String(o.zone)); void criar(perguntaFuso.l, o.zone); }}>
+                    Fuso {o.zone}S — imóvel em {fmtLon(o.lon)}{o.zone === perguntaFuso.sugerido ? " (sugerido)" : ""}
+                  </button>
+                ))}
+                <button className="fantasma" onClick={() => setPerguntaFuso(null)} disabled={criando}>Voltar</button>
+              </div>
+            </div>
+          )}
           <LeituraArquivo
             nomeArquivo={previa.arquivo.name}
             resposta={previa.resposta}

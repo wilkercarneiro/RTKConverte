@@ -10,7 +10,7 @@
 import {
   antiHorario, areaAssinada, areaPol, areaPolAteCorte, dentroAnel, bufferLinha, caixa, centroide, circulo, cross, dentroPol,
   diferenca, dist, distSegmento, dot, esquerda, faixaReferencial, intersecao, lerp, limparAnel, mult, offsetPols, soma, sub,
-  intersecaoRetas, quinas, quinasAviso, quinasDe, quinasDetalhe, uniao, uniaoFechada, unit, verdeValida,
+  giroEm, intersecaoRetas, quinas, quinasAviso, quinasDe, quinasDetalhe, uniao, uniaoFechada, unit, verdeValida,
 } from "./geom.ts";
 import type { Anel, Poligono, Pt } from "./geom.ts";
 import { criarPlano, paraPlano } from "./plano.ts";
@@ -1212,6 +1212,7 @@ function quadraEstruturada(ctx: Contexto, pol: Poligono, cfg: QuadraCfg, P: (q: 
   const E = estruturar(anel, tipos, refs);
   const base = {
     N: est.lotes, profMin: p.profundidadeMin, profPadrao: p.profundidade, esquinas: est.esquinas ?? ("absorver" as const),
+    lim: { areaMin: p.areaMin, areaMax: p.areaMax, frenteMin: p.frenteMin, profMin: p.profundidadeMin, profMax: p.profundidadeMax },
     cab1: est.cabeceiras?.[0] ?? ("auto" as const), cab2: est.cabeceiras?.[1] ?? ("auto" as const),
   };
   const C = est.linhaCentral?.map(P);
@@ -1227,7 +1228,14 @@ function quadraEstruturada(ctx: Contexto, pol: Poligono, cfg: QuadraCfg, P: (q: 
   const volta = [...z("f2").reverse(), ...z("ponta1").reverse(), ...z("testa1")];
   const lotes: ResultadoQuadra["lotes"] = [];
   [ida, volta].forEach((grupo, fileira) => grupo.forEach((l, indice) => {
-    const pg: Poligono = { ext: antiHorario(limparAnel(l.anel, 0.003)), furos: [] };
+    let pg: Poligono = { ext: antiHorario(limparAnel(l.anel, 0.003)), furos: [] };
+    // o lote de esquina da linha central passa uns centímetros do arco da quadra (o motor
+    // corta o arco por cordas): recortado pela quadra, a área é a real e o lote não
+    // invade a rua — e congelar a quadra não muda mais os lotes da esquina (0,2 a 0,9 m²)
+    if (diferenca([pg], [pol]).reduce((s2, x) => s2 + areaPol(x), 0) > 0.01) {
+      const dentro = intersecao([pg], [pol]).sort((a, b) => areaPol(b) - areaPol(a))[0];
+      if (dentro) pg = { ext: antiHorario(limparAnel(dentro.ext, 0.003)), furos: [] };
+    }
     lotes.push({ pol: pg, area: areaPol(pg), fileira, indice, ajustado: false, manual: true });
   }));
   const giros = L.lotes.flatMap((l) => l.giroLat.filter(Number.isFinite));
@@ -2257,6 +2265,79 @@ function cacheDaDivisao(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcul
   return m;
 }
 
+/**
+ * Divisa que chega no contorno da quadra a poucos metros de uma quina dele (o vértice
+ * da gleba, a dobra da rua) deixa um lote de 5 quinas: o pedacinho do contorno até a
+ * quina. O pé da divisa vai para a quina — o triângulo entre a divisa velha e a nova
+ * passa para o vizinho (ou vem dele) e os dois ficam com 4 quinas. Só aplica quando
+ * nenhum dos dois piora (quinas, área mínima, área máxima).
+ */
+export function encaixarNasQuinas(lotes: { pol: Poligono; area: number; manual?: boolean; ajustado?: boolean }[], pol: Poligono, p: Pick<Parametros, "frente" | "areaMin" | "areaMax">): void {
+  const C = pol.ext, nC = C.length;
+  // quinas do contorno: canto vivo (os dois lados com 2 m ou mais) — o arco da esquina não conta
+  const quinasC: Pt[] = [];
+  for (let i = 0; i < nC; i++) {
+    if (Math.abs(giroEm(C, i)) < 8) continue;
+    if (dist(C[i], C[(i + 1) % nC]) < 2 || dist(C[i], C[(i + nC - 1) % nC]) < 2) continue;
+    quinasC.push(C[i]);
+  }
+  const ladoDe = (q: Pt): number => { for (let i = 0; i < nC; i++) if (distSegmento(q, C[i], C[(i + 1) % nC]).d < 0.01) return i; return -1; };
+  const tem = (an: Pt[], q: Pt) => an.some((x) => dist(x, q) < 0.01);
+  const naBordaDe = (an: Pt[], q: Pt) => an.some((x, i) => distSegmento(q, x, an[(i + 1) % an.length]).d < 0.01);
+  const alcance = Math.max(4, 0.35 * p.frente);
+  const areaOk = (a: number, antes: number) => (a >= p.areaMin - 0.01 || a >= antes - 0.01) && (a <= p.areaMax * 1.03 || a <= antes + 0.01);
+  for (let rodada = 0; rodada < 2; rodada++) {
+    let mudou = false;
+    for (const A of lotes) {
+      if (A.manual || A.ajustado || quinasAviso(A.pol.ext) <= 4) continue;
+      const R = A.pol.ext;
+      let feito = false;
+      for (let k = 0; k < R.length && !feito; k++) {
+        const E = R[k];
+        const lado = ladoDe(E);
+        if (lado < 0 || quinasC.some((v) => dist(v, E) < 0.05)) continue;
+        // a quina alvo é uma ponta do mesmo lado do contorno (o trecho até ela é reto) — ou o
+        // pé da outra divisa do lote no mesmo lado (duas divisas chegando a 3 m uma da outra)
+        const alvos = [C[lado], C[(lado + 1) % nC]].filter((v) => quinasC.some((x) => dist(x, v) < 1e-6) && dist(v, E) <= alcance);
+        for (const Nv of [R[(k + 1) % R.length], R[(k + R.length - 1) % R.length]]) if (ladoDe(Nv) === lado && dist(Nv, E) > 0.05 && dist(Nv, E) <= alcance && !alvos.some((x) => dist(x, Nv) < 0.01)) alvos.push(Nv);
+        if (!alvos.length) continue;
+        for (const B of lotes) {
+          if (feito || B === A || B.manual || B.ajustado || !tem(B.pol.ext, E)) continue;
+          for (const D of [R[(k + 1) % R.length], R[(k + R.length - 1) % R.length]]) {
+            // D: o outro pé da divisa entre A e B (vértice de B ou no meio de um lado dele, num "T")
+            if (feito || !naBordaDe(B.pol.ext, D) || alvos.some((x) => dist(x, D) < 0.01)) continue;
+            for (const V of alvos) {
+              const T: Poligono = { ext: antiHorario([D, E, V]), furos: [] };
+              const aT = areaPol(T);
+              if (aT < 0.01) continue;
+              const qA = quinasAviso(A.pol.ext), qB = quinasAviso(B.pol.ext);
+              // o triângulo é de A (vai para B) ou de B (vem para A)
+              for (const [de, para] of [[A, B], [B, A]] as const) {
+                const menos = diferenca([de.pol], [T]);
+                if (menos.length !== 1 || Math.abs(areaPol(menos[0]) - (de.area - aT)) > 0.05) continue;
+                const mais = uniaoFechada([para.pol, T]);
+                if (mais.length !== 1) continue;
+                const novoDe: Poligono = { ext: antiHorario(limparAnel(menos[0].ext, 0.003)), furos: [] };
+                const novoPara: Poligono = { ext: antiHorario(limparAnel(mais[0].ext, 0.003)), furos: [] };
+                const nA = de === A ? novoDe : novoPara, nB = de === A ? novoPara : novoDe;
+                const aA = areaPol(nA), aB = areaPol(nB);
+                if (quinasAviso(nA.ext) > 4 || quinasAviso(nB.ext) > Math.max(4, qB)) continue;
+                if (quinasAviso(nA.ext) >= qA) continue;
+                if (!areaOk(aA, A.area) || !areaOk(aB, B.area)) continue;
+                A.pol = nA; A.area = aA; B.pol = nB; B.area = aB;
+                feito = true; mudou = true;
+                break;
+              }
+              if (feito) break;
+            }
+          }
+        }
+      }
+    }
+    if (!mudou) break;
+  }
+}
+
 export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalculo = {}): Resultado {
   const p = projeto.params;
   const plano = criarPlano(perimetro.pts, perimetro.altitudes, p.distanciasTerreno);
@@ -2512,6 +2593,9 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       }
     }
     if (!guardado) {
+      // divisa que morre a poucos metros da quina do contorno: o pé vai para a quina
+      // (o lote não fica com a 5ª quina do pedacinho de divisa)
+      if (!manual && !op.busca) encaixarNasQuinas(res.lotes, polEsq, p);
       if (!manual) cacheQ.set(chave, res);
       // área livre da quadra desenhada fica como está (o operador decide o que fazer com ela)
       for (const s of res.sobras) (manual ? vazios : sobras).push(s);

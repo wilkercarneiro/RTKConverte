@@ -10,12 +10,13 @@ import {
 } from "./geom.ts";
 import type { Poligono, Pt } from "./geom.ts";
 import { calcular } from "./calculo.ts";
-import type { Perimetro, Resultado } from "./calculo.ts";
+import type { Lote, Perimetro, Resultado } from "./calculo.ts";
 import { criarPlano, paraPlano, paraUtm } from "./plano.ts";
 import { ehAcesso, novoId } from "./modelo.ts";
 import { cotaEm, declividadeEm, depressaoEm, gradeDoPerimetro } from "./terreno.ts";
 import { rearranjarSelecao } from "./rearranjo.ts";
-import { posicaoNoDesenho } from "./edicao.ts";
+import { dividirLote, encaixarQuadraGravada, melhorEstrutura, posicaoNoDesenho, unirComVizinho } from "./edicao.ts";
+import type { Edicao } from "./edicao.ts";
 import type { AreaDesenhada, Projeto, QuadraCfg, Rua } from "./modelo.ts";
 
 export interface Proposta {
@@ -428,42 +429,20 @@ export interface OpcoesGerar {
 export function estruturarQuadras(pr0: Projeto, perimetro: Perimetro): Projeto {
   let pr = pr0;
   let res = calcular(pr, perimetro);
-  const ruins = (r: Resultado, nome: string) => r.lotes.filter((l) => l.quadra === nome && l.problemas.length).length;
   const nomes = res.quadras.filter((q) => q.fileiras >= 2 && q.lotes.length >= 4 && !q.estruturada).map((q) => q.nome);
+  const calc = (p: Projeto) => calcular(p, perimetro);
   for (const nome of nomes) {
     const q = res.quadras.find((x) => x.nome === nome);
     if (!q) continue;
-    const quadras = pr.quadras.slice();
-    let i = q.cfg;
-    const base0: QuadraCfg = i >= 0 && quadras[i] ? { ...quadras[i] } : { ancora: paraUtm(res.plano, ancoraDaQuadra(q)), ajustes: [] };
-    if (base0.lotes || base0.destino || base0.estrutura) continue;
-    if (i < 0 || !quadras[i]) { quadras.push(base0); i = quadras.length - 1; }
-    // fundo com fundo pede contagem par nas fileiras: quantidade ímpar tenta um lote a mais
-    let achou: { base: QuadraCfg; r1: Resultado; q1: Resultado["quadras"][number] } | null = null;
-    for (const N of q.lotes.length % 2 ? [q.lotes.length, q.lotes.length + 1] : [q.lotes.length]) {
-      const base: QuadraCfg = { ...base0, ajustes: [], estrutura: { lotes: N, cabeceiras: ["auto", "auto"], esquinas: "absorver" } };
-      quadras[i] = base;
-      const r1 = calcular({ ...pr, quadras }, perimetro);
-      const q1 = r1.quadras.find((x) => x.cfg === i);
-      if (!q1?.estruturada || q1.estruturada.cruzamentos > 0 || q1.lotes.length < q.lotes.length) continue;
-      if (ruins(r1, q1.nome) > ruins(res, nome) || r1.quadro.sobras > res.quadro.sobras + 1) continue;
-      achou = { base, r1, q1 };
-      break;
-    }
-    if (!achou) continue;
-    const { base, r1, q1 } = achou;
+    const cfg0: QuadraCfg | undefined = q.cfg >= 0 ? pr.quadras[q.cfg] : undefined;
+    if (cfg0 && (cfg0.lotes || cfg0.destino || cfg0.estrutura)) continue;
+    // o mesmo "Ajustar fundo com fundo" da prancheta: quantidade atual, ±1, esquina
+    // absorvendo ou todos iguais; fica o arranjo que não perde lote nem ganha aviso
+    const m = melhorEstrutura(pr, res, q, calc, { rapido: true });
+    if (!m || m.avisosDepois > m.avisosAntes) continue;
     // grava a linha que o cálculo escolheu (o recálculo repete o arranjo, rápido)
-    quadras[i] = {
-      ...base,
-      estrutura: {
-        ...base.estrutura,
-        linhaCentral: q1.linhaCentral!.map((x) => paraUtm(r1.plano, x)),
-        cabeceiras: q1.estruturada!.cabeceiras.length === 2 ? [q1.estruturada!.cabeceiras[0] as "direta", q1.estruturada!.cabeceiras[1] as "direta"] : ["auto", "auto"],
-        lotes: q1.lotes.length,
-      },
-    };
-    pr = { ...pr, quadras };
-    res = calcular(pr, perimetro);
+    pr = m.pr;
+    res = m.r;
   }
   return pr;
 }
@@ -505,6 +484,9 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
     const padrao = p.areaPadrao;
     let n = 0, a = 0;
     for (const l of r.lotes) if (l.area >= p.areaMin - 0.01) { n += l.area > p.areaMax + 0.5 ? 0.5 : 1; a += l.area; }
+    // lote que sai com pendência (o lote-tira de 130 m de fundo na beirada, a frente de
+    // 3 m na ponta): a planta que o tem perde para a que não tem, mesmo com um lote a menos
+    n -= 2 * r.lotes.filter((l) => l.problemas.length).length;
     // terra sem destino pesa mais que o lote que renderia: a malha que deixa
     // área rosa perde para a que aproveita a gleba
     n -= 2.5 * r.quadro.sobras / padrao;
@@ -870,12 +852,109 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
       }
     }
   }
+  // 5b'. a quadra que o passo 5b congelou pode ter lote de 5 quinas (a divisa morre
+  //      a 3 m da quina da gleba): o pé da divisa vai para a quina
+  {
+    res = calcular(pr, perimetro);
+    const ruinsDe = (r: Resultado) => r.lotes.filter((l) => l.problemas.length).length;
+    for (const q of res.quadras) {
+      const c = q.cfg >= 0 ? pr.quadras[q.cfg] : undefined;
+      if (!c?.lotes || !q.lotes.some((l) => l.problemas.some((t) => /quinas/.test(t)))) continue;
+      const pr2 = encaixarQuadraGravada(pr, res, q);
+      if (pr2 === pr) continue;
+      const r2 = calcular(pr2, perimetro);
+      if (ruinsDe(r2) < ruinsDe(res) && r2.lotes.length >= res.lotes.length) { pr = pr2; res = r2; }
+    }
+  }
+  // 5c. lote fora das medidas encostado no verde e longe da estrada (a ponta fina da
+  //     gleba que ficou como um lote de 658 m² com 44 m de fundo): entra no verde —
+  //     é terra da ponta mais longe das estradas, onde o verde já está. Só fica se
+  //     diminui as pendências da planta.
+  if (!semVerde) {
+    for (let rodada = 0; rodada < 3; rodada++) {
+      res = calcular(pr, perimetro);
+      const ruinsDe = (r: Resultado) => r.lotes.filter((l) => l.problemas.length).length;
+      const alvo = res.lotes.filter((l) => l.problemas.length && !l.lados.some((x) => x.tipo === "via") && encostaEmVerde(res, l.pol) && longeDaEstrada(res, l.pol));
+      if (!alvo.length) break;
+      const cfgs = pr.quadras.map((c) => ({ ...c, ajustes: [...c.ajustes] }));
+      for (const l of alvo) {
+        const q = res.quadras.find((x) => x.nome === l.quadra);
+        if (!q) continue;
+        let c = q.cfg >= 0 ? cfgs[q.cfg] : undefined;
+        if (!c) { c = { ancora: paraUtm(plano, ancoraDaQuadra(q)), ajustes: [] }; cfgs.push(c); q.cfg = cfgs.length - 1; }
+        c.ajustes.push({ fileira: l.fileira, indice: Math.floor(l.indice + 1e-9), destino: "verde" });
+      }
+      const pr2 = { ...pr, quadras: cfgs };
+      const r2 = calcular(pr2, perimetro);
+      if (ruinsDe(r2) >= ruinsDe(res)) break;
+      pr = pr2;
+    }
+  }
   // 6. fechamento: o retalho que ainda ficou e é praça de verdade vira área verde
   //    (a planta não sai com área rosa que podia ser praça)
+  //    — e a nesga (ponta fina da gleba) que encosta no verde, longe da estrada, entra
+  //    nele: sozinha ela não é praça, mas somada ao lote vizinho estourava as medidas
+  //    (a ponta sul do EDILSON virava um lote de 658 m² com 44 m de fundo)
   if (!semVerde) {
     res = calcular(pr, perimetro, { manterSobras: true });
-    const novas = res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s) && longeDaEstrada(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
+    const novas = res.sobras.filter((s) => (verdeValida([s]) || encostaEmVerde(res, s)) && !coberto(res, s) && longeDaEstrada(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
     if (novas.length) pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...novas] };
+  }
+  // 7. conserto final: o lote que ainda saiu fora das medidas passa pelas mesmas
+  //    ferramentas da prancheta — a planta já sai sem pendência sempre que dá
+  return consertarPendencias(pr, perimetro);
+}
+
+/**
+ * Cada lote ainda fora das medidas tenta, na ordem: dividir em 2 ou 3 (grande demais),
+ * igualar com 1 a 3 vizinhos que encostam nele (frente curta ou larga, cunha da ponta) e
+ * unir ao vizinho (pequeno demais). Fica a ferramenta que diminui as pendências da
+ * planta sem deixar sobra e sem perder mais que o lote unido. Rodadas até parar.
+ */
+export function consertarPendencias(pr0: Projeto, perimetro: Perimetro, limite = 60): Projeto {
+  let pr = pr0;
+  let res = calcular(pr, perimetro);
+  const p = pr.params;
+  const pend = (r: Resultado) => r.lotes.filter((l) => l.problemas.length).length;
+  let calculos = 0;
+  const perim = (pg: Poligono) => pg.ext.reduce((s2, q, i) => s2 + dist(q, pg.ext[(i + 1) % pg.ext.length]), 0);
+  const contato = (a: Poligono, b: Poligono) => { const u = uniaoFechada([a, b]); return u.length === 1 ? (perim(a) + perim(b) - perim(u[0])) / 2 : 0; };
+  for (let rodada = 0; rodada < 3 && calculos < limite; rodada++) {
+    let mudou = false;
+    for (const id of res.lotes.filter((l) => l.problemas.length).map((l) => l.id)) {
+      if (calculos >= limite) break;
+      const l = res.lotes.find((x) => x.id === id);
+      const q = l && res.quadras.find((x) => x.nome === l.quadra);
+      if (!l || !q || !l.problemas.length) continue;
+      const grande = l.area > p.areaMax * 1.03 || l.profundidade > p.profundidadeMax * 1.03 || l.frente > p.frenteMax * 1.03;
+      const pequeno = l.area < p.areaMin - 0.01 || l.frente < p.frenteMin - 0.005;
+      const viz = q.lotes.filter((x) => x !== l && contato(x.pol, l.pol) >= 2).sort((a, b) => contato(b.pol, l.pol) - contato(a.pol, l.pol));
+      const pos = (x: Lote) => posicaoNoDesenho(pr, res, x);
+      const cands: (() => Edicao | null)[] = [];
+      if (grande) for (const n of [2, 3]) cands.push(() => dividirLote(pr, res, q, l, n));
+      for (const v of viz.slice(0, 2)) {
+        cands.push(() => rearranjarSelecao(pr, res, q, [pos(l), pos(v)], "igualar"));
+        const v2 = q.lotes.filter((x) => x !== l && x !== v && contato(x.pol, v.pol) >= 2)[0];
+        if (v2) cands.push(() => rearranjarSelecao(pr, res, q, [pos(l), pos(v), pos(v2)], "igualar"));
+      }
+      if (pequeno) cands.push(() => unirComVizinho(pr, res, q, l));
+      let melhor: { pr: Projeto; r: Resultado; n: number } | null = null;
+      for (const c of cands) {
+        if (calculos >= limite) break;
+        let ed: Edicao | null = null;
+        try { ed = c(); } catch { ed = null; }
+        if (!ed || ed.erro || ed.pr === pr) continue;
+        let r2: Resultado;
+        try { r2 = calcular(ed.pr, perimetro); } catch { continue; }
+        calculos++;
+        const n2 = pend(r2);
+        if (n2 >= pend(res) || r2.quadro.sobras > res.quadro.sobras + 1) continue;
+        if (r2.lotes.length < res.lotes.length - (pequeno ? 1 : 0)) continue;
+        if (!melhor || n2 < melhor.n || (n2 === melhor.n && r2.lotes.length > melhor.r.lotes.length)) melhor = { pr: ed.pr, r: r2, n: n2 };
+      }
+      if (melhor) { pr = melhor.pr; res = melhor.r; mudou = true; }
+    }
+    if (!mudou) break;
   }
   return pr;
 }

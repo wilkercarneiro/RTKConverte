@@ -2,7 +2,7 @@
 // desenho, os botões do painel e a linha de comando. Uma ação recebe o projeto
 // e o resultado atual e devolve um projeto NOVO (nunca muta), o que dá o
 // desfazer/refazer de graça.
-import { areaPol, centroide, cross, dentroPol, dist, dot, intersecao, sub, unit } from "./geom.ts";
+import { areaPol, centroide, cross, dentroPol, dist, dot, intersecao, sub, uniaoFechada, unit } from "./geom.ts";
 import type { Pt } from "./geom.ts";
 import { ancoraDaQuadra } from "./auto.ts";
 import { fmt } from "./calculo.ts";
@@ -10,7 +10,7 @@ import type { Corte, Lote, Quadra, Resultado } from "./calculo.ts";
 import { paraPlano, paraUtm } from "./plano.ts";
 import { ROTULO_AREA, mudarLote, novoId } from "./modelo.ts";
 import {
-  acertarMedida, apagarLotes, desenharLote, dividirLote, igualarAreas, mudarDestino, pedirEstrutura, posicaoNoDesenho, quadraDesenhada, unirComVizinho, unirLotes, voltarAoAutomatico,
+  acertarMedida, apagarLotes, desenharLote, dividirLote, igualarAreas, mudarDestino, pedirEstrutura, posicaoNoDesenho, quadraDesenhada, temAreaPublicaDeLotes, unirComVizinho, unirLotes, voltarAoAutomatico,
 } from "./edicao.ts";
 import type { Edicao } from "./edicao.ts";
 import { rearranjarSelecao } from "./rearranjo.ts";
@@ -270,6 +270,8 @@ export interface Saida {
    * a tela calcula uma vez e grava a linha e as cabeceiras escolhidas (`fixarEstrutura`).
    */
   estruturar?: number;
+  /** nome da quadra quando o operador não pediu número nem modo: a tela testa as variantes (`melhorEstrutura`) */
+  escolherEstrutura?: string;
 }
 
 const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
@@ -459,10 +461,14 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
         const avR = conferirMedida(p, "area", lotes.reduce((s2, l) => s2 + l.area, 0) / lotes.length);
         return { pr: ed.pr, sel: selDe(ed, lotes), msg: avR ? `${ed.msg} Atenção: ${avR}` : ed.msg };
       }
+      // quadra com área pública feita dos lotes dela: refazer a quadra inteira apagaria a reserva
+      const pubF = temAreaPublicaDeLotes(res, qF);
+      if (pubF) return { msg: `A quadra ${qF.nome} tem área ${pubF} feita com lotes dela — refazer a quadra inteira pela linha central apagaria essa área. Selecione só os lotes (Shift + clique ou a seta) e clique em "Ajustar fundo com fundo": a área pública fica como está.`, erro: true };
       const nF = Number.isFinite(n1) && n1 >= 4 ? Math.round(n1) : undefined;
       const esqF = args.includes("iguais") ? "iguais" as const : args.includes("absorver") ? "absorver" as const : undefined;
       const { pr: prF, i } = pedirEstrutura(pr, res, qF, { lotes: nF, esquinas: esqF });
-      return { pr: prF, estruturar: i, sel: { tipo: "quadra", nome: qF.nome }, msg: `Quadra ${qF.nome} ajustada fundo com fundo pela linha central.` };
+      // sem número nem modo: quem conclui (a prancheta) escolhe o melhor arranjo
+      return { pr: prF, estruturar: i, ...(nF === undefined && !esqF ? { escolherEstrutura: qF.nome } : {}), sel: { tipo: "quadra", nome: qF.nome }, msg: `Quadra ${qF.nome} ajustada fundo com fundo pela linha central.` };
     }
     case "igualar": case "equalizar": case "iguais": {
       // vários lotes selecionados: a soma deles dividida por igual (só as divisas entre eles andam)
@@ -470,6 +476,9 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
         if (lotes.length < 2) return precisa("dois ou mais lotes vizinhos da mesma quadra (Shift + clique em cada um)");
         if (new Set(lotes.map((l) => l.quadra)).size > 1) return { msg: "Só dá para igualar lotes da mesma quadra — selecione os lotes de uma quadra só.", erro: true };
         const qI = quadraDe(res, lotes[0].quadra)!;
+        // já são iguais: nada a fazer (redesenhar daria outra forma à toa)
+        const arI = lotes.map((l) => l.area);
+        if (Math.max(...arI) - Math.min(...arI) < 0.05 && uniaoFechada(lotes.map((l) => l.pol)).length === 1) return { msg: `Os ${lotes.length} lotes já têm a mesma área (${fmt(arI[0])} m²) — nada mudou.` };
         // redivide a terra dos selecionados entre eles (forma boa, fundo com fundo);
         // se o contorno não deixa, as divisas entre eles só deslizam (o jeito antigo)
         const posI = lotes.map((l) => posicaoNoDesenho(pr, res, l));

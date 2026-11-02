@@ -1354,3 +1354,9 @@ button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #f
 .mapa-indisponivel b { font-size: 14.5px; }
 .mapa-indisponivel p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--texto-2); overflow-wrap: anywhere; }
 .mapa-indisponivel button { align-self: flex-start; margin-top: 4px; }
+
+/* fuso UTM ambíguo na criação do serviço (Upload): o operador escolhe antes de criar */
+.aviso-fuso { margin: 0 0 14px; padding: 14px 16px; border-radius: 10px; background: var(--alerta-claro); border: 1px solid var(--alerta); color: var(--texto); }
+.aviso-fuso strong { font-size: 14.5px; }
+.aviso-fuso p { margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--texto-2); }
+.aviso-fuso-opcoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

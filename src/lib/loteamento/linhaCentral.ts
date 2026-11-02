@@ -426,6 +426,33 @@ export interface Config {
   _vivo?: boolean;
   /** profundidade padrão do lote (faixa da testa) */
   profPadrao?: number;
+  /** medidas do projeto: o arranjo que deixa lote fora delas perde na escolha das cabeceiras */
+  lim?: LimitesLote;
+}
+
+/** Faixas do lote (mínima e máxima) que a escolha do arranjo respeita. */
+export interface LimitesLote {
+  areaMin: number;
+  areaMax: number;
+  frenteMin: number;
+  profMin: number;
+  profMax: number;
+}
+
+/** Quantos lotes do arranjo ficam fora das medidas do projeto (folga de 3% nas máximas, como os avisos). */
+export function foraDasMedidas(L: Layout, lim?: LimitesLote): number {
+  if (!lim) return 0;
+  let n = 0;
+  for (const l of L.lotes) {
+    let fora = l.area < lim.areaMin - 0.01 || l.area > lim.areaMax * 1.03;
+    if (!fora && Number.isFinite(l.frente) && l.frente < lim.frenteMin - 0.01) fora = true;
+    if (!fora && l.laterais.length) {
+      const prof = Math.max(...l.laterais);
+      if (prof < lim.profMin - 0.01 || prof > lim.profMax * 1.03) fora = true;
+    }
+    if (fora) n++;
+  }
+  return n;
 }
 
 export interface LoteL {
@@ -1065,7 +1092,7 @@ export function montarMelhor(E: Estrutura, cfg: Config): Layout & { nota: number
     const chave = (L.cabeceiras ?? []).join("/");
     if (vistos.has(chave)) continue;
     vistos.add(chave);
-    const { nota, q5, desvio, gmax } = notaDe(L, cfg.N);
+    const { nota, q5, desvio, gmax } = notaDe(L, cfg.N, cfg.lim);
     const cz = cruzamentos(L);
     tentativas.push(`${chave}: nota ${nota.toFixed(1)} (5+ quinas ${q5}, desvio ${(desvio * 100).toFixed(0)}%, giro ${gmax.toFixed(1)}°, lotes ${L.lotes.length}${cz ? ", CRUZA " + cz : ""})`);
     const pref = (L.cabeceiras ?? []).filter((c) => c === "testa").length * 0.5;
@@ -1081,7 +1108,7 @@ export function montarMelhor(E: Estrutura, cfg: Config): Layout & { nota: number
     for (const tol of [1, 2.5, 6]) {
       try {
         const L = montar(E, { ...cfg, ...cab, _C0: simplificar(m0.eixo, tol) });
-        const nn = notaDe(L, cfg.N).nota;
+        const nn = notaDe(L, cfg.N, cfg.lim).nota;
         tentativas.push(`linha mais reta (${tol} m): nota ${nn.toFixed(1)}`);
         if (nn < atual.nota) atual = { ...L, nota: nn, tentativas };
       } catch { /* não fechou */ }
@@ -1089,11 +1116,11 @@ export function montarMelhor(E: Estrutura, cfg: Config): Layout & { nota: number
     melhor = atual;
   }
   if (!melhor) return m0;
-  const gmax = notaDe(melhor, cfg.N).gmax;
+  const gmax = notaDe(melhor, cfg.N, cfg.lim).gmax;
   if (!cfg.C && gmax > 6) {
     const cab = { cab1: (melhor.cabeceiras ?? [])[0], cab2: (melhor.cabeceiras ?? [])[1] };
     const O = otimizarC(E, { ...cfg, ...cab }, melhor);
-    const nO = notaDe(O, cfg.N);
+    const nO = notaDe(O, cfg.N, cfg.lim);
     tentativas.push(`C otimizada (${O.avaliacoes} avaliações): giro ${nO.gmax.toFixed(1)}°, nota ${nO.nota.toFixed(1)}`);
     if (nO.nota < melhor.nota) return { ...O, nota: nO.nota, tentativas };
   }
@@ -1127,7 +1154,7 @@ export function cruzamentos(L: Layout): number {
 }
 
 /** nota de um arranjo: quina a mais e lote faltando pesam muito; depois o giro das laterais */
-export function notaDe(L: Layout, N: number): { nota: number; q5: number; desvio: number; gmax: number; g2: number } {
+export function notaDe(L: Layout, N: number, lim?: LimitesLote): { nota: number; q5: number; desvio: number; gmax: number; g2: number; fora: number } {
   const areas = L.lotes.map((l) => l.area).sort((a, b) => a - b);
   const med = areas[areas.length >> 1] || 1;
   const desvio = Math.max(...areas.map((a) => Math.abs(a - med) / med));
@@ -1140,7 +1167,10 @@ export function notaDe(L: Layout, N: number): { nota: number; q5: number; desvio
   // proporção: lote-tira (fundo mais de 3× a largura, cresce ao quadrado) ou lote raso e largo demais pesa
   // — é o que deixava a "testa" de lotes estreitos e compridos ganhar da esquina
   const esguio = L.lotes.reduce((t, l) => { const r = alongamento(l.anel); return t + (r > 3 ? (r - 3) ** 2 : 0); }, 0);
-  return { nota: 100 * q5 + 60 * desvio + 0.8 * gmax + 400 * faltou + 15 * L.avisos.length + 400 * cruz + 60 * esguio, q5, desvio, gmax, g2 };
+  // lote fora das medidas do projeto (área, frente, fundo) vira aviso na planta: pesa
+  // mais que a diferença de área da esquina que absorve a cabeceira
+  const fora = foraDasMedidas(L, lim);
+  return { nota: 100 * q5 + 60 * desvio + 0.8 * gmax + 400 * faltou + 15 * L.avisos.length + 400 * cruz + 60 * esguio + 150 * fora, q5, desvio, gmax, g2, fora };
 }
 
 /** comprimento ÷ largura do lote pela caixa orientada mais justa (largura = a menor extensão). */
@@ -1200,7 +1230,7 @@ export function otimizarC(E: Estrutura, cfg: Config, L0: Layout, maxAval = 160):
     aval++;
     try {
       const L = montar(E, { ...cfg, _C0: comOff(), _passo: 4 });
-      const n = notaDe(L, cfg.N);
+      const n = notaDe(L, cfg.N, cfg.lim);
       const reg = off.reduce((t, o) => t + o * o, 0);
       return { L, v: n.nota * 50 + n.g2 + 0.3 * reg };
     } catch { return null; }

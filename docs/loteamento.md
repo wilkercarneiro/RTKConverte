@@ -190,6 +190,21 @@ Com vários lotes selecionados, **Igualar áreas** e **Ajustar fundo com fundo �
 - **Institucional:** cresce a partir do lote mais perto do centro da gleba (centroide, ou ponto interno se a gleba for em "L"), sempre pelo vizinho mais central, num terreno só.
 - Lote com frente acima do máximo (a cunha na ponta da fileira) é igualado com os vizinhos da fileira pelo mesmo rearranjo, e só fica se a planta melhora. Antes ele "sumia" virando área verde.
 
+### Rodada de QA no sistema real (02/11/2026, noite)
+
+Testado no vertces.com.br com um serviço de teste e, no motor, com 8 glebas (EDILSON, IRAN, IRAN com os parâmetros da equipe, a do laboratório, IBERA parte 2, retângulo, trapézio e uma em "L"), 3 propostas cada, e com as ferramentas de ajuste aplicadas em seleções sorteadas de todas as quadras. Regras que passaram a valer:
+
+- **Seleção em quadra da linha central.** A posição de um lote no desenho vem da numeração (o índice dele é por fileira e se repete). Antes, igualar A-03…A-06 mexia em A-08, A-09, A-23 e A-24.
+- **Lotes de fora não mudam.** Igualar só a fileira da frente não arrasta mais o lote de trás: a divisa desliza até a linha de fundo e a linha fica onde está. Duas fileiras desencontradas se igualam cada uma por dentro (a mensagem diz). Lotes que só se encostam pelo fundo são recusados com explicação.
+- **Igualar não gira lotes.** No igualar a cabeceira fica "direta" (a "testa" redesenhava a ponta com lotes de pé e cunha). Lotes já iguais: "nada mudou".
+- **Nenhum lote quebrado.** O rearranjo descarta o arranjo que deixa mais lotes com 5+ quinas do que havia, ou fundo acima do máximo. No fundo com fundo de fileiras desencontradas concorre a **linha de fundo atual travada**: cada fileira por igual, os degraus das pontas ficam sobre ela e os lotes da ponta seguem com 4 quinas.
+- **Fundo com fundo da quadra inteira** testa a quantidade atual (e ±1 se precisar), com a esquina absorvendo ou todos iguais, e fica com o de menos avisos. A nota da linha central conhece as medidas do projeto (`foraDasMedidas`). Se mesmo o melhor piora, a quadra fica como estava e a mensagem diz como forçar (`fundo com fundo N`). Quadra com área pública feita dos lotes dela não é refeita inteira (a reserva se perderia); os lotes selecionados ainda podem.
+- **O arranjo avaliado é o gravado.** A escolha confere a linha central fixada (a que fica no projeto). O recálculo com a linha gravada realoca as junções e chegava a cruzar divisas.
+- **Congelar a quadra** (qualquer edição de lote) recorta cada lote pelo contorno dela e pega as áreas públicas pela geometria. Antes, o retalho absorvido de fora virava sobra por baixo do lote, e o pedaço de verde de uma quadra sumia quando a área estava registrada na vizinha.
+- **Geração.** A divisa que morre a poucos metros da quina do contorno vai até a quina (`encaixarNasQuinas`), e o lote não fica com a 5ª quina. A ponta fina da gleba que encosta no verde, longe da estrada, entra no verde. A planta com lote em pendência perde na nota. Passo final `consertarPendencias`: cada lote fora das medidas tenta dividir, igualar com 1 a 3 vizinhos ou unir, e fica o que diminui as pendências.
+- **Quadro de lotes:** o lado que o lote não tem (o triângulo da ponta) sai "—", não 0,00.
+- **Fuso UTM ao criar o serviço.** Com E/N, a longitude cabe em qualquer fuso, e a Bahia atravessa o 23S e o 24S. O "mais perto do centro da UF" punha o leste baiano no 23S, a 600 km. Agora, se o arquivo cabe em mais de um fuso na UF e o fuso está no automático, a tela pergunta antes de criar e sugere o que a empresa mais usa naquela UF.
+
 ## Como funciona por dentro
 
 - **Projeto = intenção.** A tabela `loteamentos` (migração 0021) guarda só parâmetros, ruas, áreas e ajustes. Quadras e lotes **nunca** são gravados: `calcular()` (`src/lib/loteamento/calculo.ts`) refaz tudo a cada mudança, em cerca de 10 ms para 200 lotes e 130 ms para 2.000. É isso que faz o resto se ajustar quando um lote, uma rua ou um parâmetro muda.
