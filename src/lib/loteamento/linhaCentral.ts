@@ -613,24 +613,37 @@ function lotesTesta(E: Estrutura, qual: 1 | 2, pt: Ponta, tr: { x: number; y: nu
     if (a >= ini - 0.05 && b <= fim + 0.05 && c.comp > maior) { maior = c.comp; eA = a; eB = b; }
   }
   const X = Tp.em(tr.x), Y = Tp.em(tr.y);
-  const dirLinha = sub(X, Y);
-  // direção única das divisas: perpendicular à corda da rua da ponta (rua curva não cruza divisas)
-  const dirTesta = unit(esq(sub(Tp.em(eB), Tp.em(eA))));
-  const bate = (e: number): Pt => {
-    const P = Tp.em(e);
-    return intersecaoRetas(P, add(P, dirTesta), Y, X) ?? P;
-  };
-  const areaAteE = (e: number) => { const z = bate(e); return 0.5 * (Tp.K(e) - Tp.K(tr.x) + cross(Tp.em(e), z) + cross(z, X)); };
+  const linha = sub(X, Y), L2 = dot(linha, linha);
+  // direção das divisas (paralelas, para não se cruzarem): o esquadro da rua da ponta;
+  // se a ponta é tão inclinada que assim elas cruzam ou saem da faixa, a meia direção
+  // entre o esquadro e o eixo da quadra; por último, paralelas ao eixo
+  const normalRua = unit(esq(sub(Tp.em(eB), Tp.em(eA))));
+  let eixoQ = unit(esq(linha));
+  if (dot(eixoQ, normalRua) < 0) eixoQ = mul(eixoQ, -1);
+  const candidatas: Pt[] = [normalRua, unit(add(normalRua, eixoQ)), eixoQ];
   const total = areaPonta(pt, tr.x, tr.y), Tm = total / m;
-  const es: number[] = [];
-  for (let i = 1; i < m; i++) {
-    const e = raiz(areaAteE, eA + 0.05, eB - 0.05, i * Tm, Tp.s);
-    if (e === null) { avisos.push(`testa: a divisa ${i} não coube na rua da ponta`); return { lotes: [], divisas: [] }; }
-    es.push(e);
+  let es: number[] = [], zs: Pt[] = [];
+  let achou = false;
+  for (const dir of candidatas) {
+    const bate = (e: number): Pt => { const P = Tp.em(e); return intersecaoRetas(P, add(P, dir), Y, X) ?? P; };
+    const areaAteE = (e: number) => { const z = bate(e); return 0.5 * (Tp.K(e) - Tp.K(tr.x) + cross(Tp.em(e), z) + cross(z, X)); };
+    const eTent: number[] = [];
+    let ok = true;
+    for (let i = 1; i < m && ok; i++) {
+      const e = raiz(areaAteE, eA + 0.05, eB - 0.05, i * Tm, Tp.s);
+      if (e === null) ok = false; else eTent.push(e);
+    }
+    if (!ok) continue;
+    const zTent = eTent.map(bate);
+    // cada divisa bate na linha interna DENTRO do trecho, em ordem, sem furar o contorno
+    const par = zTent.map((z) => (L2 > 0 ? dot(sub(z, Y), linha) / L2 : 0));
+    const dentro = par.every((t) => t > 0.02 && t < 0.98);
+    const ordem = par.every((t, k) => k === 0 || (par[k - 1] - t) * (par[0] - par[par.length - 1] >= 0 ? 1 : -1) > 0.005);
+    const livre = eTent.every((e, k) => Tp.cortes(add(Tp.em(e), mul(unit(sub(zTent[k], Tp.em(e))), 0.05)), zTent[k]).length === 0);
+    if (dentro && (par.length < 2 || ordem) && livre) { es = eTent; zs = zTent; achou = true; break; }
   }
-  void dirLinha;
+  if (!achou) { avisos.push("testa: as divisas não cabem na faixa da rua da ponta sem se cruzar"); return { lotes: [], divisas: [] }; }
   const lotes: LoteL[] = [], divisas: Pt[][] = [];
-  const zs = es.map(bate);
   for (let i = 0; i < m; i++) {
     let anel: Pt[];
     if (m === 1) anel = Tp.trecho(tr.x, tr.y);
