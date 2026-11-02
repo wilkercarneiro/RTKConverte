@@ -389,6 +389,31 @@ export interface QuadraCfg {
   lotes?: LoteDesenhado[];
   /** lados da quadra que o operador marcou como acesso (UTM): contam como frente de lote */
   acessos?: [Pt, Pt][];
+  /**
+   * Quadra de duas fileiras estruturada pela LINHA CENTRAL (docs/plano-linha-central.md):
+   * os lotes são gerados dela (fundo com fundo por construção, áreas iguais). Se a
+   * quadra também tiver `lotes` (desenho à mão), o desenho manda.
+   */
+  estrutura?: EstruturaQuadra;
+}
+
+export type ModoCabeceira = "direta" | "ponta" | "testa";
+
+export interface EstruturaQuadra {
+  /** linha central em UTM — a que o "Ajustar fundo com fundo" calculou ou a do operador */
+  linhaCentral?: Pt[];
+  /** quantos lotes a quadra tem */
+  lotes: number;
+  /** como cada ponta da quadra é loteada (a escolhida pelo sistema fica gravada) */
+  cabeceiras?: [ModoCabeceira | "auto", ModoCabeceira | "auto"];
+  /** cabeceira inclinada: a esquina absorve a diferença (padrão) ou todos ficam iguais */
+  esquinas?: "absorver" | "iguais";
+  /** cadeado: a linha fica exatamente onde está (cada fileira se iguala por si) */
+  travada?: boolean;
+  /** o operador mexeu na linha: a dobra vai para a junção mais próxima e a linha desliza de lado até as áreas empatarem */
+  ajustada?: boolean;
+  /** (só durante o arraste, nunca gravado) a linha segue o cursor exatamente */
+  vivo?: boolean;
 }
 
 export interface Projeto {

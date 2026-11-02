@@ -156,15 +156,95 @@ function gravar(pr: Projeto, res: Resultado, i: number, aneis: Pt[][], destinos:
   return { ...pr, quadras };
 }
 
-/** Volta a quadra a ser dividida pelo sistema (some o desenho do operador). */
+/** Volta a quadra a ser dividida pelo sistema (some o desenho do operador e a linha central). */
 export function voltarAoAutomatico(pr: Projeto, q: Quadra, pl?: Resultado["plano"]): Projeto {
   const i = cfgDe(pr, q, pl);
-  if (i < 0 || !Array.isArray(pr.quadras[i].lotes)) return pr;
+  if (i < 0 || (!Array.isArray(pr.quadras[i].lotes) && !pr.quadras[i].estrutura)) return pr;
   const quadras = pr.quadras.slice();
   const c = { ...quadras[i] };
   delete c.lotes;
+  delete c.estrutura;
   quadras[i] = c;
   return { ...pr, quadras };
+}
+
+// ---------------------------------------------------------------------------
+// Linha central (docs/plano-linha-central.md): a quadra de duas fileiras passa a
+// ser gerada da estrutura (linhaCentral.ts) — fundo com fundo por construção.
+// ---------------------------------------------------------------------------
+
+/**
+ * "Ajustar fundo com fundo": a quadra passa a ser estruturada pela linha central.
+ * O desenho à mão sai (Ctrl+Z volta); a linha e as cabeceiras ficam em "auto" até
+ * o cálculo escolher (`fixarEstrutura` grava o que ele escolheu).
+ */
+export function pedirEstrutura(pr0: Projeto, res: Resultado, q: Quadra, op: { lotes?: number; esquinas?: "absorver" | "iguais"; manterLinha?: boolean } = {}): { pr: Projeto; i: number } {
+  const pl = res.plano;
+  let i = cfgDe(pr0, q, pl);
+  const quadras = pr0.quadras.slice();
+  const base: QuadraCfg = i >= 0 ? { ...quadras[i] } : { ancora: paraUtm(pl, ancoraDaQuadra(q)), ajustes: [] };
+  delete base.lotes;
+  base.ajustes = [];
+  const antes = base.estrutura;
+  base.estrutura = {
+    lotes: Math.max(4, Math.round(op.lotes ?? q.lotes.length)),
+    cabeceiras: op.manterLinha && antes?.cabeceiras ? antes.cabeceiras : ["auto", "auto"],
+    esquinas: op.esquinas ?? antes?.esquinas ?? "absorver",
+    ...(op.manterLinha && antes?.linhaCentral ? { linhaCentral: antes.linhaCentral, travada: antes.travada } : {}),
+  };
+  if (i >= 0) quadras[i] = base; else { quadras.push(base); i = quadras.length - 1; }
+  return { pr: { ...pr0, quadras }, i };
+}
+
+/** Grava a linha central e as cabeceiras que o cálculo escolheu: o recálculo fica rápido e dá o mesmo arranjo. */
+export function fixarEstrutura(pr: Projeto, res: Resultado, i: number): Projeto {
+  const q = res.quadras.find((x) => x.cfg === i);
+  const c = pr.quadras[i];
+  if (!q?.linhaCentral || !q.estruturada || !c?.estrutura) return pr;
+  const cab = q.estruturada.cabeceiras as ("direta" | "ponta" | "testa")[];
+  const quadras = pr.quadras.slice();
+  quadras[i] = {
+    ...c,
+    estrutura: {
+      ...c.estrutura,
+      linhaCentral: q.linhaCentral.map((p) => paraUtm(res.plano, p)),
+      cabeceiras: cab.length === 2 ? [cab[0], cab[1]] : c.estrutura.cabeceiras,
+      lotes: q.lotes.length,
+    },
+  };
+  return { ...pr, quadras };
+}
+
+/**
+ * Linha central nova (do operador) numa quadra estruturada.
+ * - "vivo": durante o arraste — a linha segue o cursor exatamente (cada fileira se iguala por si);
+ * - "ajustada": ao soltar — a dobra vai para a junção mais próxima e a linha desliza de lado até as áreas empatarem;
+ * - "travada": cadeado — a linha fica exatamente onde está.
+ */
+export function moverLinhaCentral(pr: Projeto, res: Resultado, q: Quadra, linha: Pt[], modo: "vivo" | "ajustada" | "travada" = "ajustada"): Projeto {
+  const i = cfgDe(pr, q, res.plano);
+  const c = i >= 0 ? pr.quadras[i] : null;
+  if (!c?.estrutura) return pr;
+  const est = { ...c.estrutura, linhaCentral: linha.map((p) => paraUtm(res.plano, p)) };
+  delete est.vivo;
+  if (modo === "vivo") est.vivo = true;
+  if (modo === "ajustada") { est.ajustada = true; delete est.travada; }
+  if (modo === "travada") est.travada = true;
+  const quadras = pr.quadras.slice();
+  quadras[i] = { ...c, estrutura: est };
+  return { ...pr, quadras };
+}
+
+/** Projeta o ponto no contorno da quadra (a ponta da linha central corre pela rua da cabeceira). */
+export function naBordaDaQuadra(q: Quadra, p: Pt): Pt {
+  const r = q.pol.ext;
+  let best: Pt = r[0], bd = Infinity;
+  for (let k = 0; k < r.length; k++) {
+    const a = r[k], b = r[(k + 1) % r.length];
+    const x = distSegmento(p, a, b);
+    if (x.d < bd) { bd = x.d; best = lerp(a, b, x.t); }
+  }
+  return best;
 }
 
 /** Lote ou área pública (verde, institucional) — numa quadra desenhada; `null` volta a ser lote. */

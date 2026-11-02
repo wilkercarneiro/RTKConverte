@@ -14,6 +14,8 @@ import {
 } from "./geom.ts";
 import type { Anel, Poligono, Pt } from "./geom.ts";
 import { criarPlano, paraPlano } from "./plano.ts";
+import { cruzamentos as cruzamentosLC, estruturar, montar, montarMelhor } from "./linhaCentral.ts";
+import type { TipoAresta } from "./linhaCentral.ts";
 import type { Plano } from "./plano.ts";
 import { ROTULO_AREA, ehAcesso, faixaDentroDoLote } from "./modelo.ts";
 import type { AjusteLote, ModoDivisao, Parametros, Projeto, QuadraCfg, Sobra, TipoArea, TipoBorda } from "./modelo.ts";
@@ -143,6 +145,26 @@ export interface Quadra {
   curvas: CurvaEsquina[];
   /** lados da quadra marcados como acesso pelo operador (plano) */
   acessos?: [Pt, Pt][];
+  /** quadra estruturada pela linha central (plano): a linha e o resumo do arranjo */
+  linhaCentral?: Pt[];
+  estruturada?: EstruturadaInfo;
+}
+
+/** Resumo da quadra estruturada (linhaCentral.ts) para o painel e a prancheta. */
+export interface EstruturadaInfo {
+  /** área-alvo dos lotes de cada fileira (iguais quando a linha está equilibrada) */
+  T1: number;
+  T2: number;
+  cabeceiras: string[];
+  avisos: string[];
+  /** junções das divisas na linha central (plano) */
+  juncoes: Pt[];
+  /** maior giro de uma lateral em relação ao esquadro da rua (graus) */
+  giroMax: number;
+  /** divisas fundo com fundo (pé na rua 1, junção, pé na rua 2): o ponto da linha central corre por elas */
+  divisas: Pt[][];
+  /** contornos de lote que se cruzam (tem de ser 0: a linha central não fecha a quadra) */
+  cruzamentos: number;
 }
 
 export interface AreaPublica {
@@ -627,6 +649,8 @@ interface ResultadoQuadra {
   rasos: number;
   /** quadra entre duas ruas de frente uma para a outra (cabe costas com costas) */
   temOposta?: boolean;
+  linhaCentral?: Pt[];
+  estruturada?: EstruturadaInfo;
 }
 
 /**
@@ -1161,6 +1185,60 @@ function quadraDesenhada(ctx: Contexto, pol: Poligono, cfg: QuadraCfg, P: (q: Pt
   return {
     lotes, destinos, cortes: [], fundo: null, sobras: livre, canteiros: [], origem: maior.a, u, v: esquerda(u),
     fileiras: 1, problemas, ruins: 0, nFaces: 0, tortos: 0, largura: 0, rasos: 0,
+  };
+}
+
+/**
+ * Quadra estruturada pela LINHA CENTRAL (docs/plano-linha-central.md): os lotes
+ * saem do motor (linhaCentral.ts) — fundo com fundo por construção, laterais no
+ * esquadro da própria rua, áreas iguais. A numeração dá a volta: fileira 1 da
+ * cabeceira 1 à 2, a cabeceira 2, a fileira 2 voltando e a cabeceira 1.
+ */
+function quadraEstruturada(ctx: Contexto, pol: Poligono, cfg: QuadraCfg, P: (q: Pt) => Pt, p: Parametros): ResultadoQuadra {
+  const est = cfg.estrutura!;
+  // tipo de cada aresta do contorno; a estrada levantada é uma rua só (ela tem uma
+  // referência por lado do perímetro)
+  const lados = ladosDe(ctx, pol, null);
+  const anel = pol.ext;
+  const tipos: TipoAresta[] = [], refs: string[] = [];
+  for (let i = 0; i < anel.length; i++) {
+    const m = lerp(anel[i], anel[(i + 1) % anel.length], 0.5);
+    let melhor: Lado | null = null, bd = Infinity;
+    for (const x of lados) { const d = distSegmento(m, x.a, x.b).d; if (d < bd) { bd = d; melhor = x; } }
+    const t = melhor && bd < 0.05 ? melhor.tipo : "divisa";
+    tipos.push(t === "rua" ? "rua" : t === "via" ? "via" : "divisa");
+    refs.push(t === "via" ? "via" : t === "rua" ? String(melhor?.ref ?? "") : "");
+  }
+  const E = estruturar(anel, tipos, refs);
+  const base = {
+    N: est.lotes, profMin: p.profundidadeMin, profPadrao: p.profundidade, esquinas: est.esquinas ?? ("absorver" as const),
+    cab1: est.cabeceiras?.[0] ?? ("auto" as const), cab2: est.cabeceiras?.[1] ?? ("auto" as const),
+  };
+  const C = est.linhaCentral?.map(P);
+  // linha do operador: travada (ou no meio do arraste) fica exatamente onde está; ajustada à
+  // mão vai para as junções e desliza de lado até as fileiras empatarem; a gravada pelo
+  // "Ajustar" se repete igual (sem nova realocação)
+  const L = !C ? montarMelhor(E, base)
+    : est.travada || est.vivo ? montar(E, { ...base, C, _vivo: !!est.vivo })
+    : montar(E, { ...base, _C0: C, ...(est.ajustada ? {} : { _passo: 4 }) });
+  // volta na quadra: [fileira 1 (ida), cabeceira 2] como fileira 0; [fileira 2 (volta), cabeceira 1] como fileira 1
+  const z = (n: string) => L.lotes.filter((l) => l.zona === n).sort((a, b) => a.ordem - b.ordem);
+  const ida = [...z("f1"), ...z("ponta2").reverse(), ...z("testa2")];
+  const volta = [...z("f2").reverse(), ...z("ponta1").reverse(), ...z("testa1")];
+  const lotes: ResultadoQuadra["lotes"] = [];
+  [ida, volta].forEach((grupo, fileira) => grupo.forEach((l, indice) => {
+    const pg: Poligono = { ext: antiHorario(limparAnel(l.anel, 0.003)), furos: [] };
+    lotes.push({ pol: pg, area: areaPol(pg), fileira, indice, ajustado: false, manual: true });
+  }));
+  const giros = L.lotes.flatMap((l) => l.giroLat.filter(Number.isFinite));
+  const fr = lados.filter((l) => ehFrente(l.tipo));
+  const maior = fr.length ? fr.reduce((m, l) => (l.comp > m.comp ? l : m), fr[0]) : { a: anel[0], b: anel[1] };
+  const u = unit(sub(maior.b, maior.a));
+  return {
+    lotes, destinos: new Map(), cortes: [], fundo: null, sobras: [], canteiros: [], origem: maior.a, u, v: esquerda(u),
+    fileiras: 2, problemas: L.avisos.slice(), ruins: 0, nFaces: 0, tortos: 0, largura: 0, rasos: 0,
+    linhaCentral: L.C,
+    estruturada: { T1: L.T1, T2: L.T2, cabeceiras: (L.cabeceiras ?? []).slice(), avisos: L.avisos.slice(), juncoes: L.juncoes, giroMax: giros.length ? Math.max(...giros) : 0, cruzamentos: cruzamentosLC(L), divisas: L.divisas.filter((d) => d.length === 3) },
   };
 }
 
@@ -2377,6 +2455,8 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     const ancFrente = q.cfg?.frentePrincipal ? P(q.cfg.frentePrincipal) : null;
     // quadra com lotes desenhados pelo operador: é o desenho dele, não se redivide
     const manual = Array.isArray(q.cfg?.lotes);
+    // quadra estruturada pela linha central (sem desenho à mão por cima)
+    const estruturada = !manual && !!q.cfg?.estrutura;
     const chave = manual ? "" : `${q.cfgIdx}|${q.cfg ? JSON.stringify({ ...q.cfg, lotes: undefined }) : ""}|${modo}|${valor}|${sobra}|${polEsq.ext.map((x) => `${x[0].toFixed(3)},${x[1].toFixed(3)}`).join(";")}`;
     const guardado = manual ? undefined : cacheQ.get(chave);
     if (guardado) {
@@ -2387,7 +2467,16 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     // lados de acesso que o operador marcou nesta quadra contam como frente na divisão
     const acessosQ = q.cfg?.acessos?.map((sg) => [P(sg[0]), P(sg[1])] as [Pt, Pt]);
     ctx.acessosQuadra = acessosQ;
-    let res = guardado ?? (manual ? quadraDesenhada(ctx, polEsq, q.cfg!, P) : dividirQuadra(ctx, polEsq, q.cfg, p, modo, valor, sobra, ancFrente));
+    let res0 = guardado;
+    if (!res0 && estruturada) {
+      try { res0 = quadraEstruturada(ctx, polEsq, q.cfg!, P, p); }
+      catch (e) {
+        res0 = dividirQuadra(ctx, polEsq, q.cfg, p, modo, valor, sobra, ancFrente);
+        res0.problemas.push(`a linha central não se aplica a esta quadra (${(e as Error).message}); ficou a divisão automática`);
+      }
+    }
+    if (!res0) res0 = manual ? quadraDesenhada(ctx, polEsq, q.cfg!, P) : dividirQuadra(ctx, polEsq, q.cfg, p, modo, valor, sobra, ancFrente);
+    let res: ResultadoQuadra = res0;
     // frente mais longa deixou lote torto/nanico (quadra com um lado diagonal):
     // tenta lotear pelas outras frentes e fica com a que dá mais lote bom
     // (na busca rápida do gerador pula: a contagem de lotes quase não muda e custa o triplo)
@@ -2396,7 +2485,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     // quadra com ajuste do operador (trava, unir, dividir) fica no arranjo em
     // que ele mexeu: outra frente ou outro nº de fileiras jogaria a edição fora
     const editada = (q.cfg?.ajustes ?? []).some((a) => a.frente !== undefined || a.area !== undefined || a.unir || (a.dividir ?? 0) > 1);
-    if (!guardado && !manual && !op.rapido && !ancFrente && !editada && res.ruins > 0) {
+    if (!guardado && !manual && !estruturada && !op.rapido && !ancFrente && !editada && res.ruins > 0) {
       // retalho loteado (fileira 9) é lote de sobra, fora da malha da quadra: vale menos
       // lote de rua a rua (frente para duas ruas) é o que as normas mandam evitar:
       // a quadra entre duas ruas de frente fica com uma fileira só se a de duas for bem pior
@@ -2455,6 +2544,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       cfg: q.cfgIdx, nome, pol: polEsq, area: areaPol(polEsq), lotes: [], origem: res.origem, u: res.u, v: res.v,
       fundo: res.fundo, cortes: res.cortes, modo, valor, sobra, fileiras: res.fileiras, centro: q.centro,
       ancoraUtm: q.cfg?.ancora, problemas: res.problemas, curvas, acessos: acessosQ,
+      ...(res.linhaCentral ? { linhaCentral: res.linhaCentral, estruturada: res.estruturada } : {}),
     };
     let num = 0;
     let nAreaLotes = 0;

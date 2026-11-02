@@ -16,6 +16,7 @@ import { carregarProjeto, perimetroDoServico, projetoInicial, salvarProjeto } fr
 import { COMANDOS, chaveDoLote, contextoDe, executar, lotesDaSelecao } from "../../lib/loteamento/acoes.ts";
 import { dentroPol } from "../../lib/loteamento/geom.ts";
 import { pontoInterno } from "../../lib/loteamento/auto.ts";
+import { fixarEstrutura } from "../../lib/loteamento/edicao.ts";
 import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { Passos, StatusSalvamento } from "../ui";
@@ -279,9 +280,36 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     setServico({ ...servico, status: "gerado" });
   }
 
+  /**
+   * "Fundo com fundo": a quadra virou estruturada. Calcula uma vez (a linha central
+   * automática e as cabeceiras escolhidas) e grava na estrutura — o recálculo fica
+   * rápido e repete o arranjo. Quadra que não é de duas fileiras não muda.
+   */
+  function concluirEstrutura(s: ReturnType<typeof executar>): ReturnType<typeof executar> {
+    if (!s.pr || s.estruturar === undefined || !res) return s;
+    const r1 = calc(s.pr);
+    const q1 = r1?.quadras.find((x) => x.cfg === s.estruturar);
+    if (!r1 || !q1?.estruturada) {
+      const motivo = q1?.problemas.find((x) => x.includes("linha central"));
+      return { msg: motivo ? `Quadra ${q1?.nome}: ${motivo}.` : "Essa quadra não fecha pela linha central: ela precisa de duas ruas que se olham (quadra de duas fileiras).", erro: true };
+    }
+    const avisos = (r: Resultado, nome: string) => r.lotes.filter((l) => l.quadra === nome && l.problemas.length).length;
+    const nomeAntes = s.sel && s.sel.tipo === "quadra" ? s.sel.nome : q1.nome;
+    const ar = q1.lotes.map((l) => l.area);
+    const mn = Math.min(...ar), mx = Math.max(...ar);
+    const areas = mx - mn < 0.05 ? `todos com ${fmt(mn)} m²` : `${fmt(mn)} a ${fmt(mx)} m² (a esquina absorve a cabeceira inclinada)`;
+    const giro = q1.estruturada.giroMax;
+    return {
+      ...s,
+      pr: fixarEstrutura(s.pr, r1, s.estruturar),
+      sel: { tipo: "quadra", nome: q1.nome },
+      msg: `Quadra ${q1.nome}: ${q1.lotes.length} lotes fundo com fundo pela linha central, ${areas}. Avisos da quadra: ${avisos(res, nomeAntes)} → ${avisos(r1, q1.nome)}. Laterais a até ${fmt(giro, 1)}° do esquadro da rua. Arraste a linha laranja para mudar as fileiras; Ctrl+Z desfaz.`,
+    };
+  }
+
   function rodarComando(texto: string) {
     if (!projeto || !res) return;
-    const s = executar(texto, projeto, res, sel);
+    const s = concluirEstrutura(executar(texto, projeto, res, sel));
     if (s.desfazer) { lembrarSelecao(); hist.desfazer(); }
     if (s.refazer) { lembrarSelecao("refazer"); hist.refazer(); }
     if (s.ajuda) setAjuda(true);
@@ -381,6 +409,19 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
           <div className="lot-centro">
             <Editor projeto={projeto} res={res} fuso={fuso} sel={sel} onSel={setSel} ferramenta={ferramenta} onFerramenta={setFerramenta}
               onMudar={mudar} onFimArraste={fimArraste} vista={vista} focar={focar} onMsg={(m) => mostrar(m)}
+              validarEstrutura={(p, cfg) => {
+                const r = calc(p);
+                const q = r?.quadras.find((x) => x.cfg === cfg);
+                if (!r || !q?.estruturada) return "a quadra deixaria de fechar pela linha central";
+                const e = q.estruturada;
+                if (e.cruzamentos > 0) return "as divisas se cruzariam";
+                if (e.avisos.some((a) => a.includes("não fechou"))) return "uma divisa não fecharia a área";
+                const n = p.quadras[cfg]?.estrutura?.lotes;
+                if (n && q.lotes.length !== n) return `sairiam ${q.lotes.length} lotes em vez de ${n}`;
+                if (q.lotes.some((l) => l.problemas.some((x) => x.includes("quinas")))) return "um lote ficaria com 5 quinas";
+                if (e.giroMax > 30) return `uma lateral sairia ${fmt(e.giroMax, 0)}° do esquadro da rua`;
+                return null;
+              }}
               redes={verRedes && infra ? { r: infra, camadas: camadasRedes } : null} />
             {verRedes && (
               <PainelRedes r={infra} camadas={camadasRedes} onCamadas={setCamadasRedes} onFechar={() => setVerRedes(false)}

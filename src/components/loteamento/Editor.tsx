@@ -18,7 +18,7 @@ import { cotaEm } from "../../lib/loteamento/terreno.ts";
 import type { Projeto } from "../../lib/loteamento/modelo.ts";
 import { adicionarArea, adicionarRua, chaveDoLote, editarRua, lotesDaSelecao, quadraDe } from "../../lib/loteamento/acoes.ts";
 import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
-import { alcasDoLote, cortarLotes, definirFrente, desenharLote, ladosRetos, linhasDeFundo, moverDivisa, moverLinhaDeFundo, moverPontoDeFundo, moverQuina, posicaoNoDesenho } from "../../lib/loteamento/edicao.ts";
+import { alcasDoLote, cortarLotes, definirFrente, desenharLote, ladosRetos, linhasDeFundo, moverDivisa, moverLinhaCentral, moverLinhaDeFundo, moverPontoDeFundo, moverQuina, naBordaDaQuadra, posicaoNoDesenho } from "../../lib/loteamento/edicao.ts";
 import { alternarAcesso } from "../../lib/loteamento/acoes.ts";
 import type { Rede, ResultadoInfra } from "../../lib/loteamento/infra/index.ts";
 import { DefsRedes, RedesGeo, RedesSimbolos } from "./Redes";
@@ -41,6 +41,11 @@ interface Props {
   onFerramenta: (f: Ferramenta) => void;
   /** transiente = durante um arraste (não entra no desfazer) */
   onMudar: (pr: Projeto, transiente?: boolean) => void;
+  /**
+   * A quadra estruturada (config `cfg`) fecha neste projeto? (sem lote cruzando, sem 5
+   * quinas, com todos os lotes) — o arraste da linha central vai até onde a quadra deixa.
+   */
+  validarEstrutura?: (pr: Projeto, cfg: number) => string | null;
   onFimArraste: () => void;
   vista: OpcoesVista;
   /** pedido externo de foco (comando "ir") */
@@ -66,7 +71,36 @@ type Arraste =
   /** linha de fundo inteira: desliza pela distância do cursor (na normal `n`) à posição inicial */
   | { tipo: "fundo"; espinha: Pt[]; p0: Pt; n: Pt; quadra: Quadra; pr0: Projeto; res0: Resultado }
   /** um ponto da linha de fundo: corre pela divisa dele */
-  | { tipo: "pontoFundo"; de: Pt; quadra: Quadra; pr0: Projeto; res0: Resultado };
+  | { tipo: "pontoFundo"; de: Pt; quadra: Quadra; pr0: Projeto; res0: Resultado }
+  /**
+   * LINHA CENTRAL da quadra estruturada: a ponta `i` corre pela rua da cabeceira (gira a
+   * linha) ou o ponto da junção corre pela divisa `guia` (pé na rua 1, junção, pé na rua 2)
+   */
+  | { tipo: "central"; modo: "ponta" | "guia"; i: number; guia?: Pt[]; C0: Pt[]; quadra: Quadra; pr0: Projeto; res0: Resultado; ultima?: Pt[] };
+
+/** A linha central com o ponto da junção J levado a V (se a linha já dobra em J, o ponto anda; senão nasce ali). */
+function linhaComPonto(C0: Pt[], J: Pt, V: Pt): Pt[] {
+  const C = C0.map((q) => [q[0], q[1]] as Pt);
+  for (let k = 1; k < C.length - 1; k++) if (dist(C[k], J) < 0.3) { C[k] = V; return C; }
+  let melhor = 1, dm = Infinity;
+  for (let k = 0; k + 1 < C.length; k++) { const d = distSegmento(J, C[k], C[k + 1]).d; if (d < dm) { dm = d; melhor = k + 1; } }
+  C.splice(melhor, 0, V);
+  return C;
+}
+
+/** Ponto do cursor levado à divisa (pé–junção–pé), sem chegar a 15% de cada rua. */
+function naGuia(g: Pt[], p: Pt): Pt {
+  const J = g[1];
+  let melhor = J, dm = dist(p, J);
+  for (const pe of [g[0], g[2]]) {
+    const d = sub(pe, J), l2 = dot(d, d);
+    const t = l2 ? Math.max(0, Math.min(0.85, dot(sub(p, J), d) / l2)) : 0;
+    const q = lerp(J, pe, t);
+    const dd = dist(p, q);
+    if (dd < dm) { dm = dd; melhor = q; }
+  }
+  return melhor;
+}
 
 const COR_LOTE = "#FFFDF5";
 
@@ -96,7 +130,7 @@ function corPorArea(a: number, min: number, max: number): string {
   return `hsl(${h} 85% ${l}%)`;
 }
 
-export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerramenta, onMudar, onFimArraste, vista, focar, onMsg, sobreposto, redes }: Props) {
+export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerramenta, onMudar, onFimArraste, vista, focar, onMsg, sobreposto, redes, validarEstrutura }: Props) {
   // divisão de imóvel: o contorno não recua (ver Parametros.bordaFixa)
   const bordaFixa = !!projeto.params.bordaFixa;
   const caixaRef = useRef<HTMLDivElement>(null);
@@ -332,7 +366,8 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
 
   /** Linha de fundo (fundo com fundo) da quadra ativa — com a quadra ou vários lotes selecionados. */
   const fundos = useMemo(
-    () => (quadraAtiva && (sel?.tipo === "quadra" || lotesSel.length >= 2) ? linhasDeFundo(projeto, quadraAtiva) : []),
+    // a quadra estruturada tem a LINHA CENTRAL dela (alças próprias); a linha de fundo antiga é só da desenhada
+    () => (quadraAtiva && !quadraAtiva.linhaCentral && (sel?.tipo === "quadra" || lotesSel.length >= 2) ? linhasDeFundo(projeto, quadraAtiva) : []),
     [quadraAtiva, sel, lotesSel.length, projeto],
   );
 
@@ -388,6 +423,24 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
           const q2 = tela(p);
           if (Math.hypot(q2[0] - pt[0], q2[1] - pt[1]) < 14) continue;
           out.push({ x: q2[0], y: q2[1], forma: "pfundo", acao: { tipo: "pontoFundo", de: p, quadra: quadraAtiva, pr0: projeto, res0: res }, titulo: "Arraste para dobrar a linha de fundo neste ponto — ele corre pela divisa (o lote da frente e o de trás se ajustam)" });
+        }
+      }
+      // LINHA CENTRAL da quadra estruturada (com a quadra ou lotes dela selecionados):
+      // losango em cada ponto (a ponta corre pela rua da cabeceira) e "+" no meio de cada trecho
+      const C = quadraAtiva.linhaCentral;
+      if (C && C.length >= 2 && (sel?.tipo === "quadra" || lotesSel.length >= 1)) {
+        // pontas que estão na rua da cabeceira: correm por ela (giram a linha)
+        for (const i of [0, C.length - 1]) {
+          if (dist(naBordaDaQuadra(quadraAtiva, C[i]), C[i]) > 0.5) continue;
+          const q2 = tela(C[i]);
+          out.push({ x: q2[0], y: q2[1], forma: "pfundo", acao: { tipo: "central", modo: "ponta", i, C0: C, quadra: quadraAtiva, pr0: projeto, res0: res },
+            titulo: "Ponta da linha central: arraste pela rua da cabeceira para girar a linha (os lotes se refazem fundo com fundo, com a mesma área)" });
+        }
+        // cada junção do fundo com fundo: o ponto corre pela divisa e a linha dobra ali
+        for (const g of quadraAtiva.estruturada?.divisas ?? []) {
+          const q2 = tela(g[1]);
+          out.push({ x: q2[0], y: q2[1], forma: "pfundo", acao: { tipo: "central", modo: "guia", i: -1, guia: g, C0: C, quadra: quadraAtiva, pr0: projeto, res0: res },
+            titulo: "Arraste pela divisa: a linha central dobra aqui — uma fileira fica mais funda e a outra mais rasa; ao soltar, as áreas se igualam" });
         }
       }
     }
@@ -602,6 +655,15 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         if (ed.erro) return;
         movido.current = true;
         onMudar(ed.pr, true);
+      } else if (a.tipo === "central") {
+        // linha central: a linha segue o cursor exatamente (cada fileira se iguala por si);
+        // a ponta que está na borda corre pela rua da cabeceira
+        let C: Pt[];
+        if (a.modo === "guia" && a.guia) C = linhaComPonto(a.C0, a.guia[1], naGuia(a.guia, p));
+        else { C = a.C0.map((q) => [q[0], q[1]] as Pt); C[a.i] = naBordaDaQuadra(a.quadra, p); }
+        a.ultima = C;
+        movido.current = true;
+        onMudar(moverLinhaCentral(a.pr0, a.res0, a.quadra, C, "vivo"), true);
       } else if (a.tipo === "vertice") {
         const r = a.pr0.ruas.find((x2) => x2.id === a.rua);
         if (!r) return;
@@ -638,6 +700,35 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       // clique simples: seleção
       const [x, y] = pos(e);
       selecionarNoPonto(x, y, e.shiftKey);
+      return;
+    }
+    if (a.tipo === "central" && a.ultima) {
+      // ao soltar: a dobra vai para a junção mais próxima e a linha desliza de lado até as
+      // áreas empatarem. Se a quadra não fecha assim, o ponto vai até onde ela deixa.
+      const C1 = a.ultima;
+      const cfgQ = a.quadra.cfg;
+      let msgFinal = "", motivo = "";
+      // ponto final do arraste (na divisa ou na rua), para recuar até onde a quadra deixa
+      const Vfim = a.modo === "guia" && a.guia ? (C1.find((q) => !a.C0.some((c) => dist(c, q) < 1e-6)) ?? a.guia[1]) : C1[a.i];
+      for (const f of [1, 0.75, 0.5, 0.25]) {
+        const Cf = a.modo === "guia" && a.guia
+          ? linhaComPonto(a.C0, a.guia[1], lerp(a.guia[1], Vfim, f))
+          : (() => { const c = a.C0.map((q) => [q[0], q[1]] as Pt); c[a.i] = naBordaDaQuadra(a.quadra, lerp(a.C0[a.i], Vfim, f)); return c; })();
+        const prF = moverLinhaCentral(a.pr0, a.res0, a.quadra, Cf, "ajustada");
+        const erro = validarEstrutura ? validarEstrutura(prF, cfgQ) : null;
+        if (erro) { motivo = motivo || erro; continue; }
+        onMudar(prF, true);
+        msgFinal = f < 1
+          ? `A linha foi até onde a quadra deixa (${Math.round(f * 100)}% do que você puxou): mais que isso, ${motivo}. Os lotes continuam fundo com fundo e com a mesma área.`
+          : "Linha central dobrada: uma fileira ficou mais funda ali e a linha deslizou de lado até todos os lotes terem a mesma área (Ctrl+Z desfaz).";
+        break;
+      }
+      if (!msgFinal) {
+        onMudar(a.pr0, true);
+        msgFinal = `Essa linha central não fecha: ${motivo || "a quadra não aceita essa dobra"}. Voltei para a anterior.`;
+      }
+      onFimArraste();
+      onMsg(msgFinal);
       return;
     }
     onFimArraste();
@@ -793,6 +884,17 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
             <polyline key={`fundo${i}`} points={e.map((p) => `${p[0]},${p[1]}`).join(" ")} fill="none" stroke="#D97706" strokeWidth={3.2}
               strokeOpacity={0.9} strokeDasharray="10 5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" pointerEvents="none" />
           ))}
+          {/* linha central das quadras estruturadas (fundo com fundo por construção) */}
+          {res.quadras.filter((q) => q.linhaCentral && q.linhaCentral.length >= 2).map((q) => {
+            const ativa = quadraAtiva?.nome === q.nome;
+            return (
+              <g key={`central${q.nome}`} pointerEvents="none">
+                <polyline points={q.linhaCentral!.map((p) => `${p[0]},${p[1]}`).join(" ")} fill="none" stroke="#D97706"
+                  strokeWidth={ativa ? 3.2 : 1.8} strokeOpacity={ativa ? 0.95 : 0.7} strokeDasharray={ativa ? "10 5" : "6 5"} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                {ativa && q.estruturada?.juncoes.map((j, k) => <circle key={k} cx={j[0]} cy={j[1]} r={2.2 / vv.s} fill="#D97706" />)}
+              </g>
+            );
+          })}
           {/* frente escolhida pelo operador (lote) e acesso marcado na quadra */}
           {res.lotes.flatMap((l) => l.lados.filter((x) => x.definida).map((x, i) => (
             <line key={`fd${l.id}${i}`} x1={x.a[0]} y1={x.a[1]} x2={x.b[0]} y2={x.b[1]} stroke="#D97706" strokeWidth={4} vectorEffect="non-scaling-stroke" strokeLinecap="round" />

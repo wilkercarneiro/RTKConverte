@@ -10,7 +10,7 @@ import type { Corte, Lote, Quadra, Resultado } from "./calculo.ts";
 import { paraPlano, paraUtm } from "./plano.ts";
 import { ROTULO_AREA, mudarLote, novoId } from "./modelo.ts";
 import {
-  acertarMedida, apagarLotes, desenharLote, dividirLote, igualarAreas, mudarDestino, posicaoNoDesenho, quadraDesenhada, unirComVizinho, unirLotes, voltarAoAutomatico,
+  acertarMedida, apagarLotes, desenharLote, dividirLote, igualarAreas, mudarDestino, pedirEstrutura, posicaoNoDesenho, quadraDesenhada, unirComVizinho, unirLotes, voltarAoAutomatico,
 } from "./edicao.ts";
 import type { Edicao } from "./edicao.ts";
 import type { AjusteLote, AreaDesenhada, Esquina, Parametros, Projeto, QuadraCfg, Rua, Sobra, TipoArea } from "./modelo.ts";
@@ -76,8 +76,9 @@ export function ajustarQuadra(pr: Projeto, res: Resultado, q: Quadra, patch: Par
   return comCfg(pr, res, q, (c) => {
     const novo = { ...c, ...patch };
     for (const k of Object.keys(patch) as (keyof QuadraCfg)[]) if (patch[k] === undefined) delete novo[k];
-    // mudar a regra de divisão é pedir ao sistema que divida de novo: o desenho à mão sai
-    if (["modo", "valor", "sobra", "fileiras", "fundo", "frentePrincipal"].some((k) => k in patch)) delete novo.lotes;
+    // mudar a regra de divisão é pedir ao sistema que divida de novo: o desenho à mão
+    // e a linha central saem
+    if (["modo", "valor", "sobra", "fileiras", "fundo", "frentePrincipal"].some((k) => k in patch)) { delete novo.lotes; delete novo.estrutura; }
     return novo;
   });
 }
@@ -263,6 +264,11 @@ export interface Saida {
   ajuda?: boolean;
   msg: string;
   erro?: boolean;
+  /**
+   * Quadra (índice da config) que acabou de virar estruturada pela linha central:
+   * a tela calcula uma vez e grava a linha e as cabeceiras escolhidas (`fixarEstrutura`).
+   */
+  estruturar?: number;
 }
 
 const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
@@ -276,6 +282,7 @@ export const COMANDOS: { cmd: string; exemplo: string; desc: string; contexto: (
   { cmd: "area", exemplo: "area 300", desc: "deixa o lote com esta área (a divisa desliza) · na quadra, divide em áreas iguais deste tamanho", contexto: ["lote", "quadra"] },
   { cmd: "unir", exemplo: "unir", desc: "une os lotes selecionados (um só: une ao vizinho de maior divisa)", contexto: ["lote"] },
   { cmd: "igualar", exemplo: "igualar", desc: "lotes selecionados da mesma quadra ficam com a mesma área (a soma dividida por igual; só as divisas entre eles deslizam)", contexto: ["lote"] },
+  { cmd: "fundo com fundo", exemplo: "fundo com fundo 26", desc: "refaz a quadra pela linha central: fundo com fundo alinhado, laterais no esquadro da rua e lotes com a mesma área (o número é a quantidade de lotes; sem ele fica a de hoje)", contexto: ["quadra", "lote"] },
   { cmd: "dividir", exemplo: "dividir 2", desc: "divide o lote em partes iguais, com as divisas na direção das laterais dele", contexto: ["lote"] },
   { cmd: "apagar", exemplo: "apagar", desc: "apaga o lote (a área fica livre para desenhar outro) · Delete", contexto: ["lote", "rua", "area"] },
   { cmd: "desenhar lote", exemplo: "desenhar lote", desc: "desenha um lote: clique as quinas, Enter fecha (L) · duplo clique na área livre rosa vira lote", contexto: ["nada", "lote", "quadra"] },
@@ -322,7 +329,8 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
   if (!bruto) return { msg: "" };
   const t = semAcento(bruto);
   const [cmd0, ...args] = t.split(/\s+/);
-  const cmd = cmd0.replace(/:$/, "");
+  // "fundo com fundo [N]" e "ajustar fundo com fundo" (o "fundo 25" sozinho é a linha de fundo da quadra automática)
+  const cmd = /^(ajustar\s+)?fundo\s+com\s+fundo\b/.test(t) ? "fundo-com-fundo" : cmd0.replace(/:$/, "");
   const a1 = args[0];
   // o número é o primeiro argumento numérico ("frente padrão 12" também vale)
   const n1 = num(args.find((x) => Number.isFinite(num(x))) ?? a1);
@@ -437,6 +445,16 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       if (!quadra) return precisa("a quadra (duplo clique num lote)");
       if (!Number.isFinite(n1) || n1 < 1) return numErr("qtd 8");
       return { pr: ajustarQuadra(pr, res, quadra, { modo: "quantidade", valor: Math.round(n1) }), msg: `Quadra ${quadra.nome}: ${Math.round(n1)} lotes por fileira.` };
+    }
+    case "fundo-com-fundo": case "fundocomfundo": case "estruturar": case "linha-central": {
+      // "fundo com fundo [N]": a quadra (ou a quadra dos lotes selecionados) passa a ser
+      // gerada da linha central — fundo com fundo por construção, áreas iguais
+      const qF = quadra ?? (lotes.length && new Set(lotes.map((l) => l.quadra)).size === 1 ? quadraDe(res, lotes[0].quadra) : undefined);
+      if (!qF) return precisa("a quadra (duplo clique num lote) ou lotes de uma quadra só");
+      const nF = Number.isFinite(n1) && n1 >= 4 ? Math.round(n1) : undefined;
+      const esqF = args.includes("iguais") ? "iguais" as const : args.includes("absorver") ? "absorver" as const : undefined;
+      const { pr: prF, i } = pedirEstrutura(pr, res, qF, { lotes: nF, esquinas: esqF });
+      return { pr: prF, estruturar: i, sel: { tipo: "quadra", nome: qF.nome }, msg: `Quadra ${qF.nome} ajustada fundo com fundo pela linha central.` };
     }
     case "igualar": case "equalizar": case "iguais": {
       // vários lotes selecionados: a soma deles dividida por igual (só as divisas entre eles andam)

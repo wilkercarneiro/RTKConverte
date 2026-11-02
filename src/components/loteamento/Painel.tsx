@@ -188,10 +188,16 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
             const umaQuadra = new Set(lotes.map((l) => l.quadra)).size === 1;
             const media = lotes.reduce((s, l) => s + l.area, 0) / lotes.length;
             return (
-              <button className="principal lot-igualar" disabled={!umaQuadra} onClick={() => onComando("igualar")}
-                title={umaQuadra ? `Todos ficam com ${fmt(media)} m² (a soma dividida por igual). Só as divisas entre eles deslizam — a divisa que vai de rua a rua anda inteira, e o fundo com fundo continua alinhado.` : "Selecione lotes de uma quadra só"}>
-                Igualar áreas · {fmt(media)} m² cada
-              </button>
+              <>
+                <button className="principal lot-igualar" disabled={!umaQuadra} onClick={() => onComando("igualar")}
+                  title={umaQuadra ? `Todos ficam com ${fmt(media)} m² (a soma dividida por igual). Só as divisas entre eles deslizam — a divisa que vai de rua a rua anda inteira, e o fundo com fundo continua alinhado.` : "Selecione lotes de uma quadra só"}>
+                  Igualar áreas · {fmt(media)} m² cada
+                </button>
+                <button className="lot-igualar" disabled={!umaQuadra} onClick={() => onComando("fundo com fundo")}
+                  title={umaQuadra ? "Refaz a quadra inteira pela linha central: fundo com fundo alinhado, laterais no esquadro da rua e todos os lotes com a mesma área (Ctrl+Z desfaz)" : "Selecione lotes de uma quadra só"}>
+                  Ajustar fundo com fundo (quadra {lotes[0].quadra})
+                </button>
+              </>
             );
           })()}
           <div className="lot-linha">
@@ -216,6 +222,47 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
             <div><b>{quadra.fileiras}</b><span>fileira{quadra.fileiras === 1 ? "" : "s"}</span></div>
           </div>
           {quadra.problemas.map((x) => <p key={x} className="lot-aviso">{x}</p>)}
+          {quadra.estruturada ? (() => {
+            const e = quadra.estruturada;
+            const nomeCab: Record<string, string> = { direta: "esquina", ponta: "ponta de fileira única", testa: "lotes de frente para a rua da ponta" };
+            const cfgQ = projeto.quadras[quadra.cfg]?.estrutura;
+            const iguais = Math.abs(e.T1 - e.T2) < 0.01;
+            return (
+              <>
+                <p className="lot-dica">
+                  <b>Linha central</b> (em laranja): fundo com fundo alinhado e laterais no esquadro da rua — até {fmt(e.giroMax, 1)}°.
+                  {" "}{iguais ? `Lotes de ${fmt(e.T1)} m²` : `Fileiras com ${fmt(e.T1)} e ${fmt(e.T2)} m²`}; cabeceiras: {e.cabeceiras.map((c) => nomeCab[c] ?? c).join(" e ")}.
+                  <Dica>Arraste os losangos laranja para dobrar a linha central; a ponta da linha corre pela rua da cabeceira. Ao soltar, a linha só desliza de lado até as áreas empatarem — os ângulos ficam os seus. Mexer à mão num lote (quina ou divisa) volta a quadra para o desenho livre.</Dica>
+                </p>
+                <div className="lot-linha">
+                  <label>Lotes na quadra</label>
+                  <div className="lot-botoes">
+                    <button onClick={() => onComando(`fundo com fundo ${quadra.lotes.length - 2}`)} title="Dois lotes a menos (um em cada fileira)">−2</button>
+                    <button onClick={() => onComando(`fundo com fundo ${quadra.lotes.length + 2}`)} title="Dois lotes a mais (um em cada fileira)">+2</button>
+                  </div>
+                </div>
+                <div className="lot-linha">
+                  <label>Cabeceira inclinada</label>
+                  <select value={cfgQ?.esquinas ?? "absorver"} onChange={(ev) => onComando(`fundo com fundo ${quadra.lotes.length} ${ev.target.value === "iguais" ? "iguais" : "absorver"}`)}>
+                    <option value="absorver">a esquina absorve (laterais no esquadro)</option>
+                    <option value="iguais">todos iguais (laterais giram um pouco)</option>
+                  </select>
+                </div>
+                <div className="lot-botoes">
+                  <button onClick={() => onComando("fundo com fundo")} title="Recalcula a linha central automática (equidistante das ruas, empatando as fileiras)">Linha automática</button>
+                  <button onClick={() => onComando("automatico")} title="A quadra volta a ser dividida pelo gerador">Voltar ao automático</button>
+                </div>
+              </>
+            );
+          })() : null}
+          {!quadra.estruturada && (
+            <div className="lot-botoes">
+              <button className="principal" onClick={() => onComando("fundo com fundo")}
+                title="Refaz a quadra pela linha central: fundo com fundo alinhado, laterais no esquadro da rua e todos os lotes com a mesma área. Vale também para a quadra desenhada à mão (Ctrl+Z desfaz).">
+                Ajustar fundo com fundo
+              </button>
+            </div>
+          )}
           {quadraDesenhada(projeto, quadra, res.plano) && (
             <>
               <p className="lot-dica"><b>Quadra desenhada à mão</b> — o sistema não a redivide. Mudar a divisão abaixo (ou "Voltar ao automático") descarta o desenho.</p>
@@ -225,6 +272,8 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
               </div>
             </>
           )}
+          {/* divisão automática: não vale para a quadra estruturada pela linha central */}
+          {!quadra.estruturada && (<>
           <div className="lot-linha">
             <label>Divisão</label>
             <select value={quadra.modo} onChange={(e) => {
@@ -265,6 +314,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
               <CampoNum valor={quadra.fundo.valor} sufixo="m da rua" onAplicar={(v) => onMudar(ajustarQuadra(projeto, res, quadra, { fundo: v }))} />
             </div>
           )}
+          </>)}
           <div className="lot-linha">
             <label>Nome</label>
             <input defaultValue={quadra.nome} key={quadra.nome} onBlur={(e) => {
