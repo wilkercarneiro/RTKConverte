@@ -190,12 +190,12 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
             return (
               <>
                 <button className="principal lot-igualar" disabled={!umaQuadra} onClick={() => onComando("igualar")}
-                  title={umaQuadra ? `Todos ficam com ${fmt(media)} m² (a soma dividida por igual). Só as divisas entre eles deslizam — a divisa que vai de rua a rua anda inteira, e o fundo com fundo continua alinhado.` : "Selecione lotes de uma quadra só"}>
+                  title={umaQuadra ? `Todos ficam com ${fmt(media)} m² (a soma dividida por igual). A terra dos selecionados é redividida só entre eles, com as laterais no esquadro da rua (ou acompanhando as pontas) e o fundo com fundo alinhado — os lotes de fora não mudam (Ctrl+Z desfaz).` : "Selecione lotes de uma quadra só"}>
                   Igualar áreas · {fmt(media)} m² cada
                 </button>
                 <button className="lot-igualar" disabled={!umaQuadra} onClick={() => onComando("fundo com fundo")}
-                  title={umaQuadra ? "Refaz a quadra inteira pela linha central: fundo com fundo alinhado, laterais no esquadro da rua e todos os lotes com a mesma área (Ctrl+Z desfaz)" : "Selecione lotes de uma quadra só"}>
-                  Ajustar fundo com fundo (quadra {lotes[0].quadra})
+                  title={umaQuadra ? "Só os lotes selecionados: a área total deles é redividida entre eles, fundo com fundo pela linha central, laterais no esquadro da rua e a mesma área. Os outros lotes da quadra não mudam (Ctrl+Z desfaz). Para a quadra inteira, selecione a quadra (duplo clique)." : "Selecione lotes de uma quadra só"}>
+                  Ajustar fundo com fundo · {lotes.length} lotes
                 </button>
               </>
             );

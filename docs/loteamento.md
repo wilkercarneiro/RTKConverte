@@ -163,6 +163,33 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - O memorial e o quadro trazem frente, laterais, fundos e a **curva de concordância** à parte.
 - **Edição livre.** Nada é recusado: o que sair das medidas vira aviso no lote (vermelho no desenho e na coluna da esquerda).
 
+### Igualar áreas e fundo com fundo com lotes selecionados (02/11/2026)
+
+Com vários lotes selecionados, **Igualar áreas** e **Ajustar fundo com fundo · N lotes** redividem a terra dos selecionados só entre eles (`src/lib/loteamento/rearranjo.ts`):
+
+- O contorno da união dos selecionados não muda. Os lotes de fora ficam exatamente como estavam, e todos os selecionados saem com a mesma área.
+- **Duas fileiras** (a seleção encosta em duas ruas que se olham). Concorrem dois arranjos:
+  - o motor da linha central dentro da seleção, com as pontas nas divisas dos vizinhos ("direta"); a ponta da linha vai para a quina do degrau do vizinho;
+  - faixas de rua a rua (paralelas às pontas, em leque ou no esquadro), em que a junção de cada par parte a faixa em duas metades iguais. Esse arranjo é para quando as pontas da seleção são muito inclinadas.
+  - Nos dois, cada lote encosta o fundo em um só lote da outra fileira, sem junção em "T".
+- **Uma fileira.** Os cortes vão da rua até o fundo, achados pela área acumulada (exata). A direção é a de melhor forma entre esquadro da rua, paralelas (média das pontas) e leque. Se a fileira de trás tem a mesma quantidade de lotes, cada lateral termina numa junção dela, e o fundo com fundo se mantém sem mexer nos de trás.
+- **Régua da escolha.** Pesam quinas, desvio do esquadro, laterais não paralelas, proporção fundo/frente, linha central em zigue-zague e lote fora das medidas do projeto.
+  - Se todos iguais obrigaria um lote a sair com testada abaixo da mínima (ponta muito inclinada), o comando avisa.
+  - Nesse caso, o igualar volta ao jeito antigo: as divisas deslizam, ou iguala por partes.
+- A quina a mais que o degrau do vizinho de fora traz vai para algum lote da ponta, e o lote fica com aviso.
+
+### Geração já ajustada (02/11/2026)
+
+- Depois de traçar as ruas, `estruturarQuadras` (auto.ts) refaz cada quadra de duas fileiras pela linha central.
+  - Fica só a que não perde lote, não ganha aviso e não deixa sobra.
+  - Com quantidade ímpar de lotes, tenta um lote a mais.
+- A nota da linha central (`notaDe`) pesa o lote comprido demais (`alongamento` acima de 3×, ao quadrado). Isso tira os lotes-tira da "testa" na cabeceira.
+  - Lote faltando pesa mais que qualquer forma.
+  - Com 5 quinas na linha automática, tenta a linha mais reta.
+- **Área verde:** sempre no ponto do terreno mais afastado das estradas (`valorDosLotes`: a distância manda, o relevo só desempata). O retalho perto da estrada não vira verde: é somado aos lotes vizinhos.
+- **Institucional:** cresce a partir do lote mais perto do centro da gleba (centroide, ou ponto interno se a gleba for em "L"), sempre pelo vizinho mais central, num terreno só.
+- Lote com frente acima do máximo (a cunha na ponta da fileira) é igualado com os vizinhos da fileira pelo mesmo rearranjo, e só fica se a planta melhora. Antes ele "sumia" virando área verde.
+
 ## Como funciona por dentro
 
 - **Projeto = intenção.** A tabela `loteamentos` (migração 0021) guarda só parâmetros, ruas, áreas e ajustes. Quadras e lotes **nunca** são gravados: `calcular()` (`src/lib/loteamento/calculo.ts`) refaz tudo a cada mudança, em cerca de 10 ms para 200 lotes e 130 ms para 2.000. É isso que faz o resto se ajustar quando um lote, uma rua ou um parâmetro muda.
@@ -203,4 +230,10 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
   - nomes da locação iguais aos do memorial;
   - DXF/KML bem formados;
   - quadra "beliscada" por rua sobre vértice.
+- **`tests/rearranjo.test.mjs`** cobre:
+  - igualar e fundo com fundo nos lotes selecionados: iguais, de fora intactos, sem junção em "T";
+  - recusa de seleção solta;
+  - geração com as quadras pela linha central e sem erro;
+  - verde longe da estrada e institucional no centro;
+  - os casos reais do EDILSON (pontas inclinadas na C, cabeceira da D sem lote-tira).
 - **`npm run test:rls`** cobre o isolamento da tabela `loteamentos` entre escritórios.

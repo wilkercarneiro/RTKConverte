@@ -13,6 +13,7 @@ import {
   acertarMedida, apagarLotes, desenharLote, dividirLote, igualarAreas, mudarDestino, pedirEstrutura, posicaoNoDesenho, quadraDesenhada, unirComVizinho, unirLotes, voltarAoAutomatico,
 } from "./edicao.ts";
 import type { Edicao } from "./edicao.ts";
+import { rearranjarSelecao } from "./rearranjo.ts";
 import type { AjusteLote, AreaDesenhada, Esquina, Parametros, Projeto, QuadraCfg, Rua, Sobra, TipoArea } from "./modelo.ts";
 
 /** Lote identificado pela posição (sobrevive à renumeração). */
@@ -451,6 +452,13 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       // gerada da linha central — fundo com fundo por construção, áreas iguais
       const qF = quadra ?? (lotes.length && new Set(lotes.map((l) => l.quadra)).size === 1 ? quadraDe(res, lotes[0].quadra) : undefined);
       if (!qF) return precisa("a quadra (duplo clique num lote) ou lotes de uma quadra só");
+      // vários lotes (não a quadra inteira): só eles se rearranjam, dentro da terra deles
+      if (!quadra && lotes.length >= 2 && lotes.length < qF.lotes.length) {
+        const ed = rearranjarSelecao(pr, res, qF, lotes.map((l) => posicaoNoDesenho(pr, res, l)), "fundo");
+        if (ed.erro) return { msg: ed.msg, erro: true };
+        const avR = conferirMedida(p, "area", lotes.reduce((s2, l) => s2 + l.area, 0) / lotes.length);
+        return { pr: ed.pr, sel: selDe(ed, lotes), msg: avR ? `${ed.msg} Atenção: ${avR}` : ed.msg };
+      }
       const nF = Number.isFinite(n1) && n1 >= 4 ? Math.round(n1) : undefined;
       const esqF = args.includes("iguais") ? "iguais" as const : args.includes("absorver") ? "absorver" as const : undefined;
       const { pr: prF, i } = pedirEstrutura(pr, res, qF, { lotes: nF, esquinas: esqF });
@@ -462,7 +470,11 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
         if (lotes.length < 2) return precisa("dois ou mais lotes vizinhos da mesma quadra (Shift + clique em cada um)");
         if (new Set(lotes.map((l) => l.quadra)).size > 1) return { msg: "Só dá para igualar lotes da mesma quadra — selecione os lotes de uma quadra só.", erro: true };
         const qI = quadraDe(res, lotes[0].quadra)!;
-        const ed = igualarAreas(pr, res, qI, lotes.map((l) => posicaoNoDesenho(pr, res, l)));
+        // redivide a terra dos selecionados entre eles (forma boa, fundo com fundo);
+        // se o contorno não deixa, as divisas entre eles só deslizam (o jeito antigo)
+        const posI = lotes.map((l) => posicaoNoDesenho(pr, res, l));
+        const novo = rearranjarSelecao(pr, res, qI, posI, "igualar");
+        const ed = novo.erro ? igualarAreas(pr, res, qI, posI) : novo;
         if (!ed) return { msg: "Não consegui igualar estes lotes.", erro: true };
         if (ed.erro) return { msg: ed.msg, erro: true };
         const avI = conferirMedida(p, "area", lotes.reduce((s2, l) => s2 + l.area, 0) / lotes.length);

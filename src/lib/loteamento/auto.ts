@@ -14,6 +14,8 @@ import type { Perimetro, Resultado } from "./calculo.ts";
 import { criarPlano, paraPlano, paraUtm } from "./plano.ts";
 import { ehAcesso, novoId } from "./modelo.ts";
 import { cotaEm, declividadeEm, depressaoEm, gradeDoPerimetro } from "./terreno.ts";
+import { rearranjarSelecao } from "./rearranjo.ts";
+import { posicaoNoDesenho } from "./edicao.ts";
 import type { AreaDesenhada, Projeto, QuadraCfg, Rua } from "./modelo.ts";
 
 export interface Proposta {
@@ -414,6 +416,56 @@ export interface OpcoesGerar {
   angulo?: number;
   /** reservar área verde/institucional automaticamente */
   reservarAreas?: boolean;
+  /** quadras de duas fileiras já saem fundo com fundo pela linha central (padrão: sim) */
+  estruturar?: boolean;
+}
+
+/**
+ * A planta já sai ajustada: cada quadra de duas fileiras é refeita pela linha
+ * central (fundo com fundo, laterais no esquadro da rua, áreas iguais). Fica a
+ * que não perde lote e não ganha aviso; as outras continuam como o gerador fez.
+ */
+export function estruturarQuadras(pr0: Projeto, perimetro: Perimetro): Projeto {
+  let pr = pr0;
+  let res = calcular(pr, perimetro);
+  const ruins = (r: Resultado, nome: string) => r.lotes.filter((l) => l.quadra === nome && l.problemas.length).length;
+  const nomes = res.quadras.filter((q) => q.fileiras >= 2 && q.lotes.length >= 4 && !q.estruturada).map((q) => q.nome);
+  for (const nome of nomes) {
+    const q = res.quadras.find((x) => x.nome === nome);
+    if (!q) continue;
+    const quadras = pr.quadras.slice();
+    let i = q.cfg;
+    const base0: QuadraCfg = i >= 0 && quadras[i] ? { ...quadras[i] } : { ancora: paraUtm(res.plano, ancoraDaQuadra(q)), ajustes: [] };
+    if (base0.lotes || base0.destino || base0.estrutura) continue;
+    if (i < 0 || !quadras[i]) { quadras.push(base0); i = quadras.length - 1; }
+    // fundo com fundo pede contagem par nas fileiras: quantidade ímpar tenta um lote a mais
+    let achou: { base: QuadraCfg; r1: Resultado; q1: Resultado["quadras"][number] } | null = null;
+    for (const N of q.lotes.length % 2 ? [q.lotes.length, q.lotes.length + 1] : [q.lotes.length]) {
+      const base: QuadraCfg = { ...base0, ajustes: [], estrutura: { lotes: N, cabeceiras: ["auto", "auto"], esquinas: "absorver" } };
+      quadras[i] = base;
+      const r1 = calcular({ ...pr, quadras }, perimetro);
+      const q1 = r1.quadras.find((x) => x.cfg === i);
+      if (!q1?.estruturada || q1.estruturada.cruzamentos > 0 || q1.lotes.length < q.lotes.length) continue;
+      if (ruins(r1, q1.nome) > ruins(res, nome) || r1.quadro.sobras > res.quadro.sobras + 1) continue;
+      achou = { base, r1, q1 };
+      break;
+    }
+    if (!achou) continue;
+    const { base, r1, q1 } = achou;
+    // grava a linha que o cálculo escolheu (o recálculo repete o arranjo, rápido)
+    quadras[i] = {
+      ...base,
+      estrutura: {
+        ...base.estrutura,
+        linhaCentral: q1.linhaCentral!.map((x) => paraUtm(r1.plano, x)),
+        cabeceiras: q1.estruturada!.cabeceiras.length === 2 ? [q1.estruturada!.cabeceiras[0] as "direta", q1.estruturada!.cabeceiras[1] as "direta"] : ["auto", "auto"],
+        lotes: q1.lotes.length,
+      },
+    };
+    pr = { ...pr, quadras };
+    res = calcular(pr, perimetro);
+  }
+  return pr;
 }
 
 export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGerar = {}): Proposta[] {
@@ -568,6 +620,8 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
   for (const c of porAngulo.slice(0, quantas)) {
     let projeto = montar(c.eixos);
     projeto = nomearRuas(projeto, plano, c.ang);
+    // a planta já sai ajustada: quadra de duas fileiras fundo com fundo pela linha central
+    if (op.estruturar !== false) projeto = estruturarQuadras(projeto, perimetro);
     if (op.reservarAreas !== false) projeto = reservarAreas(projeto, perimetro);
     const resultado = calcular(projeto, perimetro);
     const g = resultado.quadro.gleba;
@@ -616,6 +670,19 @@ const coberto = (res: Resultado, s: Poligono) => {
   return res.areas.some((a) => a.pols.some((pol) => dentroPol(pt, pol)));
 };
 
+/**
+ * O retalho fica na metade da gleba mais afastada das estradas? Só ali ele vira
+ * área verde (regra do Wilker: o verde fica no ponto mais longe das estradas); perto
+ * delas o retalho é somado aos lotes vizinhos. Sem estrada, qualquer um serve.
+ */
+function longeDaEstrada(res: Resultado, pg: Poligono): boolean {
+  const vias = res.ladosGleba.filter((l) => ehAcesso(l.tipo));
+  if (!vias.length) return true;
+  const dV = (q: Pt) => Math.min(...vias.map((v) => distSegmentoAuto(q, v.a, v.b)));
+  const dMax = Math.max(...res.gleba.ext.map(dV));
+  return dV(pontoInterno(pg)) >= 0.5 * dMax;
+}
+
 /** O lote encosta numa área verde? (verde cresce colado, num perímetro só) */
 const perimetroDe = (pg: Poligono) => pg.ext.reduce((s2, q, i) => s2 + dist(q, pg.ext[(i + 1) % pg.ext.length]), 0);
 /** Divide divisa (5 m ou mais) com a área verde — tocar num canto não é encostar. */
@@ -648,7 +715,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
     const novas: AreaDesenhada[] = [];
     for (const s of uniao(res.sobras.map((x) => ({ ext: x.ext, furos: [] })))) {
       // só o retalho que é praça de verdade; nesga não é área verde
-      if (!verdeValida([s]) || coberto(res, s)) continue;
+      if (!verdeValida([s]) || coberto(res, s) || !longeDaEstrada(res, s)) continue;
       novas.push({ id: novoId("autov"), tipo: "verde", nome: "", anel: s.ext.map((q) => paraUtm(plano, q)) });
     }
     if (!novas.length) break;
@@ -683,17 +750,19 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
   //    (se a quadra central não basta, continua na vizinha mais próxima)
   res = calcular(pr, perimetro, { manterSobras: true }); // lotes e metas do cálculo completo (o da planta)
   let faltaInst = (p.pctInstitucionalMin / 100) * G - res.quadro.institucional;
-  let referencia = centroide(res.gleba.ext);
+  // o ponto mais central do terreno (o centroide; numa gleba em "L" ele cai fora: o ponto interno)
+  const cg = centroide(res.gleba.ext);
+  const referencia = dentroPol(cg, res.gleba) ? cg : pontoInterno(res.gleba);
   const usadas = new Set<string>();
+  const dLote = (l: Resultado["lotes"][number]) => dist(centroide(l.pol.ext), referencia);
   for (let rodada = 0; faltaInst > 1 && rodada < 10; rodada++) {
-    // quadra de duas fileiras dá terreno compacto (o equipamento precisa de
-    // largura); faixa de uma fileira só serve se não houver outra
-    const ord = [...res.quadras].filter((q) => q.lotes.length >= 2 && !usadas.has(q.nome))
-      .sort((a, b) => (b.fileiras >= 2 ? 1 : 0) - (a.fileiras >= 2 ? 1 : 0) || dist(a.centro, referencia) - dist(b.centro, referencia));
+    // a quadra que chega mais perto do centro; a de duas fileiras (terreno compacto,
+    // o equipamento precisa de largura) ganha se estiver quase tão perto
+    const perto = (q: Resultado["quadras"][number]) => Math.min(...q.lotes.map(dLote)) - (q.fileiras >= 2 ? 30 : 0);
+    const ord = [...res.quadras].filter((q) => q.lotes.length >= 2 && !usadas.has(q.nome)).sort((a, b) => perto(a) - perto(b));
     const q = ord[0];
     if (!q) break;
     usadas.add(q.nome);
-    referencia = q.centro;
     // a config da quadra é UMA: se a quadra já tem ajustes (área verde), soma neles
     const cfgs = quadrasCfg.map((c) => ({ ...c, ajustes: [...c.ajustes] }));
     let cfg = q.cfg >= 0 ? cfgs[q.cfg] : undefined;
@@ -702,16 +771,22 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
     if (total <= faltaInst * 1.15 && !cfg.ajustes.length) {
       cfg.destino = "institucional";
     } else {
-      // fileira 0 a partir do início, depois a fileira 1 na mesma ponta, até cobrir a meta
-      const fil0 = q.lotes.filter((l) => l.fileira === 0).sort((a, b) => a.indice - b.indice);
-      const fil1 = q.lotes.filter((l) => l.fileira === 1).sort((a, b) => b.indice - a.indice);
+      // cresce a partir do lote mais perto do centro, sempre pelo vizinho (divisa de 3 m
+      // ou mais) mais central — um terreno só, compacto, no meio do loteamento
+      const livres = q.lotes.filter((l) => !cfg!.ajustes.some((a) => a.destino && a.fileira === l.fileira && a.indice === Math.floor(l.indice + 1e-9)));
+      const grupo: typeof livres = [];
       let soma2 = 0;
-      for (let k = 0; soma2 < faltaInst && (k < fil0.length || k < fil1.length); k++) {
-        for (const l of [fil0[k], fil1[k]]) {
-          if (!l || soma2 >= faltaInst) continue;
-          cfg.ajustes.push({ fileira: l.fileira, indice: Math.floor(l.indice + 1e-9), destino: "institucional" });
-          soma2 += l.area;
-        }
+      const encosta = (l: (typeof livres)[number]) => grupo.some((g) => {
+        const u = uniaoFechada([g.pol, l.pol]);
+        return u.length === 1 && (perimetroDe(g.pol) + perimetroDe(l.pol) - perimetroDe(u[0])) / 2 >= 3;
+      });
+      while (soma2 < faltaInst) {
+        const cands = livres.filter((l) => !grupo.includes(l) && (!grupo.length || encosta(l)));
+        if (!cands.length) break;
+        const l = cands.reduce((m, x) => (dLote(x) < dLote(m) ? x : m), cands[0]);
+        grupo.push(l);
+        soma2 += l.area;
+        cfg.ajustes.push({ fileira: l.fileira, indice: Math.floor(l.indice + 1e-9), destino: "institucional" });
       }
     }
     quadrasCfg = cfgs;
@@ -724,7 +799,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
   //    — marcados por um ponto, sem redesenhar: assim nenhuma quadra muda de
   //    forma e as reservas já feitas (presas à posição do lote) continuam certas
   res = calcular(pr, perimetro, { rapido: true });
-  const marcas = semVerde ? [] : res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
+  const marcas = semVerde ? [] : res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s) && longeDaEstrada(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
   if (marcas.length) pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...marcas] };
 
   // 5. o que ainda ficou abaixo do mínimo (retalho com frente) vira área verde —
@@ -735,7 +810,7 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
     // o cálculo completo testa outras frentes nas quadras difíceis e pode
     // soltar retalho que o rápido não via: ele também vira área verde
     if (!semVerde) {
-      const novas = res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
+      const novas = res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s) && longeDaEstrada(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
       if (novas.length) { pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...novas] }; res = calcular(pr, perimetro, { manterSobras: true }); }
     }
     // só o que está ABAIXO das regras (área, frente, sem frente); o que passa do
@@ -767,11 +842,39 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
     }
     pr = { ...pr, quadras: cfgs };
   }
+  // 5b. lote fora das medidas (cunha na ponta da fileira, frente acima do máximo):
+  //     antes ele "sumia" virando área verde, mas o verde agora fica sempre no
+  //     ponto mais longe das estradas. Ele e os vizinhos da fileira dividem a terra
+  //     deles por igual (o mesmo "Igualar áreas" da prancheta). Só fica se melhora.
+  {
+    res = calcular(pr, perimetro);
+    const ruinsDe = (r: Resultado) => r.lotes.filter((l) => l.problemas.length).length + 3 * r.problemas.filter((x) => x.nivel === "erro").length;
+    const largos = res.lotes.filter((l) => l.frente > p.frenteMax * 1.03 && !l.esquina && !l.manual);
+    for (const l0 of largos) {
+      const l = res.lotes.find((x) => x.quadra === l0.quadra && x.fileira === l0.fileira && Math.abs(x.indice - l0.indice) < 1e-9);
+      const q = l && res.quadras.find((x) => x.nome === l.quadra);
+      if (!l || !q || q.estruturada) continue;
+      const fila = q.lotes.filter((x) => x.fileira === l.fileira).sort((a, b) => a.indice - b.indice);
+      const k = fila.indexOf(l);
+      let feito = false;
+      for (const tam of [3, 4, 5, 2]) {
+        for (let ini = Math.max(0, k - tam + 1); ini <= k && !feito; ini++) {
+          const grupo = fila.slice(ini, ini + tam);
+          if (grupo.length < 2 || !grupo.includes(l)) continue;
+          const ed = rearranjarSelecao(pr, res, q, grupo.map((x) => posicaoNoDesenho(pr, res, x)), "igualar");
+          if (ed.erro) continue;
+          const r2 = calcular(ed.pr, perimetro);
+          if (ruinsDe(r2) < ruinsDe(res) && r2.lotes.length >= res.lotes.length) { pr = ed.pr; res = r2; feito = true; }
+        }
+        if (feito) break;
+      }
+    }
+  }
   // 6. fechamento: o retalho que ainda ficou e é praça de verdade vira área verde
   //    (a planta não sai com área rosa que podia ser praça)
   if (!semVerde) {
     res = calcular(pr, perimetro, { manterSobras: true });
-    const novas = res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
+    const novas = res.sobras.filter((s) => verdeValida([s]) && !coberto(res, s) && longeDaEstrada(res, s)).map((s) => ({ ponto: paraUtm(plano, pontoInterno(s)), tipo: "verde" as const }));
     if (novas.length) pr = { ...pr, sobrasPublicas: [...(pr.sobrasPublicas ?? []), ...novas] };
   }
   return pr;
@@ -807,12 +910,13 @@ export function valorDosLotes(res: Resultado, pr: Projeto, perimetro: Perimetro)
     const s = Math.min(1, x.dec / 30);                          // íngreme = 1
     const b = Math.max(0, Math.min(1, x.dep / 2));              // buraco = 1
     const longe = vias.length ? x.dVia / dMax : 0.5;            // longe do acesso = 1
-    const v = relevo
-      ? 0.4 * z + 0.25 * (1 - s) + 0.15 * (1 - b) + 0.2 * (1 - longe)
-      : 1 - longe;
-    // lote fora das faixas (cunha rasa na ponta da quadra, tira funda) vale
-    // pouco no mercado: é ele que deve virar área verde antes do lote bom
-    const desarmonico = x.l.problemas.length > 0 ? 0.35 : 1;
+    // regra do Wilker (02/11): a área verde fica SEMPRE no ponto do terreno mais
+    // afastado das estradas — a distância manda; o relevo só desempata
+    const v = vias.length
+      ? 0.9 * (1 - longe) + (relevo ? 0.1 * (0.5 * z + 0.3 * (1 - s) + 0.2 * (1 - b)) : 0)
+      : relevo ? 0.4 * z + 0.25 * (1 - s) + 0.15 * (1 - b) + 0.2 : 0.5;
+    // lote fora das faixas vale um pouco menos (desempate), sem puxar o verde para perto da estrada
+    const desarmonico = x.l.problemas.length > 0 ? 0.95 : 1;
     out.set(x.l.id, Math.max(0, Math.min(1, v)) * desarmonico);
   }
   return out;

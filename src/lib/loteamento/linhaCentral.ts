@@ -780,12 +780,12 @@ export function montar(E: Estrutura, cfg: Config): Layout {
     let W0 = 0, W1 = 0;
     if (modo1 === "direta") {
       let lo = 0, hi = F.C.L;
-      for (let i = 0; i < 50; i++) { const m = (lo + hi) / 2; if (Math.min(perp1(F, m), perp2(F, m)) < T) lo = m; else hi = m; }
+      for (let i = 0; i < 50 && hi - lo > 1e-5; i++) { const m = (lo + hi) / 2; if (Math.min(perp1(F, m), perp2(F, m)) < T) lo = m; else hi = m; }
       W0 = perp1(F, lo) - perp2(F, lo);
     }
     if (modo2 === "direta") {
       let lo = 0, hi = F.C.L;
-      for (let i = 0; i < 50; i++) { const m = (lo + hi) / 2; if (Math.min(S1 - perp1(F, m), S2 - perp2(F, m)) > T) lo = m; else hi = m; }
+      for (let i = 0; i < 50 && hi - lo > 1e-5; i++) { const m = (lo + hi) / 2; if (Math.min(S1 - perp1(F, m), S2 - perp2(F, m)) > T) lo = m; else hi = m; }
       W1 = (S1 - perp1(F, hi)) - (S2 - perp2(F, hi));
     }
     return { W0, W1 };
@@ -829,7 +829,7 @@ export function montar(E: Estrutura, cfg: Config): Layout {
         let lo = -12, hi = 12, flo = dif(lo), fhi = dif(hi);
         if (!(flo < 0 && fhi > 0)) { lo = -30; hi = 30; flo = dif(lo); fhi = dif(hi); }
         if (flo < 0 && fhi > 0) {
-          for (let k = 0; k < 50; k++) { const mm = (lo + hi) / 2, fm = dif(mm); if (fm < 0) lo = mm; else hi = mm; }
+          for (let k = 0; k < 50 && hi - lo > 1e-5; k++) { const mm = (lo + hi) / 2, fm = dif(mm); if (fm < 0) lo = mm; else hi = mm; }
           Cuse = deslocar(Cbase0, (lo + hi) / 2);
         } else if (it === 0 && !avisos.includes("não consegui equilibrar as fileiras deslocando a linha central")) avisos.push("não consegui equilibrar as fileiras deslocando a linha central");
       }
@@ -1072,6 +1072,23 @@ export function montarMelhor(E: Estrutura, cfg: Config): Layout & { nota: number
     if (!melhor || nota + pref < melhor.nota + (melhor as any)._pref) melhor = { ...L, nota, tentativas, _pref: pref } as any;
   }
   if (!melhor) throw new Error("nenhuma combinação de cabeceiras fechou: " + tentativas.join(" | "));
+  // linha central com dobra que nenhuma junção alcança deixa lote de 5 quinas: tenta a
+  // linha mais reta (menos pontos) com as mesmas cabeceiras e fica com a de nota menor
+  const m0: Layout & { nota: number; tentativas: string[] } = melhor;
+  if (!cfg.C && m0.lotes.some((l) => l.quinas.length > 4)) {
+    const cab = { cab1: (m0.cabeceiras ?? [])[0], cab2: (m0.cabeceiras ?? [])[1] };
+    let atual = m0;
+    for (const tol of [1, 2.5, 6]) {
+      try {
+        const L = montar(E, { ...cfg, ...cab, _C0: simplificar(m0.eixo, tol) });
+        const nn = notaDe(L, cfg.N).nota;
+        tentativas.push(`linha mais reta (${tol} m): nota ${nn.toFixed(1)}`);
+        if (nn < atual.nota) atual = { ...L, nota: nn, tentativas };
+      } catch { /* não fechou */ }
+    }
+    melhor = atual;
+  }
+  if (!melhor) return m0;
   const gmax = notaDe(melhor, cfg.N).gmax;
   if (!cfg.C && gmax > 6) {
     const cab = { cab1: (melhor.cabeceiras ?? [])[0], cab2: (melhor.cabeceiras ?? [])[1] };
@@ -1120,7 +1137,26 @@ export function notaDe(L: Layout, N: number): { nota: number; q5: number; desvio
   const g2 = giros.reduce((t, g) => t + g * g, 0);
   const faltou = Math.abs(L.lotes.length - N);
   const cruz = cruzamentos(L);
-  return { nota: 100 * q5 + 60 * desvio + 0.8 * gmax + 40 * faltou + 15 * L.avisos.length + 400 * cruz, q5, desvio, gmax, g2 };
+  // proporção: lote-tira (fundo mais de 3× a largura, cresce ao quadrado) ou lote raso e largo demais pesa
+  // — é o que deixava a "testa" de lotes estreitos e compridos ganhar da esquina
+  const esguio = L.lotes.reduce((t, l) => { const r = alongamento(l.anel); return t + (r > 3 ? (r - 3) ** 2 : 0); }, 0);
+  return { nota: 100 * q5 + 60 * desvio + 0.8 * gmax + 400 * faltou + 15 * L.avisos.length + 400 * cruz + 60 * esguio, q5, desvio, gmax, g2 };
+}
+
+/** comprimento ÷ largura do lote pela caixa orientada mais justa (largura = a menor extensão). */
+export function alongamento(anel: Pt[]): number {
+  let w = Infinity;
+  for (let i = 0; i < anel.length; i++) {
+    const a = anel[i], b = anel[(i + 1) % anel.length];
+    if (dist(a, b) < 1) continue;
+    const n = esq(unit(sub(b, a)));
+    let lo = Infinity, hi = -Infinity;
+    for (const q of anel) { const t = dot(sub(q, a), n); lo = Math.min(lo, t); hi = Math.max(hi, t); }
+    w = Math.min(w, hi - lo);
+  }
+  if (!Number.isFinite(w) || w <= 0) return 1;
+  const A = Math.abs(areaAss(anel));
+  return Math.max(A / (w * w), (w * w) / Math.max(A, 1e-9));
 }
 
 /**

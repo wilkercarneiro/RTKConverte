@@ -33,7 +33,7 @@ function base() {
 }
 
 // a proposta automática é o ponto de partida de quase todos os testes
-const proposta = gerarPropostas(base(), perimetro, { quantas: 1 })[0];
+const proposta = gerarPropostas(base(), perimetro, { quantas: 1, estruturar: false })[0]; // as ferramentas de edição partem da divisão automática
 const pr0 = proposta.projeto;
 const r0 = calcular(pr0, perimetro);
 
@@ -139,12 +139,15 @@ test("arraste nunca trava: quina puxada por cima do vizinho, alinhada ou pela ru
 
 test("divisa deslizando não abre fresta: fundo que é trecho do lado do vizinho e ponta na quina da rua", () => {
   for (const q of r0.quadras.filter((x) => x.lotes.length >= 4)) {
-    const total = q.lotes.reduce((s2, x) => s2 + x.area, 0);
+    // lotes + área pública feita de lotes da quadra (a divisa com a área verde também anda)
+    const publicas = (r, c) => r.areas.filter((x) => x.origem === "lotes" && x.cfg === c).reduce((s2, x) => s2 + x.area, 0);
+    const total = q.lotes.reduce((s2, x) => s2 + x.area, 0) + publicas(r0, q.cfg);
     for (const l of q.lotes.filter((_, i) => i % 3 === 0)) for (const a of alcasDoLote(l, q).filter((x) => x.tipo === "divisa" && !x.naBorda)) {
       for (const d of [-1.5, 1.5]) {
         const ed = moverDivisa(pr0, r0, q, a.a, a.b, d, false, posicaoNoDesenho(pr0, r0, l));
-        const ls = calcular(ed.pr, perimetro).lotes.filter((x) => x.quadra === q.nome);
-        const soma = ls.reduce((s2, x) => s2 + x.area, 0);
+        const rr = calcular(ed.pr, perimetro);
+        const ls = rr.lotes.filter((x) => x.quadra === q.nome);
+        const soma = ls.reduce((s2, x) => s2 + x.area, 0) + publicas(rr, rr.quadras.find((x) => x.nome === q.nome)?.cfg ?? q.cfg);
         assert.ok(Math.abs(soma - total) < 0.5, `${l.id}: divisa ${d} m abriu ${(total - soma).toFixed(2)} m² de fresta`);
       }
     }
@@ -265,13 +268,20 @@ const conferirPlanta = (r, rotulo) => {
   assert.ok(Math.abs(areaPols(uniao(r.lotes.map((l) => l.pol))) - soma) < 0.5, `${rotulo}: lotes sobrepostos`);
 };
 
+// duas quadras vizinhas sem rua entre elas (onde a rua acaba antes da quina da gleba)
+function parSemRua(r) {
+  for (const a of r.quadras) for (const b of r.quadras) if (a !== b && a.lotes.length && b.lotes.length && uniaoFechada([a.pol, b.pol], 0.02).length === 1) return [a, b];
+  return [undefined, undefined];
+}
+
 test("quina entre quadras: o rosa sai inteiro e o duplo clique vira UM lote atravessando a divisa", () => {
-  const qA = r0.quadras.find((q) => q.nome === "A"), qB = r0.quadras.find((q) => q.nome === "B");
+  const [qA, qB] = parSemRua(r0);
+  const NA = qA?.nome, NB = qB?.nome;
   assert.ok(qA && qB && uniaoFechada([qA.pol, qB.pol], 0.02).length === 1, "a gleba de teste tem A e B vizinhas sem rua");
   const nomes = (r) => r.quadras.map((q) => q.nome).join(",");
   // apaga os lotes de A e de B que encostam na outra quadra
   let pr = pr0, r = r0;
-  for (const [de, outra] of [["A", "B"], ["B", "A"]]) {
+  for (const [de, outra] of [[NA, NB], [NB, NA]]) {
     const q = r.quadras.find((x) => x.nome === de), qo = r.quadras.find((x) => x.nome === outra);
     const ks = q.lotes.filter((l) => encosta(l.pol, qo)).map((l) => posicaoNoDesenho(pr, r, l));
     assert.ok(ks.length, `nenhum lote de ${de} encosta em ${outra}`);
@@ -279,8 +289,8 @@ test("quina entre quadras: o rosa sai inteiro e o duplo clique vira UM lote atra
     r = calcular(pr, perimetro);
   }
   conferirPlanta(r, "apagados");
-  const emA = (sb) => intersecao([sb], [r.quadras.find((q) => q.nome === "A")?.pol ?? qA.pol]).reduce((s2, x) => s2 + areaPol(x), 0);
-  const emB = (sb) => intersecao([sb], [r.quadras.find((q) => q.nome === "B")?.pol ?? qB.pol]).reduce((s2, x) => s2 + areaPol(x), 0);
+  const emA = (sb) => intersecao([sb], [r.quadras.find((q) => q.nome === NA)?.pol ?? qA.pol]).reduce((s2, x) => s2 + areaPol(x), 0);
+  const emB = (sb) => intersecao([sb], [r.quadras.find((q) => q.nome === NB)?.pol ?? qB.pol]).reduce((s2, x) => s2 + areaPol(x), 0);
   const rosa = r.sobras.find((sb) => emA(sb) > 1 && emB(sb) > 1);
   assert.ok(rosa, `o rosa da quina veio em pedaços: ${r.sobras.map((s2) => Math.round(areaPol(s2))).join(", ")}`);
   // duplo clique no rosa: a área inteira vira um lote
@@ -295,7 +305,7 @@ test("quina entre quadras: o rosa sai inteiro e o duplo clique vira UM lote atra
 });
 
 test("quina entre quadras: lote desenhado à mão passa da divisa, os lotes cobertos cedem e ele continua livre nas edições", () => {
-  const qA = r0.quadras.find((q) => q.nome === "A"), qB = r0.quadras.find((q) => q.nome === "B");
+  const [qA, qB] = parSemRua(r0);
   const lA = qA.lotes.find((l) => encosta(l.pol, qB)), lB = qB.lotes.find((l) => encosta(l.pol, qA));
   const ed = desenharLote(pr0, r0, casca([...lA.pol.ext, ...lB.pol.ext]));
   assert.ok(ed, "não desenhou");
@@ -417,7 +427,7 @@ test("igualar áreas: fundo com fundo continua fundo com fundo (a divisa de rua 
   const colunas = pares.slice(0, 4).flat();
   const c = igualarEConferir(pr0, r0, perimetro, colunas, "colunas");
   assert.equal(juncoesAtravessadas(c.s.pr, c.r, q.nome), antes, "as divisas da frente e de trás se desencontraram");
-  assert.match(c.s.msg, /fundo com fundo continua alinhado/);
+  assert.match(c.s.msg, /fundo com fundo/);
   // só a frente de três colunas: os de trás acompanham a divisa (e a mensagem diz quais)
   const frente = pares.slice(2, 5).map(([a]) => a);
   const f = igualarEConferir(pr0, r0, perimetro, frente, "só a frente");
@@ -465,7 +475,7 @@ test("igualar áreas: o projeto real do EDILSON — fileira desenhada e quadra e
   igualarEConferir(pr, r, per, da("A", [1, 2, 3, 4, 5, 6]), "EDILSON A1–A6");
   // quadra E (fundo com fundo, a frente mais rasa que o fundo): 4 colunas inteiras — iguais e alinhadas
   const e = igualarEConferir(pr, r, per, da("E", [1, 29, 2, 28, 3, 27, 4, 26]), "EDILSON E colunas");
-  assert.match(e.s.msg, /fundo com fundo continua alinhado/);
+  assert.match(e.s.msg, /fundo com fundo/);
   // só a frente da E: os de trás acompanham, sem desalinhar
   const antes = juncoesAtravessadas(pr, r, "E");
   const f = igualarEConferir(pr, r, per, da("E", [3, 4, 5, 6, 7]), "EDILSON E frente");
@@ -509,10 +519,10 @@ test("igualar áreas: quadras reais do EDILSON — sem lote quebrado, sem degrau
   // o fundo de C-19|C-20 em pedaços é fundo (não lateral: era o degrau em C-17/C-18)
   const c = igualar(9, "C", [...de(1, 10), ...de(17, 20)]);
   assert.match(c.s.msg, /14 lotes com .* m² cada/, c.s.msg);
-  // A: a lateral que sai da dobra da rua não anda (o lote ganharia a 5ª quina) — iguala por
-  // partes, e nenhuma parte esvazia a vizinha (A-26 ficava com 113 m², abaixo do mínimo)
+  // A: a terra dos 20 lotes é redividida entre eles (linha central dentro da seleção):
+  // todos iguais, nenhum lote quebrado (antes saía "por partes", com A-26 a 195 m²)
   const a = igualar(8, "A", [1, ...de(8, 26)]);
-  assert.match(a.s.msg, /por partes/, a.s.msg);
+  assert.match(a.s.msg, /20 lotes com .* m² cada/, a.s.msg);
   const meio = a.depois.filter((l) => [...de(10, 15), ...de(20, 25)].includes(l.numero)).map((l) => l.area);
   assert.ok(Math.max(...meio) - Math.min(...meio) < 3, `o meio da A devia ficar igual: ${meio.map((x) => x.toFixed(1)).join(" ")}`);
   // sem a ponta (A-17), as partes saem exatas
@@ -724,7 +734,7 @@ test("fileira com divisa torta: pontas proporcionais, sem lote nanico nem gigant
   }
 });
 
-test("área verde: nunca na frente da estrada, e vai para a baixada", async () => {
+test("área verde: nunca na frente da estrada, e fica no ponto mais longe das estradas", async () => {
   const { valorDosLotes } = await import("../src/lib/loteamento/auto.ts");
   const base0 = base();
   // relevo: cai forte para o leste (e > 491300)
@@ -751,13 +761,16 @@ test("área verde: nunca na frente da estrada, e vai para a baixada", async () =
   // lote de frente para a estrada vale "infinito" (não entra na escolha)
   const valor = valorDosLotes(r, prop.projeto, perimetro);
   for (const l of r.lotes.filter((x) => x.lados.some((s) => s.tipo === "via"))) assert.equal(valor.get(l.id), Infinity);
-  // a verde (fora os retalhos de canto) fica mais baixa que a média dos lotes
-  const { cotaEm } = await import("../src/lib/loteamento/terreno.ts");
+  // regra do Wilker (02/11): o verde fica no ponto do terreno mais afastado das estradas —
+  // mesmo com a baixada em outro lugar. Toda área verde fica na metade mais longe
   const { centroide } = await import("../src/lib/loteamento/geom.ts");
-  const cota = (p) => cotaEm(base0.terreno, paraUtm(r.plano, p));
-  const mediaLotes = r.lotes.reduce((s, l) => s + cota(centroide(l.pol.ext)), 0) / r.lotes.length;
+  const dV = (p) => dSeg(p, via.a, via.b);
+  const dMax = Math.max(...r.gleba.ext.map(dV));
   const verdes = r.publicas.filter((a) => a.tipo === "verde").sort((a, b) => b.area - a.area);
-  assert.ok(cota(centroide(verdes[0].pol.ext)) < mediaLotes, "a maior área verde não está na parte baixa");
+  for (const v of verdes) assert.ok(dV(centroide(v.pol.ext)) >= 0.5 * dMax, `área verde de ${v.area.toFixed(0)} m² a ${dV(centroide(v.pol.ext)).toFixed(0)} m da estrada (o ponto mais longe está a ${dMax.toFixed(0)} m)`);
+  // e mais longe que a média dos lotes
+  const mediaLotes = r.lotes.reduce((s, l) => s + dV(centroide(l.pol.ext)), 0) / r.lotes.length;
+  assert.ok(dV(centroide(verdes[0].pol.ext)) > mediaLotes, "a maior área verde não está longe da estrada");
   assert.ok((100 * (r.quadro.verde + r.quadro.lazer)) / r.quadro.gleba >= 10 - 0.01);
 });
 

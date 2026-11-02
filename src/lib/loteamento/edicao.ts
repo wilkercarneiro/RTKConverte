@@ -24,7 +24,7 @@ import type { LoteDesenhado, Projeto, QuadraCfg } from "./modelo.ts";
 const TOL = 0.02;
 
 /** O que acompanha cada contorno: destino (área pública), a frente escolhida (plano) e se o lote passa da quadra. */
-interface Meta { destino?: LoteDesenhado["destino"]; frente?: [Pt, Pt]; livre?: boolean }
+export interface Meta { destino?: LoteDesenhado["destino"]; frente?: [Pt, Pt]; livre?: boolean }
 
 export interface Edicao {
   pr: Projeto;
@@ -76,7 +76,7 @@ export function posicaoNoDesenho(pr: Projeto, res: Resultado, l: Lote): number {
  * config. Os lotes viram contornos na ordem da numeração; as áreas públicas
  * feitas de lotes da quadra também (com o destino delas).
  */
-function contornos(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: number; aneis: Pt[][]; destinos: Meta[] } {
+export function contornos(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: number; aneis: Pt[][]; destinos: Meta[] } {
   const pl = res.plano;
   const ic = cfgDe(pr, q, pl);
   if (ic >= 0 && Array.isArray(pr.quadras[ic].lotes)) {
@@ -113,7 +113,7 @@ function avisoPublica(antes: Pt[][], depois: Pt[][], destinos: Meta[], destinosD
   return Math.abs(a1 - a0) > 0.5 ? ` Atenção: a área pública desta quadra mudou de ${fmt(a0)} para ${fmt(a1)} m².` : "";
 }
 
-function gravar(pr: Projeto, res: Resultado, i: number, aneis: Pt[][], destinos: Meta[]): Projeto {
+export function gravar(pr: Projeto, res: Resultado, i: number, aneis: Pt[][], destinos: Meta[]): Projeto {
   const pl = res.plano;
   const lotes: LoteDesenhado[] = [];
   aneis.forEach((a, k) => {

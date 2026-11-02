@@ -1234,8 +1234,11 @@ function quadraEstruturada(ctx: Contexto, pol: Poligono, cfg: QuadraCfg, P: (q: 
   const fr = lados.filter((l) => ehFrente(l.tipo));
   const maior = fr.length ? fr.reduce((m, l) => (l.comp > m.comp ? l : m), fr[0]) : { a: anel[0], b: anel[1] };
   const u = unit(sub(maior.b, maior.a));
+  // lotes reservados (área verde, institucional) pela posição na quadra estruturada
+  const destinos = new Map<string, TipoArea>();
+  for (const a of cfg.ajustes ?? []) if (a.destino && lotes.some((l) => l.fileira === a.fileira && l.indice === a.indice)) destinos.set(`${a.fileira}:${a.indice}`, a.destino);
   return {
-    lotes, destinos: new Map(), cortes: [], fundo: null, sobras: [], canteiros: [], origem: maior.a, u, v: esquerda(u),
+    lotes, destinos, cortes: [], fundo: null, sobras: [], canteiros: [], origem: maior.a, u, v: esquerda(u),
     fileiras: 2, problemas: L.avisos.slice(), ruins: 0, nFaces: 0, tortos: 0, largura: 0, rasos: 0,
     linhaCentral: L.C,
     estruturada: { T1: L.T1, T2: L.T2, cabeceiras: (L.cabeceiras ?? []).slice(), avisos: L.avisos.slice(), juncoes: L.juncoes, giroMax: giros.length ? Math.max(...giros) : 0, cruzamentos: cruzamentosLC(L), divisas: L.divisas.filter((d) => d.length === 3) },
