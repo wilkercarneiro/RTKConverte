@@ -1,0 +1,376 @@
+<title>Loteamento por linha central</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: prancheta de projeto (papel quadriculado) no alto, plano em colunas de leitura abaixo.
+   Cores e fontes do próprio Vertces; laranja só para a linha central, como na prancheta. */
+:root {
+  --bg: #F4F6F5; --card: #FFFFFF; --texto: #12201A; --suave: #5B6B63; --borda: #E3E8E5; --borda-forte: #D5DDD8;
+  --primaria: #178552; --primaria-clara: #E4F3EB; --floresta: #0E3B2B; --acento: #7BD3A6;
+  --laranja: #E07A12; --laranja-claro: #FFC37D; --azul: #2A7FD4; --perigo: #B93A3A; --perigo-claro: #FBEAEA; --alerta: #B7791F; --alerta-claro: #FBF3E3;
+  --papel: #FBFCFB; --grade: #E9EFEB; --quadra: #DDE5E0; --lote-linha: #2C3B34;
+  --f1: #E3F1E8; --f2: #E1ECF4; --cab: #F5ECDD; --antes: #ECEEEC;
+  --fonte: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --titulo: "Bricolage Grotesque", "Figtree", system-ui, sans-serif;
+  --mono: "Fira Code", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --raio: 12px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0D1612; --card: #13201A; --texto: #E4EEE8; --suave: #93A69C; --borda: #22332B; --borda-forte: #2D4137;
+  --primaria: #4CC28A; --primaria-clara: #173527; --floresta: #0A2B1F; --acento: #7BD3A6;
+  --laranja: #F2933A; --laranja-claro: #8A531A; --azul: #6AAEF0; --perigo: #E07070; --perigo-claro: #3A1C1C; --alerta: #E0A84A; --alerta-claro: #33281A;
+  --papel: #111C17; --grade: #1A2721; --quadra: #26362E; --lote-linha: #9FB5AA;
+  --f1: #1E3B2C; --f2: #1C3141; --cab: #3A3122; --antes: #26302B; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0D1612; --card: #13201A; --texto: #E4EEE8; --suave: #93A69C; --borda: #22332B; --borda-forte: #2D4137;
+  --primaria: #4CC28A; --primaria-clara: #173527; --floresta: #0A2B1F; --acento: #7BD3A6;
+  --laranja: #F2933A; --laranja-claro: #8A531A; --azul: #6AAEF0; --perigo: #E07070; --perigo-claro: #3A1C1C; --alerta: #E0A84A; --alerta-claro: #33281A;
+  --papel: #111C17; --grade: #1A2721; --quadra: #26362E; --lote-linha: #9FB5AA;
+  --f1: #1E3B2C; --f2: #1C3141; --cab: #3A3122; --antes: #26302B; color-scheme: dark }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--texto); font-family: var(--fonte); font-size: 15px; line-height: 1.55; }
+.pagina { max-width: 1240px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--titulo); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.08; font-weight: 800; }
+h2 { font-size: clamp(21px, 2.4vw, 27px); font-weight: 700; }
+h3 { font-size: 17px; font-weight: 700; }
+p { margin: 0; }
+.rotulo { font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--primaria); font-weight: 700; }
+.lead { font-size: 17px; color: var(--suave); max-width: 70ch; }
+.cab { display: grid; gap: 12px; }
+.cab .lead b { color: var(--texto); }
+
+/* demonstração */
+.demo { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.prancheta-caixa { position: relative; background-color: var(--papel); background-image: linear-gradient(var(--grade) 1px, transparent 1px), linear-gradient(90deg, var(--grade) 1px, transparent 1px); background-size: 28px 28px; border: 1px solid var(--borda-forte); border-radius: var(--raio); overflow: hidden; }
+#prancheta { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3.1; touch-action: none; user-select: none; }
+#prancheta.arrastando { cursor: grabbing; }
+.quadra { fill: var(--quadra); stroke: var(--lote-linha); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.lote { stroke: var(--lote-linha); stroke-width: 0.9; vector-effect: non-scaling-stroke; transition: fill .15s; }
+.lote.z-f1 { fill: var(--f1); } .lote.z-f2 { fill: var(--f2); }
+.lote.z-ponta1, .lote.z-ponta2, .lote.z-testa1, .lote.z-testa2 { fill: var(--cab); }
+.lote.antes { fill: var(--antes); }
+.lote.ruim { fill: var(--perigo-claro); stroke: var(--perigo); stroke-width: 2; }
+.lote:hover { fill: var(--acento); }
+.divisa { fill: none; stroke: var(--lote-linha); stroke-width: 1.3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.central { fill: none; stroke: var(--laranja); stroke-width: 3; stroke-dasharray: 9 5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.central-toque { fill: none; stroke: transparent; stroke-width: 18; vector-effect: non-scaling-stroke; cursor: copy; }
+.juncao { fill: var(--laranja); pointer-events: none; }
+.pi { fill: none; stroke: var(--azul); stroke-width: 1.6; vector-effect: non-scaling-stroke; pointer-events: none; }
+.alca { cursor: grab; outline: none; }
+.alca-toque { fill: transparent; }
+.alca-forma { fill: var(--laranja); stroke: var(--card); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.alca:hover .alca-forma, .alca:focus-visible .alca-forma { fill: var(--primaria); }
+.rot { font-family: var(--fonte); font-weight: 700; text-anchor: middle; fill: var(--texto); pointer-events: none; }
+.rot-area { font-family: var(--mono); text-anchor: middle; fill: var(--suave); pointer-events: none; }
+.escala .esc-a { fill: var(--texto); } .escala .esc-b { fill: var(--card); stroke: var(--texto); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.escala .esc-t { font-family: var(--mono); fill: var(--suave); text-anchor: middle; }
+.escala .norte { fill: var(--texto); }
+.painel { display: grid; gap: 14px; background: var(--card); border: 1px solid var(--borda); border-radius: var(--raio); padding: 16px; }
+.campo { display: grid; gap: 6px; }
+.campo > span { font-size: 12px; font-weight: 600; color: var(--suave); }
+select, button { font: inherit; }
+select { width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--borda-forte); background: var(--card); color: var(--texto); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--borda-forte); border-radius: 9px; overflow: hidden; }
+.seg button { border: 0; background: var(--card); color: var(--suave); padding: 7px 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--borda-forte); }
+.seg button[aria-pressed="true"] { background: var(--primaria-clara); color: var(--primaria); }
+.seg button:disabled { opacity: .45; cursor: not-allowed; }
+.contador { display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; border: 1px solid var(--borda-forte); border-radius: 9px; overflow: hidden; }
+.contador button { border: 0; background: var(--card); color: var(--texto); font-size: 18px; height: 36px; cursor: pointer; }
+.contador output { text-align: center; font-family: var(--mono); font-weight: 500; }
+.botao { border: 0; border-radius: 9px; padding: 10px 12px; font-weight: 700; cursor: pointer; background: var(--primaria); color: #fff; }
+.botao.sec { background: var(--card); color: var(--texto); border: 1px solid var(--borda-forte); font-weight: 600; }
+.botoes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.botoes .botao:first-child { grid-column: 1 / -1; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--laranja); outline-offset: 2px; }
+.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--borda); border: 1px solid var(--borda); border-radius: 10px; overflow: hidden; }
+.kpi { background: var(--card); padding: 9px 10px; display: grid; gap: 2px; }
+.kpi b { font-family: var(--mono); font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.kpi b small { display: block; font-family: var(--fonte); font-size: 11px; color: var(--primaria); font-weight: 600; }
+.kpi span { font-size: 11px; color: var(--suave); line-height: 1.25; }
+#dica { min-height: 74px; font-size: 13px; background: var(--bg); border-radius: 9px; padding: 9px 11px; color: var(--texto); }
+#dica .aviso, #mensagem .aviso { color: var(--perigo); }
+.barra-msg { display: grid; gap: 4px; padding: 10px 14px; border-top: 1px solid var(--borda); background: var(--card); font-size: 13.5px; }
+#mensagem .sub { color: var(--suave); }
+.como { font-size: 12.5px; color: var(--suave); display: grid; gap: 4px; }
+.como b { color: var(--texto); }
+.legenda { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--suave); }
+.legenda i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; border: 1px solid var(--lote-linha); }
+
+/* plano */
+.secao { display: grid; gap: 16px; }
+.duas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.cartao { background: var(--card); border: 1px solid var(--borda); border-radius: var(--raio); padding: 18px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.pedidos { display: grid; gap: 10px; }
+.pedido { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr); gap: 16px; background: var(--card); border: 1px solid var(--borda); border-radius: var(--raio); padding: 14px 16px; }
+.pedido q { font-style: italic; color: var(--suave); quotes: "“" "”"; }
+.pedido div { min-width: 0; }
+ul.lista { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+ul.lista li::marker { color: var(--primaria); }
+.tabela { overflow-x: auto; border: 1px solid var(--borda); border-radius: var(--raio); background: var(--card); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--borda); vertical-align: top; }
+th { font-size: 12px; color: var(--suave); font-weight: 600; background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ok { color: var(--primaria); font-weight: 700; }
+.ruim-t { color: var(--perigo); font-weight: 600; }
+.fases { display: grid; gap: 10px; }
+.fase { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 14px; background: var(--card); border: 1px solid var(--borda); border-radius: var(--raio); padding: 14px 16px; }
+.fase .n { font-family: var(--titulo); font-size: 28px; font-weight: 800; color: var(--primaria); line-height: 1; }
+.fase .n small { display: block; font-family: var(--fonte); font-size: 11.5px; font-weight: 600; color: var(--suave); margin-top: 6px; }
+.fase p { color: var(--suave); }
+.fase .aceite { font-size: 13px; color: var(--texto); background: var(--bg); border-radius: 8px; padding: 8px 10px; }
+.decisoes { display: grid; gap: 10px; counter-reset: d; }
+.decisao { background: var(--card); border: 1px solid var(--borda); border-left: 4px solid var(--laranja); border-radius: var(--raio); padding: 12px 16px; display: grid; gap: 4px; }
+.decisao .padrao { font-size: 13px; color: var(--primaria); font-weight: 600; }
+.nota { font-size: 13px; color: var(--suave); }
+code { font-family: var(--mono); font-size: 0.88em; background: var(--bg); padding: 1px 5px; border-radius: 5px; }
+@media (max-width: 900px) {
+  .demo { grid-template-columns: minmax(0, 1fr); }
+  .duas { grid-template-columns: minmax(0, 1fr); }
+  .pedido { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}
+@media (max-width: 480px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fase { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .lote { transition: none; } }
+</style>
+
+<div class="pagina">
+  <header class="cab">
+    <span class="rotulo">Vertces · plano do loteamento</span>
+    <h1>Loteamento por linha central</h1>
+    <p class="lead">A quadra de duas fileiras passa a ter uma <b>linha central de verdade</b>, que você vê, arrasta e dobra. Os lotes nascem dela: cada divisa é um par de laterais no esquadro da sua rua que se encontram num mesmo ponto da linha. O fundo com fundo sai certo por construção, e as áreas ficam iguais por cálculo exato. Teste abaixo na quadra A do EDILSON.</p>
+  </header>
+
+  <section class="secao" aria-label="Demonstração">
+    <div class="demo">
+      <div class="prancheta-caixa">
+        <svg id="prancheta" role="img" aria-label="Prancheta com a quadra, os lotes e a linha central"></svg>
+        <div class="barra-msg"><div id="mensagem"></div></div>
+      </div>
+      <aside class="painel">
+        <label class="campo"><span>Quadra</span><select id="quadra"></select></label>
+        <p class="nota" id="origem"></p>
+        <div class="campo"><span>Vista</span>
+          <div class="seg"><button id="vista-antes" type="button" aria-pressed="false">Como está hoje</button><button id="vista-novo" type="button" aria-pressed="true">Linha central</button></div>
+        </div>
+        <div class="campo"><span>Lotes na quadra</span>
+          <div class="contador"><button id="n-menos" type="button" aria-label="Dois lotes a menos">−</button><output id="n-lotes">26</output><button id="n-mais" type="button" aria-label="Dois lotes a mais">+</button></div>
+        </div>
+        <div class="campo"><span>Cabeceira inclinada</span>
+          <div class="seg"><button id="esq-absorver" type="button" aria-pressed="true">Esquina absorve</button><button id="esq-iguais" type="button" aria-pressed="false">Todos iguais</button></div>
+        </div>
+        <div class="botoes">
+          <button id="btn-ajustar" class="botao" type="button">Ajustar fundo com fundo</button>
+          <button id="btn-reta" class="botao sec" type="button">Endireitar linha</button>
+          <button id="btn-desfazer" class="botao sec" type="button">Desfazer</button>
+        </div>
+        <div class="kpis" aria-live="polite">
+          <div class="kpi"><b id="k-lotes">—</b><span>lotes</span></div>
+          <div class="kpi"><b id="k-area">—</b><span>área de cada lote (m²)</span></div>
+          <div class="kpi"><b id="k-giro">—</b><span>maior giro de lateral</span></div>
+          <div class="kpi"><b id="k-quinas">—</b><span>lotes com 5+ quinas</span></div>
+          <div class="kpi"><b id="k-fundo">—</b><span>pares fundo com fundo</span></div>
+          <div class="kpi"><b id="k-avisos">—</b><span>avisos</span></div>
+        </div>
+        <div id="dica">Passe o mouse num lote para ver frente, fundo, laterais e quinas.</div>
+        <div class="como">
+          <span><b>Arraste</b> os losangos laranja: a linha central dobra ali e os lotes se refazem.</span>
+          <span><b>Duplo clique</b> na linha cria um ponto; no ponto, apaga.</span>
+          <span><b>Ao soltar</b>, a linha só desliza de lado para as áreas empatarem; os ângulos ficam os seus.</span>
+        </div>
+        <div class="legenda"><span><i style="background:var(--f1)"></i>fileira de uma rua</span><span><i style="background:var(--f2)"></i>fileira da outra</span><span><i style="background:var(--cab)"></i>cabeceira</span><span><i style="background:transparent;border-color:var(--azul);border-radius:50%"></i>arco da esquina = 1 quina</span></div>
+      </aside>
+    </div>
+  </section>
+
+  <section class="secao">
+    <span class="rotulo">Prova no projeto real</span>
+    <h2>No EDILSON, as três quadras refeitas zeram os avisos de lote</h2>
+    <p class="lead">Os lotes do protótipo foram gravados no projeto real e medidos pelo motor que está hoje no ar: mesmas regras, mesmos avisos. O projeto continua com 136 lotes, a mesma área loteada (33.000 m²) e nenhuma sobra rosa.</p>
+    <div class="tabela"><table>
+      <thead><tr><th>Quadra</th><th>Hoje no sistema</th><th>Com a linha central (medido pelo mesmo sistema)</th></tr></thead>
+      <tbody>
+        <tr><td><b>A</b><br><span class="nota">estrada levantada, Rua 02 e Rua 03</span></td><td class="num">26 lotes · 245,9 a 276,4 m²<br><span class="ruim-t">3 avisos</span>: A-16 com fundo de 41,3 m, A-19 com frente de 4,07 m, A-26 com 5 quinas</td><td class="num">26 lotes · <span class="ok">268,66 m² cada</span><br><span class="ok">0 avisos</span> · ponta em fileira única, miolo fundo com fundo, cabeceira de frente para a Rua 02</td></tr>
+        <tr><td><b>C</b><br><span class="nota">entre Rua 01 e Rua 02</span></td><td class="num">24 lotes · 150,2 a 311,0 m²<br>0 avisos</td><td class="num">24 lotes · <span class="ok">22 com 233,21 m²</span> e 2 na esquina com 354,21 m²<br><span class="ok">0 avisos</span> · laterais a menos de 3° do esquadro</td></tr>
+        <tr><td><b>D</b><br><span class="nota">entre Rua 01 e Rua 02, ponta na estrada</span></td><td class="num">29 lotes · 220,1 a 295,5 m²<br><span class="ruim-t">1 aviso</span>: D-28 com 5 quinas</td><td class="num">29 lotes · <span class="ok">27 com 233,72 m²</span> e 2 com 224,97 m²<br><span class="ok">0 avisos</span> · laterais a menos de 1° do esquadro</td></tr>
+        <tr><td><b>Projeto</b></td><td class="num"><span class="ruim-t">4 avisos de lote</span></td><td class="num"><span class="ok">0 avisos de lote</span> · 136 lotes · sobra 0,00 m²</td></tr>
+      </tbody>
+    </table></div>
+    <p class="nota">Na C e na D, a esquina da fileira mais comprida absorve a cabeceira inclinada (as duas ruas não terminam na mesma altura). Se preferir todos exatamente iguais, o botão "Todos iguais" faz isso, e as laterais giram um pouco mais.</p>
+  </section>
+
+  <section class="secao">
+    <span class="rotulo">O que você pediu</span>
+    <h2>Cada pedido, e como o sistema passa a responder</h2>
+    <div class="pedidos">
+      <div class="pedido"><q>Um espaço onde eu faça a divisão e os terrenos fiquem fundo com fundo, mesmo que eu faça à mão.</q><div>A quadra de duas fileiras ganha a <b>linha central</b> como objeto do projeto. Você a desenha ou arrasta, e os lotes se refazem fundo com fundo enquanto você mexe. Arrastar uma divisa à mão também move a divisa inteira, de rua a rua, com a junção junto. Hoje só a frente anda e o lote de trás fica encostado em dois.</div></div>
+      <div class="pedido"><q>Se tiver errado, ter a opção de ajuste de fundo com fundo.</q><div>Botão <b>Ajustar fundo com fundo</b> na quadra e no cartão de vários lotes. Ele lê a quadra como está (até a desenhada à mão), acha as duas ruas, a linha central e as cabeceiras, e mostra o antes e o depois com o que muda. Só aplica quando você confirma.</div></div>
+      <div class="pedido"><q>Ajustar as linhas do terreno e o espaço dele para dar a área igual, mais o ajuste correto de fundo com fundo.</q><div>Cada divisa é resolvida de uma vez: o ponto na linha central e os dois pés na rua saem juntos, com a área exata nas duas fileiras. Sem escada, sem zigue-zague e sem lote quebrado. O cálculo da quadra leva milissegundos, então dá para ver ao vivo enquanto arrasta.</div></div>
+      <div class="pedido"><q>Mantendo proporções parecidas entre fundo, frente e laterais de cada um.</q><div>A lateral fica no <b>esquadro da própria rua</b>, e radial na rua curva. A linha central começa equidistante das duas ruas (as duas fileiras com a mesma profundidade), e o sistema a ajusta para as laterais girarem o mínimo. O giro de cada lateral aparece no lote. Na C e na D ficou abaixo de 3°.</div></div>
+      <div class="pedido"><q>Reconhecer o arredondamento da quina da rua como uma quina do terreno.</q><div>Um só reconhecedor de quinas para o sistema inteiro:
+        <ul class="lista">
+          <li>arco de esquina conta 1 quina, no PI (cruzamento das tangentes);</li>
+          <li>chanfro conta 1 quina;</li>
+          <li>dobra de rua de 12° ou mais é quina e recebe uma divisa;</li>
+          <li>curva aberta de estrada não conta.</li>
+        </ul>
+        Com isso o sistema sabe o que é frente, lateral na rua, laterais e fundos, inclusive no memorial e na ferramenta Frente.</div></div>
+      <div class="pedido"><q>Ter como modificar de maneira fácil o fundo com fundo e as angulações da linha central.</q><div>Na linha central:
+        <ul class="lista">
+          <li>alças para arrastar ponto e trecho; duplo clique cria ou apaga ponto;</li>
+          <li>botões <b>Endireitar</b> e <b>Centralizar</b>;</li>
+          <li>campos de profundidade das fileiras e de ângulo;</li>
+          <li>cadeado para travar.</li>
+        </ul>
+        Ao soltar, a linha só desliza de lado para as áreas fecharem; os ângulos que você deu ficam.</div></div>
+    </div>
+  </section>
+
+  <section class="secao">
+    <span class="rotulo">Auditoria</span>
+    <h2>O que temos hoje e onde quebra</h2>
+    <div class="duas">
+      <div class="cartao"><h3>O que já é forte</h3><ul class="lista">
+        <li>Gerador automático com as regras da equipe: ruas só onde há acesso, rua de contorno, verde na terra menos valorizada, fundo com fundo na geração.</li>
+        <li>Edição como CAD: quina, divisa, cortar, unir, dividir, desenhar lote, frente escolhida, seta com caixa de seleção.</li>
+        <li>Entregas completas: planta, memoriais, quadro, KML, DXF, locação para a coletora, maquete 3D com voo e redes de água, esgoto, drenagem e energia.</li>
+        <li>Tudo no navegador, sem carga na VPS.</li>
+      </ul></div>
+      <div class="cartao"><h3>Onde quebra (com evidência)</h3><ul class="lista">
+        <li><b>A quadra desenhada perde a estrutura.</b> Vira "1 fileira" sem linha de fundo, e o sistema adivinha o fundo a cada clique. Na D de hoje a linha está em 11 pedaços, com degraus de 0,4 a 0,5 m.</li>
+        <li><b>Arrastar a lateral move só a frente.</b> Digitar a frente faz o mesmo. O lote de trás passa a encostar em dois.</li>
+        <li><b>Igualar corrige polígono por polígono.</b> Por isso entorta, trava ou "iguala por partes" quando a forma é difícil.</li>
+        <li><b>Quinas por um limite de 2 m:</b>
+          <ul class="lista">
+            <li>arco com corda de 2 m ou mais some;</li>
+            <li>chanfro de 3 m conta 2 quinas (no loteamento de teste, 22 de 32 esquinas acusam "5 quinas");</li>
+            <li>A-26 e D-28 têm a dobra da estrada dentro da frente.</li>
+          </ul></li>
+        <li><b>Esquina errada:</b>
+          <ul class="lista">
+            <li>lote vira "esquina" só porque cada lado da estrada tem uma referência, e ganha acréscimo no VGV;</li>
+            <li>a frente da esquina soma as duas ruas (35,44 m num lote de esquina do loteamento de teste);</li>
+            <li>a profundidade mede a largura (A-17: 6,4 m).</li>
+          </ul></li>
+        <li><b>O arco atrapalha o memorial e a ferramenta Frente.</b> No loteamento de teste, o memorial divide o arco entre Frente e Lateral em 35 de 43 esquinas, e a ferramenta Frente não acha o lado de rua nesses mesmos lotes.</li>
+        <li><b>Na tela, a linha de fundo é difícil de mexer:</b>
+          <ul class="lista">
+            <li>só aparece com a quadra selecionada;</li>
+            <li>não tem ângulo, ponto novo nem cadeado;</li>
+            <li>digitar "fundo" apaga o desenho sem avisar;</li>
+            <li>Esc não cancela o arraste;</li>
+            <li>cada quadro do arraste recalcula o projeto inteiro (~22 ms).</li>
+          </ul></li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="secao">
+    <span class="rotulo">Mercado</span>
+    <h2>Ninguém trata a linha central como objeto editável</h2>
+    <div class="tabela"><table>
+      <thead><tr><th>Ferramenta</th><th>O que faz com lotes</th><th>Onde para</th></tr></thead>
+      <tbody>
+        <tr><td><b>Civil 3D</b> (Autodesk)</td><td>Slide line e swing line, área e testada mínimas, testada no recuo, profundidade, repartir a sobra</td><td>O fundo é desenhado à mão; o tutorial avisa que o arco da esquina impede achar solução</td></tr>
+        <tr><td><b>Carlson LotNet</b></td><td>Lateral perpendicular à rua ou ao fundo, fundo mínimo, sobra vira linha de fundo</td><td>Esquina com arco não documentada; confere no relatório depois</td></tr>
+        <tr><td><b>CityEngine</b> (Esri)</td><td>Esqueleto da quadra dá o fundo com fundo automático; escolhe a rua da esquina</td><td>Só por parâmetro; não serve para cadastro</td></tr>
+        <tr><td><b>ParcelFlux</b> (QGIS)</td><td>Fila dupla, deslocar a linha central, esquina mais larga em %</td><td>Sem edição interativa</td></tr>
+        <tr><td><b>TestFit, Forma, TraceAir</b></td><td>Estudo de massa e rendimento</td><td>Conceitual: sem memorial nem locação</td></tr>
+        <tr><td><b>Métrica TOPO, Posição, topoGRAPH</b></td><td>CAD de mesa; loteamento citado sem geração automática documentada</td><td>Divisão à mão</td></tr>
+        <tr><td><b>Vimob, m2Corp, Sienge</b></td><td>Mapa de vendas e reserva de lotes</td><td>Não usam a geometria do projeto</td></tr>
+      </tbody>
+    </table></div>
+    <p class="nota">Regras que o plano adota, com fonte:
+      <ul class="lista">
+        <li>Lateral perpendicular à rua e radial na curva, com tolerância de 15° a 20°.</li>
+        <li>Profundidade de no máximo 3 vezes a frente.</li>
+        <li>Testada da esquina medida até o cruzamento das divisas estendidas (São Paulo, Res. CPPU 003/2018).</li>
+        <li>Raio de esquina de 6 m (Blumenau).</li>
+        <li>Esquina com testada maior (Ponta Porã: 13 m contra 10 m).</li>
+        <li>Lote mínimo de 125 m² e frente mínima de 5 m (Lei 6.766, art. 4º).</li>
+      </ul></p>
+  </section>
+
+  <section class="secao">
+    <span class="rotulo">Como funciona</span>
+    <h2>A quadra vira um modelo, não um monte de polígonos</h2>
+    <div class="duas">
+      <div class="cartao"><h3>O que fica gravado</h3><ul class="lista">
+        <li><b>Frentes:</b> as duas ruas que se olham. São achadas sozinhas, com o arco de esquina contado como uma quina.</li>
+        <li><b>Linha central:</b> automática (equidistante, empatando as fileiras) ou a sua, com cadeado.</li>
+        <li><b>Divisas:</b> cada uma é um ponto na linha central e um pé em cada rua. Lote travado (área ou frente) entra como alvo dele.</li>
+        <li><b>Cabeceiras:</b> esquina direta, ponta de fileira única ou lotes de frente para a rua da ponta. O sistema testa as três e fica com a melhor.</li>
+        <li><b>Os lotes não são gravados:</b> são recalculados, como hoje ("projeto = intenção"). A quadra desenhada livre continua existindo para os casos fora do modelo.</li>
+      </ul></div>
+      <div class="cartao"><h3>Por que agora fecha exato</h3><ul class="lista">
+        <li>A área de uma fileira, do começo da quadra até a divisa k, depende só da divisa k. Cada divisa se resolve sozinha, em microssegundos, sem empurrar o erro para a vizinha. Era isso que fazia a escada e o zigue-zague.</li>
+        <li>Na cabeceira inclinada, as duas ruas não terminam na mesma altura. A sobra vai para a esquina, vira um lote a mais, ou a cabeceira vira lotes de frente para a rua da ponta.</li>
+        <li>Dobra de rua puxa uma divisa para cima dela. A linha central se ajusta para essa divisa girar o mínimo (na A, a dobra de 21° da estrada ficou com 19°).</li>
+        <li>Toda resposta é conferida antes de aparecer: lotes que se cruzam, quina a mais, área fora e giro.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="secao">
+    <span class="rotulo">Plano de execução</span>
+    <h2>Seis etapas, cada uma vai ao ar sozinha</h2>
+    <div class="fases">
+      <div class="fase"><div class="n">0<small>1–2 dias</small></div><div><h3>Quinas e lados certos em todo o sistema</h3><p>Um só reconhecedor de arco, chanfro e dobra, usado em: aviso de 5 quinas, alças, ferramenta Frente, memorial (Frente, Lateral, Fundos e curva), profundidade e esquina. Corrige a "esquina por referência da estrada" e o acréscimo de VGV indevido.</p><p class="aceite">Aceite: nenhuma esquina com 5 quinas falsas; A-26 e D-28 apontados pelo motivo certo; memorial do lote de esquina com frente, lateral na rua e arco separados.</p></div></div>
+      <div class="fase"><div class="n">1<small>3–4 dias</small></div><div><h3>Motor da linha central no sistema</h3><p>O protótipo vira <code>linhaCentral.ts</code>. A configuração da quadra ganha a estrutura (linha central, divisas, cabeceiras e regra de esquina), e o cálculo gera os lotes a partir dela. Testes de propriedade: fundo com fundo exato, áreas, nada se cruzando e nenhuma quina a mais.</p><p class="aceite">Aceite: EDILSON A, C e D sem avisos, e o IRAN igual ou melhor que hoje; cálculo da quadra abaixo de 16 ms.</p></div></div>
+      <div class="fase"><div class="n">2<small>3–4 dias</small></div><div><h3>Editar a linha central na prancheta</h3><ul class="lista">
+        <li>Linha visível com um lote selecionado.</li>
+        <li>Losangos nos pontos e barra nos trechos; duplo clique cria ou apaga ponto.</li>
+        <li>Profundidade de cada fileira e ângulo digitáveis; Endireitar, Centralizar e cadeado.</li>
+        <li>Arraste ao vivo, calculando só a quadra.</li>
+        <li>Ao soltar, as áreas se igualam sem mudar os seus ângulos.</li>
+        <li>Esc cancela o arraste.</li>
+        <li>Divisa arrastada anda de rua a rua.</li>
+      </ul><p class="aceite">Aceite: arraste fluido no navegador (60 quadros/s em 200 lotes); desfazer volta exatamente.</p></div></div>
+      <div class="fase"><div class="n">3<small>2–3 dias</small></div><div><h3>Botão "Ajustar fundo com fundo"</h3><p>Lê qualquer quadra, inclusive a desenhada à mão, e propõe o arranjo novo. Mostra antes e depois: áreas, giro, quinas e lotes que mudam de número. Aplica com um clique; também vale para só os lotes selecionados. Nunca apaga o desenho sem perguntar.</p><p class="aceite">Aceite: aplicar no EDILSON real reproduz a tabela acima.</p></div></div>
+      <div class="fase"><div class="n">4<small>3–5 dias</small></div><div><h3>Cabeceiras difíceis e regras do município</h3><ul class="lista">
+        <li>Estrada curva e muito inclinada na ponta: divisas paralelas e linha interna que gira.</li>
+        <li>Dobra da estrada caindo numa divisa.</li>
+        <li>Quadra de uma fileira e quadra de esquina com a mesma ferramenta.</li>
+        <li>Esquina com testada maior (em % ou em metros), medida no PI ou no recuo.</li>
+        <li>Contagem ímpar de lotes.</li>
+      </ul><p class="aceite">Aceite: as cabeceiras de estrada da C e da D sem esquina maior que 1,5 lote, quando a forma permitir.</p></div></div>
+      <div class="fase"><div class="n">5<small>2 dias</small></div><div><h3>Gerador, entregas e maquete com a mesma estrutura</h3><ul class="lista">
+        <li>As propostas automáticas já saem com linha central.</li>
+        <li>Memorial e quadro com frente, laterais e fundos certos.</li>
+        <li>DXF com a linha central em camada própria.</li>
+        <li>Corpus de loteamentos reais (EDILSON, IRAN e os próximos) medido a cada mudança: fundo com fundo, giro, quinas, área e tempo.</li>
+      </ul><p class="aceite">Aceite: nenhuma regressão nos testes do loteamento (49) e no corpus.</p></div></div>
+    </div>
+    <p class="nota">Total estimado: 3 a 4 semanas de trabalho focado. A etapa 0 sozinha já elimina os falsos "5 quinas" e o VGV de esquina errado.</p>
+  </section>
+
+  <section class="secao">
+    <span class="rotulo">Decisões suas</span>
+    <h2>Seis escolhas antes de começar</h2>
+    <div class="decisoes">
+      <div class="decisao"><h3>1. Cabeceira inclinada</h3><p>A esquina fica maior, todos ficam exatamente iguais com as laterais um pouco giradas, ou os lotes da ponta ficam de frente para a rua da ponta?</p><p class="padrao">Proposta: o sistema testa os três e escolhe; você troca com um clique.</p></div>
+      <div class="decisao"><h3>2. Contagem ímpar numa quadra de duas fileiras</h3><p>Um lote a mais na fileira mais comprida, ou avisar e propor um número par?</p><p class="padrao">Proposta: lote a mais na fileira mais comprida, na cabeceira.</p></div>
+      <div class="decisao"><h3>3. Dobra da estrada no meio da fileira</h3><p>Pôr uma divisa na dobra (a linha central absorve), ou aceitar o lote com 5 quinas?</p><p class="padrao">Proposta: divisa na dobra.</p></div>
+      <div class="decisao"><h3>4. Testada do lote de esquina</h3><p>Medir até o PI (cruzamento das tangentes, como São Paulo) ou até o começo do arco?</p><p class="padrao">Proposta: até o PI, com o arco descrito à parte no memorial.</p></div>
+      <div class="decisao"><h3>5. Quanto a lateral pode girar</h3><p>15° ou 20° fora do esquadro antes de virar aviso?</p><p class="padrao">Proposta: 15°.</p></div>
+      <div class="decisao"><h3>6. Quadras que você já desenhou à mão</h3><p>Converter sozinho ao abrir, ou só quando você clicar "Ajustar fundo com fundo"?</p><p class="padrao">Proposta: só no clique, com o antes e o depois na tela.</p></div>
+    </div>
+  </section>
+
+  <section class="secao">
+    <span class="rotulo">Limites conhecidos</span>
+    <h2>O que o protótipo ainda não resolve</h2>
+    <ul class="lista">
+      <li><b>Pontas de estrada curva e muito inclinadas</b> (esquerda da C e da D): os lotes de frente para a estrada ainda cruzam divisas. O sistema descarta essa opção e fica com a esquina maior. A etapa 4 resolve.</li>
+      <li><b>Quadras fora do modelo de duas fileiras</b> (em L, com rua no meio ou de uma fileira só) continuam no desenho livre até a etapa 4.</li>
+      <li><b>"Ajustar fundo com fundo" na quadra A leva de 1 a 5 segundos</b>, por causa da otimização da linha central. No sistema, vai rodar em segundo plano com a prévia na tela.</li>
+      <li><b>A demonstração acima é o protótipo.</b> O sistema no ar não mudou.</li>
+    </ul>
+  </section>
+</div>
+<script>const DADOS = /*DADOS*/;</script>
+<script>/*APP*/</script>

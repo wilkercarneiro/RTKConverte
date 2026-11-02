@@ -9,3 +9,8 @@ tests/out/
 
 # corpus real de TXT de clientes (dados privados — nunca no Git)
 tests/corpus-real/
+
+# protótipo da linha central: dados gerados do corpus real e builds (nunca no Git)
+docs/prototipos/linha-central/demo/dados.json
+docs/prototipos/linha-central/demo/app.js
+docs/prototipos/linha-central/demo/linha-central.html
