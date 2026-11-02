@@ -411,10 +411,106 @@ export function giroEm(anel: Anel, i: number): number {
   return (Math.atan2(cross(u, v), dot(u, v)) * 180) / Math.PI;
 }
 
+/** Uma quina que o comprador enxerga. Arco (ou chanfro) de esquina é UMA quina, no PI. */
+export interface Quina {
+  /** primeiro e último vértice da quina no anel (iguais num canto vivo) */
+  i0: number;
+  i1: number;
+  /** vértice de maior giro (a "âncora" da quina) */
+  i: number;
+  /** ponto de interseção das tangentes (no canto vivo, o próprio vértice) */
+  pi: Pt;
+  /** giro total, graus com sinal (anti-horário positivo) */
+  giro: number;
+  arco: boolean;
+  /** raio estimado do arco (0 no canto vivo) */
+  raio: number;
+}
+
 /**
- * Quinas do lote — o canto que o comprador enxerga: giro de 12° ou mais. O
- * arco da esquina (vários lados curtos seguidos) conta como UMA quina. O
- * cliente pede no máximo 4; lote de ponta pode ter 3.
+ * Quinas do lote — o canto que o comprador enxerga (2026-11-01, plano da linha central).
+ *
+ * Vértice "curvo": giro ≥ giroMin ou curvatura ≥ 1/raioMax. Vértices curvos
+ * seguidos viram UMA quina quando formam um ARCO (giros pequenos, corda
+ * compatível com raio ≤ raioMax, PC/PT incluídos) ou um CHANFRO (dois cantos
+ * parecidos a até `curto` metros). Canto + dobra vizinha continuam duas quinas.
+ * A curva aberta de estrada (raio maior que raioMax) não é quina. Antes, um
+ * limiar de 2 m na corda decidia tudo: arco com corda ≥ 2 m sumia, chanfro
+ * contava duas e pontos de estrada a 1,9 m fundiam quinas reais.
+ */
+export function quinasDetalhe(anelIn: Anel, curto = 3.5, giroMin = 12, raioMax = 40): Quina[] {
+  const gMin = (giroMin * Math.PI) / 180, kMin = 1 / raioMax, peq = (35 * Math.PI) / 180;
+  // sem pontos repetidos (o índice devolvido é do anel recebido)
+  const idx: number[] = [];
+  for (let i = 0; i < anelIn.length; i++) {
+    if (idx.length && dist(anelIn[idx[idx.length - 1]], anelIn[i]) <= 1e-4) continue;
+    idx.push(i);
+  }
+  if (idx.length > 1 && dist(anelIn[idx[0]], anelIn[idx[idx.length - 1]]) <= 1e-4) idx.pop();
+  const r = idx.map((i) => anelIn[i]);
+  const n = r.length;
+  if (n < 3) return [];
+  const lado: number[] = [], giro: number[] = [];
+  for (let i = 0; i < n; i++) lado.push(dist(r[i], r[(i + 1) % n]));
+  for (let i = 0; i < n; i++) {
+    const a = r[(i - 1 + n) % n], b = r[i], c = r[(i + 1) % n];
+    const u = sub(b, a), v = sub(c, b);
+    giro.push(Math.hypot(u[0], u[1]) < 1e-9 || Math.hypot(v[0], v[1]) < 1e-9 ? 0 : Math.atan2(cross(u, v), dot(u, v)));
+  }
+  const curvo = (i: number) => {
+    const g = Math.abs(giro[i]);
+    if (g >= gMin) return true;
+    const sup = (lado[(i - 1 + n) % n] + lado[i]) / 2;
+    return g > (0.4 * Math.PI) / 180 && g / Math.max(1e-6, sup) >= kMin;
+  };
+  const liga = (i: number): boolean => {
+    const j = (i + 1) % n;
+    if (giro[i] === 0 || Math.sign(giro[i]) !== Math.sign(giro[j])) return false;
+    const gi = Math.abs(giro[i]), gj = Math.abs(giro[j]);
+    if (!(curvo(i) || curvo(j))) return false;
+    // PC/PT: vértice de giro pequeno ligado ao arco por corda curta
+    if (!curvo(i) || !curvo(j)) return Math.min(gi, gj) > (0.4 * Math.PI) / 180 && Math.max(gi, gj) < peq && lado[i] <= Math.max(curto, (1.3 / kMin) * Math.max(gi, gj));
+    if (gi < peq && gj < peq) return lado[i] <= Math.max(curto, (1.3 / kMin) * Math.min(gi, gj));
+    // chanfro de até ~4 m em cada alinhamento (aresta de até 6 m): dois cantos parecidos
+    if (gi >= peq && gj >= peq) return lado[i] <= Math.max(curto, 6) && Math.max(gi, gj) / Math.min(gi, gj) <= 1.6 && gi + gj <= (140 * Math.PI) / 180;
+    return lado[i] <= 0.05;
+  };
+  let ini = -1;
+  for (let i = 0; i < n; i++) if (!liga((i - 1 + n) % n)) { ini = i; break; }
+  if (ini < 0) return [];
+  const out: Quina[] = [];
+  let j = 0;
+  while (j < n) {
+    const i = (ini + j) % n;
+    let k = j + 1, tot = giro[i], maior = i, gMaior = Math.abs(giro[i]), temCurvo = curvo(i);
+    while (k < n && liga((ini + k - 1) % n)) {
+      const ii = (ini + k) % n;
+      tot += giro[ii];
+      if (Math.abs(giro[ii]) > gMaior) { gMaior = Math.abs(giro[ii]); maior = ii; }
+      if (curvo(ii)) temCurvo = true;
+      k++;
+    }
+    const a = i, b = (ini + k - 1) % n;
+    if (temCurvo && Math.abs(tot) >= gMin) {
+      let pi: Pt = r[a];
+      if (a !== b) {
+        const p0 = r[(a - 1 + n) % n], p1 = r[a], q0 = r[b], q1 = r[(b + 1) % n];
+        const x = intersecaoRetas(p0, sub(p1, p0), q0, sub(q1, q0));
+        if (x) pi = x.pt;
+      }
+      let comp = 0;
+      for (let m = a; m !== b; m = (m + 1) % n) comp += lado[m];
+      out.push({ i0: idx[a], i1: idx[b], i: idx[maior], pi, giro: (tot * 180) / Math.PI, arco: a !== b, raio: a !== b ? comp / Math.abs(tot) : 0 });
+    }
+    j = k;
+  }
+  return out;
+}
+
+/**
+ * Regra antiga (corda menor que `curto` soma o giro): o GERADOR e o igualar a
+ * usam nas decisões internas — as propostas validadas dependem dela. O que o
+ * operador vê (esquina, ferramenta Frente, memorial, aviso) usa `quinasDetalhe`.
  */
 export function quinasDe(anel: Anel, curto = 2, giroMin = 12): number[] {
   const n = anel.length;
@@ -438,3 +534,10 @@ export function quinasDe(anel: Anel, curto = 2, giroMin = 12): number[] {
 }
 
 export const quinas = (anel: Anel): number => quinasDe(anel).length;
+
+/**
+ * Quinas para o AVISO de forma: só conta a mais quando as duas regras concordam.
+ * O chanfro (2 quinas na antiga, 1 na nova) deixa de dar "5 quinas" falso, e
+ * nenhum lote que a geração aprovou ganha aviso novo.
+ */
+export const quinasAviso = (anel: Anel): number => Math.min(quinas(anel), quinasDetalhe(anel).length);

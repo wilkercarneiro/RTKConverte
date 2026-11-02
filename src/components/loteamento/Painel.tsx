@@ -113,14 +113,14 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
             <header><span className="lot-tag">Lote</span><h3>Quadra {l.quadra} · Lote {String(l.numero).padStart(2, "0")}<Dica>Arraste no desenho as quinas (quadrados) e as divisas (barras verdes). A quina na rua corre pela rua; os vizinhos se ajustam.</Dica></h3></header>
             <div className="lot-metricas">
               <div><b>{fmt(l.area)}</b><span>m²</span></div>
-              <div><b>{fmt(l.frente)}</b><span>m de frente</span></div>
-              <div><b>{fmt(l.profundidade)}</b><span>m de fundo</span></div>
+              <div><b>{fmt(l.testada ?? l.frente)}</b><span>m de frente</span></div>
+              <div><b>{fmt(l.fundo ?? l.profundidade)}</b><span>m de fundo</span></div>
               <div><b>{l.esquina ? "Esquina" : l.naDivisa ? "Divisa" : "Meio"}</b><span>{l.rua || "—"}</span></div>
             </div>
             {l.problemas.map((x) => <p key={x} className="lot-erro">⚠ {x}</p>)}
             {(l.esquina || l.ponta) && !l.problemas.length && (
               <p className="lot-dica">
-                {l.esquina ? "Lote de esquina: a frente soma as duas ruas, por isso a frente máxima e o fundo mínimo não valem para ele." : "Lote de ponta (onde a quadra afina): ajusta a linha da propriedade — a frente máxima não vale para ele."}
+                {l.esquina ? "Lote de esquina: a frente é a rua principal medida até o ponto em que as duas ruas se cruzariam (o arco da esquina conta como uma quina); a outra rua é a lateral. A frente máxima e o fundo mínimo não valem para ele." : "Lote de ponta (onde a quadra afina): ajusta a linha da propriedade — a frente máxima não vale para ele."}
               </p>
             )}
             <p className="lot-dica">

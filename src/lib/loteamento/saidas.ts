@@ -10,7 +10,7 @@
 // (medidas de terreno) volta para UTM aqui, pelo fator de escala.
 import proj4mod from "proj4";
 import { GEO_DEF, fmtAzimute, utmDef } from "../../../supabase/functions/_shared/geo.ts";
-import { caixa, centroide, dist, dot, esquerda, pontoDoRotulo, sub, unit } from "./geom.ts";
+import { caixa, centroide, dist, distSegmento, dot, esquerda, lerp, pontoDoRotulo, quinasDetalhe, sub, unit } from "./geom.ts";
 import type { Anel, Poligono, Pt } from "./geom.ts";
 import { fmt, viarioDe } from "./calculo.ts";
 import type { Lado, Lote, Perimetro, Quadra, Resultado } from "./calculo.ts";
@@ -377,27 +377,46 @@ export interface LadosNominais {
   direito: Lado[];
   fundos: Lado[];
   esquerdo: Lado[];
+  /** curva de concordância da esquina (do PC ao PT): é a quina entre a frente e a lateral na rua */
+  curva: Lado[];
 }
 
 /**
  * Agrupa os lados como o cartório lê: de quem está na rua olhando o lote, a
  * frente, o lado direito, os fundos e o lado esquerdo. A referência é o lado
  * de frente mais longo; cada lado vai para o grupo da direção mais próxima.
+ * O arco da esquina é UMA quina (`quinasDetalhe`): seus trechos vão para
+ * `curva`, e o lote de esquina continua sendo um quadrilátero (antes o arco era
+ * repartido entre a frente e a lateral).
  */
 export function ladosNominais(l: Lote): LadosNominais {
-  const out: LadosNominais = { frente: [], direito: [], fundos: [], esquerdo: [] };
+  const out: LadosNominais = { frente: [], direito: [], fundos: [], esquerdo: [], curva: [] };
   // a frente escolhida pelo operador é a referência; senão, a rua mais longa
   const principal = l.lados.filter((x) => x.principal);
   const fr = (principal.length ? principal : l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via")).sort((a, b) => b.comp - a.comp)[0] ?? l.lados[0];
   if (!fr) return out;
+  // trechos do arco de esquina (cordas entre o PC e o PT)
+  const r = l.pol.ext, n = r.length;
+  const arcos = quinasDetalhe(r).filter((q) => q.arco && Math.abs(q.giro) >= 35);
+  const noArco = (x: Lado) => {
+    const m = lerp(x.a, x.b, 0.5);
+    return arcos.some((q) => {
+      for (let k = q.i0; k !== q.i1; k = (k + 1) % n) if (distSegmento(m, r[k], r[(k + 1) % n]).d < 0.02) return true;
+      return false;
+    });
+  };
+  const lados = l.lados.filter((x) => {
+    if (x !== fr && noArco(x)) { out.curva.push(x); return false; }
+    return true;
+  });
   // quadrilátero (o caso comum): a ordem do anel decide, mesmo com fundo torto de divisa
-  if (l.lados.length === 4) {
-    const i = l.lados.indexOf(fr);
-    const em = (k: number) => l.lados[(i + k) % 4];
-    return { frente: [em(0)], direito: [em(1)], fundos: [em(2)], esquerdo: [em(3)] };
+  if (lados.length === 4) {
+    const i = lados.indexOf(fr);
+    const em = (k: number) => lados[(i + k) % 4];
+    return { frente: [em(0)], direito: [em(1)], fundos: [em(2)], esquerdo: [em(3)], curva: out.curva };
   }
   const u = unit(sub(fr.b, fr.a)), v = esquerda(u);
-  for (const x of l.lados) {
+  for (const x of lados) {
     const d = unit(sub(x.b, x.a));
     const cu = dot(d, u), cv = dot(d, v);
     if (Math.abs(cu) >= Math.abs(cv)) (cu > 0 ? out.frente : out.fundos).push(x);
@@ -409,10 +428,11 @@ export function ladosNominais(l: Lote): LadosNominais {
 const somaComp = (ls: Lado[]) => ls.reduce((s, x) => s + x.comp, 0);
 const confr = (ls: Lado[]) => [...new Set(ls.map((x) => x.nome))].join(" e ");
 
-export function resumoLote(l: Lote): { frente: string; direito: string; fundos: string; esquerdo: string; medidas: [number, number, number, number] } {
+export function resumoLote(l: Lote): { frente: string; direito: string; fundos: string; esquerdo: string; curva: string; medidas: [number, number, number, number] } {
   const g = ladosNominais(l);
   const t = (ls: Lado[]) => (ls.length ? `${fmt(somaComp(ls))} m — ${confr(ls)}` : "—");
-  return { frente: t(g.frente), direito: t(g.direito), fundos: t(g.fundos), esquerdo: t(g.esquerdo), medidas: [somaComp(g.frente), somaComp(g.direito), somaComp(g.fundos), somaComp(g.esquerdo)] };
+  const curva = g.curva.length ? `${fmt(somaComp(g.curva))} m de desenvolvimento — ${confr(g.curva)}` : "";
+  return { frente: t(g.frente), direito: t(g.direito), fundos: t(g.fundos), esquerdo: t(g.esquerdo), curva, medidas: [somaComp(g.frente), somaComp(g.direito), somaComp(g.fundos), somaComp(g.esquerdo)] };
 }
 
 // ---------------------------------------------------------------------------
@@ -428,7 +448,7 @@ export function quadroDeLotesCsv(res: Resultado, pr: Projeto): string {
     const r = resumoLote(l);
     const preco = l.area * p.precoM2 * (l.esquina ? 1 + p.acrescimoEsquina / 100 : 1);
     const cel = [q.nome, String(l.numero).padStart(2, "0"), fmt(l.area), fmt(r.medidas[0]), fmt(r.medidas[1]), fmt(r.medidas[2]), fmt(r.medidas[3]),
-      l.rua, l.esquina ? "sim" : "não", `Frente: ${r.frente} | Direito: ${r.direito} | Fundos: ${r.fundos} | Esquerdo: ${r.esquerdo}`];
+      l.rua, l.esquina ? "sim" : "não", `Frente: ${r.frente} | Direito: ${r.direito} | Fundos: ${r.fundos} | Esquerdo: ${r.esquerdo}${r.curva ? ` | Curva da esquina: ${r.curva}` : ""}`];
     if (p.precoM2 > 0) cel.push(fmt(preco));
     linhas.push(cel.map((c) => (/[;"\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(";"));
   }
@@ -475,7 +495,7 @@ export function memorialDoLote(l: Lote, res: Resultado, nomes: Map<string, strin
       `Imóvel: Lote ${num} da Quadra ${l.quadra} do loteamento ${d.loteamento}${d.municipio ? `, município de ${d.municipio}${d.uf ? `/${d.uf}` : ""}` : ""}.`,
       ...(d.proprietario ? [`Proprietário: ${d.proprietario}.`] : []),
       `Área: ${fmt(l.area)} m² · Perímetro: ${fmt(perim)} m${l.esquina ? " · lote de esquina" : ""}.`,
-      `Frente: ${r.frente}. Lado direito (de quem da rua olha o imóvel): ${r.direito}. Fundos: ${r.fundos}. Lado esquerdo: ${r.esquerdo}.`,
+      `Frente: ${r.frente}.${r.curva ? ` Curva de concordância da esquina: ${r.curva}.` : ""} Lado direito (de quem da rua olha o imóvel): ${r.direito}. Fundos: ${r.fundos}. Lado esquerdo: ${r.esquerdo}.`,
       `Descrição do perímetro: inicia-se no vértice ${nomeV(seq[0].a)}, de coordenadas ${coord(seq[0].a)}, situado no alinhamento da ${fr.nome}; ${trechos.join("; ")}, ponto inicial da descrição deste perímetro.`,
       `Coordenadas no sistema geodésico SIRGAS 2000, projeção UTM, fuso ${d.fuso}S. Azimutes de quadrícula; distâncias e área ${res.plano.terreno ? "no plano topográfico (medidas de terreno)" : "no plano UTM"}.`,
     ],

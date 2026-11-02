@@ -12,7 +12,7 @@
 // por ela. Nada é recusado: o que sair das medidas vira aviso no lote.
 import {
   antiHorario, areaAssinada, areaPol, bufferLinha, cross, dentroPol, diferenca, dist, distSegmento, dot, esquerda, intersecao,
-  giroEm, intersecaoRetas, lerp, limparAnel, mult, quinasDe, soma, sub, uniaoFechada, unit,
+  giroEm, intersecaoRetas, lerp, limparAnel, mult, quinasDe, quinasDetalhe, soma, sub, uniaoFechada, unit,
 } from "./geom.ts";
 import type { Poligono, Pt } from "./geom.ts";
 import { ancoraDaQuadra } from "./auto.ts";
@@ -1733,13 +1733,18 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
 
 export interface Alca { tipo: "quina" | "divisa"; p: Pt; a?: Pt; b?: Pt; naBorda: boolean }
 
-/** Lados retos do polígono, de quina a quina (o arco da esquina fica de fora). */
+/**
+ * Lados retos do polígono, de quina a quina. O arco (ou chanfro) da esquina é
+ * UMA quina com começo e fim (PC e PT): o lado de rua vai do fim de uma quina ao
+ * começo da próxima, então a rua do lote de esquina é clicável dos dois lados do
+ * arco (antes, o lado começava no meio do arco e era descartado como "torto").
+ */
 export function ladosRetos(pol: Poligono): [Pt, Pt][] {
   const e = pol.ext, n = e.length;
-  const qs = [...new Set(quinasDe(e, 2, 3))].sort((x, y) => x - y);
+  const qs = quinasDetalhe(e, 3.5, 3).sort((x, y) => x.i0 - y.i0);
   const out: [Pt, Pt][] = [];
   for (let k = 0; k < qs.length; k++) {
-    const i0 = qs[k], i1 = qs[(k + 1) % qs.length];
+    const i0 = qs[k].i1, i1 = qs[(k + 1) % qs.length].i0;
     const a = e[i0], b = e[i1];
     if (dist(a, b) < 1.5) continue;
     let reto = true;

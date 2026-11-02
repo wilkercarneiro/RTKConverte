@@ -794,7 +794,10 @@ test("medidas do lote: a proposta automática não deixa lote fora das faixas", 
     assert.ok(l.area <= f * p.areaMax * 1.03 + 0.5, `${l.id} com ${l.area.toFixed(0)} m² (máx. ${p.areaMax})`);
     assert.ok(l.profundidade <= f * limiteFundo(p), `${l.id} com ${l.profundidade.toFixed(1)} m de fundo`);
     // lote de ponta (quadrinha da ponta da gleba virou um lote só) não tem frente máxima
-    const esq = l.esquina || esquinaDe(l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via").map((x) => [x.a, x.b]));
+    // mesma regra do aviso no calcular: ruas distintas (inclui o lote de rua a rua) ou frente em duas direções.
+    // (`l.esquina` agora é só a esquina de verdade — duas ruas que se encontram numa quina)
+    const fr = l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via");
+    const esq = new Set(fr.map((x) => x.ref)).size >= 2 || esquinaDe(fr.map((x) => [x.a, x.b]));
     assert.deepEqual(foraDasFaixas(l, p, false, esq, l.ponta ? 0 : l.frente, !!l.ponta), [], l.id);
   }
 });

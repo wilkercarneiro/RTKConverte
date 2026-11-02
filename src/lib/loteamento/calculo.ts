@@ -10,7 +10,7 @@
 import {
   antiHorario, areaAssinada, areaPol, areaPolAteCorte, dentroAnel, bufferLinha, caixa, centroide, circulo, cross, dentroPol,
   diferenca, dist, distSegmento, dot, esquerda, faixaReferencial, intersecao, lerp, limparAnel, mult, offsetPols, soma, sub,
-  intersecaoRetas, quinas, quinasDe, uniao, uniaoFechada, unit, verdeValida,
+  intersecaoRetas, quinas, quinasAviso, quinasDe, quinasDetalhe, uniao, uniaoFechada, unit, verdeValida,
 } from "./geom.ts";
 import type { Anel, Poligono, Pt } from "./geom.ts";
 import { criarPlano, paraPlano } from "./plano.ts";
@@ -58,6 +58,15 @@ export interface Lote {
   numero: number;
   pol: Poligono;
   area: number;
+  /**
+   * Testada: a frente PRINCIPAL medida até o PI da curva da esquina (Res. CPPU
+   * 003/2018 de SP). No lote de esquina a outra rua é a lateral na rua; no de
+   * rua a rua, a outra rua é o fundo. (A `frente` abaixo segue somando as ruas
+   * para os avisos de sempre.)
+   */
+  testada?: number;
+  /** fundo medido da frente principal (no lote de esquina, não da rua lateral) */
+  fundo?: number;
   /** soma dos lados com frente para rua/via */
   frente: number;
   /** do alinhamento da frente principal até o ponto mais fundo do lote (m) */
@@ -787,6 +796,77 @@ export function esquinaDe(segs: Seg[]): boolean {
   let fora = 0;
   for (const [a, b] of segs) if (Math.abs(dot(unit(sub(b, a)), d0)) < 0.866) fora += dist(a, b);
   return fora >= 3;
+}
+
+/**
+ * A frente como o cartório lê (plano da linha central, etapa 0). O arco ou o
+ * chanfro da esquina é UMA quina (`quinasDetalhe`); as arestas de rua viram
+ * "corridas" separadas pelas quinas de 35° ou mais.
+ * - esquina: duas corridas de rua se encontram numa dessas quinas (a estrada
+ *   que dobra 20° não é esquina, nem o lote de rua a rua);
+ * - testada: a corrida principal (a escolhida pelo operador ou a mais longa)
+ *   até o PI das curvas de esquina nas pontas dela;
+ * - fundoSegs: a corrida principal, para medir o fundo a partir dela.
+ */
+export function frenteDoLote(pol: Poligono, frentes: { a: Pt; b: Pt; principal?: boolean }[]): { esquina: boolean; testada: number; fundoSegs: Seg[] } {
+  const r = pol.ext, n = r.length;
+  if (!frentes.length || n < 3) return { esquina: false, testada: 0, fundoSegs: [] };
+  const naFrente = (a: Pt, b: Pt) => {
+    const m = lerp(a, b, 0.5);
+    return frentes.some((x) => distSegmento(m, x.a, x.b).d < 0.02);
+  };
+  const principal = (a: Pt, b: Pt) => {
+    const m = lerp(a, b, 0.5);
+    return frentes.some((x) => x.principal && distSegmento(m, x.a, x.b).d < 0.02);
+  };
+  const qs = quinasDetalhe(r);
+  // aresta i (r[i] → r[i+1]) dentro de um arco de quina: não é corrida, é a curva
+  const noArco = new Set<number>();
+  const quinaNoVertice = new Map<number, (typeof qs)[number]>();
+  for (const q of qs) {
+    if (Math.abs(q.giro) < 35) continue;
+    for (let k = q.i0; k !== q.i1; k = (k + 1) % n) noArco.add(k);
+    quinaNoVertice.set(q.i0, q);
+    if (q.i1 !== q.i0) quinaNoVertice.set(q.i1, q);
+  }
+  // corridas: arestas de frente seguidas, sem quina forte no meio
+  type Corrida = { arestas: number[]; comp: number; principal: boolean };
+  const corridas: Corrida[] = [];
+  const ehF = r.map((_, i) => !noArco.has(i) && dist(r[i], r[(i + 1) % n]) > 1e-6 && naFrente(r[i], r[(i + 1) % n]));
+  // começa numa aresta que não continua a anterior
+  let ini = 0;
+  for (let i = 0; i < n; i++) { const ant = (i - 1 + n) % n; if (!ehF[ant] || quinaNoVertice.has(i)) { ini = i; break; } }
+  let atual: Corrida | null = null;
+  for (let s = 0; s < n; s++) {
+    const i = (ini + s) % n;
+    if (!ehF[i]) { atual = null; continue; }
+    if (atual && quinaNoVertice.has(i)) atual = null;
+    if (!atual) { atual = { arestas: [], comp: 0, principal: false }; corridas.push(atual); }
+    atual.arestas.push(i);
+    atual.comp += dist(r[i], r[(i + 1) % n]);
+    if (principal(r[i], r[(i + 1) % n])) atual.principal = true;
+  }
+  if (!corridas.length) return { esquina: false, testada: 0, fundoSegs: [] };
+  const princ = corridas.find((c) => c.principal) ?? corridas.reduce((a, b) => (b.comp > a.comp ? b : a));
+  // esquina: uma quina forte com corrida de frente dos dois lados
+  let esquina = false;
+  for (const q of qs) {
+    if (Math.abs(q.giro) < 35) continue;
+    const antes = (q.i0 - 1 + n) % n, depois = q.i1;
+    if (ehF[antes] && ehF[depois]) esquina = true;
+  }
+  // testada: a corrida principal + o trecho até o PI das curvas nas pontas dela
+  let testada = princ.comp;
+  const primeira = princ.arestas[0], ultima = princ.arestas[princ.arestas.length - 1];
+  const qIni = quinaNoVertice.get(primeira), qFim = quinaNoVertice.get((ultima + 1) % n);
+  const outraFrente = (q: (typeof qs)[number] | undefined, lado: "antes" | "depois") => {
+    if (!q) return false;
+    return lado === "antes" ? ehF[(q.i0 - 1 + n) % n] : ehF[q.i1];
+  };
+  if (qIni && qIni.arco && outraFrente(qIni, "antes")) testada += dist(r[primeira], qIni.pi);
+  if (qFim && qFim.arco && outraFrente(qFim, "depois")) testada += dist(r[(ultima + 1) % n], qFim.pi);
+  const fundoSegs: Seg[] = princ.arestas.map((i) => [r[i], r[(i + 1) % n]] as Seg);
+  return { esquina, testada, fundoSegs };
 }
 
 /**
@@ -2541,16 +2621,24 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     const fr = principal.length ? principal : l.lados.filter((x) => ehFrente(x.tipo));
     l.frente = fr.reduce((s, x) => s + x.comp, 0);
     const ruasDistintas = new Set(fr.map((x) => x.ref));
-    l.esquina = ruasDistintas.size >= 2;
-    const maior = fr.sort((a, b) => b.comp - a.comp)[0];
+    // esquina de verdade: duas ruas que se encontram numa quina (o arco conta como uma).
+    // A estrada levantada tem uma referência por lado do perímetro e o lote de rua a
+    // rua tem duas ruas paralelas: nenhum dos dois é esquina (nem ganha o acréscimo).
+    const fl = frenteDoLote(l.pol, fr);
+    l.esquina = fl.esquina;
+    l.testada = fl.testada;
+    const maior = [...fr].sort((a, b) => b.comp - a.comp)[0];
     l.rua = maior?.nome ?? "";
     l.naDivisa = l.lados.some((x) => x.tipo === "divisa");
     const segs: Seg[] = fr.map((x) => [x.a, x.b]);
     l.profundidade = profundidadeDe(l.pol, segs, true);
-    // lote de rua a rua (frente e fundo para rua): a regra vale para a frente principal
-    l.problemas.push(...foraDasFaixas({ ...l, rasa: profundidadeDe(l.pol, segs) }, p, !fr.length, l.esquina || esquinaDe(segs), l.ponta ? 0 : frentePrincipal(segs), !!l.ponta));
-    // forma: no máximo 4 quinas (o lote de ponta pode ter 3)
-    const nq = quinas(l.pol.ext);
+    l.fundo = fl.fundoSegs.length ? profundidadeDe(l.pol, fl.fundoSegs, true) : l.profundidade;
+    // lote de rua a rua (frente e fundo para rua): a regra vale para a frente principal.
+    // Os avisos seguem a regra de sempre (ruas distintas = sem frente máxima nem fundo mínimo).
+    l.problemas.push(...foraDasFaixas({ ...l, rasa: profundidadeDe(l.pol, segs) }, p, !fr.length, ruasDistintas.size >= 2 || esquinaDe(segs), l.ponta ? 0 : frentePrincipal(segs), !!l.ponta));
+    // forma: no máximo 4 quinas (o lote de ponta pode ter 3). O arco e o chanfro da
+    // esquina contam como uma: só avisa quando as duas regras de quina concordam
+    const nq = quinasAviso(l.pol.ext);
     // (divisão de imóvel rural desliga a regra: quinasMax 0 — a parte segue o perímetro)
     const qMax = p.quinasMax ?? 4;
     if (qMax > 0 && nq > qMax) l.problemas.push(`${nq} quinas — o máximo é ${qMax}`);
