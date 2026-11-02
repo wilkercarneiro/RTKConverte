@@ -329,7 +329,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     const porque = [
       ficaram.length ? `${lista(ficaram)}: a linha central deixaria pior` : "",
       jaEstavam.length ? `${lista(jaEstavam)}: já ${jaEstavam.length > 1 ? "estão" : "está"} pela linha central` : "",
-      editadas.length ? `${lista(editadas)}: ${editadas.length > 1 ? "foram editadas" : "foi editada"} à mão (para refazer, selecione a quadra e use Ajustar fundo com fundo)` : "",
+      editadas.length ? `${lista(editadas)}: ${editadas.length > 1 ? "têm" : "tem"} os lotes desenhados um a um (edição na prancheta) — para refazer, selecione a quadra e use Ajustar fundo com fundo` : "",
       comArea.length ? `${lista(comArea)}: ${comArea.length > 1 ? "têm" : "tem"} área pública feita de lotes` : "",
     ].filter(Boolean).join("; ");
     if (!feitas.length) { mostrar(`Nenhuma quadra mudou${porque ? ` — ${porque}` : " (as quadras de uma fileira não têm fundo com fundo)"}.`, true); return; }

@@ -323,7 +323,9 @@ export function fundoComFundoEmTodasAsQuadras(pr0: Projeto, res0: Resultado, cal
   // as que ficam de fora, para a mensagem dizer por quê: editada à mão (refazer apagaria a
   // edição — a quadra pode ser refeita sozinha, pelo botão dela), já pela linha central e
   // com área pública feita dos lotes dela
-  const editadas = res0.quadras.filter((q) => !q.estruturada && q.lotes.length >= 4 && q.lotes.some((l) => l.manual)).map((q) => q.nome);
+  // (a de uma fileira só — metade ou mais dos lotes no fundo da gleba — não tem fundo com fundo)
+  const umaFileira = (q: Quadra) => q.lotes.filter((l) => l.lados.some((x) => x.tipo === "divisa")).length >= q.lotes.length / 2;
+  const editadas = res0.quadras.filter((q) => !q.estruturada && q.lotes.length >= 4 && q.lotes.some((l) => l.manual) && !umaFileira(q)).map((q) => q.nome);
   const jaEstavam = res0.quadras.filter((q) => q.estruturada).map((q) => q.nome);
   const comArea = res0.quadras.filter((q) => !q.estruturada && q.fileiras >= 2 && q.lotes.length >= 4 && temAreaPublicaDeLotes(res0, q)).map((q) => q.nome);
   for (const nome of res0.quadras.filter((q) => !q.estruturada && q.fileiras >= 2 && q.lotes.length >= 4 && !comArea.includes(q.nome)).map((q) => q.nome)) {
