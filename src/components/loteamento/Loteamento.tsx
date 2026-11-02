@@ -16,7 +16,7 @@ import { carregarProjeto, perimetroDoServico, projetoInicial, salvarProjeto } fr
 import { COMANDOS, chaveDoLote, contextoDe, executar, lotesDaSelecao } from "../../lib/loteamento/acoes.ts";
 import { dentroPol } from "../../lib/loteamento/geom.ts";
 import { pontoInterno } from "../../lib/loteamento/auto.ts";
-import { fixarEstrutura } from "../../lib/loteamento/edicao.ts";
+import { fixarEstrutura, pedirEstrutura } from "../../lib/loteamento/edicao.ts";
 import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { Passos, StatusSalvamento } from "../ui";
@@ -307,8 +307,35 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     };
   }
 
+  /**
+   * "Fundo com fundo em todas": cada quadra de duas fileiras vira estruturada pela linha
+   * central, uma de cada vez. Só fica a que fecha sem piorar os avisos (as outras não mudam).
+   */
+  function fundoComFundoEmTodas() {
+    if (!projeto || !res) return;
+    const avisos = (r: Resultado, nome: string) => r.lotes.filter((l) => l.quadra === nome && l.problemas.length).length;
+    let pr = projeto, r: Resultado = res;
+    const feitas: string[] = [], ficaram: string[] = [];
+    for (const nome of res.quadras.filter((q) => !q.estruturada && q.lotes.length >= 4).map((q) => q.nome)) {
+      const q = r.quadras.find((x) => x.nome === nome);
+      if (!q) continue;
+      const { pr: p1, i } = pedirEstrutura(pr, r, q);
+      const r1 = calc(p1);
+      const q1 = r1?.quadras.find((x) => x.cfg === i);
+      if (!r1 || !q1?.estruturada || q1.estruturada.cruzamentos > 0 || q1.lotes.length !== q.lotes.length || avisos(r1, q1.nome) > avisos(r, nome)) { ficaram.push(nome); continue; }
+      const p2 = fixarEstrutura(p1, r1, i);
+      const r2 = calc(p2);
+      if (!r2) { ficaram.push(nome); continue; }
+      feitas.push(`${q1.nome} (avisos ${avisos(r, nome)} → ${avisos(r2, q1.nome)})`);
+      pr = p2; r = r2;
+    }
+    if (!feitas.length) { mostrar(`Nenhuma quadra melhorou pela linha central${ficaram.length ? ` (${ficaram.join(", ")}: uma fileira só, ou a linha central deixaria pior)` : ""}.`, true); return; }
+    if (mudar(pr)) mostrar(`Fundo com fundo pela linha central em ${feitas.length} quadra${feitas.length > 1 ? "s" : ""}: ${feitas.join(", ")}.${ficaram.length ? ` Ficaram como estavam: ${ficaram.join(", ")}.` : ""} Ctrl+Z desfaz.`);
+  }
+
   function rodarComando(texto: string) {
     if (!projeto || !res) return;
+    if (/^\s*(ajustar\s+)?fundo\s+com\s+fundo\s+(em\s+)?tod[ao]s/i.test(texto)) { fundoComFundoEmTodas(); setHistoricoCmd((h) => [texto, ...h.filter((x) => x !== texto)].slice(0, 30)); return; }
     const s = concluirEstrutura(executar(texto, projeto, res, sel));
     if (s.desfazer) { lembrarSelecao(); hist.desfazer(); }
     if (s.refazer) { lembrarSelecao("refazer"); hist.refazer(); }

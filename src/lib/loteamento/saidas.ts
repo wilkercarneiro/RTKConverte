@@ -254,7 +254,7 @@ export function arquivoLocacao(pontos: PontoLocacao[], formato: Exclude<FormatoL
 const CAMADAS: [string, number][] = [
   ["PERIMETRO", 7], ["RUA_EIXO", 1], ["RUA_ALINHAMENTO", 8], ["QUADRA", 5], ["LOTE", 7], ["AREA_VERDE", 3],
   ["AREA_INSTITUCIONAL", 30], ["AREA_LAZER", 4], ["APP", 4], ["TEXTO_LOTE", 2], ["TEXTO_QUADRA", 5], ["TEXTO_RUA", 1],
-  ["COTA", 9], ["PONTO_LOCACAO", 6], ["NOME_PONTO", 6],
+  ["COTA", 9], ["PONTO_LOCACAO", 6], ["NOME_PONTO", 6], ["LINHA_CENTRAL", 30],
 ];
 
 export function gerarDxf(res: Resultado, pontos: PontoLocacao[], op: { textos: boolean } = { textos: true }): string {
@@ -295,6 +295,8 @@ export function gerarDxf(res: Resultado, pontos: PontoLocacao[], op: { textos: b
   for (const r of res.ruas) poli(r.eixo, "RUA_EIXO", false);
   for (const q of res.quadras) anel(q.pol, "QUADRA");
   for (const l of res.lotes) anel(l.pol, "LOTE");
+  // linha central das quadras estruturadas (fundo com fundo): camada própria, para conferir e locar
+  for (const q of res.quadras) if (q.linhaCentral && q.linhaCentral.length >= 2) poli(q.linhaCentral, "LINHA_CENTRAL", false);
   const camadaArea: Record<string, string> = { verde: "AREA_VERDE", institucional: "AREA_INSTITUCIONAL", lazer: "AREA_LAZER", app: "APP" };
   for (const a of res.publicas) anel(a.pol, camadaArea[a.tipo]);
   for (const p of pontos) {

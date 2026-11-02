@@ -384,6 +384,15 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
         </section>
       )}
 
+      {/* ------------------------------------------------ fundo com fundo no projeto inteiro */}
+      {!lotes.length && !quadra && res.quadras.some((q) => !q.estruturada && q.lotes.length >= 4) && (
+        <section className="lot-cartao">
+          <header><span className="lot-tag">Fundo com fundo</span></header>
+          <p className="lot-dica">Refaz pela linha central cada quadra de duas fileiras: fundo com fundo alinhado, laterais no esquadro da rua e lotes com a mesma área. Só fica a quadra que melhora (as outras não mudam).</p>
+          <button className="principal" onClick={() => onComando("fundo com fundo todas")}>Ajustar fundo com fundo em todas as quadras</button>
+        </section>
+      )}
+
       {/* ------------------------------------------------ quadro de áreas */}
       <section className="lot-cartao">
         <header><span className="lot-tag">Quadro de áreas</span></header>

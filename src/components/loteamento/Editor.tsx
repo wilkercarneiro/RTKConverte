@@ -320,7 +320,22 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
       // Espaço segurado: arrastar move a vista (como a mão), sem trocar de ferramenta
       if (e.key === " ") { espaco.current = true; if (alvo?.tagName !== "BUTTON") e.preventDefault(); return; }
       if (e.key === "Enter" && desenho.length) { e.preventDefault(); terminar(); }
-      else if (e.key === "Escape") { setDesenho([]); onFerramenta("selecionar"); onSel(null); }
+      else if (e.key === "Escape") {
+        // no meio de um arraste, o Esc cancela: tudo volta como estava antes de pegar a alça
+        const a = arraste.current;
+        if (a && "pr0" in a) {
+          arraste.current = null;
+          setArrastando(false);
+          setSnap(null);
+          cancelAnimationFrame(raf.current);
+          pendente.current = null;
+          onMudar(a.pr0, true);
+          onFimArraste();
+          onMsg("Arraste cancelado (Esc): tudo voltou como estava.");
+          return;
+        }
+        setDesenho([]); onFerramenta("selecionar"); onSel(null);
+      }
       else if (e.key === "Backspace" && desenho.length) { e.preventDefault(); setDesenho((d) => d.slice(0, -1)); }
       else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
         const k = e.key.toLowerCase();
@@ -339,7 +354,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     addEventListener("keydown", dn);
     addEventListener("keyup", up);
     return () => { removeEventListener("keydown", dn); removeEventListener("keyup", up); };
-  }, [desenho, terminar, onFerramenta, onSel, enquadrar, res.gleba]);
+  }, [desenho, terminar, onFerramenta, onSel, enquadrar, res.gleba, onMudar, onFimArraste, onMsg]);
 
   // ---------------- ponteiro ----------------
   const pos = (e: { clientX: number; clientY: number }): [number, number] => {
