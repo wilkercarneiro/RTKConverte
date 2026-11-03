@@ -1928,7 +1928,7 @@ export class Maquete {
     const partes: THREE.BufferGeometry[] = [];
     const m4 = new THREE.Matrix4(), c = new THREE.Color();
     for (const im of [...(this.arvoresGLB ?? this.grupoArvores.children), ...this.grupoPostes.children] as THREE.InstancedMesh[]) {
-      if (im.material === this.matPoca) continue;
+      if (!(im as THREE.InstancedMesh).isInstancedMesh) continue;
       const corMat = (im.material as THREE.MeshStandardMaterial).color;
       const base = im.geometry.getAttribute("aBase") as THREE.InstancedBufferAttribute;
       // a copa em cachos (≈1.200 vértices) multiplicada por milhares de árvores pesaria demais no GLB: vai a esfera simples
@@ -2132,8 +2132,6 @@ export class Maquete {
       new THREE.CylinderGeometry(0.045, 0.045, 0.16, 8).rotateZ(Math.PI / 2).translate(1.66, 0.42, 0).toNonIndexed(),
     ].map((g) => { g.deleteAttribute("uv"); return g; }))!;
     const cabeca = new THREE.BoxGeometry(0.52, 0.02, 0.22).translate(2.0, 0.38, 0);
-    // poça de luz no chão (mancha quente, aditiva) — acende com a noite
-    const poca = new THREE.PlaneGeometry(12, 12).rotateX(-Math.PI / 2).translate(1.8, 0.18, 0);
     const pc = document.createElement("canvas");
     pc.width = pc.height = 128;
     const px = pc.getContext("2d")!;
@@ -2142,10 +2140,59 @@ export class Maquete {
     px.fillStyle = rg; px.fillRect(0, 0, 128, 128);
     const tPoca = new THREE.CanvasTexture(pc);
     tPoca.colorSpace = THREE.SRGBColorSpace;
+    tPoca.wrapS = tPoca.wrapT = THREE.ClampToEdgeWrapping;
+    // poça de luz no chão (mancha quente, aditiva) — acende com a noite. É
+    // estendida sobre os próprios nós do terreno (mesma triangulação, mesma cota,
+    // mesma transição antes → depois): no lote inclinado ela deita na rampa em vez
+    // de ficar um quadrado plano flutuando de um lado e enterrado do outro
     this.matPoca = elevar(new THREE.MeshBasicMaterial({
-      map: tPoca, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
-      polygonOffset: true, polygonOffsetFactor: -4,
-    }), "instancia", this.U);
+      map: tPoca, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, vertexColors: true,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+    }), "terreno", this.U, (sh) => {
+      sh.vertexShader = sh.vertexShader.replace("#include <project_vertex>", "transformed.y += 0.06;\n#include <project_vertex>");
+    });
+    this.matPoca.customProgramCacheKey = () => "elevar-terreno-poca";
+    {
+      const g = this.cena.grade, R = 6;
+      const P: number[] = [], UVp: number[] = [], NAT: number[] = [], FIN: number[] = [], COR: number[] = [], IX: number[] = [];
+      for (const p of ps) {
+        const c: Pt = [p.p[0] + p.dir[0] * 1.8, p.p[1] + p.dir[1] * 1.8];
+        const i0 = Math.max(0, Math.floor((c[0] - R - g.x0) / g.passo)), i1 = Math.min(g.nx - 1, Math.ceil((c[0] + R - g.x0) / g.passo));
+        const j0 = Math.max(0, Math.floor((c[1] - R - g.y0) / g.passo)), j1 = Math.min(g.ny - 1, Math.ceil((c[1] + R - g.y0) / g.passo));
+        if (i1 <= i0 || j1 <= j0) continue;
+        const v0 = P.length / 3, w = i1 - i0 + 1;
+        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+          const k = j * g.nx + i, q: Pt = [g.x0 + i * g.passo, g.y0 + j * g.passo];
+          const [x, z] = this.xz(q);
+          P.push(x, 0, z);
+          UVp.push((q[0] - c[0]) / (2 * R) + 0.5, (q[1] - c[1]) / (2 * R) + 0.5);
+          NAT.push(g.natural[k]); FIN.push(g.final[k]);
+          // dentro do lote não chega: o muro da frente faz sombra (rua, calçada,
+          // áreas públicas e o chão fora da gleba recebem a luz)
+          const r = g.lote[k] >= 0 && !g.rua[k] ? 0 : 1;
+          COR.push(r, r, r);
+        }
+        // mesma diagonal da malha do terreno
+        for (let j = 0; j < j1 - j0; j++) for (let i = 0; i < i1 - i0; i++) {
+          const a = v0 + j * w + i, b = a + 1, cc = a + w, d = cc + 1;
+          IX.push(a, b, cc, b, d, cc);
+        }
+      }
+      if (IX.length) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
+        geo.setAttribute("uv", new THREE.Float32BufferAttribute(UVp, 2));
+        geo.setAttribute("aNat", new THREE.Float32BufferAttribute(NAT, 1));
+        geo.setAttribute("aFin", new THREE.Float32BufferAttribute(FIN, 1));
+        geo.setAttribute("color", new THREE.Float32BufferAttribute(COR, 3));
+        geo.setIndex(IX);
+        geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+        const mp = new THREE.Mesh(geo, this.matPoca);
+        mp.renderOrder = 2;
+        mp.frustumCulled = false;
+        this.grupoPostes.add(mp);
+      }
+    }
     const matPoste = elevar(new THREE.MeshStandardMaterial({ color: 0xb4b0a7, roughness: 0.9 }), "instancia", this.U);
     matPoste.customProgramCacheKey = () => "elevar-instancia-poste";
     const matMetal = elevar(new THREE.MeshStandardMaterial({ color: 0x8a9097, roughness: 0.42, metalness: 0.6 }), "instancia", this.U);
@@ -2186,7 +2233,6 @@ export class Maquete {
       [braco, matMetal, ps, (p) => [lum(p), 1]],
       [corpoLum, matMetal, ps, (p) => [lum(p), 1]],
       [cabeca, this.matLampada, ps, (p) => [lum(p), 1]],
-      [poca, this.matPoca, ps, () => [0, 1]],
       [fita, matMetal, ps, (p) => [bt(p), 1]],
       [roldanas, matPorcelana, ps, (p) => [bt(p), 1]],
       [cruzeta, matMetal, ps.filter((p) => p.mt), (p) => [(p.altura ?? 12) - 0.62, 1]],
@@ -2207,11 +2253,10 @@ export class Maquete {
       });
       geo.setAttribute("aBase", new THREE.InstancedBufferAttribute(base, 1));
       geo.setAttribute("aAtraso", new THREE.InstancedBufferAttribute(atraso, 1));
-      im.castShadow = mat !== this.matPoca;
-      if (im.castShadow) im.customDepthMaterial = sombraDe("instancia", this.U);
-      im.receiveShadow = mat !== this.matPoca;
+      im.castShadow = true;
+      im.customDepthMaterial = sombraDe("instancia", this.U);
+      im.receiveShadow = true;
       im.frustumCulled = false;
-      if (mat === this.matPoca) im.renderOrder = 2;
       this.grupoPostes.add(im);
     }
   }
