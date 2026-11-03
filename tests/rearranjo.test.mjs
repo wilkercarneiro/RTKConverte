@@ -13,7 +13,7 @@ import { calcular } from "../src/lib/loteamento/calculo.ts";
 import { gerarPropostas } from "../src/lib/loteamento/auto.ts";
 import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
 import { estruturaDeDivisas, fixarEstrutura, normalizar, ordemDoDesenho } from "../src/lib/loteamento/edicao.ts";
-import { contornoUniao } from "../src/lib/loteamento/rearranjo.ts";
+import { blocosTresFrentes, contornoUniao } from "../src/lib/loteamento/rearranjo.ts";
 import { alongamento } from "../src/lib/loteamento/linhaCentral.ts";
 import { areaPol, areaPols, centroide, intersecao, quinasAviso, uniao } from "../src/lib/loteamento/geom.ts";
 
@@ -220,4 +220,64 @@ test("EDILSON: fundo com fundo da quadra inteira não faz lote-tira na cabeceira
   assert.ok(q.estruturada, "D não ficou pela linha central");
   for (const l of q.lotes) assert.ok(alongamento(l.pol.ext) < 4, `${l.id} comprido demais (${alongamento(l.pol.ext).toFixed(1)}× a largura)`);
   for (const l of q.lotes) assert.ok(quinasAviso(l.pol.ext) <= 4, `${l.id} com 5 quinas`);
+});
+
+// ---------------------------------------------------------------------------
+// Quadra de três frentes (triângulo entre três ruas): a linha central não fecha e o
+// "igualar" caía nas divisas que só deslizam — por partes, com lote quebrado (IRAN, E)
+// ---------------------------------------------------------------------------
+const LIM_IRAN = { frente: 10, profundidade: 26, frenteMin: 8, frenteMax: 15, profundidadeMin: 15.6, profundidadeMax: 42, areaMin: 208, areaMax: 630 };
+/** fundo como a planta mede: maior distância até a reta do lado mais comprido na rua */
+function fundoNaRua(an, contorno) {
+  const naBorda = (a, b) => contorno.some((x, i) => { const y = contorno[(i + 1) % contorno.length]; const d = (p) => { const ab = [y[0] - x[0], y[1] - x[1]], l2 = ab[0] ** 2 + ab[1] ** 2; const t = Math.max(0, Math.min(1, ((p[0] - x[0]) * ab[0] + (p[1] - x[1]) * ab[1]) / l2)); return Math.hypot(p[0] - x[0] - ab[0] * t, p[1] - x[1] - ab[1] * t); }; return d(a) < 0.05 && d(b) < 0.05; });
+  let fa = null, fb = null, comp = 0;
+  an.forEach((a, i) => { const b = an[(i + 1) % an.length]; const l = Math.hypot(b[0] - a[0], b[1] - a[1]); if (l > comp && naBorda(a, b)) { comp = l; fa = a; fb = b; } });
+  if (!fa) return Infinity;
+  const u = [(fb[0] - fa[0]) / comp, (fb[1] - fa[1]) / comp];
+  return Math.max(...an.map((x) => Math.abs(u[0] * (x[1] - fa[1]) - u[1] * (x[0] - fa[0]))));
+}
+
+test("quadra de três frentes (triângulo sintético): blocos com áreas exatas, sem lote quebrado nem fundo acima do máximo", () => {
+  // lados como os da quadra E do IRAN: rodovia 220 m, rua 286 m e rua da cabeceira 113 m
+  const R = [[0, 0], [220, 0], [-46.9, 102.8]];
+  const total = areaPol({ ext: R, furos: [] });
+  const N = Math.round(total / 353);
+  const b = blocosTresFrentes(R, ["via", "rua", "rua"], ["via", "a4", "a3"], N, LIM_IRAN);
+  assert.ok(b, "não dividiu a quadra de três frentes");
+  assert.equal(b.aneis.length, N);
+  const T = total / N;
+  for (const a of b.aneis) {
+    assert.ok(Math.abs(areaPol({ ext: a, furos: [] }) - T) < 0.05, `área ${areaPol({ ext: a, furos: [] }).toFixed(2)} ≠ ${T.toFixed(2)}`);
+    assert.ok(quinasAviso(a) <= 4, `lote com ${quinasAviso(a)} quinas`);
+    assert.ok(fundoNaRua(a, R) <= LIM_IRAN.profundidadeMax * 1.03 + 0.01, `fundo ${fundoNaRua(a, R).toFixed(1)} m acima do máximo`);
+  }
+  assert.ok(Math.abs(areaPols(uniao(b.aneis.map((a) => ({ ext: a, furos: [] })))) - total) < 0.5, "lotes sobrepostos ou terra faltando");
+  assert.match(b.resumo, /quadra de três frentes/);
+});
+
+const IRAN = new URL("./corpus-real/iran/loteamento_2026-11-03.json", import.meta.url);
+const temIran = existsSync(IRAN);
+test("IRAN: igualar a quadra E inteira (três frentes) — 31 lotes iguais, sem aviso, numeração em sequência", { skip: !temIran && "sem o corpus real" }, () => {
+  const d = JSON.parse(readFileSync(IRAN, "utf8"));
+  const per = { pts: d.vertices.map((v) => [v.e, v.n]), altitudes: d.vertices.map((v) => v.h), confrontantes: d.vertices.map(() => null) };
+  const pr = normalizarProjeto(d.projeto, "IRAN", per.pts.length);
+  const r0 = calcular(pr, per);
+  const sel = r0.lotes.filter((l) => l.quadra === "E");
+  assert.equal(sel.length, 31);
+  // antes: o igualar saía por partes (319 a 400 m²), com lote fora das medidas
+  const ig = rearranjar(pr, r0, sel, "igualar", per);
+  assert.match(ig.s.msg, /31 lotes com 353,02 m² cada — quadra de três frentes/);
+  const ar = ig.novos.map((l) => l.area);
+  assert.ok(Math.max(...ar) - Math.min(...ar) < 0.05, `áreas desiguais: ${Math.min(...ar).toFixed(2)} a ${Math.max(...ar).toFixed(2)}`);
+  for (const l of ig.novos) {
+    assert.deepEqual(l.problemas, [], `${l.id}: ${l.problemas.join("; ")}`);
+    assert.ok(quinasAviso(l.pol.ext) <= 4, `${l.id} com ${quinasAviso(l.pol.ext)} quinas`);
+  }
+  // numeração pela ordem do contorno, como o gerador: cada lote encosta no seguinte, salvo
+  // nas voltas — da a4 para a ponta (os de rua a rua voltam pela rodovia) e da esquina
+  // aguda para a rua da cabeceira (antes: números embaralhados, 14 entre 22 e 21)
+  const q = ig.r.lotes.filter((l) => l.quadra === "E").sort((a, b) => a.numero - b.numero);
+  const encosta = (a, b) => a.pol.ext.some((p) => b.pol.ext.some((x) => Math.hypot(p[0] - x[0], p[1] - x[1]) < 0.05));
+  const pulos = q.filter((l, i) => !encosta(l, q[(i + 1) % q.length])).map((l) => l.id);
+  assert.ok(pulos.length <= 2, `numeração pula: ${pulos.join(", ")}`);
 });

@@ -178,6 +178,23 @@ Com vários lotes selecionados, **Igualar áreas** e **Ajustar fundo com fundo �
   - Nesse caso, o igualar volta ao jeito antigo: as divisas deslizam, ou iguala por partes.
 - A quina a mais que o degrau do vizinho de fora traz vai para algum lote da ponta, e o lote fica com aviso.
 
+### Quadra de três frentes (03/11/2026)
+
+O caso é a quadra E do IRAN: um triângulo entre três ruas (a4 com 286 m, rodovia com 220 m e a3 com 113 m), em que a a4 e a rodovia se encontram numa ponta fina. O igualar só conhecia "duas ruas que se olham com as pontas fechadas" ou "uma fileira". A a3 virava cabeceira sem lotes, e os 8 lotes de frente para ela não cabiam. O comando caía nas divisas que só deslizam e travava em 18 delas, igualando por partes: 319, 336, 353, 380 e 400 m², com degrau no fundo e lote fora das medidas.
+
+Agora, quando a linha central e as faixas não fecham, `blocosTresFrentes` (rearranjo.ts) divide a terra em blocos, cada um com n × T de área exata:
+- **Testa:** fileira de frente para a rua da cabeceira, com o fundo numa reta paralela a ela. A reta pode girar até 40°.
+- **Ponta:** lotes de rua a rua, separados por uma reta que pode ficar até 30° fora da perpendicular à bissetriz. A transição em diagonal dá fundo aos últimos lotes das duas fileiras sem que o primeiro de rua a rua passe da profundidade máxima.
+- **Miolo:** duas fileiras fundo com fundo, numa linha de fundo reta (a bissetriz das duas frentes, deslocada até fechar a conta).
+- **Divisão de cada bloco:** a dobra do fundo (onde a reta de um bloco encontra a linha de fundo) vira divisa (`melhorComDobra`). Em pedaço com frente para duas ruas (perto de uma esquina aguda), a frente por cada rua sozinha também concorre: os lotes correm de rua a rua em vez de dar a volta na esquina.
+- **Cunha:** onde a reta da testa encontra uma frente em ângulo fechado, a ponta aguda pode passar para a testa, com a descida no esquadro ou até 20° inclinada.
+- **Régua:** primeiro, quantos lotes ficariam fora das medidas pela régua da planta (frente pelos lados na rua; fundo até a reta do lado mais comprido na rua; a frente máxima não vale para lote de esquina nem de rua a rua). Depois, o custo de forma.
+- **Desempenho:** uma passada rápida sem dobras ordena as combinações, e só as 8 melhores são divididas por inteiro (cerca de 2,5 s na E).
+- **Numeração:** segue a ordem do contorno, no sentido e com o começo mais perto dos números antigos. Pelo lote mais perto, os números saíam embaralhados.
+- **Resultado na E:** 31 lotes de 353,02 m², nenhum aviso, nenhum lote com 5 quinas.
+
+Limite que a conta mostra: com T = 353 m², frente máxima de 15 m e fundo máximo de 42 m (3% de folga), duas fileiras pedem pelo menos 45,7 m de largura, e o lote de rua a rua aceita no máximo 43,3 m. Com a reta da ponta perpendicular sobra sempre um lote fora; por isso a reta gira.
+
 ### Geração já ajustada (02/11/2026)
 
 - Depois de traçar as ruas, `estruturarQuadras` (auto.ts) refaz cada quadra de duas fileiras pela linha central.
@@ -254,4 +271,5 @@ Testado no vertces.com.br com um serviço de teste e, no motor, com 8 glebas (ED
   - geração com as quadras pela linha central e sem erro;
   - verde longe da estrada e institucional no centro;
   - os casos reais do EDILSON (pontas inclinadas na C, cabeceira da D sem lote-tira).
+  - quadra de três frentes: triângulo sintético (áreas exatas, sem 5 quinas, fundo dentro do máximo) e a quadra E real do IRAN (`tests/corpus-real/iran/`, fora do Git: 31 iguais, sem aviso, numeração em sequência).
 - **`npm run test:rls`** cobre o isolamento da tabela `loteamentos` entre escritórios.

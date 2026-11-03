@@ -769,7 +769,7 @@ function frentesDe(pol: Poligono, naFrente: (a: Pt, b: Pt) => boolean): Seg[] {
  * mesmo sentido. O lote que vai de rua a rua (frente e fundo para rua) não
  * soma as duas.
  */
-function frentePrincipal(segs: Seg[]): number {
+export function frentePrincipal(segs: Seg[]): number {
   if (!segs.length) return 0;
   const [a0, b0] = segs.reduce((m, x) => (dist(x[0], x[1]) > dist(m[0], m[1]) ? x : m), segs[0]);
   const d0 = unit(sub(b0, a0));
