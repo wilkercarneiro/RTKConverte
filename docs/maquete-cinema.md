@@ -87,3 +87,34 @@ pré-multiplicado: por isso a normal/profundidade vai em RGB opaco, não no alfa
 reflexo, troque o `#include <envmap_physical_pars_fragment>` pelo chunk editado;
 (6) material com shader extra precisa de `customProgramCacheKey` próprio (senão
 reaproveita o programa de outro material "elevar-objeto").
+
+## Objetos realistas (2026-11-03)
+
+Lote ocupado, carros, postes e fios. Dados em `lib/loteamento/ocupacao3d.ts`
+(sem three.js, testados em `tests/loteamento.test.mjs`); desenho em
+`components/loteamento/lote3d.ts`, `carros3d.ts` e `maquete3d.ts`. A elevação
+pela cota real virou módulo próprio: `components/loteamento/elevar3d.ts`.
+
+| Peça | Como é feita |
+|---|---|
+| Muro de divisa | 1,9 m, painéis de até 3 m em degraus no terreno, pingadeira; usa o material de reboco das casas (uv fixo: a textura das paredes tem janelas) |
+| Frente | mureta + pilares + gradil (alfa, com sombra recortada) + cerca viva podada (perfil varrido, folhagem gerada no canvas com normal) |
+| Portões | garagem de correr em lambri (parte fica entreaberta) e social, entre pilares |
+| Piso da garagem | pintado na textura do projeto, da casa até o meio-fio, com juntas; caminho de pedra até a porta |
+| Casa | porta pivotante de madeira, caixilho saliente, peitoril; vidro físico (Fresnel, `ior` 1,9) com interior variado: 8 vidraças num atlas (`repeat.x = 1/8`), à noite acende |
+| Telhado | caixa d'água em 45% das casas, placas solares (55%, alinhadas à casa, viradas para o lado mais ao norte), condensadora na lateral |
+| Quintal | piscina em lotes ≥ 240 m² (42%), deck pintado no chão |
+| Jardim | arbustos `searsia_lucida` (Poly Haven) assados como as árvores (`arbusto`, `arbusto2`, `arbusto3`; tipo 3 em `cena.arvores`, tinta verde no shader) |
+| Carros | hatch, sedã e SUV por seções (`carros3d.ts`): caixa de roda, cabine com vidro, colunas, retrovisor, rodas, grade, placas; pintura física com verniz, cor por instância; inclinam na rampa; só os que andam acendem farol (`aAceso`) |
+| Poste | circular de concreto 9 m (sem projeto) ou duplo T (projeto); braço curvo + luminária LED; armação secundária com roldanas; cruzeta com isoladores; trafo com aletas |
+| Fios | fitas viradas para a câmera (`montarFios`): largura real 1,4–3,4 cm, nunca abaixo de 1,1 px; mais fino vira transparência (sem serrilhado) |
+| Rede sem projeto | postes num lado só da rua, BT de poste a poste (vão ≤ 45 m), ramal de cada casa até o pontalete do padrão (3,8 m). Com projeto, o ramal termina no padrão mais perto |
+| Prédio institucional | `comporEquipamento`: barra de 2 pavimentos, faixas de vidro, marquise, ripado |
+
+Armadilhas:
+- O GLB simplificava **toda** malha com mais de 300 vértices numa esfera (era para
+  as copas); agora só quem tem `userData.copaGlb`. GLB do laboratório: ~51 MB
+  (muros e caixilhos entram; os arbustos e os carros não).
+- Arbustos ficam fora da faixa de 2,4 m dos fios do projeto (mesma regra das árvores, DIS-NOR-012).
+- Carro parado a 2,95 m da face da garagem e deslocado para longe da porta; exige recuo ≥ 5,5 m.
+- Medida de qps no Chrome sem janela varia mais que o custo dos objetos (33–42 qps com e sem).

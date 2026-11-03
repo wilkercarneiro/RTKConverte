@@ -233,7 +233,46 @@ export function pintarMateriais(ctx: Ctx, q: Quadro, res: Resultado, cena: Cena)
   ctx.fillStyle = "#ff0000";
   caminho(ctx, q, cena.pista);
   ctx.fill("evenodd");
+  pintarOcupacao(ctx, q, cena, true);
   ctx.restore();
+}
+
+/**
+ * Piso de cada lote ocupado: a garagem em concreto (atravessa a calçada até o
+ * meio-fio), o caminho de pedra até a porta e o deck claro em volta da piscina.
+ * `mascara`: pinta na máscara de materiais (verde = piso com a textura da calçada).
+ */
+function pintarOcupacao(ctx: Ctx, q: Quadro, cena: Cena, mascara = false): void {
+  const k = escala(q);
+  const oc = cena.ocupacao?.lotes ?? [];
+  const quad = (pts: Pt[]) => { caminho(ctx, q, [{ ext: pts, furos: [] }]); ctx.fill(); };
+  ctx.fillStyle = mascara ? "#00ff00" : padraoRuido(ctx, "#b9b6ae", 14);
+  for (const o of oc) quad(o.entrada);
+  ctx.strokeStyle = mascara ? "#00ff00" : "#cfc8b8";
+  ctx.lineCap = "butt";
+  ctx.lineWidth = 1.0 * k;
+  for (const o of oc) if (o.caminho) { linha(ctx, q, o.caminho); ctx.stroke(); }
+  ctx.fillStyle = mascara ? "#00ff00" : padraoRuido(ctx, "#e4ddcd", 10);
+  for (const o of oc) {
+    const p = o.piscina;
+    if (!p) continue;
+    const v: Pt = [-p.u[1], p.u[0]], a = p.comp / 2 + 1.1, b = p.larg / 2 + 1.1;
+    const P = (x: number, y: number): Pt => [p.c[0] + p.u[0] * x + v[0] * y, p.c[1] + p.u[1] * x + v[1] * y];
+    quad([P(-a, -b), P(a, -b), P(a, b), P(-a, b)]);
+  }
+  if (mascara) return;
+  // juntas do piso da garagem a cada 1,2 m (de perto lê como concreto moldado)
+  ctx.strokeStyle = "rgba(90,88,82,0.35)";
+  ctx.lineWidth = Math.max(0.5, 0.04 * k);
+  for (const o of oc) {
+    const [a0, a1, b1, b0] = o.entrada;
+    const L = Math.hypot(b0[0] - a0[0], b0[1] - a0[1]);
+    for (let s = 1.2; s < L; s += 1.2) {
+      const t = s / L;
+      linha(ctx, q, [[a0[0] + (b0[0] - a0[0]) * t, a0[1] + (b0[1] - a0[1]) * t], [a1[0] + (b1[0] - a1[0]) * t, a1[1] + (b1[1] - a1[1]) * t]]);
+      ctx.stroke();
+    }
+  }
 }
 
 /** Pinta o projeto dentro da gleba (o fundo/satélite já está no canvas). */
@@ -283,6 +322,7 @@ export function pintarProjeto(ctx: Ctx, q: Quadro, d: DadosPintura): void {
   for (const r of res.ruas) { linha(ctx, q, r.eixo); ctx.stroke(); }
   ctx.setLineDash([]);
   ctx.restore();
+  pintarOcupacao(ctx, q, cena);
 
   // modos de análise: pintam por cima dos lotes
   if (modo === "declividade") pintarCampoGrade(ctx, q, cena.grade, (g, kk) => {

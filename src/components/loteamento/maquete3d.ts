@@ -15,8 +15,8 @@ import { camNoTempo, legendaNoTempo, roteiroDoVoo } from "../../lib/loteamento/c
 import { Pos } from "./pos3d.ts";
 import { Ceu } from "./ceu3d.ts";
 import type { Cena, Casa } from "../../lib/loteamento/cena3d.ts";
-import { cotaFinal, loteNoPonto, PLATIBANDA } from "../../lib/loteamento/cena3d.ts";
-import { alturaLuminaria } from "../../lib/loteamento/infra/cena.ts";
+import { ALTURA_BT_SIMPLES, cotaFinal, loteNoPonto, PLATIBANDA } from "../../lib/loteamento/cena3d.ts";
+import { alturaBT, alturaLuminaria, type Fio } from "../../lib/loteamento/infra/cena.ts";
 import type { Resultado } from "../../lib/loteamento/calculo.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { centroide, comprimento, dist, esquerda, pontoNaPolilinha } from "../../lib/loteamento/geom.ts";
@@ -45,100 +45,18 @@ export interface EventosMaquete {
 /** Textos das cartelas do vídeo (abertura e fecho). */
 export interface Cartela { nome: string; linha: string; rodape: string }
 
-interface Uniforms {
-  uExag: { value: number };
-  uRef: { value: number };
-  uBase: { value: number };
-  uMistura: { value: number };
-  uMisturaCor: { value: number };
-  uCresce: { value: number };
-}
-
-// ---------------------------------------------------------------------------
-// Shaders: altura pela cota real
-// ---------------------------------------------------------------------------
-
 import { carregarTexCasa, triplanar, uniformsCasa } from "./materiais3d";
 import { aparelhoModesto, carregarEspecies, especieDe, materialImpostor, sombraImpostor, type Especie, type IdEspecie } from "./arvores3d";
-
-type Tipo = "terreno" | "parede" | "objeto" | "instancia" | "entorno";
+import { DECL, elevar, sombraDe, type Tipo, type Uniforms } from "./elevar3d";
+import { montarLotes } from "./lote3d";
+import { geometriaCarro } from "./carros3d";
+import { corDeCarro } from "../../lib/loteamento/ocupacao3d.ts";
 
 /**
  * O céu procedural (Sky) é muito mais forte que o HDRI normalizado: o ambiente
  * foi calibrado com ele (0,09). Com o HDRI, o mesmo papel pede este fator.
  */
 const AMBIENTE_HDRI = 5;
-
-const DECL = `
-uniform float uExag; uniform float uRef; uniform float uBase; uniform float uMistura; uniform float uCresce;
-attribute float aNat; attribute float aFin; attribute vec2 aGNat; attribute vec2 aGFin;
-attribute float aBaixo; attribute float aBase; attribute float aAtraso;
-float crescer(float atraso) { float c = clamp(uCresce * 1.7 - atraso * 0.7, 0.0, 1.0); return c * c * (3.0 - 2.0 * c); }
-`;
-
-function patchVertice(src: string, tipo: Tipo): string {
-  let s = DECL + src;
-  if (tipo === "terreno") {
-    s = s.replace("#include <beginnormal_vertex>", `
-      vec2 gr = mix(aGNat, aGFin, uMistura) * uExag;
-      vec3 objectNormal = normalize(vec3(-gr.x, 1.0, gr.y));`);
-    s = s.replace("#include <begin_vertex>", `
-      vec3 transformed = vec3(position);
-      transformed.y = (mix(aNat, aFin, uMistura) - uRef) * uExag;`);
-  } else if (tipo === "parede") {
-    s = s.replace("#include <begin_vertex>", `
-      vec3 transformed = vec3(position);
-      transformed.y = aBaixo > 0.5 ? uBase : (mix(aNat, aFin, uMistura) - uRef) * uExag;`);
-  } else if (tipo === "entorno") {
-    // entorno da paisagem: da borda do relevo (aBaixo = 0) ao plano distante (aBaixo = 1)
-    s = s.replace("#include <begin_vertex>", `
-      vec3 transformed = vec3(position);
-      float yBorda = (mix(aNat, aFin, uMistura) - uRef) * uExag;
-      transformed.y = mix(yBorda, (aBase - uRef) * uExag, aBaixo);`);
-  } else if (tipo === "objeto") {
-    // a fundação (y < 0) acompanha o exagero até o chão; o resto cresce
-    s = s.replace("#include <begin_vertex>", `
-      vec3 transformed = vec3(position);
-      float cr = crescer(aAtraso);
-      transformed.y = (position.y < 0.0 ? position.y * uExag : position.y * cr) + (aBase - uRef) * uExag;
-      if (cr < 0.01) transformed.y -= 10000.0;`);
-  } else {
-    const inst = `
-      vec4 POS = vec4(transformed, 1.0);
-      #ifdef USE_INSTANCING
-        POS = instanceMatrix * POS;
-        vec3 pe_POS = vec3(instanceMatrix[3].x, 0.0, instanceMatrix[3].z);
-        float cr_POS = crescer(aAtraso);
-        POS.xyz = pe_POS + (POS.xyz - pe_POS) * cr_POS;
-        if (cr_POS < 0.01) POS.y -= 10000.0;
-      #endif
-      POS.y += (aBase - uRef) * uExag;`;
-    s = s.replace("#include <project_vertex>", `${inst.replace(/POS/g, "mvPosition")}
-      mvPosition = modelViewMatrix * mvPosition;
-      gl_Position = projectionMatrix * mvPosition;`);
-    s = s.replace("#include <worldpos_vertex>", `
-      #if defined( USE_ENVMAP ) || defined( DISTANCE ) || defined ( USE_SHADOWMAP ) || defined ( USE_TRANSMISSION ) || NUM_SPOT_LIGHT_COORDS > 0
-        ${inst.replace(/POS/g, "worldPosition")}
-        worldPosition = modelMatrix * worldPosition;
-      #endif`);
-  }
-  return s;
-}
-
-function elevar<M extends THREE.Material>(mat: M, tipo: Tipo, U: Uniforms, extra?: (sh: THREE.WebGLProgramParametersWithUniforms) => void): M {
-  mat.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, U);
-    sh.vertexShader = patchVertice(sh.vertexShader, tipo);
-    extra?.(sh);
-  };
-  mat.customProgramCacheKey = () => `elevar-${tipo}`;
-  return mat;
-}
-
-/** Material de sombra com a mesma elevação (senão a sombra fica no lugar errado). */
-function sombraDe(tipo: Tipo, U: Uniforms): THREE.MeshDepthMaterial {
-  return elevar(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }), tipo, U);
-}
 
 // ---------------------------------------------------------------------------
 // Texturas procedurais
@@ -209,22 +127,51 @@ function texturaRipado(): THREE.CanvasTexture {
 }
 
 /** Caixilho do pano de vidro: montante a cada módulo (u) e quadro em cima e embaixo (v de 0 a 1). */
+/**
+ * O que se vê pelo vidro: 8 vidraças diferentes lado a lado (a malha repete uma
+ * por módulo de caixilho, repeat.x = 1/8) — cortina clara, persiana, cômodo
+ * escuro, cortina pela metade. De dia é o fundo do reflexo; à noite acende quente.
+ */
 function texturaVidro(): THREE.CanvasTexture {
   const c = document.createElement("canvas");
-  c.width = 64; c.height = 64;
+  c.width = 512; c.height = 64;
   const x = c.getContext("2d")!;
-  const g = x.createLinearGradient(0, 0, 64, 64);
-  g.addColorStop(0, "#ffffff");
-  g.addColorStop(0.5, "#d9dee2");
-  g.addColorStop(1, "#f2f4f5");
-  x.fillStyle = g;
-  x.fillRect(0, 0, 64, 64);
+  let h = 91;
+  const r = () => { h = (h * 16807) % 2147483647; return h / 2147483647; };
+  for (let k = 0; k < 8; k++) {
+    const x0 = k * 64;
+    // fundo do cômodo: escuro, um pouco mais claro embaixo (piso, móveis)
+    const g = x.createLinearGradient(0, 0, 0, 64);
+    g.addColorStop(0, "#15181b"); g.addColorStop(0.6, "#1e2226"); g.addColorStop(1, "#302d29");
+    x.fillStyle = g;
+    x.fillRect(x0, 0, 64, 64);
+    const tipo = k % 4;
+    if (tipo === 0 || tipo === 3) {
+      // cortina de tecido claro com as dobras (inteira ou pela metade)
+      const w = tipo === 0 ? 64 : 24 + r() * 20, ini = tipo === 0 ? 0 : r() < 0.5 ? 0 : 64 - w;
+      const base = [[150, 140, 124], [162, 156, 146], [128, 116, 100]][Math.floor(r() * 3)];
+      for (let i = 0; i < w; i++) {
+        const dobra = 0.82 + 0.18 * Math.sin(i * 0.9 + k) ** 2;
+        x.fillStyle = `rgb(${base[0] * dobra | 0},${base[1] * dobra | 0},${base[2] * dobra | 0})`;
+        x.fillRect(x0 + ini + i, 4, 1, 60);
+      }
+    } else if (tipo === 1) {
+      // persiana: lâminas horizontais
+      for (let y = 4; y < 44; y += 3) { x.fillStyle = y % 2 ? "#8e8a82" : "#77736b"; x.fillRect(x0, y, 64, 2); }
+    } else {
+      // cômodo à vista: um quadro na parede e um abajur
+      x.fillStyle = "#585048"; x.fillRect(x0 + 18, 18, 22, 14);
+      x.fillStyle = "#8a7a62"; x.fillRect(x0 + 44, 36, 6, 10);
+    }
+  }
+  // caixilho de cada vidraça
   x.fillStyle = "#202326";
-  x.fillRect(0, 0, 3, 64);
-  x.fillRect(0, 0, 64, 3);
-  x.fillRect(0, 61, 64, 3);
+  for (let k = 0; k <= 8; k++) x.fillRect(k * 64 - 2, 0, 4, 64);
+  x.fillRect(0, 0, 512, 3);
+  x.fillRect(0, 61, 512, 3);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = THREE.RepeatWrapping;
+  t.repeat.set(1 / 8, 1);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
   return t;
@@ -395,7 +342,14 @@ export class Maquete {
   /** sombra refeita só quando algo muda (sol, exagero, transição) — mexer a câmera não precisa */
   private sombraSuja = true;
   /** carros andando pelas ruas (só no voo e na apresentação) */
-  private carros: { im: THREE.InstancedMesh; base: THREE.InstancedBufferAttribute; lista: { rua: number; s: number; sentido: number; vel: number }[] } | null = null;
+  private carros: {
+    modelos: { ims: THREE.InstancedMesh[]; base: THREE.InstancedBufferAttribute }[];
+    /** os que andam (os parados na garagem não mudam) */
+    lista: { rua: number; s: number; sentido: number; vel: number; modelo: number; idx: number }[];
+  } | null = null;
+  private matFarol: THREE.MeshStandardMaterial | null = null;
+  /** resolução do quadro (px) para os fios de largura mínima em pixel */
+  private uRes = { value: new THREE.Vector2(1, 1) };
   private movimento = false;
   private ultimoT = 0;
   /** roteiro de cinema em curso */
@@ -476,6 +430,9 @@ export class Maquete {
     this.montarCeu();
     this.montarTerreno();
     this.montarCasas(cena.casas);
+    this.grupoCasas.add(montarLotes(cena, {
+      xz: (p) => this.xz(p), cota: (p) => cotaFinal(cena.grade, p), U: this.U, centro: this.centro, raio: this.raio, matParede: this.matParede ?? null,
+    }));
     this.montarArvores();
     this.montarMeioFio();
     this.montarPostes();
@@ -626,8 +583,9 @@ export class Maquete {
     // janelas e postes acendem com o sol abaixo de ~10°; o brilho (bloom) vem junto
     const noite = Math.max(0, Math.min(1, (10 - elG) / 10));
     if (this.matParede) this.matParede.emissiveIntensity = 4.5 * noite;
-    if (this.matVidro) this.matVidro.emissiveIntensity = 1.6 * noite;
+    if (this.matVidro) this.matVidro.emissiveIntensity = 2.6 * noite;
     if (this.matLampada) this.matLampada.emissiveIntensity = 0.3 + 8 * Math.max(0, Math.min(1, (12 - elG) / 10));
+    if (this.matFarol) this.matFarol.emissiveIntensity = 0.15 + 5 * noite;
     if (this.matPoca) this.matPoca.opacity = 0.75 * Math.max(0, Math.min(1, (8 - elG) / 8));
     // brilho só ao anoitecer (janelas e postes): de dia o céu HDR da paisagem passa do limiar
     // e o bloom espalhava uma névoa clara pela imagem inteira
@@ -990,9 +948,11 @@ export class Maquete {
     const paredes = { P, N, C, UV, B, A }, telhados = { P: PT, N: NT, C: CT, B: BT, A: AT };
     const vidros = { P: [] as number[], N: [] as number[], C: [] as number[], UV: [] as number[], B: [] as number[], A: [] as number[] };
     const madeira = { P: [] as number[], N: [] as number[], C: [] as number[], UV: [] as number[], B: [] as number[], A: [] as number[] };
+    const caixilho = { P: [] as number[], N: [] as number[], C: [] as number[], UV: [] as number[], B: [] as number[], A: [] as number[] };
     type Dst = typeof paredes | typeof telhados;
     const LISO = [[0.1, 0.5], [0.1, 0.5], [0.1, 0.5], [0.1, 0.5]];
     const COR_ACAB: Record<string, number> = { grafite: 0x3b3e43, concreto: 0xaaa79f, madeira: 0xffffff };
+    const corCaixilho = new THREE.Color(0x2b2d31), corPeitoril = new THREE.Color(0xd8d4cb), corPuxador = new THREE.Color(0xb8bcc0);
     for (const c of casas) {
       const V = esquerda(c.u);
       const atraso = Math.min(1, dist(c.c, this.centro) / this.raio) * 0.85 + ((c.lote * 0.6180339) % 1) * 0.15;
@@ -1053,8 +1013,42 @@ export class Maquete {
           const [fa, fb] = FORA[vd.face];
           const P0 = (s: number, y: number) => W(a1 + da * s + fa * 0.03, b1 + db * s + fb * 0.03, y);
           const m = (vd.s1 - vd.s0) / Math.max(1, Math.round((vd.s1 - vd.s0) / 1.25));
+          // cada janela começa numa vidraça diferente da textura (cortina, persiana, cômodo)
+          const ov = (c.lote * 5 + vd.vol * 3 + vd.face * 7) % 8;
           quad(vidros, [P0(vd.s0, vd.y0), P0(vd.s1, vd.y0), P0(vd.s1, vd.y1), P0(vd.s0, vd.y1)], D(fa, fb, 0),
-            [[0, 0], [(vd.s1 - vd.s0) / m, 0], [(vd.s1 - vd.s0) / m, 1], [0, 1]], branco);
+            [[ov, 0], [ov + (vd.s1 - vd.s0) / m, 0], [ov + (vd.s1 - vd.s0) / m, 1], [ov, 1]], branco);
+          // caixilho de alumínio saliente (quadro + montantes) e o peitoril
+          const E = (s: number, y: number, o: number) => W(a1 + da * s + fa * o, b1 + db * s + fb * o, y);
+          const barra = (s0: number, s1: number, y0: number, y1: number, o: number, k: THREE.Color, dst: Dst = caixilho) => {
+            const fora = D(fa, fb, 0), lado = D(da, db, 0), cima = new THREE.Vector3(0, 1, 0);
+            quad(dst, [E(s0, y0, o), E(s1, y0, o), E(s1, y1, o), E(s0, y1, o)], fora, LISO, k);
+            quad(dst, [E(s0, y1, 0), E(s1, y1, 0), E(s1, y1, o), E(s0, y1, o)], cima, LISO, k);
+            quad(dst, [E(s0, y0, 0), E(s1, y0, 0), E(s1, y0, o), E(s0, y0, o)], cima.clone().negate(), LISO, k);
+            quad(dst, [E(s0, y0, 0), E(s0, y1, 0), E(s0, y1, o), E(s0, y0, o)], lado.clone().negate(), LISO, k);
+            quad(dst, [E(s1, y0, 0), E(s1, y1, 0), E(s1, y1, o), E(s1, y0, o)], lado, LISO, k);
+          };
+          const t = 0.055;
+          barra(vd.s0 - t, vd.s1 + t, vd.y1, vd.y1 + t, 0.07, corCaixilho);
+          barra(vd.s0 - t, vd.s1 + t, vd.y0 - t, vd.y0, 0.07, corCaixilho);
+          barra(vd.s0 - t, vd.s0, vd.y0, vd.y1, 0.07, corCaixilho);
+          barra(vd.s1, vd.s1 + t, vd.y0, vd.y1, 0.07, corCaixilho);
+          for (let k = 1; k < Math.round((vd.s1 - vd.s0) / m); k++) barra(vd.s0 + k * m - 0.02, vd.s0 + k * m + 0.02, vd.y0, vd.y1, 0.05, corCaixilho);
+          if (vd.y0 > 0.5) barra(vd.s0 - 0.08, vd.s1 + 0.08, vd.y0 - 0.1, vd.y0 - 0.05, 0.12, corPeitoril, paredes);
+        }
+        // porta pivotante de madeira (do chão a 2,45 m) com o puxador vertical
+        if (c.porta) {
+          const pt = c.porta, k = new THREE.Color(0xffffff);
+          const Pq = (a: number, y: number, o: number) => W(a, pt.b - o, y);
+          const a0 = pt.a - pt.w / 2, a1p = pt.a + pt.w / 2;
+          const fora = D(0, -1, 0);
+          quad(madeira, [Pq(a0, 0, 0.05), Pq(a1p, 0, 0.05), Pq(a1p, pt.h, 0.05), Pq(a0, pt.h, 0.05)], fora, [[0, 0], [pt.w, 0], [pt.w, pt.h], [0, pt.h]], k);
+          quad(madeira, [Pq(a0, pt.h, 0), Pq(a1p, pt.h, 0), Pq(a1p, pt.h, 0.05), Pq(a0, pt.h, 0.05)], new THREE.Vector3(0, 1, 0), LISO, k);
+          quad(madeira, [Pq(a0, 0, 0), Pq(a0, pt.h, 0), Pq(a0, pt.h, 0.05), Pq(a0, 0, 0.05)], D(-1, 0, 0), LISO, k);
+          quad(madeira, [Pq(a1p, 0, 0), Pq(a1p, pt.h, 0), Pq(a1p, pt.h, 0.05), Pq(a1p, 0, 0.05)], D(1, 0, 0), LISO, k);
+          // batente escuro e puxador
+          const ap = pt.a + pt.w * 0.32;
+          quad(caixilho, [Pq(ap - 0.02, 0.6, 0.12), Pq(ap + 0.02, 0.6, 0.12), Pq(ap + 0.02, 1.9, 0.12), Pq(ap - 0.02, 1.9, 0.12)], fora, LISO, corPuxador);
+          quad(caixilho, [Pq(a0 - 0.06, pt.h, 0.06), Pq(a1p + 0.06, pt.h, 0.06), Pq(a1p + 0.06, pt.h + 0.06, 0.06), Pq(a0 - 0.06, pt.h + 0.06, 0.06)], fora, LISO, corCaixilho);
         }
         continue;
       }
@@ -1145,13 +1139,23 @@ export class Maquete {
       casasM.customDepthMaterial = sombraDe("objeto", this.U);
       this.grupoCasas.add(casasM);
     }
+    if (caixilho.P.length) {
+      const mC = elevar(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.7 }), "objeto", this.U);
+      mC.customProgramCacheKey = () => "elevar-objeto-caixilho";
+      const casasC = new THREE.Mesh(mk(caixilho), mC);
+      casasC.castShadow = casasC.receiveShadow = true;
+      casasC.customDepthMaterial = sombraDe("objeto", this.U);
+      this.grupoCasas.add(casasC);
+    }
     if (vidros.P.length) {
       // vidro fumê refletindo o céu; à noite acende (interior iluminado, caixilho escuro)
       const texVidro = texturaVidro();
-      this.matVidro = elevar(new THREE.MeshStandardMaterial({
+      this.matVidro = elevar(new THREE.MeshPhysicalMaterial({
         // luz ambiente da cena é baixa (sombras marcadas): vidro metálico ficaria preto
         // vidro escuro que espelha o céu (o reflexo, não a cor, é o que se vê numa fachada)
-        color: 0x63798a, map: texVidro, emissiveMap: texVidro, roughness: 0.05, metalness: 0.62, envMapIntensity: 2.4,
+        // vidro de verdade (dielétrico): de frente mostra o interior, de lado espelha o céu
+        // (Fresnel); o ambiente da cena é fraco, então o reflexo pede um ganho alto
+        color: 0xffffff, map: texVidro, emissiveMap: texVidro, roughness: 0.03, metalness: 0, ior: 1.9, envMapIntensity: 9,
         emissive: 0xffcf94, emissiveIntensity: 0, side: THREE.DoubleSide,
       }), "objeto", this.U, (sh) => {
         // de cima, o reflexo "de verdade" da janela é o chão escuro do HDRI; a fotografia de
@@ -1188,8 +1192,10 @@ export class Maquete {
   // -------------------------------------------------------------------------
 
   private montarArvores(): void {
-    const arv = this.cena.arvores;
-    if (!arv.length) return;
+    // os arbustos do jardim (milhares) só existem como impostor: na geometria simples
+    // (GLB e o instante antes dos atlas chegarem) pesariam dezenas de MB à toa
+    const arv = this.cena.arvores.filter((a) => a.tipo !== 3);
+    if (!this.cena.arvores.length) return;
     const tronco = new THREE.CylinderGeometry(0.12, 0.2, 1, 6);
     tronco.translate(0, 0.5, 0);
     const redonda = copaEmCachos();
@@ -1226,7 +1232,7 @@ export class Maquete {
       return im;
     };
     instancias(tronco, arv, mats.tronco, (a) => [0, a.copa * 0.22, a.altura * 0.62, a.copa * 0.22, 0]);
-    instancias(redonda, redondas, mats.copa, (a, i) => [a.altura - a.copa * 0.85, a.copa, a.copa * 0.82, a.copa, i]);
+    instancias(redonda, redondas, mats.copa, (a, i) => [a.altura - a.copa * 0.85, a.copa, a.copa * 0.82, a.copa, i]).userData.copaGlb = true;
     instancias(conica, conicas, mats.cone, (a) => [a.altura * 0.42 + a.copa, a.copa * 0.7, a.altura / 3.2, a.copa * 0.7, 0]);
     // as árvores de verdade (Poly Haven) chegam pela rede e trocam as de geometria simples
     void carregarEspecies(this.renderer.capabilities.getMaxAnisotropy()).then((esp) => {
@@ -1905,7 +1911,10 @@ export class Maquete {
     terreno.name = "Terreno";
     grupo.add(terreno);
     // casas e meio-fio
-    for (const m of [...this.grupoCasas.children, ...(this.meioFio ? [this.meioFio] : [])] as THREE.Mesh[]) {
+    // (muros, portões e piscinas também: malhas comuns; as peças instanciadas do telhado ficam fora)
+    const comuns: THREE.Mesh[] = [];
+    this.grupoCasas.traverse((o) => { const me = o as THREE.Mesh; if (me.isMesh && !(o as THREE.InstancedMesh).isInstancedMesh && me.geometry.getAttribute("aBase")) comuns.push(me); });
+    for (const m of [...comuns, ...(this.meioFio ? [this.meioFio] : [])] as THREE.Mesh[]) {
       const gg = m.geometry.clone();
       const p = gg.getAttribute("position") as THREE.BufferAttribute, b = gg.getAttribute("aBase") as THREE.BufferAttribute;
       for (let k = 0; k < p.count; k++) { const y = p.getY(k); p.setY(k, (y < 0 ? y * ex : y) + (b.getX(k) - ref) * ex); }
@@ -1923,7 +1932,7 @@ export class Maquete {
       const corMat = (im.material as THREE.MeshStandardMaterial).color;
       const base = im.geometry.getAttribute("aBase") as THREE.InstancedBufferAttribute;
       // a copa em cachos (≈1.200 vértices) multiplicada por milhares de árvores pesaria demais no GLB: vai a esfera simples
-      const molde = im.geometry.getAttribute("position").count > 300 ? new THREE.IcosahedronGeometry(1, 1)
+      const molde = im.userData.copaGlb ? new THREE.IcosahedronGeometry(1, 1)
         : im.geometry.index ? im.geometry.toNonIndexed() : im.geometry.clone();
       for (const a of Object.keys(molde.attributes)) if (a !== "position" && a !== "normal") molde.deleteAttribute(a);
       for (let i = 0; i < im.count; i++) {
@@ -1969,6 +1978,7 @@ export class Maquete {
     // o céu acompanha a câmera (fica sempre no infinito)
     if (this.ceu?.fundo.parent) this.ceu.fundo.position.copy(this.camera.position);
     if (!this.cinema) this.pos.setLente(this.tiltUsuario, 0.5, this.paisagem ? 0.18 : 0.12);
+    this.renderer.getDrawingBufferSize(this.uRes.value);
     this.pos.render();
   }
 
@@ -2004,42 +2014,89 @@ export class Maquete {
 
   private montarCarros(): void {
     const ruas = this.res.ruas.map((r, i) => ({ r, i, L: comprimento(r.eixo) })).filter((x) => x.L > 40);
-    if (!ruas.length) return;
-    const lista: { rua: number; s: number; sentido: number; vel: number }[] = [];
+    const lista: { rua: number; s: number; sentido: number; vel: number; modelo: number; idx: number }[] = [];
     let semente = 7;
     const rnd = () => { semente = (semente * 16807) % 2147483647; return semente / 2147483647; };
+    const porModelo = [0, 0, 0];
+    const cores: number[][] = [[], [], []];
     for (const x of ruas) {
       const n = Math.max(1, Math.floor(x.L / 75));
-      for (let k = 0; k < n && lista.length < 90; k++) lista.push({ rua: x.i, s: x.L * ((k + 0.3 + rnd() * 0.4) / n), sentido: rnd() < 0.5 ? 1 : -1, vel: 7 + rnd() * 5 });
+      for (let k = 0; k < n && lista.length < 90; k++) {
+        const modelo = Math.floor(rnd() * 3);
+        lista.push({ rua: x.i, s: x.L * ((k + 0.3 + rnd() * 0.4) / n), sentido: rnd() < 0.5 ? 1 : -1, vel: 7 + rnd() * 5, modelo, idx: porModelo[modelo]++ });
+        cores[modelo].push(corDeCarro(rnd()));
+      }
     }
-    // carroceria (cor da instância) e cabine com vidro escuro
-    const corpo = new THREE.BoxGeometry(4.2, 0.95, 1.8).translate(0, 0.62, 0);
-    const cabine = new THREE.BoxGeometry(2.2, 0.72, 1.62).translate(-0.25, 1.45, 0);
-    const pinta = (g: THREE.BufferGeometry, c: number) => { const n = g.getAttribute("position").count; const a = new Float32Array(n * 3).fill(c); g.setAttribute("color", new THREE.BufferAttribute(a, 3)); return g; };
-    const geo = mergeGeometries([pinta(corpo.toNonIndexed(), 1), pinta(cabine.toNonIndexed(), 0.16)])!;
-    corpo.dispose(); cabine.dispose();
-    const mat = elevar(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, metalness: 0.4 }), "instancia", this.U);
-    const im = new THREE.InstancedMesh(geo, mat, lista.length);
-    const cores = [0xf2f2f2, 0xd9d9d9, 0x2b2d31, 0x8a1c1c, 0x1f4e8c, 0x9aa1a8, 0xf2f2f2, 0x2b2d31, 0xc9b27a];
+    // parados na garagem (ocupação dos lotes)
+    const parados = (this.cena.ocupacao?.lotes ?? []).flatMap((o) => (o.carro ? [o.carro] : []));
+    const fixos = parados.map((c) => { const idx = porModelo[c.modelo]++; cores[c.modelo].push(c.cor); return { ...c, idx }; });
+    if (!lista.length && !fixos.length) return;
+    // materiais: pintura com verniz (a cor é da instância; vidro e frisos escuros pelo vértice),
+    // peças escuras/rodas e as luzes (acendem à noite)
+    const matPintura = elevar(new THREE.MeshPhysicalMaterial({
+      vertexColors: true, roughness: 0.34, metalness: 0.42, clearcoat: 1, clearcoatRoughness: 0.07, envMapIntensity: 1.25,
+    }), "instancia", this.U);
+    matPintura.customProgramCacheKey = () => "elevar-instancia-pintura";
+    const matEscuro = elevar(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.35 }), "instancia", this.U);
+    matEscuro.customProgramCacheKey = () => "elevar-instancia-escuro";
+    const matLuz = elevar(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.25, metalness: 0.1, emissive: 0xffffff, emissiveIntensity: 0.15 }), "instancia", this.U, (sh) => {
+      // só os carros andando acendem (aAceso = 0 nos parados na garagem)
+      sh.vertexShader = "attribute float aAceso; varying float vAceso;\n" + sh.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n vAceso = aAceso;");
+      sh.fragmentShader = "varying float vAceso;\n" + sh.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n totalEmissiveRadiance *= vColor.rgb * vAceso;");
+    });
+    matLuz.customProgramCacheKey = () => "elevar-instancia-farol";
+    this.matFarol = matLuz;
     const c = new THREE.Color();
-    lista.forEach((_, i) => im.setColorAt(i, c.setHex(cores[i % cores.length])));
-    const base = new THREE.InstancedBufferAttribute(new Float32Array(lista.length), 1);
-    geo.setAttribute("aBase", base);
-    geo.setAttribute("aAtraso", new THREE.InstancedBufferAttribute(new Float32Array(lista.length).fill(0.6), 1));
-    im.frustumCulled = false;
-    im.receiveShadow = true;
-    this.carros = { im, base, lista };
+    const modelos = porModelo.map((n, m) => {
+      const geo = geometriaCarro(m);
+      const base = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n)), 1);
+      const atraso = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n)).fill(0.6), 1);
+      const aceso = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n)), 1);
+      for (const cc of lista) if (cc.modelo === m) aceso.setX(cc.idx, 1);
+      geo.luzes.setAttribute("aAceso", aceso);
+      const ims = ([[geo.corpo, matPintura], [geo.escuro, matEscuro], [geo.luzes, matLuz]] as const).map(([g, mat]) => {
+        g.setAttribute("aBase", base);
+        g.setAttribute("aAtraso", atraso);
+        const im = new THREE.InstancedMesh(g, mat, Math.max(1, n));
+        im.count = n;
+        im.frustumCulled = false;
+        im.castShadow = mat !== matLuz;
+        im.receiveShadow = true;
+        if (im.castShadow) im.customDepthMaterial = sombraDe("instancia", this.U);
+        this.scene.add(im);
+        return im;
+      });
+      cores[m].forEach((cor, i) => ims[0].setColorAt(i, c.setHex(cor)));
+      if (ims[0].instanceColor) ims[0].instanceColor.needsUpdate = true;
+      return { ims, base };
+    });
+    this.carros = { modelos, lista };
+    for (const f of fixos) this.porCarro(f.modelo, f.idx, f.p, f.dir);
     this.posicionarCarros(0);
-    this.scene.add(im);
+  }
+
+  /** Coloca um carro: rumo pela direção e o nariz inclinado pela rampa do chão. */
+  private porCarro(modelo: number, idx: number, p: Pt, d: Pt): void {
+    const cs = this.carros;
+    if (!cs) return;
+    const md = cs.modelos[modelo];
+    const g = this.cena.grade, ex = this.U.uExag.value;
+    const zf = cotaFinal(g, [p[0] + d[0] * 1.3, p[1] + d[1] * 1.3]), zt = cotaFinal(g, [p[0] - d[0] * 1.3, p[1] - d[1] * 1.3]);
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(d[1], d[0]));
+    q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.atan2((zf - zt) * ex, 2.6)));
+    const [x, z] = this.xz(p);
+    const m4 = new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), q, new THREE.Vector3(1, 1, 1));
+    for (const im of md.ims) { im.setMatrixAt(idx, m4); im.instanceMatrix.needsUpdate = true; }
+    md.base.setX(idx, (zf + zt) / 2);
+    md.base.needsUpdate = true;
   }
 
   /** Anda com os carros `dt` segundos (na ponta da rua, fazem o retorno pela outra mão). */
   private posicionarCarros(dt: number): void {
     const cs = this.carros;
     if (!cs) return;
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), um = new THREE.Vector3(1, 1, 1), eixoY = new THREE.Vector3(0, 1, 0);
     const meia = this.cena.larguraPista / 4;
-    cs.lista.forEach((c, i) => {
+    for (const c of cs.lista) {
       const r = this.res.ruas[c.rua];
       const L = comprimento(r.eixo);
       c.s += c.vel * c.sentido * dt;
@@ -2048,28 +2105,33 @@ export class Maquete {
       const { pt, dir } = pontoNaPolilinha(r.eixo, c.s);
       const d: Pt = [dir[0] * c.sentido, dir[1] * c.sentido];
       // mão de direção: à direita de quem vai
-      const p: Pt = [pt[0] + d[1] * meia, pt[1] - d[0] * meia];
-      const [x, z] = this.xz(p);
-      q.setFromAxisAngle(eixoY, Math.atan2(d[1], d[0]));
-      m4.compose(new THREE.Vector3(x, 0, z), q, um);
-      cs.im.setMatrixAt(i, m4);
-      cs.base.setX(i, cotaFinal(this.cena.grade, p));
-    });
-    cs.im.instanceMatrix.needsUpdate = true;
-    cs.base.needsUpdate = true;
+      this.porCarro(c.modelo, c.idx, [pt[0] + d[1] * meia, pt[1] - d[0] * meia], d);
+    }
   }
 
   private montarPostes(): void {
     const ps = this.cena.postes;
     if (!ps.length) return;
     // com o projeto elétrico: poste de concreto duplo T de 9 ou 12 m, luminária na altura do
-    // projeto, cruzeta na média tensão e o transformador; sem ele, o poste de iluminação de 7 m
+    // projeto, cruzeta na média tensão e o transformador; sem ele, o circular de concreto de 9 m
+    // com a baixa tensão na armação secundária e a luminária LED no braço curvo
     const projeto = ps.some((p) => p.altura);
     const fuste = projeto
       ? new THREE.CylinderGeometry(0.09, 0.15, 1, 4, 1).rotateY(Math.PI / 4).translate(0, 0.5, 0)
-      : new THREE.CylinderGeometry(0.07, 0.11, 7, 6).translate(0, 3.5, 0);
-    const braco = new THREE.BoxGeometry(1.7, 0.08, 0.08).translate(0.8, 0.09, 0);
-    const cabeca = new THREE.BoxGeometry(0.62, 0.14, 0.32).translate(1.55, 0, 0);
+      : new THREE.CylinderGeometry(0.085, 0.155, 1, 18, 1).translate(0, 0.5, 0);
+    const curva = new THREE.QuadraticBezierCurve3(new THREE.Vector3(0.06, -0.42, 0), new THREE.Vector3(0.2, 0.32, 0), new THREE.Vector3(1.72, 0.4, 0));
+    const braco = mergeGeometries([
+      new THREE.TubeGeometry(curva, 10, 0.032, 6).toNonIndexed(),
+      new THREE.CylinderGeometry(0.115, 0.115, 0.16, 14).translate(0, -0.42, 0).toNonIndexed(),
+      new THREE.CylinderGeometry(0.11, 0.11, 0.1, 14).translate(0, 0.02, 0).toNonIndexed(),
+    ].map((g) => { g.deleteAttribute("uv"); return g; }))!;
+    // luminária LED: corpo chato de alumínio (a lente embaixo é a lâmpada)
+    const corpoLum = mergeGeometries([
+      new THREE.BoxGeometry(0.66, 0.085, 0.3).translate(1.98, 0.43, 0).toNonIndexed(),
+      new THREE.BoxGeometry(0.4, 0.05, 0.22).translate(1.94, 0.495, 0).toNonIndexed(),
+      new THREE.CylinderGeometry(0.045, 0.045, 0.16, 8).rotateZ(Math.PI / 2).translate(1.66, 0.42, 0).toNonIndexed(),
+    ].map((g) => { g.deleteAttribute("uv"); return g; }))!;
+    const cabeca = new THREE.BoxGeometry(0.52, 0.02, 0.22).translate(2.0, 0.38, 0);
     // poça de luz no chão (mancha quente, aditiva) — acende com a noite
     const poca = new THREE.PlaneGeometry(12, 12).rotateX(-Math.PI / 2).translate(1.8, 0.18, 0);
     const pc = document.createElement("canvas");
@@ -2084,28 +2146,49 @@ export class Maquete {
       map: tPoca, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
       polygonOffset: true, polygonOffsetFactor: -4,
     }), "instancia", this.U);
-    const matPoste = elevar(new THREE.MeshStandardMaterial(projeto ? { color: 0xaaa79f, roughness: 0.88 } : { color: 0x6f747a, roughness: 0.6, metalness: 0.5 }), "instancia", this.U);
-    const matMetal = elevar(new THREE.MeshStandardMaterial({ color: 0x6f747a, roughness: 0.55, metalness: 0.5 }), "instancia", this.U);
-    this.matLampada = elevar(new THREE.MeshStandardMaterial({ color: 0xdedede, emissive: 0xffc98a, emissiveIntensity: 0.3, roughness: 0.4 }), "instancia", this.U);
+    const matPoste = elevar(new THREE.MeshStandardMaterial({ color: 0xb4b0a7, roughness: 0.9 }), "instancia", this.U);
+    matPoste.customProgramCacheKey = () => "elevar-instancia-poste";
+    const matMetal = elevar(new THREE.MeshStandardMaterial({ color: 0x8a9097, roughness: 0.42, metalness: 0.6 }), "instancia", this.U);
+    matMetal.customProgramCacheKey = () => "elevar-instancia-metal";
+    const matPorcelana = elevar(new THREE.MeshStandardMaterial({ color: 0xf1efe9, roughness: 0.2, metalness: 0 }), "instancia", this.U);
+    matPorcelana.customProgramCacheKey = () => "elevar-instancia-porcelana";
+    this.matLampada = elevar(new THREE.MeshStandardMaterial({ color: 0xf4f1ea, emissive: 0xffd6a0, emissiveIntensity: 0.3, roughness: 0.3 }), "instancia", this.U);
+    // armação secundária: fita de aço e quatro roldanas de porcelana (a baixa tensão)
+    const fita = new THREE.BoxGeometry(0.025, 0.82, 0.06).translate(-0.17, 0, 0);
+    const roldanas = mergeGeometries([0.3, 0.1, -0.1, -0.3].map((y) => {
+      const g = new THREE.CylinderGeometry(0.048, 0.048, 0.085, 8).translate(-0.24, y, 0).toNonIndexed();
+      g.deleteAttribute("uv");
+      return g;
+    }))!;
     const cruzeta = mergeGeometries([
       new THREE.BoxGeometry(1.15, 0.1, 0.1).toNonIndexed(),
-      ...[-0.28, 0, 0.28].map((x) => new THREE.CylinderGeometry(0.05, 0.06, 0.2, 6).translate(x, 0.15, 0).toNonIndexed()),
-    ])!;
+      ...[-0.42, 0, 0.42].flatMap((x) => [0, 0.06, 0.12].map((dy) => new THREE.CylinderGeometry(0.065, 0.075, 0.035, 8).translate(x, 0.09 + dy, 0).toNonIndexed())),
+      ...[-0.42, 0, 0.42].map((x) => new THREE.CylinderGeometry(0.025, 0.025, 0.2, 6).translate(x, 0.12, 0).toNonIndexed()),
+    ].map((g) => { g.deleteAttribute("uv"); return g; }))!;
+    // transformador: tanque com as aletas do radiador, buchas e o suporte no poste
     const trafo = mergeGeometries([
-      new THREE.CylinderGeometry(0.4, 0.4, 1.15, 14).translate(-0.62, 0, 0).toNonIndexed(),
-      new THREE.BoxGeometry(0.5, 0.12, 0.5).translate(-0.62, 0.64, 0).toNonIndexed(),
-      ...[-0.18, 0, 0.18].map((z) => new THREE.CylinderGeometry(0.035, 0.045, 0.32, 6).translate(-0.62, 0.86, z).toNonIndexed()),
+      new THREE.CylinderGeometry(0.4, 0.4, 1.05, 18).translate(-0.62, 0, 0).toNonIndexed(),
+      new THREE.CylinderGeometry(0.43, 0.43, 0.08, 18).translate(-0.62, 0.56, 0).toNonIndexed(),
+      ...[-1, 1].flatMap((sz) => [-0.2, -0.07, 0.07, 0.2].map((dx) => new THREE.BoxGeometry(0.03, 0.8, 0.16).translate(-0.62 + dx, -0.02, sz * 0.47).toNonIndexed())),
+      ...[-0.18, 0, 0.18].map((z) => new THREE.CylinderGeometry(0.035, 0.05, 0.32, 8).translate(-0.62, 0.76, z).toNonIndexed()),
       new THREE.BoxGeometry(0.5, 0.12, 0.16).translate(-0.3, -0.2, 0).toNonIndexed(),
-    ])!;
-    const matTrafo = elevar(new THREE.MeshStandardMaterial({ color: 0x7c8a93, roughness: 0.45, metalness: 0.55 }), "instancia", this.U);
+      new THREE.BoxGeometry(0.5, 0.12, 0.16).translate(-0.3, 0.3, 0).toNonIndexed(),
+    ].map((g) => { g.deleteAttribute("uv"); return g; }))!;
+    const matTrafo = elevar(new THREE.MeshStandardMaterial({ color: 0x667370, roughness: 0.6, metalness: 0.2 }), "instancia", this.U);
+    matTrafo.customProgramCacheKey = () => "elevar-instancia-trafo";
     const eixoY = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), m4 = new THREE.Matrix4();
-    const lum = (p: (typeof ps)[number]) => (p.altura ? alturaLuminaria(p.altura) : 6.86);
+    const altura = (p: (typeof ps)[number]) => p.altura ?? 9;
+    const lum = (p: (typeof ps)[number]) => (p.altura ? alturaLuminaria(p.altura) : 7.6);
+    const bt = (p: (typeof ps)[number]) => (p.altura ? alturaBT(p.altura) : ALTURA_BT_SIMPLES);
     const partes: [THREE.BufferGeometry, THREE.Material, typeof ps, (p: (typeof ps)[number]) => [number, number]][] = [
       // [geometria, material, quais postes, (altura da peça, escala vertical)]
-      [fuste, matPoste, ps, (p) => [0, projeto ? p.altura ?? 9 : 1]],
-      [braco, projeto ? matMetal : matPoste, ps, (p) => [lum(p), 1]],
+      [fuste, matPoste, ps, (p) => [0, altura(p)]],
+      [braco, matMetal, ps, (p) => [lum(p), 1]],
+      [corpoLum, matMetal, ps, (p) => [lum(p), 1]],
       [cabeca, this.matLampada, ps, (p) => [lum(p), 1]],
       [poca, this.matPoca, ps, () => [0, 1]],
+      [fita, matMetal, ps, (p) => [bt(p), 1]],
+      [roldanas, matPorcelana, ps, (p) => [bt(p), 1]],
       [cruzeta, matMetal, ps.filter((p) => p.mt), (p) => [(p.altura ?? 12) - 0.62, 1]],
       [trafo, matTrafo, ps.filter((p) => p.trafo), () => [7.4, 1]],
     ];
@@ -2126,9 +2209,82 @@ export class Maquete {
       geo.setAttribute("aAtraso", new THREE.InstancedBufferAttribute(atraso, 1));
       im.castShadow = mat !== this.matPoca;
       if (im.castShadow) im.customDepthMaterial = sombraDe("instancia", this.U);
+      im.receiveShadow = mat !== this.matPoca;
       im.frustumCulled = false;
       if (mat === this.matPoca) im.renderOrder = 2;
       this.grupoPostes.add(im);
+    }
+  }
+
+  /**
+   * Fios aéreos como fitas viradas para a câmera: a largura real (cabo de 1 a 3 cm)
+   * nunca fica abaixo de ~1,1 px; mais fino que isso, a cobertura vira transparência
+   * (de longe a fiação some suave, sem serrilhar nem piscar).
+   */
+  private montarFios(fios: Fio[]): void {
+    if (!fios.length) return;
+    const atrasoDe = (p: Pt) => Math.min(1, dist(p, this.centro) / this.raio) * 0.8;
+    const grupos = { mt: [] as Fio[], bt: [] as Fio[], ramal: [] as Fio[] };
+    for (const f of fios) grupos[f.tipo].push(f);
+    const cfg = { mt: { cor: 0x3a3d40, larg: 0.018, n: 12 }, bt: { cor: 0x141516, larg: 0.034, n: 12 }, ramal: { cor: 0x1c1d1f, larg: 0.014, n: 6 } };
+    for (const t of ["mt", "bt", "ramal"] as const) {
+      const lista = grupos[t];
+      if (!lista.length) continue;
+      const P: number[] = [], O: number[] = [], B: number[] = [], BO: number[] = [], L: number[] = [], A: number[] = [], I: number[] = [];
+      for (const f of lista) {
+        const ponto = (k: number) => {
+          const u = k / cfg[t].n;
+          const p: Pt = [f.a[0] + (f.b[0] - f.a[0]) * u, f.a[1] + (f.b[1] - f.a[1]) * u];
+          const [x, z] = this.xz(p);
+          return { x, z, h: f.ha + (f.hb - f.ha) * u - 4 * f.flecha * u * (1 - u), b: f.za + (f.zb - f.za) * u, at: atrasoDe(p) };
+        };
+        for (let k = 0; k < cfg[t].n; k++) {
+          const u = ponto(k), v = ponto(k + 1);
+          const i0 = P.length / 3;
+          // u (+1), u (−1), v (−1 = o mesmo lado de u +1, a direção vira), v (+1)
+          for (const [a, b, lado] of [[u, v, 1], [u, v, -1], [v, u, -1], [v, u, 1]] as const) {
+            P.push(a.x, a.h, a.z); O.push(b.x, b.h, b.z); B.push(a.b); BO.push(b.b); L.push(lado); A.push(a.at);
+          }
+          I.push(i0, i0 + 1, i0 + 2, i0 + 1, i0 + 3, i0 + 2);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
+      geo.setAttribute("aOutro", new THREE.Float32BufferAttribute(O, 3));
+      geo.setAttribute("aBase", new THREE.Float32BufferAttribute(B, 1));
+      geo.setAttribute("aBaseOutro", new THREE.Float32BufferAttribute(BO, 1));
+      geo.setAttribute("aLado", new THREE.Float32BufferAttribute(L, 1));
+      geo.setAttribute("aAtraso", new THREE.Float32BufferAttribute(A, 1));
+      geo.setIndex(I);
+      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+      const mat = new THREE.MeshBasicMaterial({ color: cfg[t].cor, transparent: true, side: THREE.DoubleSide });
+      const larg = cfg[t].larg;
+      mat.onBeforeCompile = (sh) => {
+        Object.assign(sh.uniforms, this.U, { uRes: this.uRes, uLarg: { value: larg } });
+        sh.vertexShader = DECL + `attribute vec3 aOutro; attribute float aBaseOutro; attribute float aLado;
+          uniform vec2 uRes; uniform float uLarg; varying float vCobre;\n` + sh.vertexShader.replace("#include <project_vertex>", `
+          float crF = crescer(aAtraso);
+          vec3 fA = vec3(position.x, position.y * crF + (aBase - uRef) * uExag, position.z);
+          vec3 fB = vec3(aOutro.x, aOutro.y * crF + (aBaseOutro - uRef) * uExag, aOutro.z);
+          vec4 mvPosition = modelViewMatrix * vec4(fA, 1.0);
+          vec4 cA = projectionMatrix * mvPosition, cB = projectionMatrix * (modelViewMatrix * vec4(fB, 1.0));
+          vec2 sA = cA.xy / cA.w * uRes, sB = cB.xy / cB.w * uRes;
+          vec2 dS = sB - sA;
+          vec2 nS = length(dS) > 1e-4 ? normalize(vec2(-dS.y, dS.x)) : vec2(1.0, 0.0);
+          bool orto = projectionMatrix[3][3] > 0.5;
+          float px = orto ? uLarg * projectionMatrix[1][1] * 0.5 * uRes.y : uLarg * projectionMatrix[1][1] * 0.5 * uRes.y / max(-mvPosition.z, 0.05);
+          float desenho = max(px, 1.1);
+          vCobre = clamp(px / 1.1, 0.0, 1.0);
+          cA.xy += nS * aLado * desenho / uRes * cA.w;
+          if (crF < 0.01) cA.y -= 1e4;
+          gl_Position = cA;`);
+        sh.fragmentShader = "varying float vCobre;\n" + sh.fragmentShader.replace("#include <alphatest_fragment>", "diffuseColor.a *= 0.35 + 0.65 * vCobre;\n#include <alphatest_fragment>");
+      };
+      mat.customProgramCacheKey = () => "fio-fita";
+      const me = new THREE.Mesh(geo, mat);
+      me.frustumCulled = false;
+      me.renderOrder = 1;
+      this.grupoInfra.add(me);
     }
   }
 
@@ -2139,39 +2295,9 @@ export class Maquete {
    */
   private montarInfra(): void {
     const inf = this.cena.infra;
+    this.montarFios([...(inf?.fios ?? []), ...(this.cena.fiacao ?? [])]);
     if (!inf) return;
     const atrasoDe = (p: Pt) => Math.min(1, dist(p, this.centro) / this.raio) * 0.8;
-    // ---- fios: segmentos de reta numa parábola de flecha
-    const porTipo = { mt: [] as number[], bt: [] as number[], ramal: [] as number[] };
-    const basePorTipo = { mt: [] as number[], bt: [] as number[], ramal: [] as number[] };
-    const atrPorTipo = { mt: [] as number[], bt: [] as number[], ramal: [] as number[] };
-    for (const f of inf.fios) {
-      const n = f.tipo === "ramal" ? 4 : 10;
-      const P = porTipo[f.tipo], B = basePorTipo[f.tipo], A = atrPorTipo[f.tipo];
-      const ponto = (t: number) => {
-        const p: Pt = [f.a[0] + (f.b[0] - f.a[0]) * t, f.a[1] + (f.b[1] - f.a[1]) * t];
-        const [x, z] = this.xz(p);
-        return { x, z, h: f.ha + (f.hb - f.ha) * t - 4 * f.flecha * t * (1 - t), b: f.za + (f.zb - f.za) * t, at: atrasoDe(p) };
-      };
-      for (let k = 0; k < n; k++) {
-        const u = ponto(k / n), v = ponto((k + 1) / n);
-        P.push(u.x, u.h, u.z, v.x, v.h, v.z);
-        B.push(u.b, v.b);
-        A.push(u.at, v.at);
-      }
-    }
-    const cores = { mt: 0x2b2b2b, bt: 0x161616, ramal: 0x3a3a3a };
-    for (const t of ["mt", "bt", "ramal"] as const) {
-      if (!porTipo[t].length) continue;
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.Float32BufferAttribute(porTipo[t], 3));
-      geo.setAttribute("aBase", new THREE.Float32BufferAttribute(basePorTipo[t], 1));
-      geo.setAttribute("aAtraso", new THREE.Float32BufferAttribute(atrPorTipo[t], 1));
-      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
-      const linhas = new THREE.LineSegments(geo, elevar(new THREE.LineBasicMaterial({ color: cores[t], transparent: t === "ramal", opacity: t === "ramal" ? 0.75 : 1 }), "objeto", this.U));
-      linhas.frustumCulled = false;
-      this.grupoInfra.add(linhas);
-    }
     // ---- peças pequenas, instanciadas
     const eixoY = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), m4 = new THREE.Matrix4(), um = new THREE.Vector3(1, 1, 1);
     const instancias = (geo: THREE.BufferGeometry, mat: THREE.Material, lista: { p: Pt; z: number; dir?: Pt }[], sombra = true) => {

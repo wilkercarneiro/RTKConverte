@@ -71,7 +71,7 @@ export function triplanar(sh: THREE.WebGLProgramParametersWithUniforms, U: Unifo
           // reboco: quase branco; o que conta é a variação (manchas leves e textura do chapisco)
           ? `float l = texture2D(tReb, tpUv(vTpW, vTpN) / 1.6).r;
              float manchas = texture2D(tReb, tpUv(vTpW, vTpN) / 9.0 + 0.37).r;
-             diffuseColor.rgb *= mix(1.0, (0.86 + 0.16 * l) * (0.94 + 0.08 * manchas), tpPerto);`
+             diffuseColor.rgb *= mix(1.0, (0.92 + 0.1 * l) * (0.96 + 0.05 * manchas), tpPerto);`
           : `float l = texture2D(tCon, vTpW.xz / 2.5).r;
              diffuseColor.rgb *= mix(1.0, 0.72 + 0.55 * l, tpPerto);`}
       }`)
@@ -82,7 +82,7 @@ export function triplanar(sh: THREE.WebGLProgramParametersWithUniforms, U: Unifo
         vec3 T = a.y > max(a.x, a.z) ? vec3(1.0, 0.0, 0.0) : normalize(cross(vec3(0.0, 1.0, 0.0), nG));
         vec3 B = cross(nG, T);
         vec3 nt = texture2D(tRebN, tpUv(vTpW, vTpN) / 1.6).xyz * 2.0 - 1.0;
-        nt.xy *= 1.6 * tpPerto;
+        nt.xy *= 0.85 * tpPerto;
         vec3 nW = normalize(T * nt.x + B * nt.y + nG * nt.z);
         normal = normalize((viewMatrix * vec4(nW, 0.0)).xyz);
       }` : ""}`);

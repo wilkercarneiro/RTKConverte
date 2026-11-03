@@ -19,8 +19,10 @@ import type { Parametros } from "./modelo.ts";
 import type { GradeTerreno } from "./terreno.ts";
 import { paraUtm } from "./plano.ts";
 import type { ResultadoInfra } from "./infra/index.ts";
-import type { Infra3D } from "./infra/cena.ts";
+import type { Fio, Infra3D } from "./infra/cena.ts";
 import { infra3d, postesDoProjeto } from "./infra/cena.ts";
+import type { Ocupacao } from "./ocupacao3d.ts";
+import { ocuparLotes } from "./ocupacao3d.ts";
 
 export interface Grade3D {
   /** canto sudoeste (plano) e espaçamento dos nós */
@@ -61,6 +63,10 @@ export interface Casa {
    *  b ao longo de esquerda(u), b = −prof/2 é a fachada da rua; y acima do piso) */
   volumes?: Volume[];
   vidros?: Vidro[];
+  /** faixa da garagem (a0..a1) e a face da casa onde o piso da garagem encosta (b) */
+  garagem?: { a0: number; a1: number; b: number };
+  /** porta de entrada na fachada da frente: centro (a), face (b), largura e altura */
+  porta?: { a: number; b: number; w: number; h: number };
 }
 
 export type Acabamento = "parede" | "madeira" | "grafite" | "concreto";
@@ -82,8 +88,8 @@ export interface Arvore {
   z: number;
   altura: number;
   copa: number;
-  /** 0 copa redonda, 1 cônica, 2 ipê florido */
-  tipo: 0 | 1 | 2;
+  /** 0 copa redonda, 1 cônica, 2 ipê florido, 3 arbusto de jardim */
+  tipo: 0 | 1 | 2 | 3;
   cor: number;
 }
 
@@ -119,6 +125,10 @@ export interface Cena {
   postes: Poste[];
   /** redes de infraestrutura projetadas (fios, hidrantes, tampas, reservatório…) */
   infra?: Infra3D;
+  /** ocupação dos lotes: muros, portões, garagem, jardim, carro, piscina, padrão de energia */
+  ocupacao: Ocupacao;
+  /** fiação aérea sem projeto elétrico: baixa tensão de poste a poste e os ramais das casas */
+  fiacao: Fio[];
   /** largura da pista de rolamento (m) — mão de direção dos carros */
   larguraPista: number;
   volumes: { corte: number; aterro: number };
@@ -142,7 +152,7 @@ export interface OpcoesCena {
 // Sorteio repetível (a mesma casa sai sempre igual no mesmo lote)
 // ---------------------------------------------------------------------------
 
-function sorteio(semente: string): () => number {
+export function sorteio(semente: string): () => number {
   let h = 2166136261;
   for (let i = 0; i < semente.length; i++) { h ^= semente.charCodeAt(i); h = Math.imul(h, 16777619); }
   return () => {
@@ -423,20 +433,39 @@ export function montarCena(res: Resultado, params: Parametros, terreno: GradeTer
   let arvores = montarArvores(res, g, pista, calcada);
   // com o projeto elétrico, os postes são os dele (na divisa dos lotes, vão de 35 m)
   const projetados = op.infra ? postesDoProjeto(op.infra).map((x) => ({ ...x, z: cotaFinal(g, x.p) })) : null;
-  if (projetados && op.infra) {
-    // a calçada dos postes fica sem árvore embaixo dos fios (DIS-NOR-012: poste no lado não arborizado)
+  // a calçada dos postes fica sem árvore embaixo dos fios (DIS-NOR-012: poste no lado não arborizado)
+  const livreDosFios = (lista: Arvore[]) => {
+    if (!projetados || !op.infra) return lista;
     const e = op.infra.eletrica;
     const vaos = e.vaos.filter((v) => v.mt || v.bt).map((v) => [e.postes[v.a].p, e.postes[v.b].p] as const);
-    arvores = arvores.filter((a) => !projetados.some((x) => dist(x.p, a.p) < 2.6) && !vaos.some(([p, q]) => distSegmento(a.p, p, q).d < 2.4));
-  }
+    return lista.filter((a) => !projetados.some((x) => dist(x.p, a.p) < 2.6) && !vaos.some(([p, q]) => distSegmento(a.p, p, q).d < 2.4));
+  };
+  arvores = livreDosFios(arvores);
+  // ocupação dos lotes: o quintal não fica com árvore em cima da piscina nem do piso da garagem
+  const ocupacao = ocuparLotes(res, g, casas, calcada);
+  const livres = ocupacao.lotes.flatMap((o) => [
+    ...(o.piscina ? [{ p: o.piscina.c, r: Math.max(o.piscina.comp, o.piscina.larg) / 2 + 2 }] : []),
+    { p: lerp(lerp(o.entrada[0], o.entrada[1], 0.5), lerp(o.entrada[2], o.entrada[3], 0.5), 0.5), r: 2.4 },
+  ]);
+  arvores = arvores.filter((a) => !livres.some((x) => dist(x.p, a.p) < x.r));
+  arvores.push(...livreDosFios(ocupacao.arbustos));
   const postes = projetados ?? montarPostes(res, g, pista, calcada, arvores);
   const infra = op.infra ? infra3d(op.infra, g) : undefined;
+  const padroes = ocupacao.lotes.flatMap((o) => (o.padrao ? [o.padrao] : []));
+  // o ramal do projeto termina no pontalete do padrão de entrada do lote (3,8 m)
+  if (infra) for (const f of infra.fios) {
+    if (f.tipo !== "ramal") continue;
+    let mais: (typeof padroes)[number] | null = null, dm = 8;
+    for (const pd of padroes) { const d = dist(pd.p, f.b); if (d < dm) { dm = d; mais = pd; } }
+    if (mais) { f.b = mais.p; f.zb = mais.z; f.hb = ALTURA_PONTALETE; }
+  }
+  const fiacao = projetados ? [] : fiacaoSimples(postes, padroes, pista);
 
   let cotaMin = Infinity, cotaMax = -Infinity;
   for (let k = 0; k < n; k++) { cotaMin = Math.min(cotaMin, g.final[k]); cotaMax = Math.max(cotaMax, g.final[k]); }
   const centro: Pt = [(gb.min[0] + gb.max[0]) / 2, (gb.min[1] + gb.max[1]) / 2];
   return {
-    grade: g, casas, arvores, pista, ruas: caixaRuas, meioFio, postes, infra, larguraPista: Math.max(4, params.ruaPista), volumes: { corte, aterro }, infoLotes,
+    grade: g, casas, arvores, pista, ruas: caixaRuas, meioFio, postes, infra, ocupacao, fiacao, larguraPista: Math.max(4, params.ruaPista), volumes: { corte, aterro }, infoLotes,
     cotaMin, cotaMax, centro, raio: Math.hypot(larg, alt) / 2,
   };
 }
@@ -455,7 +484,7 @@ export const PE_DIREITO = 3.1, PLATIBANDA = 0.6;
  * alto de destaque + garagem coberta em balanço) ou sobrado (térreo recuado e
  * caixa superior em balanço sobre a frente). Tudo cabe na planta.
  */
-export function comporModerna(larg: number, prof: number, andares: number, rnd: () => number): { volumes: Volume[]; vidros: Vidro[] } {
+export function comporModerna(larg: number, prof: number, andares: number, rnd: () => number): Pick<Casa, "volumes" | "vidros" | "garagem" | "porta"> & { volumes: Volume[]; vidros: Vidro[] } {
   const hl = larg / 2, hp = prof / 2, H = PE_DIREITO, P = PLATIBANDA;
   const volumes: Volume[] = [], vidros: Vidro[] = [];
   const s = rnd() < 0.5 ? -1 : 1; // lado da garagem
@@ -490,6 +519,11 @@ export function comporModerna(larg: number, prof: number, andares: number, rnd: 
     // térreo: vidro do social do lado oposto à garagem, porta-janela no fundo
     vid(0, 0, s > 0 ? 0.5 : larg * 0.45, s > 0 ? larg * 0.55 : larg - 0.5, 0.1, 2.5);
     vid(0, 2, larg * 0.25, larg * 0.75, 0.1, 2.4);
+    // garagem embaixo do balanço, do lado s; porta social na beira de dentro dela
+    const gw = Math.min(larg - 1, Math.max(3, larg * 0.4));
+    const [g0, g1] = s > 0 ? [hl - gw, hl] : [-hl, -hl + gw];
+    const pa = s > 0 ? Math.max(g0 + 0.65, larg * 0.05 + 0.6) : Math.min(g1 - 0.65, -larg * 0.05 - 0.6);
+    return { volumes, vidros, garagem: { a0: g0, a1: g1, b: t0 }, porta: { a: pa, b: t0, w: 1.1, h: 2.45 } };
   } else {
     // volume alto de destaque (pé-direito duplo) do lado oposto à garagem
     const w2 = Math.max(2.6, larg * (0.34 + 0.1 * rnd()));
@@ -508,17 +542,56 @@ export function comporModerna(larg: number, prof: number, andares: number, rnd: 
     }
     const wc = c1 - c0, wd = d1 - d0;
     // corpo: vidro na frente (fora da garagem) e no fundo
-    vid(0, 0, s > 0 ? 0.6 : wc * 0.5, s > 0 ? wc * 0.5 : wc - 0.6, 0.1, 2.5);
+    // (o vidro da frente para antes da porta, que fica na beira da garagem)
+    const gwP = Math.min(wc - 0.3, Math.max(3, larg * 0.4));
+    const portaS = s > 0 ? wc - gwP + 0.7 : gwP - 0.7;
+    if (s > 0) vid(0, 0, 0.6, Math.min(wc * 0.5, portaS - 0.85), 0.1, 2.5);
+    else vid(0, 0, Math.max(wc * 0.5, portaS + 0.85), wc - 0.6, 0.1, 2.5);
     vid(0, 2, wc * 0.2, wc * 0.8, 0.1, 2.4);
     // destaque: pano alto de vidro, ou rasgo horizontal no ripado
     if (acDestaque === "madeira") vid(1, 0, wd * 0.2, wd * 0.8, 1.0, 2.4);
     else vid(1, 0, 0.45, wd - 0.45, 0.1, H + 0.9);
+    const gw = Math.min(c1 - c0 - 0.3, Math.max(3, larg * 0.4));
+    const [g0, g1] = s > 0 ? [c1 - gw, c1] : [c0, c0 + gw];
+    // porta pivotante de madeira na beira de dentro da garagem (coberta pela laje)
+    const pa = s > 0 ? g0 + 0.7 : g1 - 0.7;
+    return { volumes, vidros, garagem: { a0: g0, a1: g1, b: corpoB0 }, porta: { a: pa, b: corpoB0, w: 1.1, h: 2.45 } };
   }
-  return { volumes, vidros };
+}
+
+/**
+ * Prédio público (escola, creche, posto) no mesmo padrão das casas: barra de dois
+ * pavimentos com platibanda, faixas de vidro corridas em cada andar, marquise de
+ * concreto na entrada e um painel de ripado de madeira na fachada de cima.
+ */
+export function comporEquipamento(larg: number, prof: number): Pick<Casa, "volumes" | "vidros"> {
+  const hl = larg / 2, hp = prof / 2, H = PE_DIREITO + 0.4, P = PLATIBANDA;
+  const volumes: Volume[] = [
+    { a0: -hl, a1: hl, b0: -hp, b1: hp, y0: 0, y1: 2 * H + P, acab: "parede", platibanda: true },
+    // marquise da entrada
+    { a0: -Math.min(5, hl * 0.3), a1: Math.min(5, hl * 0.3), b0: -hp - 2.6, b1: -hp, y0: H - 0.35, y1: H, acab: "concreto", platibanda: false },
+    // ripado na fachada de cima (placa saliente)
+    { a0: hl - Math.max(4, larg * 0.28), a1: hl - 1.2, b0: -hp - 0.14, b1: -hp, y0: H + 0.3, y1: 2 * H + P - 0.1, acab: "madeira", platibanda: false },
+  ];
+  const vidros: Vidro[] = [];
+  const ent = Math.min(5, hl * 0.3);
+  const rip0 = larg - Math.max(4, larg * 0.28);
+  // térreo: vidro dos dois lados da entrada e a porta de vidro no meio
+  vidros.push({ vol: 0, face: 0, s0: 1.2, s1: hl - ent - 0.6, y0: 0.9, y1: 2.6 });
+  vidros.push({ vol: 0, face: 0, s0: hl + ent + 0.6, s1: larg - 1.2, y0: 0.9, y1: 2.6 });
+  vidros.push({ vol: 0, face: 0, s0: hl - 1.6, s1: hl + 1.6, y0: 0.05, y1: 2.6 });
+  // andar de cima: faixa corrida até o ripado
+  vidros.push({ vol: 0, face: 0, s0: 1.2, s1: rip0 - 0.4, y0: H + 0.9, y1: H + 2.6 });
+  // fundo e laterais: faixas nos dois andares
+  for (const y0 of [0.9, H + 0.9]) {
+    vidros.push({ vol: 0, face: 2, s0: 1.2, s1: larg - 1.2, y0, y1: y0 + 1.7 });
+    if (prof > 8) { vidros.push({ vol: 0, face: 1, s0: 1.5, s1: prof - 1.5, y0, y1: y0 + 1.7 }); vidros.push({ vol: 0, face: 3, s0: 1.5, s1: prof - 1.5, y0, y1: y0 + 1.7 }); }
+  }
+  return { volumes, vidros: vidros.filter((v) => v.s1 - v.s0 >= 0.8) };
 }
 
 /** Frente do lote para orientar a casa: a frente escolhida, senão a rua mais longa. */
-function frenteDaCasa(l: Lote): { a: Pt; b: Pt } | null {
+export function frenteDaCasa(l: Lote): { a: Pt; b: Pt } | null {
   const principal = l.lados.filter((x) => x.principal);
   const cands = (principal.length ? principal : l.lados.filter((x) => (x.tipo === "rua" || x.tipo === "via") && x.comp >= 3));
   if (!cands.length) return null;
@@ -617,6 +690,7 @@ function montarEquipamentos(res: Resultado, g: Grade3D, evitar?: { p: Pt; r: num
         out.push({
           lote: -1, c, u, larg, prof, piso: Math.max(...hs) + 0.3, fundacao: Math.min(...hs) - 0.4,
           andares: 2, telhado: "laje", corParede: 0xf1efe9, corTelhado: 0x9aa3ab,
+          ...comporEquipamento(larg, prof),
         });
         break;
       }
@@ -697,9 +771,9 @@ function montarArvores(res: Resultado, g: Grade3D, pista: Poligono[], calcada: n
 }
 
 /**
- * Iluminação pública: um poste a cada ~32 m, alternando os lados, na beira de
- * fora da calçada (longe das árvores e dos outros postes — o cruzamento não
- * ganha dois).
+ * Iluminação pública (sem projeto elétrico): poste de concreto de 9 m a cada
+ * ~32 m, num lado só da rua (o da rede), na beira de fora da calçada, longe das
+ * árvores e dos outros postes (o cruzamento não ganha dois).
  */
 function montarPostes(res: Resultado, g: Grade3D, pista: Poligono[], calcada: number, arvores: Arvore[]): Poste[] {
   const out: Poste[] = [];
@@ -707,20 +781,60 @@ function montarPostes(res: Resultado, g: Grade3D, pista: Poligono[], calcada: nu
   for (const r of res.ruas) {
     const L = comprimento(r.eixo);
     const off = r.largura / 2 - 0.35;
+    const lado = sorteio(`postes-${r.id}`)() < 0.5 ? 1 : -1;
     let k = 0;
-    for (let s = 12; s < L - 8; s += 32, k++) {
+    for (let s = 12; s < L - 8; s += 32) {
       const { pt, dir } = pontoNaPolilinha(r.eixo, s);
       const nrm = esquerda(dir);
-      const lado = k % 2 ? 1 : -1;
       const p: Pt = [pt[0] + nrm[0] * off * lado, pt[1] + nrm[1] * off * lado];
       const i = Math.round((p[0] - g.x0) / g.passo), j = Math.round((p[1] - g.y0) / g.passo);
       if (i < 0 || j < 0 || i >= g.nx || j >= g.ny || !g.rua[j * g.nx + i]) continue;
       if (pista.some((pg) => dentroPol(p, pg))) continue;
-      if (out.some((o) => dist(o.p, p) < 14) || arvores.some((a) => dist(a.p, p) < 2.5)) continue;
-      out.push({ p, z: cotaFinal(g, p), dir: [-nrm[0] * lado, -nrm[1] * lado] });
+      if (out.some((o) => dist(o.p, p) < 14) || arvores.some((a) => a.tipo !== 3 && dist(a.p, p) < 2.5)) continue;
+      out.push({ p, z: cotaFinal(g, p), dir: [-nrm[0] * lado, -nrm[1] * lado], id: `${r.id}:${k++}` });
     }
   }
   return out;
+}
+
+/** Altura do topo do pontalete do padrão de entrada (onde o ramal chega). */
+export const ALTURA_PONTALETE = 3.8;
+/** Altura da baixa tensão no poste de 9 m sem projeto (armação secundária). */
+export const ALTURA_BT_SIMPLES = 7.0;
+
+/**
+ * Rede aérea sem projeto: a baixa tensão liga os postes vizinhos da mesma rua
+ * (vão de até 45 m) e cada casa recebe o ramal do poste mais perto até o
+ * pontalete do padrão (atravessar a rua custa mais que andar pela calçada).
+ */
+function fiacaoSimples(postes: Poste[], padroes: { p: Pt; z: number }[], pista: Poligono[]): Fio[] {
+  const fios: Fio[] = [];
+  const porRua = new Map<string, Poste[]>();
+  for (const p of postes) {
+    const rua = p.id?.split(":")[0];
+    if (!rua) continue;
+    if (!porRua.has(rua)) porRua.set(rua, []);
+    porRua.get(rua)!.push(p);
+  }
+  for (const lista of porRua.values()) for (let i = 0; i + 1 < lista.length; i++) {
+    const A = lista[i], B = lista[i + 1], L = dist(A.p, B.p);
+    if (L > 45) continue;
+    fios.push({ a: A.p, b: B.p, ha: ALTURA_BT_SIMPLES, hb: ALTURA_BT_SIMPLES, za: A.z, zb: B.z, flecha: Math.max(0.2, 0.016 * L), tipo: "bt" });
+  }
+  const cruza = (a: Pt, b: Pt) => pista.some((pg) => dentroPol(lerp(a, b, 0.5), pg));
+  for (const pd of padroes) {
+    let melhor: Poste | null = null, custo = 40;
+    for (const p of postes) {
+      const d = dist(p.p, pd.p);
+      if (d > 40) continue;
+      const c = d + (cruza(p.p, pd.p) ? 12 : 0);
+      if (c < custo) { custo = c; melhor = p; }
+    }
+    if (!melhor) continue;
+    const L = dist(melhor.p, pd.p);
+    fios.push({ a: melhor.p, b: pd.p, ha: ALTURA_BT_SIMPLES - 0.3, hb: ALTURA_PONTALETE, za: melhor.z, zb: pd.z, flecha: Math.max(0.12, 0.02 * L), tipo: "ramal" });
+  }
+  return fios;
 }
 
 /** Área do lote que precisa de corte/aterro além do talude da rua (m²) — ficha do lote. */

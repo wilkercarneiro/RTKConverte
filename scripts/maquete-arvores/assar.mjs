@@ -22,6 +22,10 @@ export const ARVORES = [
   { id: "copa", modelo: "island_tree_01", nome: "copa larga" },
   { id: "jacaranda", modelo: "jacaranda_tree", nome: "sombra grande" },
   { id: "conifera", modelo: "fir_sapling_medium", no: "fir_sapling_medium_a_LOD0", nome: "conífera" },
+  // arbustos dos jardins (atlas menor: de perto ocupam pouco da tela)
+  { id: "arbusto", modelo: "searsia_lucida", no: "searsia_lucida_a_LOD0", nome: "arbusto", celula: 256 },
+  { id: "arbusto2", modelo: "searsia_lucida", no: "searsia_lucida_e_LOD0", nome: "arbusto baixo", celula: 256 },
+  { id: "arbusto3", modelo: "searsia_lucida", no: "searsia_lucida_c_LOD0", nome: "arbusto médio", celula: 256 },
   // o ipê (amarelo e rosa) não tem atlas: a maquete pinta a copa da árvore de rua (arvores3d.ts).
   // Para ver a versão assada: { id: "ipe-amarelo", modelo: "tree_small_02", folhas: [0.98, 0.74, 0.08] }
 ];
@@ -77,7 +81,7 @@ const metaArq = path.join(SAIDA, "arvores.json");
 const metas = fs.existsSync(metaArq) ? JSON.parse(fs.readFileSync(metaArq, "utf8")) : {};
 for (const a of lista) {
   const t0 = Date.now();
-  const r = await page.evaluate((cfg) => window.assar(cfg), { modelo: a.modelo, no: a.no, N, celula: CELULA, celulaNormal: CELULA_NORMAL, folhas: a.folhas });
+  const r = await page.evaluate((cfg) => window.assar(cfg), { modelo: a.modelo, no: a.no, N, celula: a.celula ?? CELULA, celulaNormal: CELULA_NORMAL, folhas: a.folhas });
   const grava = (nome, dataUrl) => fs.writeFileSync(path.join(SAIDA, nome), Buffer.from(dataUrl.split(",")[1], "base64"));
   grava(`${a.id}-cor.webp`, r.cor);
   // o ipê é a árvore de rua pintada: a normal é a mesma (a maquete lê a de "rua")

@@ -1178,3 +1178,61 @@ test("rótulo da área verde em L cai dentro da faixa, no braço onde cabe deita
   const q = pontoDoRotulo(L);
   assert.ok(dentroPol(q, L) && distAnel(q, L.ext) > 8, `${q}`);
 });
+
+test("maquete 3D: lote ocupado — garagem até o meio-fio, carro e piscina dentro do lote, muros, portões, jardim e padrão", () => {
+  const c = montarCena(r0, pr0.params, terrenoSintetico(r0));
+  const oc = c.ocupacao.lotes;
+  const casas = c.casas.filter((x) => x.lote >= 0);
+  assert.ok(oc.length >= 0.85 * casas.length, `só ${oc.length} lotes ocupados para ${casas.length} casas`);
+  const pistas = c.pista;
+  let carros = 0, piscinas = 0, garagens = 0, padroes = 0;
+  for (const o of oc) {
+    const l = r0.lotes[o.lote];
+    assert.equal(o.entrada.length, 4);
+    // o piso da garagem começa dentro do lote e não entra no asfalto
+    assert.ok(dentroPol(o.entrada[0], l.pol) && dentroPol(o.entrada[1], l.pol), `garagem fora do lote ${l.id}`);
+    // as pontas da rua chegam no meio-fio: meio metro para dentro do lote já não é asfalto
+    for (const [rua, casa] of [[o.entrada[3], o.entrada[0]], [o.entrada[2], o.entrada[1]]]) {
+      const L = Math.hypot(casa[0] - rua[0], casa[1] - rua[1]);
+      const p = [rua[0] + (casa[0] - rua[0]) * 0.5 / L, rua[1] + (casa[1] - rua[1]) * 0.5 / L];
+      assert.ok(!pistas.some((pg) => dentroPol(p, pg)), `garagem do lote ${l.id} entra no asfalto`);
+    }
+    if (o.carro) { carros++; assert.ok(dentroPol(o.carro.p, l.pol), `carro fora do lote ${l.id}`); }
+    if (o.piscina) {
+      piscinas++;
+      const pi = o.piscina, v = [-pi.u[1], pi.u[0]];
+      for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        const p = [pi.c[0] + pi.u[0] * a * pi.comp / 2 + v[0] * b * pi.larg / 2, pi.c[1] + pi.u[1] * a * pi.comp / 2 + v[1] * b * pi.larg / 2];
+        assert.ok(dentroPol(p, l.pol), `piscina fora do lote ${l.id}`);
+      }
+    }
+    if (o.portoes.some((p) => p.tipo === "garagem")) garagens++;
+    if (o.padrao) padroes++;
+    assert.ok(o.muros.some((m) => m.tipo === "divisa"), `lote ${l.id} sem muro de divisa`);
+  }
+  assert.ok(carros > oc.length * 0.4, `poucos carros na garagem: ${carros}`);
+  assert.ok(piscinas > 0, "nenhuma piscina");
+  assert.ok(garagens > oc.length * 0.8, `poucos portões de garagem: ${garagens}`);
+  assert.ok(padroes > oc.length * 0.8, `poucos padrões de entrada: ${padroes}`);
+  // arbustos só dentro dos lotes, nunca na pista
+  const arb = c.arvores.filter((a) => a.tipo === 3);
+  assert.ok(arb.length > oc.length, `poucos arbustos: ${arb.length}`);
+  for (const a of arb) assert.ok(!pistas.some((pg) => dentroPol(a.p, pg)), "arbusto no asfalto");
+});
+
+test("maquete 3D: fiação — sem projeto, baixa tensão de poste a poste e o ramal de cada casa até o padrão; com projeto, o ramal termina no padrão", async () => {
+  const { calcularInfra } = await import("../src/lib/loteamento/infra/index.ts");
+  const c = montarCena(r0, pr0.params, terrenoSintetico(r0));
+  const bt = c.fiacao.filter((f) => f.tipo === "bt"), ramais = c.fiacao.filter((f) => f.tipo === "ramal");
+  assert.ok(c.postes.length > 4 && bt.length > 0, "sem rede de baixa tensão");
+  for (const f of bt) assert.ok(Math.hypot(f.b[0] - f.a[0], f.b[1] - f.a[1]) <= 45.01, "vão de BT acima de 45 m");
+  const padroes = c.ocupacao.lotes.filter((o) => o.padrao).map((o) => o.padrao);
+  assert.ok(ramais.length >= padroes.length * 0.8, `${ramais.length} ramais para ${padroes.length} padrões`);
+  for (const f of ramais) assert.ok(padroes.some((p) => p.p === f.b), "ramal não termina num padrão");
+  const inf = calcularInfra(r0, pr0);
+  const cp = montarCena(r0, pr0.params, terrenoSintetico(r0), { infra: inf });
+  assert.equal(cp.fiacao.length, 0, "com projeto a fiação é a do projeto");
+  const pads = cp.ocupacao.lotes.filter((o) => o.padrao).map((o) => o.padrao.p);
+  const noPadrao = cp.infra.fios.filter((f) => f.tipo === "ramal" && pads.includes(f.b)).length;
+  assert.ok(noPadrao > 0, "nenhum ramal do projeto chegou no padrão");
+});

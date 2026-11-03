@@ -8,12 +8,12 @@
 import * as THREE from "three";
 
 export interface MetaArvore { N: number; S: number; H: number; cy: number; raioCopa: number }
-export interface Especie { id: string; meta: MetaArvore; cor: THREE.Texture; normal: THREE.Texture; flor: THREE.Color | null }
+export interface Especie { id: string; meta: MetaArvore; cor: THREE.Texture; normal: THREE.Texture; flor: THREE.Color | null; tinta?: THREE.Color }
 
-export const ESPECIES = ["rua", "copa", "jacaranda", "conifera", "ipe-amarelo", "ipe-rosa"] as const;
+export const ESPECIES = ["rua", "copa", "jacaranda", "conifera", "ipe-amarelo", "ipe-rosa", "arbusto", "arbusto2", "arbusto3"] as const;
 export type IdEspecie = (typeof ESPECIES)[number];
 /** Atlas assados (o ipê é a árvore de rua com a copa pintada na placa de vídeo). */
-const ATLAS = ["rua", "copa", "jacaranda", "conifera"] as const;
+const ATLAS = ["rua", "copa", "jacaranda", "conifera", "arbusto", "arbusto2", "arbusto3"] as const;
 const IPE: Partial<Record<IdEspecie, [number, number, number]>> = { "ipe-amarelo": [0.98, 0.74, 0.08], "ipe-rosa": [0.86, 0.36, 0.62] };
 
 /**
@@ -58,7 +58,9 @@ export function carregarEspecies(maxAniso: number): Promise<Map<IdEspecie, Espec
         const flor = IPE[id];
         const base: IdEspecie = flor ? "rua" : id;
         const a = atlas.get(base)!;
-        return [id, { id, meta: metas[base], cor: a.cor, normal: a.normal, flor: flor ? new THREE.Color(...flor) : null }] as const;
+        // arbusto de jardim: o modelo é verde-oliva seco; o jardim regado é mais verde
+        const tinta = id.startsWith("arbusto") ? new THREE.Color(0.82, 1.0, 0.7) : undefined;
+        return [id, { id, meta: metas[base], cor: a.cor, normal: a.normal, flor: flor ? new THREE.Color(...flor) : null, tinta }] as const;
       }));
     } catch (e) {
       console.warn("árvores da Poly Haven indisponíveis", e);
@@ -143,10 +145,10 @@ export function materialImpostor(e: Especie, decl: string, uniforms: Record<stri
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms, {
       uIN: { value: e.meta.N }, uIS: { value: e.meta.S }, uICy: { value: e.meta.cy }, tINormal: { value: e.normal },
-      uIFlor: { value: e.flor ?? new THREE.Color(0, 0, 0) },
+      uIFlor: { value: e.flor ?? new THREE.Color(0, 0, 0) }, uITinta: { value: e.tinta ?? new THREE.Color(1, 1, 1) },
     });
     sh.vertexShader = patchVertice(sh.vertexShader, decl, true);
-    sh.fragmentShader = `uniform float uIS; uniform sampler2D tINormal; uniform mat4 projectionMatrix; uniform vec3 uIFlor;
+    sh.fragmentShader = `uniform float uIS; uniform sampler2D tINormal; uniform mat4 projectionMatrix; uniform vec3 uIFlor; uniform vec3 uITinta;
       varying vec2 vIRot; varying vec3 vIVista; varying vec3 vIMundo; varying float vIEsc; varying vec3 vICentro;
       ${ALFA}
       vec3 desOct(vec2 f) { f = f * 2.0 - 1.0; vec3 n = vec3(f.x, 1.0 - abs(f.x) - abs(f.y), f.y);
@@ -160,7 +162,7 @@ export function materialImpostor(e: Especie, decl: string, uniforms: Record<stri
         if (uIFlor.r + uIFlor.g + uIFlor.b > 0.0 && cI.g > cI.r * 1.05 && cI.g >= cI.b) {
           cI = clamp(uIFlor * (0.35 + dot(cI, vec3(0.3, 0.55, 0.15)) * 2.6), 0.0, 1.0);
         }
-        diffuseColor *= vec4(min(cI * 1.18, 1.0), alfaCheio(corI.a, vMapUv, map));`)
+        diffuseColor *= vec4(min(cI * 1.18 * uITinta, 1.0), alfaCheio(corI.a, vMapUv, map));`)
       .replace("#include <normal_fragment_begin>", `#include <normal_fragment_begin>
         {
           vec3 nO = desOct(texture2D(tINormal, vMapUv).rg);
@@ -195,7 +197,8 @@ export function sombraImpostor(e: Especie, decl: string, uniforms: Record<string
 }
 
 /** Espécie de cada árvore da cena (determinística pela posição na lista). */
-export function especieDe(a: { tipo: 0 | 1 | 2; cor: number; altura: number }, i: number): IdEspecie {
+export function especieDe(a: { tipo: 0 | 1 | 2 | 3; cor: number; altura: number }, i: number): IdEspecie {
+  if (a.tipo === 3) { const h = (i * 0.6180339) % 1; return a.altura < 1.2 ? "arbusto2" : h < 0.55 ? "arbusto" : "arbusto3"; }
   if (a.tipo === 1) return "conifera";
   if (a.tipo === 2) return a.cor === 0xf2c230 ? "ipe-amarelo" : "ipe-rosa";
   const h = (i * 0.6180339) % 1;

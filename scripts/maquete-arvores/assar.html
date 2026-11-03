@@ -87,6 +87,8 @@ W.assar = async function assar(cfg) {
     const b = new THREE.Box3().setFromObject(m);
     yFolha = Math.min(yFolha, b.min.y);
   }
+  // arbusto (folha desde o chão, material sem "leaves" no nome): a copa começa embaixo
+  if (yFolha >= H - 0.01) yFolha = H * 0.15;
 
   // materiais: cor (com AO do modelo e escurecendo por dentro/embaixo da copa) e normal+profundidade
   const uDir = { value: new THREE.Vector3() }, uS = { value: S }, uC = { value: C };

@@ -464,7 +464,7 @@ export function casaNaRua(cena: Cena, eixo: Pt[], largura: number, sMin: number,
     for (const x of amostras) { const d = dist(x.p, fr); if (d < dm) { dm = d; a = x; } }
     if (a.s < sMin || a.s > sMax || dm > largura / 2 + 7) continue;
     // árvore da calçada na frente da fachada taparia a casa (a câmera passa baixo)
-    if (cena.arvores.some((x) => dist(x.p, fr) < Math.max(7, k.larg / 2 + 3))) continue;
+    if (cena.arvores.some((x) => x.tipo !== 3 && dist(x.p, fr) < Math.max(7, k.larg / 2 + 3))) continue;
     // nem poste de luz na frente (cortaria a fachada ao meio na parada)
     if (cena.postes.some((x) => dist(x.p, fr) < Math.max(8, k.larg / 2 + 4))) continue;
     // a fachada olha para o eixo: −esquerda(u) aponta para a rua

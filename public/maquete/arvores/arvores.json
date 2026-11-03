@@ -34,5 +34,32 @@
     "raioCopa": 2.959,
     "nome": "conífera",
     "fonte": "Poly Haven fir_sapling_medium (CC0)"
+  },
+  "arbusto": {
+    "N": 8,
+    "S": 1.233,
+    "H": 2.339,
+    "cy": 1.169,
+    "raioCopa": 1.183,
+    "nome": "arbusto",
+    "fonte": "Poly Haven searsia_lucida (CC0)"
+  },
+  "arbusto2": {
+    "N": 8,
+    "S": 0.619,
+    "H": 1.025,
+    "cy": 0.512,
+    "raioCopa": 0.549,
+    "nome": "arbusto baixo",
+    "fonte": "Poly Haven searsia_lucida (CC0)"
+  },
+  "arbusto3": {
+    "N": 8,
+    "S": 1.023,
+    "H": 1.68,
+    "cy": 0.84,
+    "raioCopa": 0.926,
+    "nome": "arbusto médio",
+    "fonte": "Poly Haven searsia_lucida (CC0)"
   }
 }
