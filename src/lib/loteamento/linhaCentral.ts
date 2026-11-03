@@ -424,6 +424,8 @@ export interface Config {
   _passo?: number;
   /** (interno) arraste ao vivo: não puxa divisa para as dobras da linha central (a dobra vai para a junção ao soltar) */
   _vivo?: boolean;
+  /** laterais no esquadro de cada rua (padrão) ou em leque: na direção das divisas das pontas, girando aos poucos de uma à outra */
+  laterais?: "esquadro" | "leque" | "meio";
   /** profundidade padrão do lote (faixa da testa) */
   profPadrao?: number;
   /** medidas do projeto: o arranjo que deixa lote fora delas perde na escolha das cabeceiras */
@@ -435,6 +437,8 @@ export interface LimitesLote {
   areaMin: number;
   areaMax: number;
   frenteMin: number;
+  /** frente máxima (não vale para o lote da ponta da fileira, que pode ser de esquina) */
+  frenteMax?: number;
   profMin: number;
   profMax: number;
 }
@@ -446,8 +450,12 @@ export function foraDasMedidas(L: Layout, lim?: LimitesLote): number {
   for (const l of L.lotes) {
     let fora = l.area < lim.areaMin - 0.01 || l.area > lim.areaMax * 1.03;
     if (!fora && Number.isFinite(l.frente) && l.frente < lim.frenteMin - 0.01) fora = true;
+    if (!fora && lim.frenteMax && (l.zona === "f1" || l.zona === "f2") && Number.isFinite(l.frente) && l.frente > lim.frenteMax * 1.03 + 0.01) {
+      const daFila = L.lotes.filter((x) => x.zona === l.zona);
+      if (l.ordem > 0 && l.ordem < daFila.length - 1) fora = true;
+    }
     if (!fora && l.laterais.length) {
-      const prof = Math.max(...l.laterais);
+      const prof = Math.max(l.prof ?? 0, ...l.laterais);
       if (prof < lim.profMin - 0.01 || prof > lim.profMax * 1.03) fora = true;
     }
     if (fora) n++;
@@ -467,10 +475,14 @@ export interface LoteL {
   laterais: number[];
   /** giro das laterais em relação à perpendicular da rua (graus) */
   giroLat: number[];
+  /** profundidade como a planta mede: a maior distância do lote à reta da frente */
+  prof?: number;
 }
 
 export interface Layout {
   C: Pt[];
+  /** laterais no esquadro ou em leque (Config.laterais) */
+  lat?: "esquadro" | "leque" | "meio";
   eixo: Pt[];
   lotes: LoteL[];
   juncoes: Pt[];
@@ -544,12 +556,14 @@ function douradaMin(f: (x: number) => number, a: number, b: number, it = 60): nu
 interface Divisa { t: number; u: number; v: number; fixo?: "u" | "v" | "t" }
 
 /** resolve a divisa k: junção t em C e pés u (B1) e v (B2) com as áreas acumuladas τ1, τ2 */
-function resolverDivisa(F: Fileiras, tau1: number, tau2: number, tMin: number, fixo?: { tipo: "u" | "v" | "t"; valor: number }): Divisa | null {
+function resolverDivisa(F: Fileiras, tau1: number, tau2: number, tMin: number, fixo?: { tipo: "u" | "v" | "t"; valor: number } | null, dirDe?: (t: number) => Pt): Divisa | null {
   const vb1 = F.B1.s, vb2 = F.B2.s, vc = F.C.s;
   const U = (t: number) => raiz((u) => area1(F, u, t), F.f1[0], F.f1[1], tau1, vb1);
   const V = (t: number) => raiz((v) => -area2(F, v, t), F.f2[0], F.f2[1], -tau2, vb2);
-  const giro1 = (t: number, u: number) => angulo(F.B1.nrm(u), sub(F.C.em(t), F.B1.em(u)));
-  const giro2 = (t: number, v: number) => angulo(F.B2.nrm(v), sub(F.C.em(t), F.B2.em(v)));
+  // giro de cada lateral: do esquadro da própria rua ou, nas laterais em leque, da direção
+  // das divisas das pontas naquele ponto (dirDe aponta da rua 1 para a rua 2)
+  const giro1 = (t: number, u: number) => angulo(dirDe ? dirDe(t) : F.B1.nrm(u), sub(F.C.em(t), F.B1.em(u)));
+  const giro2 = (t: number, v: number) => angulo(dirDe ? mul(dirDe(t), -1) : F.B2.nrm(v), sub(F.C.em(t), F.B2.em(v)));
   if (fixo?.tipo === "u") {
     const u = fixo.valor;
     const t = raiz((tt) => area1(F, u, tt), tMin, F.C.L, tau1, vc);
@@ -677,7 +691,7 @@ function lotesTesta(E: Estrutura, qual: 1 | 2, pt: Ponta, tr: { x: number; y: nu
     else if (i === 0) anel = [...Tp.trecho(tr.x, es[0]), zs[0]];
     else if (i === m - 1) anel = [...Tp.trecho(es[m - 2], tr.y), zs[m - 2]];
     else anel = [...Tp.trecho(es[i - 1], es[i]), zs[i], zs[i - 1]];
-    const l = medirPonta(anel, qual === 1 ? "testa1" : "testa2", i, giroMin);
+    const l = medirPonta(anel, qual === 1 ? "testa1" : "testa2", i, giroMin, E);
     lotes.push(l);
   }
   for (let i = 0; i < es.length; i++) divisas.push([Tp.em(es[i]), zs[i]]);
@@ -821,7 +835,10 @@ export function montar(E: Estrutura, cfg: Config): Layout {
   // --- iteração em T. Nas cabeceiras diretas, a esquina da fileira mais comprida absorve a
   //     cunha; cunha de mais de meio lote vira lote(s) a mais nessa fileira (todos iguais), e
   //     cunha de mais de 1,4 lote faz a cabeceira virar "testa" (lotes de frente para a rua da ponta).
-  const Cbase0 = limparLinha(cfg.C ? cfg.C.map((p) => [p[0], p[1]] as Pt) : (cfg._C0 ?? simplificar(eixo.pts, 0.35)));
+  // linha automática: uma RETA (regra do projeto — a linha de fundo é reta de ponta a
+  // ponta entre os lotes fundo com fundo). A equidistante dobrava com as ruas e deixava o
+  // fundo em zigue-zague; a reta é a que mais se aproxima dela, deslocada até as fileiras empatarem
+  const Cbase0 = limparLinha(cfg.C ? cfg.C.map((p) => [p[0], p[1]] as Pt) : (cfg._C0 ?? retaDasFrentes(E, eixo.pts)));
   type Tr = { x: number; y: number } | null;
   interface Sol { T: number; W: { W0: number; W1: number }; base: { F: Fileiras; C: Pt[] }; tr1: Tr; tr2: Tr; m1: number; m2: number; n: number }
   const resolverT = (j0: number, j1: number): Sol => {
@@ -899,11 +916,32 @@ export function montar(E: Estrutura, cfg: Config): Layout {
   const T1 = (S1 - p(W.W0) - p(W.W1)) / n, T2 = (S2 - p(-W.W0) - p(-W.W1)) / n;
   const c1 = T1 + p(W.W0), c2 = T2 + p(-W.W0);
 
+  // laterais em leque: a direção (da rua 1 para a rua 2) gira da divisa de uma ponta à da outra
+  let dirDe: ((t: number) => Pt) | undefined;
+  if (cfg.laterais === "leque" || cfg.laterais === "meio") {
+    const C = F.C;
+    // direção de cada cabeceira (do lado da rua 1 para o da rua 2), pelo lado da quadra; na
+    // ponta fechada (cabeceira sem largura) vale o esquadro da rua 1
+    let n0 = unit(esq(sub(F.B1.em(F.f1[1]), F.B1.em(F.f1[0]))));
+    const cab = (de: number, para: number): Pt | null => { const a = E.Q.em(de), b = E.Q.em(para); return dist(a, b) > 3 ? unit(sub(b, a)) : null; };
+    const cA = cab(E.e1[1], E.e1[0]), cB = cab(E.e2[0], E.e2[1]);
+    if (dot(n0, add(cA ?? [0, 0], cB ?? [0, 0])) < 0) n0 = mul(n0, -1);
+    const dA = cA ?? n0, dB = cB ?? n0;
+    const thA = Math.atan2(dA[1], dA[0]);
+    let dth = Math.atan2(dB[1], dB[0]) - thA;
+    while (dth > Math.PI) dth -= 2 * Math.PI;
+    while (dth < -Math.PI) dth += 2 * Math.PI;
+    const leque = (t: number): Pt => { const th = thA + dth * Math.max(0, Math.min(1, t / C.L)); return [Math.cos(th), Math.sin(th)]; };
+    // "meio": a meia direção entre o esquadro da rua 1 e o leque (ponta muito inclinada:
+    // no leque puro a testada passaria da máxima)
+    const n1 = n0;
+    dirDe = cfg.laterais === "meio" ? (t: number) => unit(add(n1, leque(t))) : leque;
+  }
   // --- divisas da zona de duas fileiras
   const div: (Divisa | null)[] = [];
   let tMin = 0.3;
   for (let k = 1; k < n; k++) {
-    const d = resolverDivisa(F, c1 + (k - 1) * T1, c2 + (k - 1) * T2, tMin);
+    const d = resolverDivisa(F, c1 + (k - 1) * T1, c2 + (k - 1) * T2, tMin, null, dirDe);
     div.push(d);
     if (d) tMin = d.t + 0.3;
   }
@@ -940,7 +978,7 @@ export function montar(E: Estrutura, cfg: Config): Layout {
     for (const best of cand.slice(0, 2)) {
       const k = best + 1;
       const tm = best > 0 && div[best - 1] ? div[best - 1]!.t + 0.2 : 0.2;
-      const nd = resolverDivisa(F, c1 + (k - 1) * T1, c2 + (k - 1) * T2, tm, { tipo, valor });
+      const nd = resolverDivisa(F, c1 + (k - 1) * T1, c2 + (k - 1) * T2, tm, { tipo, valor }, dirDe);
       if (!nd) continue;
       if (best + 1 < div.length && div[best + 1] && nd.t >= div[best + 1]!.t - 0.2) continue;
       const g = giroDe(nd);
@@ -1034,7 +1072,7 @@ export function montar(E: Estrutura, cfg: Config): Layout {
       const cur = i === m ? tr : transversal(pt, i * Tm);
       if (!cur) { avisos.push(`ponta: transversal ${i} não fechou`); return; }
       const anel = prev ? [...pt.Tp.trecho(cur.x, prev.x), ...pt.Tp.trecho(prev.y, cur.y)] : pt.Tp.trecho(cur.x, cur.y);
-      lotes.push(medirPonta(anel, zona, i - 1, giroMin));
+      lotes.push(medirPonta(anel, zona, i - 1, giroMin, E));
       if (i < m) divisas.push([pt.Tp.em(cur.y), pt.Tp.em(cur.x)]);
       prev = cur;
     }
@@ -1049,7 +1087,7 @@ export function montar(E: Estrutura, cfg: Config): Layout {
   cab(2, modo2, tr2, m2);
   const Tcab = (tr: { x: number; y: number } | null, pt: Ponta, m: number) => (tr && m ? areaPonta(pt, tr.x, tr.y) / m : 0);
   return {
-    C: base!.C, eixo: eixo.pts, lotes, juncoes, divisas, T1, T2,
+    C: base!.C, lat: cfg.laterais ?? "esquadro", eixo: eixo.pts, lotes, juncoes, divisas, T1, T2,
     Tponta: Math.max(Tcab(tr1, p1, m1), Tcab(tr2, p2, m2)),
     cabeceiras: [modo1, modo2], esquinas: { c1, c2, c1f: T1 + p(W.W1), c2f: T2 + p(-W.W1) },
     avisos, ms: performance.now() - t0,
@@ -1072,59 +1110,120 @@ function medir(anelIn: Pt[], zona: "f1" | "f2", ordem: number, B: Caminho, ua: n
   const laterais = [dist(Pa, Ja), dist(Pb, Jb)];
   const g = (u: number, J: Pt) => Math.abs(angulo(B.nrm(u), sub(J, B.em(u)))) / GRAU;
   const giroLat = [internaA ? g(ua, Ja) : NaN, internaB ? g(ub, Jb) : NaN];
-  return { anel, zona, ordem, area, quinas: quinasArco(anel, { giroMin }), frente, fundo, laterais, giroLat };
+  const fr = sub(Pb, Pa), lf = norma(fr);
+  const prof = lf > 0.01 ? Math.max(...anel.map((q) => Math.abs(cross(fr, sub(q, Pa))) / lf)) : undefined;
+  return { anel, zona, ordem, area, quinas: quinasArco(anel, { giroMin }), frente, fundo, laterais, giroLat, prof };
 }
 
-function medirPonta(anelIn: Pt[], zona: "ponta1" | "ponta2" | "testa1" | "testa2", ordem: number, giroMin: number): LoteL {
+function medirPonta(anelIn: Pt[], zona: "ponta1" | "ponta2" | "testa1" | "testa2", ordem: number, giroMin: number, E?: Estrutura): LoteL {
   const anel = limpa(anelIn);
-  return { anel, zona, ordem, area: Math.abs(areaAss(anel)), quinas: quinasArco(anel, { giroMin }), frente: NaN, fundo: NaN, laterais: [], giroLat: [] };
+  // testada como a planta mede: os lados do lote sobre a rua. Sem ela, o lote da testa com
+  // 7,6 m de rua (mínimo 8) passava na escolha das cabeceiras e virava aviso na planta
+  let frente = NaN;
+  if (E) {
+    let soma = 0;
+    for (let i = 0; i < anel.length; i++) {
+      const a = anel[i], b = anel[(i + 1) % anel.length];
+      if (dist(a, b) < 0.05) continue;
+      const m = lerp(a, b, 0.5), e = arestaDe(E.anel, m);
+      const x = E.anel[e], y = E.anel[(e + 1) % E.anel.length], xy = sub(y, x), l2 = dot(xy, xy);
+      const f = l2 > 0 ? Math.max(0, Math.min(1, dot(sub(m, x), xy) / l2)) : 0;
+      if (dist(m, add(x, mul(xy, f))) < 0.05 && ehRua(E.tipos[e])) soma += dist(a, b);
+    }
+    if (soma > 0) frente = soma;
+  }
+  return { anel, zona, ordem, area: Math.abs(areaAss(anel)), quinas: quinasArco(anel, { giroMin }), frente, fundo: NaN, laterais: [], giroLat: [] };
 }
 
 /** Testa as combinações de cabeceira (direta × testa) que o operador deixou em "auto" e fica com a melhor. */
 export function montarMelhor(E: Estrutura, cfg: Config): Layout & { nota: number; tentativas: string[] } {
   const opcoes = (pedido?: "auto" | ModoCabeceira): (ModoCabeceira | "auto")[] => (pedido && pedido !== "auto" ? [pedido] : ["auto", "direta", "testa"]);
-  let melhor: (Layout & { nota: number; tentativas: string[] }) | null = null;
+  type Melhor = Layout & { nota: number; tentativas: string[]; _pref: number };
+  let melhor: Melhor | null = null;
   const tentativas: string[] = [];
   const vistos = new Set<string>();
-  for (const c1 of opcoes(cfg.cab1)) for (const c2 of opcoes(cfg.cab2)) {
+  const tentar = (extra: Partial<Config>, rotulo: string, c1: ModoCabeceira | "auto", c2: ModoCabeceira | "auto") => {
     let L: Layout;
-    try { L = montar(E, { ...cfg, cab1: c1, cab2: c2 }); } catch (e) { tentativas.push(`${c1}/${c2}: ${(e as Error).message}`); continue; }
-    const chave = (L.cabeceiras ?? []).join("/");
-    if (vistos.has(chave)) continue;
+    try { L = montar(E, { ...cfg, ...extra, cab1: c1, cab2: c2 }); } catch (e) { tentativas.push(`${rotulo} ${c1}/${c2}: ${(e as Error).message}`); return; }
+    const chave = rotulo + "|" + (L.cabeceiras ?? []).join("/");
+    if (vistos.has(chave)) return;
     vistos.add(chave);
     const { nota, q5, desvio, gmax } = notaDe(L, cfg.N, cfg.lim);
     const cz = cruzamentos(L);
-    tentativas.push(`${chave}: nota ${nota.toFixed(1)} (5+ quinas ${q5}, desvio ${(desvio * 100).toFixed(0)}%, giro ${gmax.toFixed(1)}°, lotes ${L.lotes.length}${cz ? ", CRUZA " + cz : ""})`);
+    tentativas.push(`${chave}: nota ${nota.toFixed(1)} (5+ quinas ${q5}, desvio ${(desvio * 100).toFixed(0)}%, giro ${gmax.toFixed(1)}°, lotes ${L.lotes.length}${cz ? ", CRUZA " + cz : ""}, fora ${foraDasMedidas(L, cfg.lim)}, avisos ${L.avisos.join("/")})`);
     const pref = (L.cabeceiras ?? []).filter((c) => c === "testa").length * 0.5;
-    if (!melhor || nota + pref < melhor.nota + (melhor as any)._pref) melhor = { ...L, nota, tentativas, _pref: pref } as any;
+    if (!melhor || nota + pref < melhor.nota + melhor._pref) melhor = { ...L, nota, tentativas, _pref: pref };
+  };
+  const lats: ("esquadro" | "leque" | "meio")[] = cfg.laterais ? [cfg.laterais] : ["esquadro", "leque", "meio"];
+  for (const lat of lats) for (const c1 of opcoes(cfg.cab1)) for (const c2 of opcoes(cfg.cab2)) tentar({ laterais: lat }, `reta ${lat}`, c1, c2);
+  // a reta pode girar um pouco em volta do meio (as laterais ficam mais no esquadro): continua reta
+  if (!cfg.C && !cfg._C0 && melhor) {
+    const m0: Melhor = melhor;
+    const cab: [ModoCabeceira, ModoCabeceira] = [(m0.cabeceiras ?? [])[0] ?? "direta", (m0.cabeceiras ?? [])[1] ?? "direta"];
+    const r = retaDasFrentes(E, m0.eixo);
+    // girar em volta do meio basta: o deslocamento que empata as fileiras cobre os outros pivôs
+    const meio = lerp(r[0], r[1], 0.5);
+    for (const g of [-12, -8, -5, -3, -1.5, 1.5, 3, 5, 8, 12]) {
+      const c = Math.cos(g * GRAU), sn = Math.sin(g * GRAU);
+      const gi = (p: Pt): Pt => { const v = sub(p, meio); return [meio[0] + v[0] * c - v[1] * sn, meio[1] + v[0] * sn + v[1] * c]; };
+      tentar({ _C0: [gi(r[0]), gi(r[1])], laterais: m0.lat }, `reta ${m0.lat ?? "esquadro"} ${g > 0 ? "+" : ""}${g}°`, cab[0], cab[1]);
+    }
+  }
+  // quadra que a reta não atravessa (dobrada em "L"): só aí a linha acompanha as ruas
+  if (!melhor && !cfg.C && !cfg._C0) {
+    for (const c1 of opcoes(cfg.cab1)) for (const c2 of opcoes(cfg.cab2)) {
+      const eixo = cacheEixo.get(E);
+      if (eixo) tentar({ _C0: simplificar(eixo.pts, 0.35) }, "dobrada", c1, c2);
+    }
   }
   if (!melhor) throw new Error("nenhuma combinação de cabeceiras fechou: " + tentativas.join(" | "));
-  // linha central com dobra que nenhuma junção alcança deixa lote de 5 quinas: tenta a
-  // linha mais reta (menos pontos) com as mesmas cabeceiras e fica com a de nota menor
-  const m0: Layout & { nota: number; tentativas: string[] } = melhor;
-  if (!cfg.C && m0.lotes.some((l) => l.quinas.length > 4)) {
-    const cab = { cab1: (m0.cabeceiras ?? [])[0], cab2: (m0.cabeceiras ?? [])[1] };
-    let atual = m0;
-    for (const tol of [1, 2.5, 6]) {
-      try {
-        const L = montar(E, { ...cfg, ...cab, _C0: simplificar(m0.eixo, tol) });
-        const nn = notaDe(L, cfg.N, cfg.lim).nota;
-        tentativas.push(`linha mais reta (${tol} m): nota ${nn.toFixed(1)}`);
-        if (nn < atual.nota) atual = { ...L, nota: nn, tentativas };
-      } catch { /* não fechou */ }
-    }
-    melhor = atual;
-  }
-  if (!melhor) return m0;
-  const gmax = notaDe(melhor, cfg.N, cfg.lim).gmax;
-  if (!cfg.C && gmax > 6) {
-    const cab = { cab1: (melhor.cabeceiras ?? [])[0], cab2: (melhor.cabeceiras ?? [])[1] };
-    const O = otimizarC(E, { ...cfg, ...cab }, melhor);
-    const nO = notaDe(O, cfg.N, cfg.lim);
-    tentativas.push(`C otimizada (${O.avaliacoes} avaliações): giro ${nO.gmax.toFixed(1)}°, nota ${nO.nota.toFixed(1)}`);
-    if (nO.nota < melhor.nota) return { ...O, nota: nO.nota, tentativas };
-  }
   return melhor;
+}
+
+/**
+ * Linha automática: reta na bissetriz das duas frentes (a direção média das ruas), pelo
+ * centro da equidistante, de uma ponta à outra dela. Pela equidistante inteira a reta
+ * entortava para os cantos das cabeceiras inclinadas.
+ */
+export function retaDasFrentes(E: Estrutura, eixo: Pt[]): Pt[] {
+  const r = retaDoEixo(eixo);
+  if (r.length < 2) return r;
+  let d = unit(sub(E.f1.dir, E.f2.dir));
+  if (dot(d, sub(r[1], r[0])) < 0) d = mul(d, -1);
+  // a direção do eixo só vale se as ruas forem quase paralelas; abrindo muito, a bissetriz manda
+  const c = lerp(r[0], r[1], 0.5);
+  let W = 0; let m: Pt = [0, 0];
+  for (let i = 0; i + 1 < eixo.length; i++) { const w = dist(eixo[i], eixo[i + 1]); W += w; m = add(m, mul(lerp(eixo[i], eixo[i + 1], 0.5), w)); }
+  const o = W > 0 ? mul(m, 1 / W) : c;
+  const t0 = dot(sub(eixo[0], o), d), t1 = dot(sub(eixo[eixo.length - 1], o), d);
+  return [add(o, mul(d, t0)), add(o, mul(d, t1))];
+}
+
+/**
+ * A reta que mais se aproxima de uma polilinha (mínimos quadrados ortogonais, cada trecho
+ * pesando pelo comprimento), da projeção da primeira ponta à da última.
+ */
+export function retaDoEixo(pts: Pt[]): Pt[] {
+  if (pts.length <= 2) return pts.map((p) => [p[0], p[1]] as Pt);
+  let W = 0, cx = 0, cy = 0;
+  for (let i = 0; i + 1 < pts.length; i++) { const w = dist(pts[i], pts[i + 1]); const m = lerp(pts[i], pts[i + 1], 0.5); W += w; cx += m[0] * w; cy += m[1] * w; }
+  if (W < 1e-9) return [pts[0], pts[pts.length - 1]];
+  cx /= W; cy /= W;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1], w = dist(a, b);
+    // segundo momento do segmento (não só do ponto do meio)
+    for (const [p, f] of [[a, 1 / 6], [lerp(a, b, 0.5), 4 / 6], [b, 1 / 6]] as [Pt, number][]) {
+      const dx = p[0] - cx, dy = p[1] - cy;
+      sxx += w * f * dx * dx; syy += w * f * dy * dy; sxy += w * f * dx * dy;
+    }
+  }
+  const th = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  let d: Pt = [Math.cos(th), Math.sin(th)];
+  if (dot(d, sub(pts[pts.length - 1], pts[0])) < 0) d = mul(d, -1);
+  const c: Pt = [cx, cy];
+  const t0 = dot(sub(pts[0], c), d), t1 = dot(sub(pts[pts.length - 1], c), d);
+  return [add(c, mul(d, t0)), add(c, mul(d, t1))];
 }
 
 /** quantas vezes os contornos dos lotes se cruzam de verdade (sobreposição) — tem de ser zero */
@@ -1168,9 +1267,10 @@ export function notaDe(L: Layout, N: number, lim?: LimitesLote): { nota: number;
   // — é o que deixava a "testa" de lotes estreitos e compridos ganhar da esquina
   const esguio = L.lotes.reduce((t, l) => { const r = alongamento(l.anel); return t + (r > 3 ? (r - 3) ** 2 : 0); }, 0);
   // lote fora das medidas do projeto (área, frente, fundo) vira aviso na planta: pesa
-  // mais que a diferença de área da esquina que absorve a cabeceira
+  // mais que a diferença de área da esquina que absorve a cabeceira e que o lote comprido
+  // (o lote em leque numa quadra de pontas a 45° é "esguio" pela caixa, mas a planta não o acusa)
   const fora = foraDasMedidas(L, lim);
-  return { nota: 100 * q5 + 60 * desvio + 0.8 * gmax + 400 * faltou + 15 * L.avisos.length + 400 * cruz + 60 * esguio + 150 * fora, q5, desvio, gmax, g2, fora };
+  return { nota: 100 * q5 + 60 * desvio + 0.8 * gmax + 400 * faltou + 15 * L.avisos.length + 400 * cruz + 60 * esguio + 2000 * fora, q5, desvio, gmax, g2, fora };
 }
 
 /** comprimento ÷ largura do lote pela caixa orientada mais justa (largura = a menor extensão). */

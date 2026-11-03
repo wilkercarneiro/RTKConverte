@@ -33,6 +33,10 @@ export interface Edicao {
   sel?: { quadra: string; indices: number[] };
   /** não deu para fazer (o projeto volta igual): é mensagem de erro, não edição */
   erro?: boolean;
+  /** (rearranjo) diferença entre o maior e o menor lote novo, em fração da média */
+  espalho?: number;
+  /** (rearranjo) quantos lotes novos têm área diferente da mais comum (a ponta que fica com a diferença) */
+  diferentes?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +218,7 @@ export function pedirEstrutura(pr0: Projeto, res: Resultado, q: Quadra, op: { lo
     cabeceiras: op.manterLinha && antes?.cabeceiras ? antes.cabeceiras : ["auto", "auto"],
     esquinas: op.esquinas ?? antes?.esquinas ?? "absorver",
     ...(op.manterLinha && antes?.linhaCentral ? { linhaCentral: antes.linhaCentral, travada: antes.travada } : {}),
+    ...(op.manterLinha && antes?.laterais ? { laterais: antes.laterais } : {}),
   };
   if (i >= 0) quadras[i] = base; else { quadras.push(base); i = quadras.length - 1; }
   return { pr: { ...pr0, quadras }, i };
@@ -278,9 +283,10 @@ export function melhorEstrutura(pr0: Projeto, res: Resultado, q: Quadra, calc: (
   // (rápido = a geração: cada variante é um cálculo inteiro da linha central — "iguais" só
   // quando a esquina deixa aviso, e um lote a mais só na quantidade ímpar, como antes)
   if (!m0 || m0.av > 0 || (!op.rapido && m0.custo > 40)) tentar(n, "iguais");
-  // um lote a mais ou a menos só quando a quantidade atual não fecha sem aviso
+  // um lote a mais ou a menos só quando a quantidade atual não fecha sem aviso (também na
+  // geração: com a linha de fundo reta, a quadra que afina às vezes só fecha com um lote a mais)
   const m1 = melhorAte();
-  if (!m1 || m1.av > 0) for (const N of (op.rapido ? (n % 2 ? [n + 1] : []) : [n + 1, n - 1]).filter((x) => x >= 4)) { tentar(N, "absorver"); if (!op.rapido) tentar(N, "iguais"); }
+  if (!m1 || m1.av > 0) for (const N of [n + 1, n - 1].filter((x) => x >= 4)) { tentar(N, "absorver"); if (!op.rapido) tentar(N, "iguais"); }
   // vale o arranjo GRAVADO (a linha fixada, como fica no projeto): o recálculo com a linha
   // gravada realoca as junções e pode dar outro desenho — divisas cruzadas na quadra F da
   // gleba de teste. Fixa só o melhor (e, se ele não se sustenta, o seguinte): fixar todas
@@ -357,6 +363,7 @@ export function fixarEstrutura(pr: Projeto, res: Resultado, i: number): Projeto 
       ...c.estrutura,
       linhaCentral: q.linhaCentral.map((p) => paraUtm(res.plano, p)),
       cabeceiras: cab.length === 2 ? [cab[0], cab[1]] : c.estrutura.cabeceiras,
+      ...(q.estruturada.laterais ? { laterais: q.estruturada.laterais } : {}),
       lotes: q.lotes.length,
     },
   };
@@ -1949,6 +1956,24 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
       passeFundos();
     }
     if (igual()) break;
+  }
+
+  // a linha de fundo é reta (regra do projeto): o deslizamento que entorta a linha de fundo
+  // (empurrava cada trecho para um lado e deixava um serrote) não é gravado
+  const dobraMax = (an: Pt[][]) => Math.max(0, ...estruturaDeDivisas(an, q).espinhas.map((e) => {
+    let g = 0;
+    for (let j = 1; j + 1 < e.length; j++) if (dist(e[j], e[j - 1]) > 0.05 && dist(e[j + 1], e[j]) > 0.05) g = Math.max(g, Math.abs(Math.atan2(cross(sub(e[j], e[j - 1]), sub(e[j + 1], e[j])), dot(sub(e[j], e[j - 1]), sub(e[j + 1], e[j])))) * 180 / Math.PI);
+    return g;
+  }));
+  // e a linha de fundo não sai do lugar (a junção corre pela linha; um trecho do fundo
+  // empurrado de lado era um degrau que o ângulo não pegava)
+  // (a linha de fundo de depois só pode correr sobre a de antes)
+  // (um ponto da linha de fundo de depois entre 1 cm e 2 m fora da de antes é degrau; mais longe
+  // é outra linha — a classificação do lado em leque cria às vezes uma "linha de fundo" solta)
+  const distLinha = (pt: Pt) => Math.min(Infinity, ...est0.espinhas.flatMap((e) => e.slice(1).map((b, j) => distSegmento(pt, e[j], b).d)));
+  const saiuDaLinha = estruturaDeDivisas(aneis, q).espinhas.some((e) => e.some((pt) => { if (naBorda(q, pt)) return false; const d = distLinha(pt); return d >= 0.01 && d < 2; }));
+  if (dobraMax(aneis) > dobraMax(an0) + 0.5 || (est0.espinhas.length > 0 && saiuDaLinha)) {
+    return { pr: pr0, erro: true, msg: `Igualar estes lotes deslizando as divisas entortaria a linha de fundo — ela tem de ser uma reta entre os lotes fundo com fundo, e a quadra ficou como estava. Selecione os lotes das duas fileiras no mesmo trecho e use "Ajustar fundo com fundo" (a diferença de área fica nos lotes da ponta), ou selecione menos lotes.` };
   }
 
   const areas = ks.map((k) => area(aneis, k));

@@ -379,12 +379,21 @@ const juncoesAtravessadas = (pr, r, nomeQ) => {
 const igualarEConferir = (pr, r0, per, sel, rotulo) => {
   const s = executar("igualar", pr, r0, { tipo: "lotes", chaves: sel.map(chaveDoLote) });
   assert.ok(s.pr, `${rotulo}: ${s.msg}`);
-  assert.match(s.msg, /m² cada/, `${rotulo}: ${s.msg}`);
+  // (a linha de fundo que continua nos lotes vizinhos fica reta e no lugar: cada fileira por igual)
+  const porFileira = /cada fileira ficou igual/.test(s.msg);
+  assert.match(s.msg, porFileira ? /cada fileira ficou igual/ : /m² cada/, `${rotulo}: ${s.msg}`);
   const r = calcular(s.pr, per);
   const novos = s.sel.chaves.map((c) => r.lotes.find((l) => l.quadra === c.quadra && l.fileira === c.fileira && Math.abs(l.indice - c.indice) < 1e-9));
   // todos iguais (à média de agora: com o lote de trás acompanhando, a soma dos selecionados pode mudar)
-  const media = novos.reduce((s2, l) => s2 + l.area, 0) / novos.length;
-  for (const l of novos) assert.ok(Math.abs(l.area - media) < 0.05, `${rotulo}: ${l.id} com ${l.area} m² (os outros ${media})`);
+  if (porFileira) {
+    // duas áreas só (uma por fileira)
+    const valores = [];
+    for (const l of novos) if (!valores.some((v) => Math.abs(v - l.area) < 0.05)) valores.push(l.area);
+    assert.ok(valores.length <= 2, `${rotulo}: ${valores.length} áreas diferentes (${valores.map((v) => v.toFixed(2)).join(", ")})`);
+  } else {
+    const media = novos.reduce((s2, l) => s2 + l.area, 0) / novos.length;
+    for (const l of novos) assert.ok(Math.abs(l.area - media) < 0.05, `${rotulo}: ${l.id} com ${l.area} m² (os outros ${media})`);
+  }
   // de fora da seleção só mudam os lotes de trás que a mensagem nomeia (fundo com fundo)
   const ids = new Set(sel.map((l) => l.id));
   for (const l of r0.lotes.filter((x) => !ids.has(x.id))) {
@@ -542,16 +551,16 @@ test("igualar áreas: quadras reais do EDILSON — sem lote quebrado, sem degrau
   // o fundo de C-19|C-20 em pedaços é fundo (não lateral: era o degrau em C-17/C-18)
   const c = igualar(9, "C", [...de(1, 10), ...de(17, 20)]);
   assert.match(c.s.msg, /14 lotes com .* m² cada/, c.s.msg);
-  // A: igualar não gira os lotes (a "testa" na ponta de baixo deixava a linha do meio em
-  // zigue-zague e os lotes de pé) — os lotes ficam paralelos, iguais por partes onde a
-  // forma da quadra em triângulo não deixa; nenhum lote quebrado (o helper confere)
+  // A (triângulo): todos iguais só deslizando as divisas, o que entortava a linha de fundo
+  // (serrote). Regra de 03/11: a linha de fundo fica reta e a diferença vai para os lotes da
+  // ponta; nenhum lote quebrado (o helper confere)
   const a = igualar(8, "A", [1, ...de(8, 26)]);
-  assert.match(a.s.msg, /20 lotes com .* m² cada|por partes/, a.s.msg);
+  assert.match(a.s.msg, /20 lotes com .* m² cada|linha de fundo — ela ficou reta/, a.s.msg);
   const meio = a.depois.filter((l) => [...de(10, 15), ...de(20, 25)].includes(l.numero)).map((l) => l.area);
   assert.ok(Math.max(...meio) - Math.min(...meio) < 3, `o meio da A devia ficar igual: ${meio.map((x) => x.toFixed(1)).join(" ")}`);
   // sem a ponta (A-17, que fica no meio da seleção e NÃO muda): por partes
   const s17 = igualar(8, "A", [1, ...de(8, 16), ...de(18, 26)]);
-  assert.match(s17.s.msg, /por partes|19 lotes com .* m² cada/, s17.s.msg);
+  assert.match(s17.s.msg, /por partes|19 lotes com .* m² cada|linha de fundo — ela ficou reta/, s17.s.msg);
   const a17 = calcular(estado(8), per).lotes.find((l) => l.id === "A-17");
   assert.ok(Math.abs(s17.r.lotes.find((l) => l.id === "A-17").area - a17.area) < 0.05, "o A-17, fora da seleção, mudou");
 });

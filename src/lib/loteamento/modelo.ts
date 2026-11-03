@@ -408,6 +408,8 @@ export interface EstruturaQuadra {
   cabeceiras?: [ModoCabeceira | "auto", ModoCabeceira | "auto"];
   /** cabeceira inclinada: a esquina absorve a diferença (padrão) ou todos ficam iguais */
   esquinas?: "absorver" | "iguais";
+  /** laterais no esquadro de cada rua ou em leque (na direção das divisas das pontas); sem ele, o motor escolhe */
+  laterais?: "esquadro" | "leque" | "meio";
   /** cadeado: a linha fica exatamente onde está (cada fileira se iguala por si) */
   travada?: boolean;
   /** o operador mexeu na linha: a dobra vai para a junção mais próxima e a linha desliza de lado até as áreas empatarem */

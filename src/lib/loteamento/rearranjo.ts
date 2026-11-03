@@ -18,9 +18,9 @@
  *   se a fileira de trás tem a mesma quantidade de lotes, cada corte termina
  *   numa junção dela (o fundo de cada lote encosta num lote só).
  */
-import { areaAssinada, centroide, cross, dist, distSegmento, dot, esquerda, lerp, quinasAviso, quinasDetalhe, sub, unit } from "./geom.ts";
+import { antiHorario, areaAssinada, centroide, cross, dist, distSegmento, dot, esquerda, intersecao, lerp, limparAnel, quinasAviso, quinasDetalhe, sub, unit } from "./geom.ts";
 import type { Pt } from "./geom.ts";
-import { cruzamentos as cruzamentosLC, estruturar, montar, montarMelhor } from "./linhaCentral.ts";
+import { cruzamentos as cruzamentosLC, estruturar, montar, montarMelhor, retaDoEixo } from "./linhaCentral.ts";
 import type { Layout, TipoAresta } from "./linhaCentral.ts";
 import { contornos, estruturaDeDivisas, gravar, normalizar, posicaoNoDesenho } from "./edicao.ts";
 import type { Edicao, Meta } from "./edicao.ts";
@@ -192,7 +192,7 @@ function seCruza(a: Pt[]): boolean {
 
 type ModoCorte = "esquadro" | "paralelas" | "leque" | "juncoes";
 
-interface Divisao { modo: ModoCorte; aneis: Pt[][]; custo: number; formas: Forma[]; cortes: Corte[] }
+interface Divisao { modo: ModoCorte; aneis: Pt[][]; custo: number; formas: Forma[]; cortes: Corte[]; /** (faixas) Σ giro² das junções do fundo, rad² — 0 = linha de fundo reta */ giroFundo?: number }
 
 export function dividirFileira(F: Fileira, N: number, modo: ModoCorte, juncoes?: { Q: Pt; sig: number }[]): Divisao | null {
   const total = areaDe(F.anel);
@@ -339,7 +339,7 @@ export function dividirDuas(F: Fileira, sigA: number, sigB: number, N: number, m
       }
     }
     const custo = formas.reduce((s, f) => s + custoForma(f, { testada: 0 }), 0) + 5 * sol.giro / (GRAU * GRAU);
-    return { modo, aneis, custo, formas, cortes };
+    return { modo, aneis, custo, formas, cortes, giroFundo: sol.giro };
   };
   // a junção da ponta: pontos espaçados e as quinas do caminho (o degrau do vizinho:
   // junção nele não deixa quina a mais no lote da ponta)
@@ -998,6 +998,20 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
   }
   if (!rua.some(Boolean)) return { pr: pr0, erro: true, msg: "Os lotes selecionados não têm frente para rua." };
 
+  const naRua = (a: Pt, b: Pt) => R.some((x, i) => rua[i] && distSegmento(a, x, R[(i + 1) % R.length]).d < 0.05 && distSegmento(b, x, R[(i + 1) % R.length]).d < 0.05);
+  const fundoDe = (an: Pt[]) => {
+    let fa: Pt | null = null, fb: Pt | null = null, comp = 0;
+    an.forEach((a, i) => { const b = an[(i + 1) % an.length]; if (dist(a, b) > comp && naRua(a, b)) { comp = dist(a, b); fa = a; fb = b; } });
+    if (!fa || !fb) return 0;
+    const u = unit(sub(fb, fa));
+    return Math.max(...an.map((x) => Math.abs(cross(u, sub(x, fa!)))));
+  };
+  const fundoFora = (f: number) => f > p.profundidadeMax * 1.03 + 0.01;
+  const frenteNaRua = (an: Pt[]) => an.reduce((s, a, i) => { const b = an[(i + 1) % an.length]; return s + (naRua(a, b) ? dist(a, b) : 0); }, 0);
+  /** lote que a planta acusaria: testada abaixo da mínima, fundo acima do máximo ou 5+ quinas */
+  const acusado = (an: Pt[]) => frenteNaRua(an) < LIM.frenteMin - 0.005 || fundoFora(fundoDe(an)) || quinasAviso(an) > 4;
+  const acusadosAntes = ks.filter((k) => acusado(aneis[k])).length;
+
   // ---- duas fileiras (as ruas se olham): linha central dentro da seleção
   let novos: Pt[][] | null = null;
   let resumo = "";
@@ -1018,10 +1032,61 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
     const cab1 = temRua(E.e1) && modo !== "igualar" ? "auto" as const : "direta" as const;
     const cab2 = temRua(E.e2) && modo !== "igualar" ? "auto" as const : "direta" as const;
     const tentativas: { L: Layout; custo: number; esq: string; formas: Forma[] }[] = [];
-    const avaliar = (L: Layout, esq: string) => {
+    const atual0 = linhaDeFundoDaSelecao(aneis, ks, q, R);
+    // a linha atual em serrote (igualar antigo) vira a reta mais próxima dela
+    const atual = atual0 && atual0.length > 2 && dobraDe(atual0) >= 0.5 ? retaDoEixo(atual0) : atual0;
+    // a linha de fundo continua nos lotes de fora (a seleção pega só um trecho dela): ali ela não
+    // pode sair do lugar — deslocada ou girada, faria um degrau no encontro com os de fora
+    // (continua = algum lado de lote de fora segue a mesma reta além da ponta da linha)
+    const segueFora = (P: Pt, para: Pt): boolean => aneis.some((an, k) => !ks.includes(k) && an.some((x, i) => {
+      const y = an[(i + 1) % an.length];
+      for (const [p0, p1] of [[x, y], [y, x]] as [Pt, Pt][]) {
+        if (dist(p0, P) > 0.03 || dist(p1, P) < 1) continue;
+        if (dot(sub(p1, P), para) > 0 && Math.abs(cross(para, sub(p1, P))) < 0.05) return true;
+      }
+      return false;
+    }));
+    const continua = !!atual && atual.length >= 2 && (
+      segueFora(atual[0], unit(sub(atual[0], atual[1]))) || segueFora(atual[atual.length - 1], unit(sub(atual[atual.length - 1], atual[atual.length - 2]))));
+    const naReta = (C: Pt[]) => {
+      if (!atual) return true;
+      const a = atual[0], u = unit(sub(atual[atual.length - 1], a));
+      return C.every((x) => Math.abs(cross(u, sub(x, a))) < 0.02);
+    };
+    // o lote da linha central passa uns centímetros do contorno da seleção no degrau do vizinho
+    // (a reta corta o canto): recortado pela seleção, a terra fecha e o vizinho não muda
+    const Rpol = { ext: antiHorario(R.map((x) => [x[0], x[1]] as Pt)), furos: [] as Pt[][] };
+    // vértice a menos de 1 cm do contorno da seleção vai para cima dele (a quina, ou o pé no lado):
+    // ao gravar, o ponto a milímetros do lado do vizinho de fora era inserido nele (a mesma
+    // tolerância de 1 cm de normalizar) e entortava o lado — 3 cm² a mais ou a menos no vizinho
+    const encaixar = (an: Pt[]): Pt[] => an.map((x) => {
+      let m: Pt | null = null, dm = 0.01;
+      for (const v of R) { const d = dist(x, v); if (d < dm) { dm = d; m = v; } }
+      if (m) return dm > 1e-9 ? [m[0], m[1]] as Pt : x;
+      for (let k = 0; k < R.length; k++) {
+        const ds = distSegmento(x, R[k], R[(k + 1) % R.length]);
+        if (ds.d > 1e-9 && ds.d < 0.01 && ds.t > 0 && ds.t < 1) return lerp(R[k], R[(k + 1) % R.length], ds.t);
+      }
+      return x;
+    });
+    const recortar = (L0: Layout): Layout => {
+      const L = { ...L0, lotes: L0.lotes.map((l) => { const an = encaixar(l.anel); return { ...l, anel: an, area: Math.abs(areaAssinada(an)) }; }) };
+      const lotes = L.lotes.map((l) => {
+        const pecas = intersecao([{ ext: antiHorario(l.anel), furos: [] }], [Rpol]).filter((x) => Math.abs(areaAssinada(x.ext)) > 0.01);
+        if (pecas.length !== 1 || pecas[0].furos.length) return l;
+        const an = encaixar(limparAnel(pecas[0].ext, 0.003));
+        const a = Math.abs(areaAssinada(an));
+        return Math.abs(a - l.area) < 0.005 ? l : { ...l, anel: an, area: a };
+      });
+      return { ...L, lotes };
+    };
+    const avaliar = (L0: Layout, esq: string) => {
+      const L = recortar(L0);
       if (L.lotes.length !== N || cruzamentosLC(L) > 0 || quebra(L.lotes.map((l) => l.anel))) return;
       const soma = L.lotes.reduce((s, l) => s + l.area, 0);
-      if (Math.abs(soma - total) > Math.max(1, 0.002 * total) || L.lotes.some((l) => seCruza(l.anel))) return;
+      // a terra tem de fechar no centímetro: a fresta que sobra (a reta que termina no meio do
+      // degrau do vizinho) ia para o lote de fora ao gravar
+      if (Math.abs(soma - total) > 0.05 || L.lotes.some((l) => seCruza(l.anel))) return;
       const formas = L.lotes.map((l): Forma => {
         const dev = l.giroLat.filter(Number.isFinite);
         const fr = Number.isFinite(l.frente) ? l.frente : Math.sqrt(l.area);
@@ -1033,10 +1098,17 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
       // a linha central em zigue-zague pesa como nas faixas (giro em graus², o mesmo peso)
       let giroC = 0;
       for (let k = 1; k + 1 < L.C.length; k++) giroC += (ang(sub(L.C[k], L.C[k - 1]), sub(L.C[k + 1], L.C[k])) / GRAU) ** 2;
-      const custo = formas.reduce((s, f) => s + custoForma(f, { testada: 0 }), 0) + (modo === "igualar" ? 20000 : 4000) * espalho + 5 * giroC;
+      // linha de fundo dobrada (a ponta no degrau do vizinho, o miolo deslocado) não serve: a linha
+      // de fundo é uma reta entre os lotes fundo com fundo (regra do projeto)
+      if (dobraDe(L.C) >= 0.5) return;
+      if (continua && !naReta(L.C)) return;
+      const dobrada = 0;
+      // lote que sairia fora das medidas (mais do que já havia) pesa acima de qualquer forma
+      const acusados = Math.max(0, L.lotes.filter((l) => acusado(l.anel)).length - acusadosAntes);
+      const custo = formas.reduce((s, f) => s + custoForma(f, { testada: 0 }), 0) + (modo === "igualar" ? 20000 : 4000) * espalho + 5 * giroC + dobrada + 50000 * acusados;
       tentativas.push({ L, custo, esq, formas });
     };
-    const base = { N, profMin: p.profundidadeMin, profPadrao: p.profundidade, cab1, cab2, lim: { areaMin: p.areaMin, areaMax: p.areaMax, frenteMin: p.frenteMin, profMin: p.profundidadeMin, profMax: p.profundidadeMax } };
+    const base = { N, profMin: p.profundidadeMin, profPadrao: p.profundidade, cab1, cab2, lim: { areaMin: p.areaMin, areaMax: p.areaMax, frenteMin: p.frenteMin, frenteMax: p.frenteMax, profMin: p.profundidadeMin, profMax: p.profundidadeMax } };
     for (const esquinas of ["iguais", "absorver"] as const) {
       let L: Layout;
       try { L = montarMelhor(E, { ...base, esquinas }); } catch (e) { if (/estreita/.test((e as Error).message)) soUmaFileira = true; continue; }
@@ -1068,9 +1140,12 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
     // desencontradas (o lote da frente não fica bem atrás do de trás) os degraus das
     // pontas ficam SOBRE ela, e os lotes da ponta seguem com 4 quinas. Cada fileira se
     // divide por igual e as divisas se encontram na linha (fundo com fundo).
-    const atual = modo === "fundo" ? linhaDeFundoDaSelecao(aneis, ks, q, R) : null;
-    if (atual) for (const esquinas of ["iguais", "absorver"] as const) {
-      try { avaliar(montar(E, { ...base, esquinas, C: atual }), esquinas + "+linha atual"); } catch { /* não fecha */ }
+    // a linha atual fica onde está (cada fileira por igual) ou desliza de lado até as fileiras empatarem
+    // (todos iguais; só quando a linha não continua nos lotes de fora)
+    if (atual) for (const esquinas of ["iguais", "absorver"] as const) for (const lat of ["esquadro", "leque", "meio"] as const) {
+      for (const equilibrar of [false, true]) {
+        try { avaliar(montar(E, { ...base, esquinas, laterais: lat, C: atual, equilibrar }), `${esquinas}+linha atual${equilibrar ? " deslocada" : ""} ${lat}`); } catch { /* não fecha */ }
+      }
     }
     // faixas de rua a rua (pontas muito inclinadas: as divisas acompanham as pontas)
     let faixa: Divisao | null = null;
@@ -1080,10 +1155,13 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
     for (const esp of [false, true]) {
       const Rx = esp ? espelho(R) : R;
       const ruaX = esp ? R.map((_, i) => rua[(2 * nR - 2 - i) % nR]) : rua;
-      const D2 = montarDuas(Rx, ruaX);
+      const D2 = continua ? null : montarDuas(Rx, ruaX); // (a linha que continua fora fica onde está)
       if (D2) for (const m of ["paralelas", "leque", "esquadro"] as ModoCorte[]) {
         const d = dividirDuas(D2.F, D2.sigA, D2.sigB, N, m);
-        if (d && !quebra(d.aneis) && (!faixa || d.custo < faixa.custo)) faixa = esp ? { ...d, aneis: d.aneis.map(espelho) } : d;
+        // a linha de fundo é reta (regra do projeto): faixa cujas junções dobram não concorre
+        // — elas partem cada faixa ao meio e, com as faixas em leque, o fundo virava serrote
+        const reta = Math.sqrt(d?.giroFundo ?? 0) < 0.5 * GRAU;
+        if (d && reta && !quebra(d.aneis) && (!faixa || d.custo < faixa.custo)) faixa = esp ? { ...d, aneis: d.aneis.map(espelho) } : d;
       }
     }
     // igualar = todos iguais: havendo arranjo exato, o da esquina que absorve não concorre
@@ -1092,7 +1170,13 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
     // "Igualar áreas" sem nenhum arranjo exato pela linha central nem pelas faixas: o da
     // esquina que absorve deixaria as áreas diferentes — quem chamou cai no igualar que
     // desliza as divisas (áreas exatas)
-    if (modo === "igualar" && !exatos.length && !faixa) tentativas.length = 0;
+    // Sem arranjo exato, vale a linha de fundo reta com uma pequena diferença nos lotes da ponta
+    // (até 10%, regra do Wilker), em vez das divisas que deslizam e entortam o fundo
+    // A linha que continua nos lotes de fora não anda só neste trecho: cada fileira se iguala por
+    // dentro, e a diferença entre as fileiras é a da profundidade de cada uma
+    const porFileira = (t: (typeof tentativas)[number]) => continua && t.esq.includes("linha atual") && !t.esq.includes("deslocada");
+    const quase = tentativas.filter((t) => { const ar = t.L.lotes.map((l) => l.area); return ((Math.max(...ar) - Math.min(...ar)) / T <= 0.1 || porFileira(t)) && dobraDe(t.L.C) < 0.5; });
+    if (modo === "igualar" && !exatos.length && !faixa) tentativas.splice(0, tentativas.length, ...quase);
     const lcMelhor = (modo === "igualar" && (exatos.length || faixa) ? exatos : tentativas).sort((a, b) => a.custo - b.custo)[0];
     if (faixa && (!lcMelhor || faixa.custo < lcMelhor.custo)) {
       novos = faixa.aneis;
@@ -1113,9 +1197,10 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
       const fr = porFila(["f1", "ponta1", "testa1"]), tr = porFila(["f2", "ponta2", "testa2"]);
       const fila = (v: number[]) => (Math.max(...v) - Math.min(...v) < 0.05 ? `${v.length} com ${fmt(v[0])} m²` : `${v.length} de ${fmt(Math.min(...v))} a ${fmt(Math.max(...v))} m²`);
       resumo = (Math.max(...ar) - Math.min(...ar) < 0.05 ? `${N} lotes com ${fmt(ar[0])} m² cada`
+        : naLinhaAtual && fr.length && tr.length && continua ? `${N} lotes — ${fila(fr)} de um lado e ${fila(tr)} do outro: cada fileira ficou igual. A linha de fundo é uma reta que continua nos lotes vizinhos, por isso não anda só neste trecho (as fileiras têm profundidades diferentes); para todos com a mesma área, selecione o trecho inteiro da linha (a quadra toda)`
         : naLinhaAtual && fr.length && tr.length ? `${N} lotes — ${fila(fr)} de um lado e ${fila(tr)} do outro (a linha de fundo ficou onde estava, sobre os degraus das pontas)`
         : `${N} lotes de ${fmt(Math.min(...ar))} a ${fmt(Math.max(...ar))} m² (a ponta inclinada fica com a diferença)`)
-        + ` — fundo com fundo pela linha central, laterais a até ${fmt(giros.length ? Math.max(...giros) : 0, 1)}° do esquadro da rua`;
+        + ` — fundo com fundo numa linha reta, ${melhor.L.lat === "leque" || melhor.L.lat === "meio" ? `laterais acompanhando a inclinação das divisas das pontas` : `laterais a até ${fmt(giros.length ? Math.max(...giros) : 0, 1)}° do esquadro da rua`}`;
     }
   } catch { /* não é de duas fileiras */ }
 
@@ -1196,15 +1281,6 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
   // iguais numa quadra da linha central deixava um com 5 quinas)
   // fundo: a maior distância do lote à reta da frente dele (o lado mais comprido na rua),
   // como a planta mede — fundo com fundo que deixava um lote com 50,8 m (máx. 48) passava
-  const naRua = (a: Pt, b: Pt) => R.some((x, i) => rua[i] && distSegmento(a, x, R[(i + 1) % R.length]).d < 0.05 && distSegmento(b, x, R[(i + 1) % R.length]).d < 0.05);
-  const fundoDe = (an: Pt[]) => {
-    let fa: Pt | null = null, fb: Pt | null = null, comp = 0;
-    an.forEach((a, i) => { const b = an[(i + 1) % an.length]; if (dist(a, b) > comp && naRua(a, b)) { comp = dist(a, b); fa = a; fb = b; } });
-    if (!fa || !fb) return 0;
-    const u = unit(sub(fb, fa));
-    return Math.max(...an.map((x) => Math.abs(cross(u, sub(x, fa!)))));
-  };
-  const fundoFora = (f: number) => f > p.profundidadeMax * 1.03 + 0.01;
   const antesFora = selAntes.filter((l) => l.problemas.some((t) => /frente|profundidade/.test(t))).length + selAntes.filter((l) => quinasAviso(l.pol.ext) > 4).length;
   // fundo com fundo que só fecha com lotes de áreas muito diferentes (a seleção com 4 de um
   // lado e 3 do outro dava 138 a 274 m²): melhor pedir os lotes em pares do que entregar isso
@@ -1217,7 +1293,6 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
   }
   // frente medida no lote (os lados dele que ficam na rua), como a planta mede: o lote da
   // ponta da linha central não tem "frente" no motor e passava com 4,6 m (mín. 5)
-  const frenteNaRua = (an: Pt[]) => an.reduce((s, a, i) => { const b = an[(i + 1) % an.length]; return s + (naRua(a, b) ? dist(a, b) : 0); }, 0);
   const testadaFora = novos.filter((a, k) => {
     const f = formasFinal[k];
     const curta = frenteNaRua(a) < LIM.frenteMin - 0.005;
@@ -1266,7 +1341,9 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
   const metas: Meta[] = destinos.map((d, k) => (destinoDe.has(k) ? { ...d, frente: undefined } : d));
   const prN = gravar(pr, res, i, normalizar(aneisNovos), metas);
   void duas;
-  return { pr: prN, msg: `${resumo}. A área total dos ${N} lotes (${fmt(total)} m²) ficou entre eles; os lotes de fora da seleção não mudaram.`, sel: { quadra: q.nome, indices: ks } };
+  const arN = novos.map((x) => Math.abs(areaAssinada(x)));
+  const comum = Math.max(...arN.map((x) => arN.filter((y) => Math.abs(y - x) < 0.5).length));
+  return { pr: prN, espalho: (Math.max(...arN) - Math.min(...arN)) / T, diferentes: arN.length - comum, msg: `${resumo}. A área total dos ${N} lotes (${fmt(total)} m²) ficou entre eles; os lotes de fora da seleção não mudaram.`, sel: { quadra: q.nome, indices: ks } };
 }
 
 const ehRua = (t: TipoAresta) => t === "rua" || t === "via";
@@ -1339,4 +1416,11 @@ function dentroDe(s0: number, s1: number, e: [number, number], P: number): boole
 /** posições no desenho dos lotes (para os comandos) */
 export function posicoes(pr: Projeto, res: Resultado, lotes: Resultado["lotes"]): number[] {
   return lotes.map((l) => posicaoNoDesenho(pr, res, l));
+}
+
+/** maior giro (graus) entre trechos seguidos de uma polilinha */
+function dobraDe(c: Pt[]): number {
+  let g = 0;
+  for (let i = 1; i + 1 < c.length; i++) if (dist(c[i], c[i - 1]) > 0.05 && dist(c[i + 1], c[i]) > 0.05) g = Math.max(g, Math.abs(ang(sub(c[i], c[i - 1]), sub(c[i + 1], c[i]))) / GRAU);
+  return g;
 }

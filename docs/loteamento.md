@@ -202,6 +202,48 @@ Limite que a conta mostra: com T = 353 m², frente máxima de 15 m e fundo máxi
 - a medida de cada lote nos blocos fica guardada entre os candidatos.
 Medido no laboratório: a maior pausa da tela durante o cálculo foi de 120 a 133 ms.
 
+### Linha de fundo reta (03/11/2026, noite)
+
+**Regra do Wilker:** a linha de fundo é uma reta única entre todos os lotes fundo com fundo. Se a divisão em áreas iguais não fecha, a diferença fica nos últimos lotes (a esquina que absorve) ou numa pequena diferença entre lotes. O fundo nunca vira zigue-zague.
+
+O que deixava o fundo torto, medido nas quadras B, C e D do IRAN (de 7 a 17 dobras, com giros de até 24°):
+- **Igualar antigo:** quando a linha central não dava áreas exatas, o "Igualar" caía nas divisas que deslizam. Ele empurrava cada trecho do fundo para um lado e formava um serrote.
+- **Linha central automática:** seguia a equidistante das ruas, que dobra com elas. O otimizador ainda punha uma dobra em cada junção para endireitar as laterais.
+
+Como ficou (`linhaCentral.ts`, `rearranjo.ts`):
+- **A linha automática é uma reta** (`retaDasFrentes`): fica na direção média das duas ruas e passa pelo centro da equidistante. As fileiras se empatam deslocando a reta de lado.
+  - A reta pode girar até 12° em volta do meio. O otimizador que dobrava a linha (`otimizarC`) saiu da escolha.
+  - A linha que acompanha as ruas só entra quando nenhuma reta fecha (quadra dobrada em "L").
+- **Laterais em leque:** a linha central também divide com as laterais acompanhando a inclinação das divisas das pontas. O modo "meio" fica a meio caminho entre esse leque e o esquadro.
+  - Nas quadras de pontas a 30–45° (B, C e D do IRAN), o esquadro deixava lotes em cunha na ponta, com testada de 4,6 m. O leque divide tudo igual, como o gerador original fazia.
+  - O modo escolhido fica gravado na quadra (`estrutura.laterais`). Sem ele, o recálculo com a linha gravada voltava ao esquadro e dava outro desenho.
+- **Medidas como a planta mede:**
+  - o lote da ponta ou da testa passou a ter a testada medida pelos lados na rua (antes ficava sem testada e o lote com 7,6 m de rua passava);
+  - a profundidade é a maior distância até a reta da frente;
+  - a frente máxima vale para os lotes do meio da fileira.
+  - Lote fora das medidas pesa mais que o lote comprido na escolha do arranjo.
+- **Seleção ("Igualar" e "Fundo com fundo"):**
+  - Linha dobrada não entra. As faixas de rua a rua só concorrem se as junções caem numa reta. A linha de fundo atual em serrote vira a reta mais próxima.
+  - **A linha que continua nos lotes vizinhos** (a seleção pega só um trecho dela) fica reta e no lugar.
+    - Deslocada só ali, ela faria um degrau no encontro com os vizinhos.
+    - Cada fileira se iguala por dentro, e a mensagem explica que, para todos ficarem com a mesma área, é preciso selecionar o trecho inteiro da linha.
+    - Quando a seleção pega a linha toda, ela desliza de lado até todos ficarem iguais.
+  - Os lotes da linha central são recortados pelo contorno da seleção, e a terra tem de fechar em 5 cm².
+    - Antes, a tolerância era de 0,2%, e a fresta que a reta deixava no degrau do vizinho ia para o lote de fora.
+    - A escolha também pesa o lote que a planta acusaria (testada, fundo, 5 quinas).
+  - **Igualar sem jeito de todos iguais:**
+    - o deslizamento das divisas que entortaria a linha de fundo não é gravado;
+    - no lugar dele vale o fundo com fundo numa reta, se a diferença for pequena: até 10%, ou no máximo 2 lotes (os da ponta) diferentes dos outros;
+    - se a diferença for maior, o igualar recusa e explica.
+    - Na quadra A do EDILSON, a versão anterior entortava o fundo e igualava "por partes". Agora dá 18 lotes de 278,8 m² e 2 de 245,6 m² na ponta, com o fundo reto.
+- **"Fundo com fundo" da quadra inteira em segundo plano:** a escolha das variantes (`melhorEstrutura`) também roda no worker. Antes, eram cerca de 2 s de tela parada; agora, 0,18 s.
+- **Quadra inteira:** se nenhuma variante fecha sem perder lote, cruzar divisa ou deixar sobra (a quadra de três frentes), a prancheta não troca a quadra por um arranjo pior. Antes, a E do IRAN ia para 17 lotes com 8 avisos.
+- **Geração:** a quadra que, com a reta, ainda deixa lote fora das medidas tenta um lote a mais e um a menos. Antes, isso só acontecia com quantidade ímpar. Na quadra A do EDILSON, por exemplo, a reta deixava um lote com 42 m de fundo, e com 27 lotes ficou sem aviso.
+
+Resultado no IRAN:
+- "Igualar" da quadra inteira: C com 32 × 292,90 m² e D com 24 × 304,01 m². O fundo ficou reto, sem aviso.
+- "Fundo com fundo": B com 40 × 286,04 m², pela linha central reta.
+
 ### Geração já ajustada (02/11/2026)
 
 - Depois de traçar as ruas, `estruturarQuadras` (auto.ts) refaz cada quadra de duas fileiras pela linha central.

@@ -6,11 +6,11 @@ import { areaPol, centroide, cross, dentroPol, dist, dot, intersecao, sub, uniao
 import type { Pt } from "./geom.ts";
 import { ancoraDaQuadra } from "./auto.ts";
 import { fmt } from "./calculo.ts";
-import type { Corte, Lote, Quadra, Resultado } from "./calculo.ts";
+import type { Corte, Lote, Perimetro, Quadra, Resultado } from "./calculo.ts";
 import { paraPlano, paraUtm } from "./plano.ts";
 import { ROTULO_AREA, mudarLote, novoId } from "./modelo.ts";
 import {
-  acertarMedida, apagarLotes, desenharLote, dividirLote, igualarAreas, mudarDestino, pedirEstrutura, posicaoNoDesenho, quadraDesenhada, temAreaPublicaDeLotes, unirComVizinho, unirLotes, voltarAoAutomatico,
+  acertarMedida, apagarLotes, melhorEstrutura, desenharLote, dividirLote, igualarAreas, mudarDestino, pedirEstrutura, posicaoNoDesenho, quadraDesenhada, temAreaPublicaDeLotes, unirComVizinho, unirLotes, voltarAoAutomatico,
 } from "./edicao.ts";
 import type { Edicao } from "./edicao.ts";
 import { rearranjarSelecao } from "./rearranjo.ts";
@@ -272,6 +272,8 @@ export interface Saida {
   estruturar?: number;
   /** nome da quadra quando o operador não pediu número nem modo: a tela testa as variantes (`melhorEstrutura`) */
   escolherEstrutura?: string;
+  /** (segundo plano) a escolha das variantes já feita: null = nenhuma fecha; ausente = a tela escolhe */
+  melhor?: ReturnType<typeof melhorEstrutura>;
 }
 
 const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
@@ -331,7 +333,8 @@ const SOBRAS: Record<string, Sobra> = { esquinas: "esquinas", esquina: "esquinas
 export function comandoPesado(texto: string, sel: Selecao): boolean {
   const t = texto.trim().toLowerCase();
   if (/^(igualar|equalizar|iguais)(\s|$)/.test(t)) return sel?.tipo === "lotes";
-  return /^(ajustar\s+)?fundo\s+com\s+fundo\s*$/.test(t) && sel?.tipo === "lotes";
+  // (a quadra inteira também: a escolha das variantes da linha central leva segundos)
+  return /^(ajustar\s+)?fundo\s+com\s+fundo\s*$/.test(t) && (sel?.tipo === "lotes" || sel?.tipo === "quadra");
 }
 
 /**
@@ -361,7 +364,7 @@ export function refazerDados<T>(x: T): T {
 }
 
 /** Roda o comando num Web Worker (a tela segue respondendo); sem worker, roda aqui mesmo. */
-export function executarEmSegundoPlano(texto: string, pr: Projeto, res: Resultado, sel: Selecao): Promise<Saida> {
+export function executarEmSegundoPlano(texto: string, pr: Projeto, res: Resultado, sel: Selecao, perimetro?: Perimetro): Promise<Saida> {
   return new Promise((resolve, reject) => {
     const aqui = () => { try { resolve(executar(texto, pr, res, sel)); } catch (e) { reject(e); } };
     let w: Worker;
@@ -373,7 +376,7 @@ export function executarEmSegundoPlano(texto: string, pr: Projeto, res: Resultad
       if (e.data.ok && e.data.s) resolve(refazerDados(e.data.s)); else reject(new Error(e.data.erro ?? "o comando falhou"));
     };
     w.onerror = (ev) => { ev.preventDefault?.(); w.terminate(); aqui(); };
-    try { w.postMessage({ texto, projeto: pr, res, sel }); } catch { w.terminate(); aqui(); }
+    try { w.postMessage({ texto, projeto: pr, res, sel, perimetro }); } catch { w.terminate(); aqui(); }
   });
 }
 
@@ -534,7 +537,15 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
         // se o contorno não deixa, as divisas entre eles só deslizam (o jeito antigo)
         const posI = lotes.map((l) => posicaoNoDesenho(pr, res, l));
         const novo = rearranjarSelecao(pr, res, qI, posI, "igualar");
-        const ed = novo.erro ? igualarAreas(pr, res, qI, posI) : novo;
+        let ed = novo.erro ? igualarAreas(pr, res, qI, posI) : novo;
+        // todos iguais só deslizando as divisas, e isso entortaria a linha de fundo (regra: ela é
+        // reta): fundo com fundo numa reta, com a pequena diferença de área nos lotes da ponta
+        if (ed?.erro && /entortaria a linha de fundo/.test(ed.msg)) {
+          const ff = rearranjarSelecao(pr, res, qI, posI, "fundo");
+          // (só a pequena diferença: até 10% entre o maior e o menor, ou no máximo 2 lotes — os da
+          // ponta — diferentes dos outros; mais que isso, fica a recusa)
+          if (!ff.erro && ff.pr !== pr && ((ff.espalho ?? 0) <= 0.1 || (ff.diferentes ?? Infinity) <= 2)) ed = { ...ff, msg: `Todos iguais só entortando a linha de fundo — ela ficou reta e a diferença foi para os lotes da ponta: ${ff.msg}` };
+        }
         if (!ed) return { msg: "Não consegui igualar estes lotes.", erro: true };
         if (ed.erro) return { msg: ed.msg, erro: true };
         const avI = conferirMedida(p, "area", lotes.reduce((s2, l) => s2 + l.area, 0) / lotes.length);

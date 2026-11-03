@@ -16,7 +16,7 @@ import { carregarProjeto, perimetroDoServico, projetoInicial, salvarProjeto } fr
 import { COMANDOS, chaveDoLote, comandoPesado, contextoDe, executar, executarEmSegundoPlano, lotesDaSelecao } from "../../lib/loteamento/acoes.ts";
 import { dentroPol } from "../../lib/loteamento/geom.ts";
 import { pontoInterno } from "../../lib/loteamento/auto.ts";
-import { fixarEstrutura, fundoComFundoEmTodasAsQuadras, melhorEstrutura, pedirEstrutura } from "../../lib/loteamento/edicao.ts";
+import { fixarEstrutura, fundoComFundoEmTodasAsQuadras, melhorEstrutura, pedirEstrutura, temAreaPublicaDeLotes } from "../../lib/loteamento/edicao.ts";
 import type { Ferramenta, Saida, Selecao } from "../../lib/loteamento/acoes.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { Passos, StatusSalvamento } from "../ui";
@@ -293,7 +293,14 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     // sem número nem modo pedidos: testa as variantes e fica com a melhor; se nenhuma
     // deixa a quadra sem piorar, ela fica como estava (o comando com número força)
     const qAntes = s.escolherEstrutura ? res.quadras.find((x) => x.nome === s.escolherEstrutura) : undefined;
-    const m = qAntes ? melhorEstrutura(projeto, res, qAntes, calc) : null;
+    // (no segundo plano a escolha já vem feita; s.melhor null = nenhuma variante fechou)
+    const m = qAntes ? (s.melhor !== undefined ? s.melhor : melhorEstrutura(projeto, res, qAntes, calc)) : null;
+    // nenhuma variante fecha sem perder lote, cruzar divisa ou deixar sobra (a quadra de três
+    // frentes, por exemplo): o pedido sem número não troca a quadra por um arranjo pior
+    if (qAntes && !m) {
+      const pub = temAreaPublicaDeLotes(res, qAntes);
+      return { msg: pub ? `A quadra ${qAntes.nome} tem área ${pub} feita com lotes dela — refazer a quadra inteira apagaria essa área. Selecione só os lotes e use "Ajustar fundo com fundo".` : `Quadra ${qAntes.nome}: pela linha central a quadra perderia lote, cruzaria divisas ou deixaria sobra — ela ficou como estava. Selecione os lotes (duplo clique e Shift) e use "Igualar áreas": a terra é redividida dentro do contorno de hoje.`, erro: true };
+    }
     if (qAntes && m && m.avisosDepois > m.avisosAntes) {
       const fora = m.r.lotes.filter((l) => l.quadra === m.r.quadras.find((x) => x.cfg === m.i)?.nome && l.problemas.length).slice(0, 3).map((l) => `${l.id} (${l.problemas[0]})`);
       return { msg: `Quadra ${qAntes.nome}: pela linha central ficariam ${m.avisosDepois} lote(s) fora das medidas (${fora.join("; ")}) e hoje são ${m.avisosAntes}. A quadra ficou como estava. Para forçar, digite "fundo com fundo ${qAntes.lotes.length}".`, erro: true };
@@ -311,12 +318,13 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     const mn = Math.min(...ar), mx = Math.max(...ar);
     const areas = mx - mn < 0.05 ? `todos com ${fmt(mn)} m²` : `${fmt(mn)} a ${fmt(mx)} m² (a esquina absorve a cabeceira inclinada)`;
     const giro = q1.estruturada.giroMax;
+    const lateraisTxt = q1.estruturada.laterais === "leque" || q1.estruturada.laterais === "meio" ? "Laterais acompanhando a inclinação das divisas das pontas" : `Laterais a até ${fmt(giro, 1)}° do esquadro da rua`;
     return {
       ...s,
       // (o melhor arranjo já vem com a linha gravada; o pedido com número grava aqui)
       pr: m ? prE : fixarEstrutura(prE, r1, iE),
       sel: { tipo: "quadra", nome: q1.nome },
-      msg: `Quadra ${q1.nome}: ${q1.lotes.length} lotes fundo com fundo pela linha central, ${areas}. Avisos da quadra: ${avisos(res, nomeAntes)} → ${avisos(r1, q1.nome)}. Laterais a até ${fmt(giro, 1)}° do esquadro da rua. Arraste a linha laranja para mudar as fileiras; Ctrl+Z desfaz.`,
+      msg: `Quadra ${q1.nome}: ${q1.lotes.length} lotes fundo com fundo pela linha central, ${areas}. Avisos da quadra: ${avisos(res, nomeAntes)} → ${avisos(r1, q1.nome)}. ${lateraisTxt}. Linha de fundo reta. Arraste a linha laranja para mudar as fileiras; Ctrl+Z desfaz.`,
     };
   }
 
@@ -348,7 +356,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
       const rotulo = /fundo/i.test(texto) ? "Ajustando fundo com fundo…" : "Igualando os lotes…";
       setOcupado(rotulo);
       setMsg(null);
-      executarEmSegundoPlano(texto, projeto, res, sel)
+      executarEmSegundoPlano(texto, projeto, res, sel, perimetro)
         .then((s) => {
           // o projeto mudou enquanto calculava (desfazer, outra edição): o resultado é de outro estado
           if (projetoAtual.current !== antes) { mostrar("O projeto mudou enquanto o comando calculava — nada foi aplicado. Rode de novo.", true); return; }

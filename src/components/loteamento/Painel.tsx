@@ -230,7 +230,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
             return (
               <>
                 <p className="lot-dica">
-                  <b>Linha central</b> (em laranja): fundo com fundo alinhado e laterais no esquadro da rua — até {fmt(e.giroMax, 1)}°.
+                  <b>Linha central</b> (em laranja): fundo com fundo numa linha reta e {e.laterais === "leque" || e.laterais === "meio" ? <>laterais acompanhando a inclinação das divisas das pontas.</> : <>laterais no esquadro da rua — até {fmt(e.giroMax, 1)}°.</>}
                   {" "}{iguais ? `Lotes de ${fmt(e.T1)} m²` : `Fileiras com ${fmt(e.T1)} e ${fmt(e.T2)} m²`}; cabeceiras: {e.cabeceiras.map((c) => nomeCab[c] ?? c).join(" e ")}.
                   <Dica>Arraste os losangos laranja para dobrar a linha central; a ponta da linha corre pela rua da cabeceira. Ao soltar, a linha só desliza de lado até as áreas empatarem — os ângulos ficam os seus. Mexer à mão num lote (quina ou divisa) volta a quadra para o desenho livre.</Dica>
                 </p>

@@ -12,7 +12,7 @@ import { projetoNovo, normalizarProjeto } from "../src/lib/loteamento/modelo.ts"
 import { calcular } from "../src/lib/loteamento/calculo.ts";
 import { gerarPropostas } from "../src/lib/loteamento/auto.ts";
 import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
-import { estruturaDeDivisas, fixarEstrutura, normalizar, ordemDoDesenho } from "../src/lib/loteamento/edicao.ts";
+import { estruturaDeDivisas, fixarEstrutura, melhorEstrutura, normalizar, ordemDoDesenho } from "../src/lib/loteamento/edicao.ts";
 import { blocosTresFrentes, contornoUniao } from "../src/lib/loteamento/rearranjo.ts";
 import { alongamento } from "../src/lib/loteamento/linhaCentral.ts";
 import { areaPol, areaPols, centroide, intersecao, quinasAviso, uniao } from "../src/lib/loteamento/geom.ts";
@@ -72,9 +72,13 @@ test("fundo com fundo nos lotes selecionados (duas fileiras): iguais, alinhados,
   assert.ok(sel.length >= 6, "a quadra de teste tem colunas fundo com fundo");
   for (const cmd of ["fundo com fundo", "igualar"]) {
     const { s, novos } = rearranjar(auto0, rA, sel, cmd);
-    assert.match(s.msg, /m² cada — fundo com fundo/, s.msg);
-    const ar = novos.map((l) => l.area);
-    assert.ok(Math.max(...ar) - Math.min(...ar) < 0.05, `áreas ${ar.map((x) => x.toFixed(2)).join(" ")}`);
+    // a linha de fundo continua nos lotes vizinhos: fica reta e no lugar, e cada fileira se
+    // iguala por dentro (regra de 03/11 — antes a linha deslocava só neste trecho e fazia degrau)
+    assert.match(s.msg, /m² cada — fundo com fundo|cada fileira ficou igual|linha de fundo ficou onde estava/, s.msg);
+    const valores = [];
+    for (const l of novos) if (!valores.some((v) => Math.abs(v - l.area) < 0.05)) valores.push(l.area);
+    assert.ok(valores.length <= (/cada fileira|ficou onde estava/.test(s.msg) ? 2 : 1), `áreas ${novos.map((l) => l.area.toFixed(2)).join(" ")}`);
+    assert.ok(fundoReto(novos).desvio < 0.02, `linha de fundo torta (${fundoReto(novos).desvio.toFixed(2)} m)`);
     assert.equal(emT(novos), 0, "junção em T: um lote encostou o fundo em dois");
     for (const l of novos) assert.ok(quinasAviso(l.pol.ext) <= 4, `${l.id} com ${quinasAviso(l.pol.ext)} quinas`);
   }
@@ -194,7 +198,7 @@ test("EDILSON: duas fileiras com as pontas inclinadas (quadra C) — iguais e fu
   for (const l of ff.novos) assert.ok(quinasAviso(l.pol.ext) <= 4, `fundo com fundo: ${l.id} com ${quinasAviso(l.pol.ext)} quinas`);
   const ar = ff.novos.map((l) => l.area).sort((a, b) => a - b);
   assert.ok(ar[4] - ar[0] < 0.05 && ar[9] - ar[5] < 0.05, `cada fileira por igual: ${ar.map((x) => x.toFixed(2)).join(" ")}`);
-  assert.match(ff.s.msg, /5 com .* m² de um lado e 5 com .* m² do outro \(a linha de fundo ficou onde estava/);
+  assert.match(ff.s.msg, /5 com .* m² de um lado e 5 com .* m² do outro(: cada fileira ficou igual| \(a linha de fundo ficou onde estava)/);
   // igualar: as fileiras se igualam por dentro, a linha de fundo e os de fora ficam
   const ig = rearranjar(pr, r0, sel, "igualar", per);
   for (const l of ig.novos) assert.ok(quinasAviso(l.pol.ext) <= 4, `igualar: ${l.id} com ${quinasAviso(l.pol.ext)} quinas`);
@@ -280,4 +284,58 @@ test("IRAN: igualar a quadra E inteira (três frentes) — 31 lotes iguais, sem 
   const encosta = (a, b) => a.pol.ext.some((p) => b.pol.ext.some((x) => Math.hypot(p[0] - x[0], p[1] - x[1]) < 0.05));
   const pulos = q.filter((l, i) => !encosta(l, q[(i + 1) % q.length])).map((l) => l.id);
   assert.ok(pulos.length <= 2, `numeração pula: ${pulos.join(", ")}`);
+});
+
+// Regra do Wilker (03/11/2026): a linha de fundo é uma RETA entre todos os lotes fundo com
+// fundo. Antes, o "Igualar" das quadras B, C e D do IRAN deslizava cada trecho do fundo e
+// deixava um serrote (9 a 17 dobras de até 24°), e a linha central automática acompanhava a
+// equidistante das ruas (e o otimizador ainda dobrava a linha nas junções).
+/** junções do fundo (vértices dos lotes por dentro da união) e o maior desvio da reta entre as duas mais afastadas */
+function fundoReto(lotes) {
+  const borda = contornoUniao(normalizar(lotes.map((l) => l.pol.ext)))[0];
+  const naBorda = (p) => borda.some((a, i) => { const b = borda[(i + 1) % borda.length]; const ab = [b[0] - a[0], b[1] - a[1]], l2 = ab[0] ** 2 + ab[1] ** 2; const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / l2)); return Math.hypot(p[0] - a[0] - ab[0] * t, p[1] - a[1] - ab[1] * t) < 0.02; });
+  const vistos = new Map();
+  for (const l of lotes) for (const p of l.pol.ext) if (!naBorda(p)) vistos.set(`${Math.round(p[0] * 50)},${Math.round(p[1] * 50)}`, p);
+  const js = [...vistos.values()];
+  let a = js[0], b = js[0], dm = -1;
+  for (const p of js) for (const q of js) { const d = Math.hypot(p[0] - q[0], p[1] - q[1]); if (d > dm) { dm = d; a = p; b = q; } }
+  const u = [(b[0] - a[0]) / dm, (b[1] - a[1]) / dm];
+  const desvio = Math.max(0, ...js.map((p) => Math.abs((p[0] - a[0]) * u[1] - (p[1] - a[1]) * u[0])));
+  return { juncoes: js.length, desvio };
+}
+for (const [nome, n, area] of [["C", 32, 292.9], ["D", 24, 304.01]]) {
+  test(`IRAN ${nome}: igualar a quadra inteira — ${n} lotes iguais e a linha de fundo reta`, { skip: !temIran && "sem o corpus real" }, () => {
+    const d = JSON.parse(readFileSync(IRAN, "utf8"));
+    const per = { pts: d.vertices.map((v) => [v.e, v.n]), altitudes: d.vertices.map((v) => v.h), confrontantes: d.vertices.map(() => null) };
+    const pr = normalizarProjeto(d.projeto, "IRAN", per.pts.length);
+    const r0 = calcular(pr, per);
+    const sel = r0.lotes.filter((l) => l.quadra === nome);
+    assert.equal(sel.length, n);
+    const { s, novos } = rearranjar(pr, r0, sel, "igualar", per);
+    const ar = novos.map((l) => l.area);
+    assert.ok(Math.max(...ar) - Math.min(...ar) < 0.05, `áreas ${Math.min(...ar).toFixed(2)} a ${Math.max(...ar).toFixed(2)}`);
+    assert.ok(Math.abs(ar[0] - area) < 0.05, `área ${ar[0]}`);
+    for (const l of novos) assert.deepEqual(l.problemas, [], `${l.id}: ${l.problemas.join("; ")}`);
+    const f = fundoReto(novos);
+    assert.ok(f.juncoes >= n / 2 - 1, `só ${f.juncoes} junções`);
+    assert.ok(f.desvio < 0.02, `linha de fundo torta: junção a ${f.desvio.toFixed(2)} m da reta (${s.msg})`);
+  });
+}
+test("IRAN: fundo com fundo da quadra inteira (linha central) — reta de ponta a ponta, sem aviso", { skip: !temIran && "sem o corpus real" }, () => {
+  const d = JSON.parse(readFileSync(IRAN, "utf8"));
+  const per = { pts: d.vertices.map((v) => [v.e, v.n]), altitudes: d.vertices.map((v) => v.h), confrontantes: d.vertices.map(() => null) };
+  const pr = normalizarProjeto(d.projeto, "IRAN", per.pts.length);
+  const r0 = calcular(pr, per);
+  const calc = (p) => calcular(p, per);
+  for (const nome of ["B", "C", "D"]) {
+    const q = r0.quadras.find((x) => x.nome === nome);
+    const m = melhorEstrutura(pr, r0, q, calc);
+    assert.ok(m, `${nome}: não fechou`);
+    assert.equal(m.avisosDepois, 0, `${nome}: ${m.avisosDepois} avisos`);
+    const q1 = m.r.quadras.find((x) => x.cfg === m.i);
+    assert.equal(q1.lotes.length, q.lotes.length, `${nome}: quantidade de lotes mudou`);
+    assert.equal(q1.linhaCentral.length, 2, `${nome}: linha central com ${q1.linhaCentral.length} pontos (dobrada)`);
+    const ar = q1.lotes.map((l) => l.area);
+    assert.ok(Math.max(...ar) - Math.min(...ar) < 0.05, `${nome}: áreas ${Math.min(...ar).toFixed(2)} a ${Math.max(...ar).toFixed(2)}`);
+  }
 });

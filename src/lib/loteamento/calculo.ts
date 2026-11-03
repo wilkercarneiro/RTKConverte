@@ -156,6 +156,8 @@ export interface EstruturadaInfo {
   T1: number;
   T2: number;
   cabeceiras: string[];
+  /** laterais no esquadro de cada rua ou em leque (na direção das divisas das pontas) */
+  laterais?: "esquadro" | "leque" | "meio";
   avisos: string[];
   /** junções das divisas na linha central (plano) */
   juncoes: Pt[];
@@ -1212,8 +1214,9 @@ function quadraEstruturada(ctx: Contexto, pol: Poligono, cfg: QuadraCfg, P: (q: 
   const E = estruturar(anel, tipos, refs);
   const base = {
     N: est.lotes, profMin: p.profundidadeMin, profPadrao: p.profundidade, esquinas: est.esquinas ?? ("absorver" as const),
-    lim: { areaMin: p.areaMin, areaMax: p.areaMax, frenteMin: p.frenteMin, profMin: p.profundidadeMin, profMax: p.profundidadeMax },
+    lim: { areaMin: p.areaMin, areaMax: p.areaMax, frenteMin: p.frenteMin, frenteMax: p.frenteMax, profMin: p.profundidadeMin, profMax: p.profundidadeMax },
     cab1: est.cabeceiras?.[0] ?? ("auto" as const), cab2: est.cabeceiras?.[1] ?? ("auto" as const),
+    ...(est.laterais ? { laterais: est.laterais } : {}),
   };
   const C = est.linhaCentral?.map(P);
   // linha do operador: travada (ou no meio do arraste) fica exatamente onde está; ajustada à
@@ -1249,7 +1252,7 @@ function quadraEstruturada(ctx: Contexto, pol: Poligono, cfg: QuadraCfg, P: (q: 
     lotes, destinos, cortes: [], fundo: null, sobras: [], canteiros: [], origem: maior.a, u, v: esquerda(u),
     fileiras: 2, problemas: L.avisos.slice(), ruins: 0, nFaces: 0, tortos: 0, largura: 0, rasos: 0,
     linhaCentral: L.C,
-    estruturada: { T1: L.T1, T2: L.T2, cabeceiras: (L.cabeceiras ?? []).slice(), avisos: L.avisos.slice(), juncoes: L.juncoes, giroMax: giros.length ? Math.max(...giros) : 0, cruzamentos: cruzamentosLC(L), divisas: L.divisas.filter((d) => d.length === 3) },
+    estruturada: { T1: L.T1, T2: L.T2, cabeceiras: (L.cabeceiras ?? []).slice(), laterais: L.lat, avisos: L.avisos.slice(), juncoes: L.juncoes, giroMax: giros.length ? Math.max(...giros) : 0, cruzamentos: cruzamentosLC(L), divisas: L.divisas.filter((d) => d.length === 3) },
   };
 }
 
