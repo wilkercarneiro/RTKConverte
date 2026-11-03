@@ -1411,6 +1411,11 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
   // 6,35 m de frente num loteamento de mínimo 8 — pendência nova que o operador não pediu)
   const frenteMinima = Math.max(2.5, pr0.params.frenteMin || 5);
   const frenteNaBorda = (x: Pt[]) => x.reduce((t, v, j) => { const w = x[(j + 1) % x.length]; return t + (naBorda(q, lerp(v, w, 0.5)) && naBorda(q, v) && naBorda(q, w) ? dist(v, w) : 0); }, 0);
+  // a testada como a planta mede: só os lados na rua (a borda da quadra soma divisa da gleba,
+  // e o igualar deixava 7,8 m de rua num loteamento de mínimo 8)
+  const ruasQ = res.lotes.filter((l) => l.quadra === q.nome).flatMap((l) => l.lados.filter((x) => x.tipo === "rua" || x.tipo === "via").map((x) => [x.a, x.b] as [Pt, Pt]));
+  const naRuaQ = (p: Pt) => ruasQ.some(([a, b]) => distSegmento(p, a, b).d < 0.05);
+  const frenteNaRua = (x: Pt[]) => x.reduce((t, v, j) => { const w = x[(j + 1) % x.length]; return t + (naRuaQ(v) && naRuaQ(w) && naRuaQ(lerp(v, w, 0.5)) ? dist(v, w) : 0); }, 0);
   // e não vira faixa: alongamento (perímetro² ÷ área; 10×25 dá 19,6 e 7×40 dá 31) até 34 —
   // lote que já era mais comprido que isso não pode ficar mais comprido do que era
   const alongamento = (x: Pt[]) => { const p = x.reduce((t, v, j) => t + dist(v, x[(j + 1) % x.length]), 0); return (p * p) / Math.max(Math.abs(areaAssinada(x)), 1e-6); };
@@ -1474,9 +1479,10 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
     // só a soma denuncia; foi o que gerava os lotes compridos cruzando na ponta da quadra)
     const totalAntes = antes.reduce((t, x) => t + x, 0);
     const frenteAntes = ls.map((k) => frenteNaBorda(aneis[k]));
+    const ruaAntes = ls.map((k) => frenteNaRua(aneis[k]));
     const valido = (an: Pt[][]) => an.length === aneis.length
       && Math.abs(an.reduce((t, x) => t + Math.abs(areaAssinada(x)), 0) - totalAntes) < 0.05
-      && ls.every((k, j) => frenteNaBorda(an[k]) >= Math.min(frenteAntes[j], frenteMinima) - 0.01 && formaBoa(an[k], k)) && an.every((x, k) => {
+      && ls.every((k, j) => frenteNaBorda(an[k]) >= Math.min(frenteAntes[j], frenteMinima) - 0.01 && frenteNaRua(an[k]) >= Math.min(ruaAntes[j], frenteMinima) - 0.01 && formaBoa(an[k], k)) && an.every((x, k) => {
       if (antes[k] < 1) return true;
       if (x.length < 3 || Math.sign(areaAssinada(x)) !== Math.sign(areaAssinada(aneis[k])) || Math.abs(areaAssinada(x)) < 1) return false;
       return podem.has(k) || Math.abs(Math.abs(areaAssinada(x)) - antes[k]) < 0.002;
@@ -1741,6 +1747,7 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
     // anda só nos selecionados e se afasta do vizinho de fora abria um vão entre eles)
     const totalAntes = antes.reduce((t, x) => t + x, 0);
     const frenteJ = new Map([...daColuna].map((k) => [k, frenteNaBorda(aneis[k])]));
+    const ruaJ = new Map([...daColuna].map((k) => [k, frenteNaRua(aneis[k])]));
     /** para onde a junção vai com o deslocamento s: pela divisa dela; na borda, pelo lado do lote (a rua tem dobras) */
     const destino = (j: Juncao, s: number): Pt => {
       const lados = ladosDe(j);
@@ -1777,7 +1784,7 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
       }
       nv = normalizar(nv);
       if (Math.abs(nv.reduce((t, x) => t + Math.abs(areaAssinada(x)), 0) - totalAntes) > 0.05) return null;
-      if ([...daColuna].some((k) => frenteNaBorda(nv[k]) < Math.min(frenteJ.get(k)!, frenteMinima) - 0.01 || !formaBoa(nv[k], k))) return null;
+      if ([...daColuna].some((k) => frenteNaBorda(nv[k]) < Math.min(frenteJ.get(k)!, frenteMinima) - 0.01 || frenteNaRua(nv[k]) < Math.min(ruaJ.get(k)!, frenteMinima) - 0.01 || !formaBoa(nv[k], k))) return null;
       const ok = nv.every((x, k) => {
         if (antes[k] < 1) return true;
         if (x.length < 3 || Math.sign(areaAssinada(x)) !== Math.sign(areaAssinada(aneis[k])) || Math.abs(areaAssinada(x)) < 1) return false;
