@@ -142,6 +142,37 @@ function inverterSentido<T extends { tipo: "M" | "P" | "V"; conf: VerticeServico
   return out;
 }
 
+/**
+ * De qual linha do banco vem a confrontação que cada M abre NO SENTIDO HORÁRIO
+ * — a mesma regra de `inverterSentido`, para quem lê a confrontação direto das
+ * linhas de `vertices` (as peças, que andam o anel na ordem do PDF do SIGEF,
+ * sempre horária) em vez de passar por `montarServico`.
+ *
+ * Linhas já horárias: cada M fica com a própria. Anti-horárias (o TXT veio
+ * assim, e a planta inverte): cada M fica com a do M ANTERIOR na ordem do banco,
+ * dando a volta. Sem isso, cada confrontante saía nas peças na divisa do
+ * vizinho seguinte — como se o perímetro fosse descrito no sentido anti-horário
+ * (FAZENDA TRES LAMEIROS, 03/11/2026).
+ *
+ * `linhas` na ordem do banco (`order by ordem`), um anel só. Devolve, para o
+ * índice de cada M, o índice da linha cuja confrontação ele abre. Sem E/N em
+ * todas as linhas não há como decidir o sentido: fica cada M com a própria.
+ */
+export function origemDaConfrontacaoHoraria(
+  linhas: { tipo: string; e: number | null; n: number | null }[],
+): Map<number, number> {
+  const idxM: number[] = [];
+  linhas.forEach((v, i) => { if (v.tipo === "M") idxM.push(i); });
+  const mapa = new Map<number, number>(idxM.map((i) => [i, i]));
+  if (linhas.length < 3 || linhas.some((v) => v.e === null || v.n === null)) return mapa;
+  const horario = ehSentidoHorario(linhas.map((v) => ({ eProj: v.e as number, nProj: v.n as number })));
+  if (horario) return mapa;
+  for (let k = 0; k < idxM.length; k++) {
+    mapa.set(idxM[k], idxM[(k - 1 + idxM.length) % idxM.length]);
+  }
+  return mapa;
+}
+
 export function montarServico(inp: ServicoInput, proj4: Proj4): ServicoCalculado {
   const entradas: EntradaVertice[] = inp.vertices.map((v) => ({
     numTxt: v.numTxt,

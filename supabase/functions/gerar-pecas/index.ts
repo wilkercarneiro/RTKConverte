@@ -13,7 +13,7 @@ import { GEO_DEF, fmtBR, gmsToDeg, parseGmsPlanilha, utmDef } from "../_shared/g
 import type { GlebaRow } from "../_shared/planta_dados.ts";
 import { cartasDe, gerarPecasPosseXml, gerarPecasXml, montarTrechosPecas, rotuloVia, viasDaPlanta } from "../_shared/pecas.ts";
 import type { DadosPecas, Requerente } from "../_shared/pecas.ts";
-import { ehViaPorLimite, montarServico } from "../_shared/servico.ts";
+import { ehViaPorLimite, montarServico, origemDaConfrontacaoHoraria } from "../_shared/servico.ts";
 import { carregarLogoPlanta, geometriaDoCalculo, sigefDoCalculo } from "../_shared/planta_dados.ts";
 import { aplicarTimbreAutomatico, identidadeDaEmpresa, precisaTimbreAutomatico } from "../_shared/timbre_automatico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
@@ -238,6 +238,19 @@ Deno.serve(async (req) => {
       }
       return [null, null];
     };
+    // As peças andam o anel na ordem do PDF do SIGEF (horária). A confrontação
+    // gravada em cada M vale para o trecho que ele abre NA ORDEM DO BANCO; com o
+    // TXT anti-horário a planta inverte e cada M passa a abrir o trecho do M
+    // anterior (`inverterSentido`). Aqui vale a mesma regra — antes cada
+    // confrontante saía na divisa do vizinho seguinte. Só para anel único: num
+    // serviço de glebas as linhas do banco misturam vários anéis.
+    const linhasBanco = (vertices ?? []).map((v) => {
+      const [e, n] = enDoVertice(v);
+      return { v, e, n, tipo: String(v.tipo) };
+    });
+    const confDe = blocos.length > 1 || servico.tem_glebas
+      ? new Map<number, number>(linhasBanco.map((_, i) => [i, i]))
+      : origemDaConfrontacaoHoraria(linhasBanco);
     const fontes: FonteConf[] = iniciosDoCalculo ? [] : [
       ...(trechoRows ?? []).map((t) => ({
         codigo: (t.codigo_inicio || (vertices ?? []).find((x) => x.ordem === t.vertice_inicio_ordem)?.codigo || null) as string | null,
@@ -248,15 +261,18 @@ Deno.serve(async (req) => {
         ehVia: !!t.eh_via,
         e: null, n: null,
       })),
-      ...(vertices ?? []).filter((v) => v.tipo === "M").map((v) => {
-        const [e, n] = enDoVertice(v);
-        return {
+      ...linhasBanco.flatMap(({ v, e, n }, i) => {
+        if (v.tipo !== "M") return [];
+        // a confrontação vem da linha indicada pelo sentido; o ponto (código e
+        // posição, usados para ancorar no PDF) continua sendo o deste M
+        const c = linhasBanco[confDe.get(i) ?? i].v;
+        return [{
           codigo: (v.codigo ?? null) as string | null,
-          descritivo: String(v.descritivo || v.apelido_txt || ""),
-          tipoLimite: String(v.tipo_limite ?? "LA1"),
-          ehVia: !!v.eh_via || ehViaPorLimite(v.tipo_limite),
+          descritivo: String(c.descritivo || c.apelido_txt || ""),
+          tipoLimite: String(c.tipo_limite ?? "LA1"),
+          ehVia: !!c.eh_via || ehViaPorLimite(c.tipo_limite),
           e, n,
-        };
+        }];
       }),
     ];
     // Num serviço de glebas o casamento tem de correr TODOS os memoriais: os
