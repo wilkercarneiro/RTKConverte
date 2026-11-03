@@ -334,6 +334,32 @@ export function comandoPesado(texto: string, sel: Selecao): boolean {
   return /^(ajustar\s+)?fundo\s+com\s+fundo\s*$/.test(t) && sel?.tipo === "lotes";
 }
 
+/**
+ * Refaz os dados que chegam por postMessage. A cópia (structured clone) cria os pares
+ * de coordenadas num formato interno diferente do que o cálculo cria; misturando os
+ * dois, o V8 desotimiza dist/dot e o igualar ficava 5–6× mais lento no worker (88 s
+ * em vez de 16 s). Cada array é refeito por map; objetos compartilhados continuam
+ * compartilhados (o mesmo lote na quadra e na lista geral).
+ */
+export function refazerDados<T>(x: T): T {
+  const vistos = new Map<unknown, unknown>();
+  const refaz = (v: unknown): unknown => {
+    if (v === null || typeof v !== "object") return v;
+    const ja = vistos.get(v);
+    if (ja !== undefined) return ja;
+    // (por map: refeito com push num array vazio, o par continua lento — medido, 95 s × 17 s)
+    if (Array.isArray(v)) { const out = v.map(refaz); vistos.set(v, out); return out; }
+    if (v instanceof Map) { const out = new Map(); vistos.set(v, out); for (const [k, y] of v) out.set(refaz(k), refaz(y)); return out; }
+    if (v instanceof Set) { const out = new Set(); vistos.set(v, out); for (const y of v) out.add(refaz(y)); return out; }
+    if (Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null) return v;
+    const out: Record<string, unknown> = {};
+    vistos.set(v, out);
+    for (const k of Object.keys(v)) out[k] = refaz((v as Record<string, unknown>)[k]);
+    return out;
+  };
+  return refaz(x) as T;
+}
+
 /** Roda o comando num Web Worker (a tela segue respondendo); sem worker, roda aqui mesmo. */
 export function executarEmSegundoPlano(texto: string, pr: Projeto, res: Resultado, sel: Selecao): Promise<Saida> {
   return new Promise((resolve, reject) => {
@@ -344,7 +370,7 @@ export function executarEmSegundoPlano(texto: string, pr: Projeto, res: Resultad
     } catch { aqui(); return; }
     w.onmessage = (e: MessageEvent<{ ok: boolean; s?: Saida; erro?: string }>) => {
       w.terminate();
-      if (e.data.ok && e.data.s) resolve(e.data.s); else reject(new Error(e.data.erro ?? "o comando falhou"));
+      if (e.data.ok && e.data.s) resolve(refazerDados(e.data.s)); else reject(new Error(e.data.erro ?? "o comando falhou"));
     };
     w.onerror = (ev) => { ev.preventDefault?.(); w.terminate(); aqui(); };
     try { w.postMessage({ texto, projeto: pr, res, sel }); } catch { w.terminate(); aqui(); }
