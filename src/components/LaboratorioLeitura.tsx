@@ -16,7 +16,7 @@ import { APOIO_PADRAO, camposVazios } from "../../supabase/functions/_shared/lei
 import type { Receita } from "../../supabase/functions/_shared/leitor/receita.ts";
 import { LeituraArquivo } from "./LeituraArquivo";
 import type { LeituraConfirmada, RespostaLeitura } from "./LeituraArquivo";
-import { Passos } from "./ui";
+import { confirmar, DialogosGlobais, Passos } from "./ui";
 import THEREZA from "../../reference/THEREZA.txt?raw";
 import LARISSA from "../../reference/LARISSA.txt?raw";
 
@@ -62,15 +62,21 @@ function caso(nome: string): { arquivo: string; linhas: string[]; receita?: Rece
 }
 
 export function LaboratorioLeitura() {
-  const nome = location.hash.split("/")[3] ?? "equipe";
+  const nome = (location.hash.split("/")[3] ?? "equipe").split("?")[0];
   const c = useMemo(() => caso(nome), [nome]);
   const [confirmada, setConfirmada] = useState<LeituraConfirmada | null>(null);
+  // UF da área de cada caso (os arquivos de referência são da Bahia: 23S × 24S)
+  const uf = "BA";
+  const [fuso, setFuso] = useState<number | null>(null);
   const resposta: RespostaLeitura = useMemo(() => {
     const l = c.receita ? null : nome === "manual" ? null : lerLinhas(c.linhas, { proj4 });
     return {
       ok: true, formato: "texto (utf-8)", codificacao: "utf-8", linhas: c.linhas,
       receita: c.receita ?? l?.receita ?? null, confianca: c.ia ? "alta" : l?.confianca ?? "baixa", duvidas: l?.duvidas ?? [],
       perfil: null,
+      // o laboratório simula o servidor novo (aceita ativar inativos e ligar à mão);
+      // #/lab/leitura/<caso>?antigo simula o servidor de antes
+      ajustes: location.hash.includes("antigo") ? undefined : 1,
       ia: c.ia
         ? { usada: true, tentativas: [{ modelo: "gpt-6-luna", aprovada: true, ms: 2140, custoUsd: 0.0021 }], custoUsd: 0.0021, erro: null, motivo: null }
         : { usada: false, tentativas: [], custoUsd: 0, erro: null, motivo: nome === "manual" ? "IA desligada neste laboratório" : null },
@@ -78,15 +84,22 @@ export function LaboratorioLeitura() {
   }, [c, nome]);
   return (
     <div className="upload-tela fade" style={{ padding: 24 }}>
-      <Passos passos={[{ rotulo: "Área certificada", estado: "feita" }, { rotulo: "Arquivo do levantamento", estado: "feita" }, { rotulo: "Leitura do arquivo", estado: "ativa" }, { rotulo: "Conferência", estado: "futura" }, { rotulo: "Documentos", estado: "futura" }]} rotulo="Etapas do novo serviço" />
+      <DialogosGlobais />
+      <Passos passos={[{ rotulo: "Área certificada", estado: "feita" }, { rotulo: "Arquivo do levantamento", estado: "feita" }, { rotulo: "Conferência do TXT", estado: "ativa" }, { rotulo: "Conferência", estado: "futura" }, { rotulo: "Documentos", estado: "futura" }]} rotulo="Etapas do novo serviço" />
       <div className="upload-card leitura">
         <div>
           <h2>Georreferenciamento completo</h2>
-          <p className="sub">Confira como o arquivo foi lido antes de criar o serviço.</p>
+          <p className="sub">Confira e ajuste os pontos; o crédito só é usado no Prosseguir.</p>
         </div>
         <LeituraArquivo key={nome} nomeArquivo={c.arquivo} resposta={resposta} criando={false} erro={null}
-          onConfirmar={setConfirmada} onTrocarArquivo={() => setConfirmada(null)} />
-        {confirmada && <pre className="mono pequeno" data-testid="confirmada">{JSON.stringify({ origem: confirmada.receita.origem, ordem: confirmada.ordem, excluir: confirmada.excluir, sigma: confirmada.sigma_padrao, confirmados: confirmada.confirmados, versao: confirmada.versao }, null, 1)}</pre>}
+          uf={uf} fuso={fuso} onEscolherFuso={setFuso}
+          onConfirmar={async (l) => {
+            // a mesma pergunta do Upload (aqui sem banco: o texto genérico)
+            const ok = await confirmar({ titulo: "Prosseguir vai consumir 1 crédito", texto: <p>{`O serviço será criado com ${l.resumo.pontos} pontos. (laboratório: nada é criado)`}</p>, confirmar: "Prosseguir e usar 1 crédito", cancelar: "Voltar à conferência" });
+            if (ok) setConfirmada(l);
+          }}
+          onTrocarArquivo={() => setConfirmada(null)} />
+        {confirmada && <pre className="mono pequeno" data-testid="confirmada">{JSON.stringify({ origem: confirmada.receita.origem, ordem: confirmada.ordem, excluir: confirmada.excluir, incluir: confirmada.incluir, ligacao: confirmada.ligacao, sigma: confirmada.sigma_padrao, confirmados: confirmada.confirmados, versao: confirmada.versao, resumo: confirmada.resumo }, null, 1)}</pre>}
       </div>
     </div>
   );

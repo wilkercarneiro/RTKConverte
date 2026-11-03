@@ -14,41 +14,11 @@ import { supabase } from "./supabase";
 import { avisarGlobal } from "./ux";
 import { recursoDe } from "./recursos";
 import type { ChaveServico } from "./modalidades";
-import type { Faixa } from "../../supabase/functions/_shared/precos.ts";
+import { carteiraGeral, carteiraPropria, disponivel, nomeCredito } from "./creditos_regras";
+import type { Creditos } from "./creditos_regras";
 
-export type { Faixa };
-
-export interface Carteira {
-  chave: string;
-  nome: string;
-  descricao: string | null;
-  /** serviços que ela paga (null = todos) */
-  servicos: string[] | null;
-  /** créditos do mês (null = sem limite) */
-  por_mes: number | null;
-  usado: number;
-  /** comprados ou dados, sem vencimento */
-  extra: number;
-  /** preço do crédito extra por faixa (vazio = não está à venda) */
-  precos: Faixa[];
-}
-
-export type StatusCompra = "pendente" | "aprovado" | "recusado" | "cancelado";
-export interface Compra {
-  id: string; tipo: string; quantidade: number; valor: number | null; unitario: number | null;
-  descricao: string | null; status: StatusCompra; origem: "pedido" | "manual" | "compra";
-  created_at: string; link: string | null; pagamento: string | null;
-}
-
-export interface Creditos {
-  periodo: { inicio: string; renova_em: string; dia: number };
-  carteiras: Carteira[];
-  servicos: Record<string, { disponivel: boolean; carteira: string | null; precisa_aceite: boolean }>;
-  sou_dono: boolean;
-  /** Asaas configurado: a compra gera cobrança e os créditos entram sozinhos */
-  pagamento_online: boolean;
-  compras: Compra[];
-}
+// tipos, saldo e custo: regras puras (testáveis no Node) — reexportadas aqui
+export * from "./creditos_regras";
 
 export async function carregarCreditos(): Promise<Creditos | null> {
   const { data, error } = await supabase.rpc("meus_creditos");
@@ -56,50 +26,7 @@ export async function carregarCreditos(): Promise<Creditos | null> {
   return data as Creditos;
 }
 
-const doServico = (c: Creditos | null, chave: ChaveServico) => c?.servicos[`servico.${chave}`];
-
-/** O serviço ainda pode nascer? (sem a 0034, sempre) */
-export const temCredito = (c: Creditos | null, chave: ChaveServico): boolean => doServico(c, chave)?.disponivel ?? true;
-
-/** Só crédito geral paga este serviço agora, e ele tem carteira própria: pede o aceite. */
-export const precisaAceite = (c: Creditos | null, chave: ChaveServico): boolean => doServico(c, chave)?.precisa_aceite ?? false;
-
-export const carteiraDe = (c: Creditos, tipo: string): Carteira | undefined => c.carteiras.find((x) => x.chave === tipo);
-
-/** Créditos do mês que sobram (null = sem limite). */
-export const sobraDoMes = (k: Carteira): number | null => (k.por_mes === null ? null : Math.max(0, k.por_mes - k.usado));
-
-/** Tudo o que a carteira ainda paga: o que sobra do mês + o extra (null = sem limite). */
-export function disponivel(k: Carteira): number | null {
-  const s = sobraDoMes(k);
-  return s === null ? null : s + k.extra;
-}
-
-/** A carteira própria do serviço (a de CAR para o CAR); undefined = só a geral. */
-export const carteiraPropria = (c: Creditos, chave: ChaveServico): Carteira | undefined =>
-  c.carteiras.find((k) => k.servicos?.includes(`servico.${chave}`));
-
-export const carteiraGeral = (c: Creditos): Carteira | undefined => c.carteiras.find((k) => k.servicos === null);
-
-/** A carteira vende crédito extra neste plano. */
-export const aVenda = (k: Carteira): boolean => k.precos.length > 0;
-
-/** "crédito de CAR", "créditos gerais"… a partir do nome da carteira. */
-export function nomeCredito(k: Pick<Carteira, "nome"> | undefined, n = 2): string {
-  const base = (k?.nome ?? "Créditos").replace(/^Créditos\s*/i, "");
-  if (n === 1) return `crédito ${base.replace(/^gerais$/i, "geral")}`.trim();
-  return `créditos ${base}`.trim();
-}
-
 export const nomeDaChave = (chave: string): string => recursoDe(chave)?.nome ?? chave;
-
-/** Erro do banco: o crédito acabou. */
-export const ehSemCredito = (msg: string): boolean => msg.includes("SEM_CREDITO");
-/** Erro do banco: só o crédito geral paga, e falta o aceite. */
-export const ehAceiteGeral = (msg: string): boolean => msg.includes("ACEITE_CREDITO_GERAL");
-/** Tira o prefixo técnico da mensagem do banco. */
-export const textoSemCredito = (msg: string): string =>
-  msg.replace(/^.*(SEM_CREDITO|ACEITE_CREDITO_GERAL):\s*/, "").replace(/^./, (x) => x.toUpperCase());
 
 /** Pedido de créditos sem o pagamento online: o superadmin aprova depois de combinar o pagamento. */
 export async function pedirCreditos(tipo: string, quantidade: number, observacao?: string): Promise<void> {
@@ -110,15 +37,6 @@ export async function pedirCreditos(tipo: string, quantidade: number, observacao
 export async function cancelarPedido(id: string): Promise<void> {
   const { error } = await supabase.rpc("cancelar_pedido_credito", { p_id: id });
   if (error) throw new Error(error.message);
-}
-
-export const fmtPreco = (v: number | null): string =>
-  v === null ? "a combinar" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-
-/** "30 de outubro" de uma data "aaaa-mm-dd" (sem passar por fuso). */
-export function diaMes(iso: string): string {
-  const [a, m, d] = iso.slice(0, 10).split("-").map(Number);
-  return new Date(a, m - 1, d).toLocaleDateString("pt-BR", { day: "numeric", month: "long" });
 }
 
 // ---------------------------------------------------------------------------
@@ -141,11 +59,11 @@ export function fecharAvisoCredito(): void { aviso = null; mudou(); }
 export function textoDoConsumo(c: Creditos, chave: ChaveServico, usouGeral = false): string {
   const nome = recursoDe(`servico.${chave}`)?.nome ?? "serviço";
   const k = usouGeral ? carteiraGeral(c) : carteiraPropria(c, chave) ?? carteiraGeral(c);
-  if (!k) return `1 crédito foi usado ao enviar o arquivo de ${nome}.`;
+  if (!k) return `1 crédito foi usado no ${nome}.`;
   const r = disponivel(k);
   const usado = usouGeral
     ? `1 crédito geral foi usado no ${nome}, com o seu aceite.`
-    : `1 ${nomeCredito(k, 1)} foi usado ao enviar o arquivo.`;
+    : `1 ${nomeCredito(k, 1)} foi usado no ${nome}.`;
   const sobra = r === null ? `Seu plano não tem limite de ${nomeCredito(k)}.`
     : r === 0 ? `Era o último dos seus ${nomeCredito(k)}.`
       : `${r === 1 ? "Resta 1" : `Restam ${r}`} ${nomeCredito(k, r)}.`;

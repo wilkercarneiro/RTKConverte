@@ -166,6 +166,9 @@ Deno.serve(async (req) => {
       duvidas: escolhida?.duvidas ?? [],
       perfil: perfilUsado ? { id: perfilUsado.id, nome: perfilUsado.nome ?? null } : null,
       ia,
+      // o parse-txt deste servidor aceita os ajustes de pontos da prévia
+      // (ativar inativos e ligar à mão); sem isto a tela só deixa excluir
+      ajustes: 1,
     });
   } catch (err) {
     console.error("ler-arquivo:", err);
@@ -188,7 +191,7 @@ async function regressao(supa: any) {
     const { receita } = validarReceita(perfil.receita);
     if (!receita) { resultado.push({ servico_id: l.servico_id, nome_arquivo: l.nome_arquivo, perfil_id: l.perfil_id, ok: false, motivo: "receita do perfil inválida" }); continue; }
     const antes = JSON.parse(await gravado.data.text());
-    const agora = executarReceita(aberto.linhas, receita, { proj4, ordem: antes.ordem ?? undefined, excluir: antes.excluir ?? [], sigmaPadrao: antes.sigma_padrao ?? null, versao: typeof antes.versao_pontos === "string" ? antes.versao_pontos : null });
+    const agora = executarReceita(aberto.linhas, receita, { proj4, ordem: antes.ordem ?? undefined, excluir: antes.excluir ?? [], sigmaPadrao: antes.sigma_padrao ?? null, versao: typeof antes.versao_pontos === "string" ? antes.versao_pontos : null, incluir: Array.isArray(antes.incluir) ? antes.incluir : [], ligacao: Array.isArray(antes.ligacao) ? antes.ligacao : null });
     const chave = (p: { num: number; e: number; n: number; h: number }) => `${p.num}|${p.e}|${p.n}|${p.h}`;
     const iguais = JSON.stringify(agora.anel.map(chave)) === JSON.stringify((antes.anel ?? []).map(chave));
     resultado.push({ servico_id: l.servico_id, nome_arquivo: l.nome_arquivo, perfil_id: l.perfil_id, ok: iguais, ...(iguais ? {} : { motivo: "o perfil hoje lê o arquivo diferente do que foi gravado" }) });

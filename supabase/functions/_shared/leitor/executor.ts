@@ -43,7 +43,7 @@ export interface PontoLido {
   foraDaVersao?: boolean;
 }
 
-export type TipoIgnorada = "topo" | "padrao" | "cabecalho" | "ilegivel" | "repetido" | "excluido" | "versao";
+export type TipoIgnorada = "topo" | "padrao" | "cabecalho" | "ilegivel" | "repetido" | "excluido" | "versao" | "ligacao";
 
 export interface LinhaIgnorada { linha: number; texto: string; motivo: string; tipo: TipoIgnorada }
 

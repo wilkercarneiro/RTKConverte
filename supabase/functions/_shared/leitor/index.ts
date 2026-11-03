@@ -35,6 +35,11 @@ export interface OpcoesLeitura {
   /** Versão dos pontos escolhida na prévia ("" = levantamento, "postp_"…);
    *  ausente = automática (a mais completa). Ver versoes.ts. */
   versao?: string | null;
+  /** Linhas de pontos inativos (apoio, outra versão) ativadas na prévia. */
+  incluir?: number[];
+  /** Ligação dos pontos feita à mão na prévia: partes × `idx` dos pontos, na
+   *  ordem do perímetro (ver ordem.ts). Ausente/null = ordem automática. */
+  ligacao?: number[][] | null;
 }
 
 /** Ponto do perímetro, pronto para o parse-txt (formato de `PontoTxt` + origem). */
@@ -49,6 +54,8 @@ export interface PontoAnel {
   sigmaPos: number;
   sigmaH: number;
   linha: number;
+  /** Índice do ponto lido (`PontoLido.idx`): é por ele que a ligação manual se refere. */
+  idx: number;
   sigmaDeclarado: boolean;
 }
 
@@ -63,8 +70,8 @@ export interface Leitura {
   anel: PontoAnel[];
   /** Posições em `anel` de cada parte do imóvel. */
   blocos: number[][];
-  criterio: "id" | "arquivo";
-  candidatos: { criterio: "id" | "arquivo"; simples: boolean; cruzamentos: number }[];
+  criterio: "id" | "arquivo" | "ligacao";
+  candidatos: { criterio: "id" | "arquivo" | "ligacao"; simples: boolean; cruzamentos: number }[];
   ignoradas: LinhaIgnorada[];
   avisos: Aviso[];
   /** Avisos que o operador precisa confirmar com um clique antes de seguir. */
@@ -79,7 +86,7 @@ export interface Leitura {
 /** Avisos de alerta que exigem confirmação explícita (nunca seguem calados). */
 export const AVISOS_A_CONFIRMAR = new Set([
   "desenho_cruza", "linhas_ilegiveis", "V5_utm_geo", "lat_sem_sinal", "sigma_95", "apoio_fora", "ordem_do_arquivo", "ordem_ambigua", "texto_livre", "dxf_nomes_por_texto", "dxf_nomes_ambiguos", "gpx_trilha", "receita_ia", "receita_operador",
-  "versoes", "versao_incompleta",
+  "versoes", "versao_incompleta", "fora_da_ligacao",
 ]);
 
 /** Avisos que tiram a confiança "alta" da leitura (dedução, não leitura direta). */
@@ -108,7 +115,7 @@ export function executarReceita(linhas: string[], receita: Receita, op: OpcoesLe
     }
   }
 
-  const ordem = montarAnel(exec.pontos, op.ordem ?? receita.ordem, new Set(op.excluir ?? []));
+  const ordem = montarAnel(exec.pontos, op.ordem ?? receita.ordem, new Set(op.excluir ?? []), { incluir: new Set(op.incluir ?? []), ligacao: op.ligacao ?? null });
   const ignoradas = [...exec.ignoradas, ...ordem.ignoradas];
   const validacao = validar({
     linhas, receita, pontos: exec.pontos, anel: ordem.anel, blocos: ordem.blocos, ignoradas,
@@ -135,7 +142,7 @@ export function executarReceita(linhas: string[], receita: Receita, op: OpcoesLe
     return {
       num: nn.num, numSintetico: nn.sintetico, nome: p.nome, rotulo: p.rotulo,
       e: p.e, n: p.n, h: p.h as number, sigmaPos: p.sigmaPos as number, sigmaH: p.sigmaH as number,
-      linha: p.linha, sigmaDeclarado: sigmaDeclarado.has(i),
+      linha: p.linha, idx: p.idx, sigmaDeclarado: sigmaDeclarado.has(i),
     };
   });
   return {

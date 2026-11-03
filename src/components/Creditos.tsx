@@ -79,7 +79,7 @@ export function SemCreditos({ def, creditos, onVoltar, onAtualizar, voltarPara =
           ))}
         </div>
         <p className="sub">
-          Cada envio de arquivo usa um crédito. Os créditos do mês renovam em {diaMes(creditos.periodo.renova_em)}
+          Cada serviço novo usa um crédito, descontado quando você clica em Prosseguir depois de conferir os pontos. Os créditos do mês renovam em {diaMes(creditos.periodo.renova_em)}
           {podeComprar ? "; para continuar agora, compre mais créditos." : "."}
         </p>
         {pendentes > 0 && <p className="nota-permissao">{pendentes === 1 ? "Há 1 compra" : `Há ${pendentes} compras`} esperando pagamento.</p>}

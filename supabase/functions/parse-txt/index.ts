@@ -79,7 +79,17 @@ async function textoDoPdf(bytes: Uint8Array): Promise<string> {
   return Array.isArray(text) ? text.join("\n") : text;
 }
 
-interface LeituraPedida { receita?: unknown; ordem?: unknown; excluir?: unknown; sigma_padrao?: unknown; confirmados?: unknown; versao?: unknown }
+interface LeituraPedida { receita?: unknown; ordem?: unknown; excluir?: unknown; sigma_padrao?: unknown; confirmados?: unknown; versao?: unknown; incluir?: unknown; ligacao?: unknown }
+
+/** Linhas (inteiros > 0) de uma lista vinda da tela; o resto é descartado. */
+const linhasDe = (v: unknown): number[] => Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+
+/** Ligação manual da prévia: partes × índices de ponto (inteiros >= 0); null = automática. */
+function ligacaoDe(v: unknown): number[][] | null {
+  if (!Array.isArray(v)) return null;
+  const partes = v.filter(Array.isArray).map((p) => (p as unknown[]).map(Number).filter((n) => Number.isInteger(n) && n >= 0).slice(0, 20000)).filter((p) => p.length);
+  return partes.length ? partes.slice(0, 200) : null;
+}
 
 /**
  * Lê o arquivo: com a leitura confirmada na prévia, reexecuta a receita e exige
@@ -97,19 +107,22 @@ function lerPedido(linhas: string[], pedido: LeituraPedida | null, fusoTela: num
   if (!validada.receita) return { erro: `Receita de leitura inválida: ${validada.erros.join("; ")}`, status: 400 };
   const receita = fusoTela !== null ? { ...validada.receita, fuso: fusoTela } : validada.receita;
   const ordem = pedido.ordem === "id" || pedido.ordem === "arquivo" || pedido.ordem === "auto" ? pedido.ordem : undefined;
-  const excluir = Array.isArray(pedido.excluir) ? pedido.excluir.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+  const excluir = linhasDe(pedido.excluir);
+  // ajustes de pontos da prévia: inativos ativados e a ligação feita à mão
+  const incluir = linhasDe(pedido.incluir);
+  const ligacao = ligacaoDe(pedido.ligacao);
   const sp = pedido.sigma_padrao as { pos?: unknown; h?: unknown } | null | undefined;
   const sigmaPadrao = sp && Number(sp.pos) > 0 && Number(sp.h) > 0 && Number(sp.pos) <= 10 && Number(sp.h) <= 10 ? { pos: Number(sp.pos), h: Number(sp.h) } : null;
   // versão dos pontos escolhida na prévia ("" = levantamento; "postp_"…); ausente = automática
   const versao = typeof pedido.versao === "string" && pedido.versao.length <= 40 ? pedido.versao : null;
-  const leitura = executarReceita(linhas, receita, { proj4, ordem, excluir, sigmaPadrao, versao });
+  const leitura = executarReceita(linhas, receita, { proj4, ordem, excluir, sigmaPadrao, versao, incluir, ligacao });
   const confirmados = new Set(Array.isArray(pedido.confirmados) ? pedido.confirmados.map(String) : []);
   const faltam = leitura.aConfirmar.filter((c) => !confirmados.has(c));
   if (faltam.length) {
     const msgs = leitura.avisos.filter((a) => faltam.includes(a.codigo)).map((a) => a.mensagem);
     return { erro: `Confirme na prévia antes de criar o serviço: ${msgs.join(" | ")}`, status: 422, faltam };
   }
-  return { leitura, pedido: { ...pedido, ordem, excluir, sigma_padrao: sigmaPadrao, versao } };
+  return { leitura, pedido: { ...pedido, ordem, excluir, sigma_padrao: sigmaPadrao, versao, incluir, ligacao } };
 }
 
 /**
@@ -319,6 +332,8 @@ Deno.serve(async (req) => {
       versao: 1, formato: formatoArquivo, codificacao,
       receita: leitura.receita, criterio: leitura.criterio, blocos: leitura.blocos,
       ordem: lido.pedido?.ordem ?? null, excluir: lido.pedido?.excluir ?? [], sigma_padrao: lido.pedido?.sigma_padrao ?? null,
+      // ajustes de pontos da prévia (a regressão dos perfis relê com eles)
+      incluir: lido.pedido?.incluir ?? [], ligacao: lido.pedido?.ligacao ?? null,
       // a versão dos pontos que entrou (a regressão dos perfis relê com ela)
       versao_pontos: leitura.versoes.escolhida,
       confirmados: lido.pedido ? leitura.aConfirmar : [],

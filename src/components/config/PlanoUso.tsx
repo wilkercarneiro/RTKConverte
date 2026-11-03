@@ -98,7 +98,7 @@ export function PlanoUso({ escritorio }: { escritorio: EstadoEscritorio }) {
 
       <section className="bloco">
         <header>
-          <h3>Créditos{creditos ? ` · renovam em ${diaMes(creditos.periodo.renova_em)}` : ""}<Dica>cada envio de arquivo de um serviço novo usa 1 crédito. O CAR usa os créditos de CAR e, quando eles acabam, pode usar um geral com o seu aceite. Os créditos do mês renovam no dia da renovação; os extras não vencem.</Dica></h3>
+          <h3>Créditos{creditos ? ` · renovam em ${diaMes(creditos.periodo.renova_em)}` : ""}<Dica>cada serviço novo usa 1 crédito: no TXT, ele é descontado no Prosseguir, depois da conferência dos pontos e do esboço (que não custam nada); no CAR e no PDF do SIGEF, ao criar o serviço. O CAR usa os créditos de CAR e, quando eles acabam, pode usar um geral com o seu aceite. Os créditos do mês renovam no dia da renovação; os extras não vencem.</Dica></h3>
           {creditos?.sou_dono && venda.length > 0 && <button type="button" className="link" onClick={() => setComprando(true)}>Comprar créditos</button>}
         </header>
         {comprando && creditos && <ComprarCreditos creditos={creditos} onFechar={() => setComprando(false)} onPedido={recarregarCreditos} />}

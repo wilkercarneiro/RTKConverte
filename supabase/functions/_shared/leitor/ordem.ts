@@ -76,7 +76,7 @@ export function blocosPorCentena(nums: { num: number; sintetico: boolean }[]): n
 }
 
 export interface CandidatoOrdem {
-  criterio: "id" | "arquivo";
+  criterio: "id" | "arquivo" | "ligacao";
   /** Índices (em `pontos`) na ordem do anel. */
   anel: number[];
   /** Posições no anel de cada parte. */
@@ -95,7 +95,8 @@ export interface ResultadoOrdem {
   /** Pontos do perímetro, na ordem escolhida (índices em `pontos`). */
   anel: number[];
   blocos: number[][];
-  criterio: "id" | "arquivo";
+  /** "ligacao" = a sequência que o operador ligou à mão na prévia. */
+  criterio: "id" | "arquivo" | "ligacao";
   candidatos: CandidatoOrdem[];
   /** Número final de cada ponto do anel (sintético quando o nome não é número). */
   numeros: Map<number, { num: number; sintetico: boolean }>;
@@ -117,20 +118,32 @@ function candidato(criterio: "id" | "arquivo", ordemIdx: number[], pontos: Ponto
   return { criterio, anel: ordemIdx, blocos, cruzamentos: cr, simples: cr.every((x) => x.length === 0) };
 }
 
+/** Ajustes de pontos feitos à mão na prévia (além das exclusões). */
+export interface AjustesAnel {
+  /** Linhas de pontos inativos (apoio, outra versão) que o operador ATIVOU. */
+  incluir?: Set<number>;
+  /** Ligação manual: cada parte é a sequência de pontos (`idx`) na ordem do
+   *  perímetro. Ponto ativo fora dela não entra; null = ordem automática. */
+  ligacao?: number[][] | null;
+}
+
 /**
  * Monta o anel. `ordemPedida`: "auto" escolhe pela geometria; "id"/"arquivo"
  * obedecem (com aviso se o desenho cruzar). `excluir`: linhas que o operador
- * tirou na prévia.
+ * tirou na prévia. `ajustes.ligacao` (quando há) manda na ordem e nas partes.
  */
-export function montarAnel(pontos: PontoLido[], ordemPedida: "auto" | "id" | "arquivo", excluir: Set<number> = new Set()): ResultadoOrdem {
+export function montarAnel(pontos: PontoLido[], ordemPedida: "auto" | "id" | "arquivo", excluir: Set<number> = new Set(), ajustes: AjustesAnel = {}): ResultadoOrdem {
   const ignoradas: LinhaIgnorada[] = [];
   const avisos: Aviso[] = [];
+  const incluir = ajustes.incluir ?? new Set<number>();
 
   // ---- exclusões da tela e apoio ----
   const ativos: number[] = [];
   const apoio: PontoLido[] = [];
   for (const p of pontos) {
     if (excluir.has(p.linha)) { ignoradas.push({ linha: p.linha, texto: p.nome, motivo: "excluído na prévia pelo operador", tipo: "excluido" }); continue; }
+    // ponto inativo que o operador ativou na prévia: entra como qualquer outro
+    if (incluir.has(p.linha) && (p.apoio || p.foraDaVersao)) { ativos.push(p.idx); continue; }
     if (p.apoio) { apoio.push(p); continue; }
     // outra versão do mesmo ponto (versoes.ts): só uma versão entra no anel
     if (p.foraDaVersao) { ignoradas.push({ linha: p.linha, texto: p.nome, motivo: `outra versão do mesmo ponto (${p.nome}): fora do perímetro`, tipo: "versao" }); continue; }
@@ -199,6 +212,28 @@ export function montarAnel(pontos: PontoLido[], ordemPedida: "auto" | "id" | "ar
     || (cId.blocos.length === 1 && mesmoCiclo(porId, porArquivo));
   const candidatos = iguais ? [cId] : [cId, cArq];
 
+  // ---- ligação feita à mão na prévia: manda na ordem e nas partes ----
+  const ligada = ligacaoManual(ajustes.ligacao, unicos, pontos);
+  if (ligada) {
+    for (const i of ligada.fora) {
+      const p = pontos[i];
+      ignoradas.push({ linha: p.linha, texto: p.nome, motivo: `ponto ${p.nome} ficou fora da ligação feita na prévia`, tipo: "ligacao" });
+    }
+    if (ligada.fora.length) {
+      const nomes = ligada.fora.map((i) => pontos[i].nome || `linha ${pontos[i].linha}`);
+      avisos.push({
+        codigo: "fora_da_ligacao", nivel: "alerta",
+        mensagem: `${ligada.fora.length === 1 ? "1 ponto ativo ficou" : `${ligada.fora.length} pontos ativos ficaram`} fora da ligação e não ${ligada.fora.length === 1 ? "entra" : "entram"} no perímetro: ${nomes.slice(0, 12).join(", ")}${nomes.length > 12 ? "…" : ""}.`,
+        linhas: ligada.fora.map((i) => pontos[i].linha),
+      });
+    }
+    const curtas = ligada.c.blocos.filter((b) => b.length < 3).length;
+    if (curtas) {
+      avisos.push({ codigo: "parte_curta", nivel: "bloqueio", mensagem: `${curtas === 1 ? "Uma parte da ligação tem" : `${curtas} partes da ligação têm`} menos de 3 pontos: ligue ao menos 3 pontos em cada parte.` });
+    }
+    return finalizar(ligada.c, unicos, pontos, numeros, candidatos, ignoradas, avisos);
+  }
+
   let escolhido: CandidatoOrdem;
   if (ordemPedida === "id" && !temSintetico) escolhido = cId;
   else if (ordemPedida === "arquivo") escolhido = cArq;
@@ -232,7 +267,45 @@ export function montarAnel(pontos: PontoLido[], ordemPedida: "auto" | "id" | "ar
       mensagem: "Pela numeração, o desenho se cruzava; a ordem em que os pontos estão no arquivo forma o perímetro sem cruzar, e foi a usada.",
     });
   } else escolhido = cId;
+  return finalizar(escolhido, unicos, pontos, numeros, candidatos, ignoradas, avisos);
+}
 
+/**
+ * A ligação pedida, limpa: só pontos ativos e únicos (repetido, excluído ou
+ * desconhecido sai), cada ponto uma vez só. Null = sem ligação manual.
+ */
+function ligacaoManual(pedida: number[][] | null | undefined, unicos: number[], pontos: PontoLido[]): { c: CandidatoOrdem; fora: number[] } | null {
+  if (!Array.isArray(pedida) || !pedida.length) return null;
+  const validos = new Set(unicos);
+  const vistos = new Set<number>();
+  const partes: number[][] = [];
+  for (const parte of pedida) {
+    if (!Array.isArray(parte)) continue;
+    const limpa: number[] = [];
+    for (const i of parte) {
+      if (!Number.isInteger(i) || !validos.has(i) || vistos.has(i)) continue;
+      vistos.add(i);
+      limpa.push(i);
+    }
+    if (limpa.length) partes.push(limpa);
+  }
+  if (!partes.length) return null;
+  const anel = partes.flat();
+  let pos = 0;
+  const blocos = partes.map((p) => p.map(() => pos++));
+  const cr = blocos.map((b) => {
+    const pts = b.map((k) => pontos[anel[k]]);
+    const lado = (i: number) => `${pts[i].nome || "?"}–${pts[(i + 1) % pts.length].nome || "?"}`;
+    return cruzamentos(pts).map(([i, j]) => [lado(i), lado(j)] as [string, string]);
+  });
+  return {
+    c: { criterio: "ligacao", anel, blocos, cruzamentos: cr, simples: cr.every((x) => x.length === 0) },
+    fora: unicos.filter((i) => !vistos.has(i)),
+  };
+}
+
+/** Avisos do desenho escolhido (poucos pontos, cruzamento, área zero, nomes) e o resultado. */
+function finalizar(escolhido: CandidatoOrdem, unicos: number[], pontos: PontoLido[], numeros: ResultadoOrdem["numeros"], candidatos: CandidatoOrdem[], ignoradas: LinhaIgnorada[], avisos: Aviso[]): ResultadoOrdem {
   if (unicos.length < 3) {
     avisos.push({ codigo: "poucos_pontos", nivel: "bloqueio", mensagem: `O perímetro precisa de pelo menos 3 pontos (lidos: ${unicos.length}).` });
   }

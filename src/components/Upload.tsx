@@ -19,14 +19,15 @@ import type { PreviewParse, Servico, Trecho, Vertice } from "../lib/types";
 import { parseCsvSigef } from "../../supabase/functions/_shared/certificados.ts";
 import type { VerticeSigef } from "../../supabase/functions/_shared/certificados.ts";
 import { Icone, ICONE } from "./Icone";
-import { Dica, Passos, Rotulo, type Passo } from "./ui";
+import { confirmar, Dica, Passos, Rotulo, type Passo } from "./ui";
 import { PlantaCertificada } from "./PlantaCertificada";
 import { PainelSigef } from "./PainelSigef";
 import { BarreiraErro } from "./BarreiraErro";
 import { temRecurso } from "../lib/recursos";
 import { guardarParcelasSigef } from "../lib/sigef";
 import { loteamentoDisponivel } from "../lib/loteamento/persistencia";
-import { textoSemCredito } from "../lib/creditos";
+import { carregarCreditos, custoDoServico, textoSemCredito } from "../lib/creditos";
+import { fmtArea } from "../lib/esboco";
 import type { LonLat } from "../lib/sigef";
 
 export interface ResultadoParse {
@@ -68,7 +69,7 @@ async function paraBase64(f: File): Promise<string> {
 function fusosNaUf(linhas: string[], l: LeituraConfirmada, uf: string): { zone: number; lon: number }[] {
   const proj4 = proj4lib as unknown as Proj4;
   try {
-    const lt = executarReceita(linhas, l.receita, { proj4, ordem: l.ordem, excluir: l.excluir, sigmaPadrao: l.sigma_padrao ?? undefined, versao: l.versao ?? undefined });
+    const lt = executarReceita(linhas, l.receita, { proj4, ordem: l.ordem, excluir: l.excluir, sigmaPadrao: l.sigma_padrao ?? undefined, versao: l.versao ?? undefined, incluir: l.incluir, ligacao: l.ligacao });
     if (lt.fusoGeo || lt.anel.length < 3) return [];
     const bb = uf ? UF_BBOX[uf] : undefined;
     return detectZoneCandidates(lt.anel.map((p) => ({ e: p.e, n: p.n })), proj4)
@@ -204,7 +205,9 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (!leituraIndisponivel(msg)) throw e;
-        // servidor ainda sem a leitura universal: o caminho de sempre
+        // servidor ainda sem a leitura universal: o caminho de sempre — mas o
+        // crédito só sai com o "sim" de quem envia, como no Prosseguir
+        if (!(await confirmarCredito(null))) return;
         onParsed(await chamarFuncao<ResultadoParse>("parse-txt", { ...corpoServico(), nome_arquivo: file.name, conteudo: await file.text() }));
         return;
       }
@@ -237,6 +240,33 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
   }
 
   /**
+   * A pergunta do Prosseguir: quanto crédito sai e de onde. O saldo é lido na
+   * hora (outra pessoa da equipe pode ter gasto enquanto esta conferia). Sem
+   * crédito, não pergunta: avisa e a conferência fica aberta.
+   */
+  async function confirmarCredito(l: LeituraConfirmada | null): Promise<boolean> {
+    const custo = custoDoServico(await carregarCreditos().catch(() => null), definicao.chave);
+    if (!custo.disponivel) { setErroCriacao(custo.detalhe); setErro(custo.detalhe); return false; }
+    const r = l?.resumo;
+    return confirmar({
+      titulo: `Prosseguir vai consumir ${custo.credito}`,
+      texto: (
+        <>
+          <p>{custo.detalhe}</p>
+          {r && (
+            <p className="sub">
+              O serviço será criado com {r.pontos} ponto{r.pontos === 1 ? "" : "s"}{r.partes > 1 ? ` em ${r.partes} partes` : ""}
+              {r.areaHa !== null ? ` · ${fmtArea(r.areaHa)}` : ""}. Até aqui, conferir os pontos e gerar o esboço não custaram nada.
+            </p>
+          )}
+        </>
+      ),
+      confirmar: `Prosseguir e usar ${custo.credito}`,
+      cancelar: "Voltar à conferência",
+    });
+  }
+
+  /**
    * Confirmação da prévia: o parse-txt reexecuta a leitura sobre o arquivo e cria o serviço.
    * Fuso no automático e o arquivo cabendo em mais de um fuso dentro da UF (a Bahia
    * atravessa 23S e 24S; com E/N só, qualquer fuso serve): pergunta antes de criar —
@@ -253,8 +283,10 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
       }
     }
     setPerguntaFuso(null);
-    setCriando(true);
     setErroCriacao(null);
+    // o crédito é gasto aqui, ao criar o serviço: pergunta antes
+    if (!(await confirmarCredito(l))) return;
+    setCriando(true);
     try {
       onParsed(await chamarFuncao<ResultadoParse>("parse-txt", {
         ...corpoServico(), ...(fusoEscolhido !== undefined ? { fuso: fusoEscolhido } : {}), nome_arquivo: previa.arquivo.name, arquivo_base64: previa.b64, leitura: l,
@@ -270,7 +302,7 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
   const passos: Passo[] = [
     ...(perguntaCabe ? [{ rotulo: "Área certificada", estado: fase === "txt" || fase === "leitura" ? "feita" as const : "ativa" as const }] : []),
     { rotulo: "Arquivo do levantamento", estado: fase === "txt" ? "ativa" : fase === "leitura" ? "feita" : "futura" },
-    { rotulo: "Leitura do arquivo", estado: fase === "leitura" ? "ativa" : "futura" },
+    { rotulo: "Conferência do TXT", estado: fase === "leitura" ? "ativa" : "futura" },
     ...(definicao.chave === "loteamento"
       ? [{ rotulo: "Perguntas", estado: "futura" as const }, { rotulo: "Projeto", estado: "futura" as const }, { rotulo: "Entregas", estado: "futura" as const }]
       : [{ rotulo: "Conferência", estado: "futura" as const }, { rotulo: "Documentos", estado: "futura" as const }]),
@@ -402,9 +434,11 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
       <div className="upload-tela fade">
         {stepper}
         <div className="upload-card leitura">
-          {cabecalhoCom(<>Confira como o arquivo foi lido antes de criar o serviço. O desenho, a tabela e os
-            avisos vêm do mesmo código que grava o serviço: o que está aqui é o que vai ser gravado. Formatos novos
-            ficam aprendidos — o próximo arquivo do mesmo aparelho entra sozinho.</>)}
+          {cabecalhoCom(<>Confira e ajuste os pontos antes de criar o serviço: desative, ative um ponto inativo,
+            ligue os pontos na ordem do perímetro ou encaixe um ponto em outro lado. “Gerar imagem” monta o esboço
+            sobre o satélite com as medidas, para baixar. Nada disso gasta crédito: ele só é usado no “Prosseguir”.
+            O desenho, a tabela e os avisos vêm do mesmo código que grava o serviço: o que está aqui é o que vai ser
+            gravado.</>)}
           {perguntaFuso && (
             <div className="aviso-fuso" role="alertdialog" aria-label="Escolha o fuso UTM">
               <strong>Em qual fuso UTM o levantamento foi feito?</strong>
@@ -431,6 +465,9 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
             erro={erroCriacao}
             onConfirmar={criar}
             onTrocarArquivo={() => { setPrevia(null); setErroCriacao(null); setFase("txt"); }}
+            uf={uf}
+            fuso={fuso ? Number(fuso) : null}
+            onEscolherFuso={(z) => { setFuso(String(z)); guardar("fuso", String(z)); }}
           />
         </div>
       </div>
