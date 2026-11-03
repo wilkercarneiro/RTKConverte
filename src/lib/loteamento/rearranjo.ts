@@ -672,7 +672,23 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
   };
   const fundoFora = (f: number) => f > p.profundidadeMax * 1.03 + 0.01;
   const antesFora = selAntes.filter((l) => l.problemas.some((t) => /frente|profundidade/.test(t))).length + selAntes.filter((l) => quinasAviso(l.pol.ext) > 4).length;
-  const testadaFora = formasFinal.filter((f) => Number.isFinite(f.testada) && (f.testada < LIM.frenteMin - 0.005 || (!f.ponta && f.testada > LIM.frenteMax * 1.03))).length;
+  // fundo com fundo que só fecha com lotes de áreas muito diferentes (a seleção com 4 de um
+  // lado e 3 do outro dava 138 a 274 m²): melhor pedir os lotes em pares do que entregar isso
+  {
+    const ar = novos.map((a) => Math.abs(areaAssinada(a)));
+    const med = ar.reduce((s, x) => s + x, 0) / ar.length;
+    if (modo === "fundo" && (Math.max(...ar) - Math.min(...ar)) / med > 0.25) {
+      return { pr: pr0, erro: true, msg: `Fundo com fundo nestes ${N} lotes deixaria áreas muito diferentes (${fmt(Math.min(...ar))} a ${fmt(Math.max(...ar))} m²). Selecione os lotes das duas fileiras em pares — o mesmo trecho de frente e de fundo, a mesma quantidade de cada lado.` };
+    }
+  }
+  // frente medida no lote (os lados dele que ficam na rua), como a planta mede: o lote da
+  // ponta da linha central não tem "frente" no motor e passava com 4,6 m (mín. 5)
+  const frenteNaRua = (an: Pt[]) => an.reduce((s, a, i) => { const b = an[(i + 1) % an.length]; return s + (naRua(a, b) ? dist(a, b) : 0); }, 0);
+  const testadaFora = novos.filter((a, k) => {
+    const f = formasFinal[k];
+    const curta = frenteNaRua(a) < LIM.frenteMin - 0.005;
+    return curta || (!!f && Number.isFinite(f.testada) && (f.testada < LIM.frenteMin - 0.005 || (!f.ponta && f.testada > LIM.frenteMax * 1.03)));
+  }).length;
   const depoisFora = testadaFora + novos.filter((a) => quinasAviso(a) > 4).length + novos.filter((a) => fundoFora(fundoDe(a))).length;
   if (depoisFora > antesFora) return { pr: pr0, erro: true, msg: `Rearranjando estes ${N} lotes por igual, ${depoisFora - antesFora === 1 ? "um lote ficaria" : `${depoisFora - antesFora} lotes ficariam`} fora das medidas do projeto (testada abaixo de ${fmt(p.frenteMin)} m ou acima de ${fmt(p.frenteMax)} m, fundo acima de ${fmt(p.profundidadeMax)} m, ou com 5 quinas) — a ponta da seleção é inclinada demais. Selecione menos lotes na ponta.` };
 
