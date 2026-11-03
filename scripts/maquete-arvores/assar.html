@@ -1,0 +1,177 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Assar árvores (impostores)</title>
+<script type="importmap">
+{ "imports": { "three": "/three/build/three.module.js", "three/addons/": "/three/examples/jsm/" } }
+</script>
+</head>
+<body style="margin:0;background:#888">
+<script type="module">
+// Assa uma árvore glTF (Poly Haven) num atlas de impostor hemi-octaédrico:
+//  - cor: N×N vistas, RGBA (alfa = cobertura), sombreamento suave da copa embutido;
+//  - normal+profundidade: RG = normal (mundo) em octaedro, B = profundidade ao longo da vista.
+// A vista (i, j) olha da direção d = decodificar(((i+0.5)/N)*2-1, ((j+0.5)/N)*2-1),
+// com a linha j = 0 no TOPO da imagem — o mesmo que maquete3d/arvores3d.ts lê.
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+const W = window;
+
+function decodificar(ex, ey) {
+  const x = (ex + ey) / 2, z = (ex - ey) / 2;
+  const y = Math.max(0, 1 - Math.abs(x) - Math.abs(z));
+  return new THREE.Vector3(x, y, z).normalize();
+}
+
+/**
+ * Fecha os furinhos da copa (pixel vazio cercado de folha vira folha, com a
+ * cor média em volta). De longe a árvore lê como copa cheia, não peneira; o
+ * contorno não cresce (precisa de 5 dos 8 vizinhos cheios).
+ */
+function fecharBuracos(canvas, passadas) {
+  const ctx = canvas.getContext("2d");
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data, w = canvas.width, h = canvas.height;
+  for (let p = 0; p < passadas; p++) {
+    const a0 = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) a0[i] = d[i * 4 + 3];
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      if (a0[i] >= 128) continue;
+      let n = 0, r = 0, g = 0, b = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const k = i + dy * w + dx;
+        if (k !== i && a0[k] >= 128) { n++; r += d[k * 4]; g += d[k * 4 + 1]; b += d[k * 4 + 2]; }
+      }
+      if (n >= 5) { d[i * 4] = r / n; d[i * 4 + 1] = g / n; d[i * 4 + 2] = b / n; d[i * 4 + 3] = 255; }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+W.assar = async function assar(cfg) {
+  const { modelo, no, N, celula, celulaNormal, folhas } = cfg;
+  const gltf = await new GLTFLoader().loadAsync(`/modelos/${modelo}/${modelo}_1k.gltf`);
+  const raiz = gltf.scene;
+  // só o nó pedido (o arquivo das coníferas traz três)
+  if (no) raiz.traverse((o) => { if (o.isMesh && o.name !== no && o.parent?.name !== no && !o.name.startsWith(no)) o.visible = false; });
+  raiz.updateMatrixWorld(true);
+  const vis = [];
+  raiz.traverse((o) => { if (o.isMesh && o.visible && (o.parent?.visible ?? true)) vis.push(o); });
+  // caixa e o pé da árvore (o pivô do modelo: o tronco nasce em x = z = 0)
+  const caixa = new THREE.Box3();
+  for (const m of vis) caixa.expandByObject(m);
+  // tira o deslocamento do nó (coníferas b e c ficam fora do eixo); a base vai a y = 0
+  const pe = new THREE.Vector3();
+  if (no) { const n = vis[0]; n.getWorldPosition(pe); }
+  const H = caixa.max.y - caixa.min.y;
+  raiz.position.set(-pe.x, -caixa.min.y, -pe.z);
+  raiz.updateMatrixWorld(true);
+  const C = new THREE.Vector3(0, H / 2, 0);
+  let S = 0, raioCopa = 0;
+  const v = new THREE.Vector3();
+  for (const m of vis) {
+    const p = m.geometry.getAttribute("position");
+    for (let i = 0; i < p.count; i += 7) {
+      v.fromBufferAttribute(p, i).applyMatrix4(m.matrixWorld);
+      S = Math.max(S, v.distanceTo(C));
+      raioCopa = Math.max(raioCopa, Math.hypot(v.x, v.z));
+    }
+  }
+  S *= 1.02;
+  // altura da copa (onde as folhas começam) para o sombreamento
+  let yFolha = H;
+  for (const m of vis) if (/leaves|twigs/.test(m.material.name)) {
+    const b = new THREE.Box3().setFromObject(m);
+    yFolha = Math.min(yFolha, b.min.y);
+  }
+
+  // materiais: cor (com AO do modelo e escurecendo por dentro/embaixo da copa) e normal+profundidade
+  const uDir = { value: new THREE.Vector3() }, uS = { value: S }, uC = { value: C };
+  const corDe = (orig) => {
+    const folha = /leaves|twigs/.test(orig.name);
+    const m = new THREE.MeshBasicMaterial({ map: orig.map, aoMap: orig.aoMap ?? orig.metalnessMap ?? null, aoMapIntensity: 0.85, side: THREE.DoubleSide });
+    if (orig.map) orig.map.colorSpace = THREE.SRGBColorSpace;
+    m.onBeforeCompile = (sh) => {
+      sh.uniforms.uH = { value: H }; sh.uniforms.uY0 = { value: yFolha }; sh.uniforms.uR = { value: raioCopa };
+      sh.uniforms.uTinta = { value: new THREE.Vector3(...(folha && folhas ? folhas : [0, 0, 0])) };
+      sh.vertexShader = "varying vec3 vW;\n" + sh.vertexShader.replace("#include <fog_vertex>", "#include <fog_vertex>\n vW = (modelMatrix * vec4(transformed, 1.0)).xyz;");
+      sh.fragmentShader = "varying vec3 vW; uniform float uH; uniform float uY0; uniform float uR; uniform vec3 uTinta;\n" + sh.fragmentShader.replace("#include <map_fragment>", `
+        #include <map_fragment>
+        if (uTinta.x + uTinta.y + uTinta.z > 0.0) {
+          // copa florida: a luminância da folha vira a cor da flor
+          float l = dot(diffuseColor.rgb, vec3(0.3, 0.55, 0.15));
+          diffuseColor.rgb = clamp(uTinta * (0.35 + l * 2.6), 0.0, 1.0);
+        }
+        float alto = smoothstep(uY0 - 0.5, uH, vW.y);
+        float fora = smoothstep(0.0, uR * 0.95, length(vW.xz));
+        diffuseColor.rgb *= mix(0.72, 1.0, alto) * mix(0.88, 1.0, max(fora, alto * 0.6));`);
+    };
+    return m;
+  };
+  const matNormal = new THREE.ShaderMaterial({
+    uniforms: { uDir, uS, uC },
+    side: THREE.DoubleSide,
+    vertexShader: `varying vec3 vN; varying vec3 vW;
+      void main() { vN = normalize(mat3(modelMatrix) * normal); vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+    fragmentShader: `varying vec3 vN; varying vec3 vW; uniform vec3 uDir; uniform float uS; uniform vec3 uC;
+      vec2 oct(vec3 n) { n /= abs(n.x) + abs(n.y) + abs(n.z); vec2 e = n.xz;
+        if (n.y < 0.0) e = (1.0 - abs(n.zx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.z >= 0.0 ? 1.0 : -1.0); return e * 0.5 + 0.5; }
+      void main() { vec3 n = normalize(vN); if (dot(n, uDir) < 0.0) n = -n;
+        float t = dot(vW - uC, uDir) / (2.0 * uS) + 0.5;
+        gl_FragColor = vec4(oct(n), clamp(t, 0.0, 1.0), 1.0); }`,
+  });
+  const origs = new Map();
+  for (const m of vis) origs.set(m, m.material);
+
+  const cena = new THREE.Scene();
+  cena.add(raiz);
+  const cam = new THREE.OrthographicCamera(-S, S, S, -S, 0.01, S * 6);
+  const ren = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  ren.setPixelRatio(1);
+  ren.outputColorSpace = THREE.SRGBColorSpace;
+  ren.toneMapping = THREE.NoToneMapping;
+  ren.setClearColor(0x000000, 0);
+  document.body.appendChild(ren.domElement);
+
+  const atlas = async (cel, modo) => {
+    ren.setSize(cel, cel);
+    const out = document.createElement("canvas");
+    out.width = out.height = cel * N;
+    const ctx = out.getContext("2d");
+    if (modo === "normal") { ctx.fillStyle = "rgb(128,128,128)"; ctx.fillRect(0, 0, out.width, out.height); }
+    for (const m of vis) m.material = modo === "cor" ? corDe(origs.get(m)) : matNormal;
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const d = decodificar(((i + 0.5) / N) * 2 - 1, ((j + 0.5) / N) * 2 - 1);
+      cam.position.copy(C).addScaledVector(d, S * 3);
+      cam.up.set(0, 1, 0);
+      if (Math.abs(d.y) > 0.999) cam.up.set(0, 0, -1);
+      cam.lookAt(C);
+      cam.updateMatrixWorld(true);
+      uDir.value.copy(d);
+      ren.render(cena, cam);
+      ctx.drawImage(ren.domElement, i * cel, j * cel);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    return out;
+  };
+  const cor = await atlas(celula, "cor");
+  fecharBuracos(cor, 2);
+  ren.setClearColor(0x808080, 1);
+  const nor = await atlas(celulaNormal, "normal");
+  const url = (c, tipo, q) => new Promise((r) => c.toBlob((b) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); }, tipo, q));
+  const res = {
+    cor: await url(cor, "image/webp", 0.86),
+    normal: await url(nor, "image/webp", 0.92),
+    meta: { N, S: +S.toFixed(3), H: +H.toFixed(3), cy: +C.y.toFixed(3), raioCopa: +raioCopa.toFixed(3) },
+  };
+  ren.dispose();
+  ren.domElement.remove();
+  return res;
+};
+W.pronto = true;
+</script>
+</body>
+</html>

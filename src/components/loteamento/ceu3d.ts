@@ -6,7 +6,16 @@
 import * as THREE from "three";
 import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
 
+// dia: kloofendal_48d_partly_cloudy_puresky (cúmulos); tarde e anoitecer: qwantani late_afternoon e dusk_2
 const ARQUIVOS = ["/maquete/ceu-dia.hdr", "/maquete/ceu-tarde.hdr", "/maquete/ceu-crepusculo.hdr"];
+/**
+ * Fundo nítido do dia: a mesma foto em 8K (JPG tonemapeado da Poly Haven), só
+ * a metade de cima. O HDR de 1k dá a luz e o reflexo; no fundo, com 1k, cada
+ * pixel da foto virava ~7 pixels de tela e as nuvens ficavam borradas.
+ */
+const FUNDO_DIA = "/maquete/ceu-dia-fundo.webp";
+/** o mesmo em 4K (celular, placa sem textura de 8K) */
+const FUNDO_DIA_4K = "/maquete/ceu-dia-fundo-4k.webp";
 /**
  * Brilho médio do céu (sem o sol) que cada foto passa a ter: cada uma é
  * calibrada pela própria média. Com a escala do meio-dia nas três, o
@@ -27,6 +36,7 @@ const FRAG = /* glsl */ `
   uniform sampler2D t0; uniform sampler2D t1; uniform sampler2D t2;
   uniform vec3 uPeso; uniform vec3 uGiro; uniform vec3 uEscala; uniform float uTeto;
   uniform vec3 uHorizonte;
+  uniform sampler2D tL; uniform float uLdr;
   varying vec3 vDir;
   vec3 amostra(sampler2D t, float giro, vec3 d) {
     float u = atan(d.z, d.x) / 6.2831853 + 0.5 - giro;
@@ -37,7 +47,14 @@ const FRAG = /* glsl */ `
     vec3 d = normalize(vDir);
     // abaixo do horizonte as fotos "pure sky" não têm chão: a cor do horizonte (casa com a névoa)
     vec3 dc = vec3(d.x, max(d.y, 0.02), d.z);
-    vec3 c = amostra(t0, uGiro.x, dc) * (uPeso.x * uEscala.x) + amostra(t1, uGiro.y, dc) * (uPeso.y * uEscala.y) + amostra(t2, uGiro.z, dc) * (uPeso.z * uEscala.z);
+    vec3 c0 = amostra(t0, uGiro.x, dc) * uEscala.x;
+    if (uLdr > 0.0) {
+      float u = atan(dc.z, dc.x) / 6.2831853 + 0.5 - uGiro.x;
+      vec3 l = texture2D(tL, vec2(fract(u), asin(clamp(dc.y, 0.0, 1.0)) / 1.5707963)).rgb * uLdr;
+      // perto do sol a foto tonemapeada satura: ali fica o HDR
+      c0 = mix(l, c0, smoothstep(14.0, 40.0, dot(c0, vec3(0.333))));
+    }
+    vec3 c = c0 * uPeso.x + amostra(t1, uGiro.y, dc) * (uPeso.y * uEscala.y) + amostra(t2, uGiro.z, dc) * (uPeso.z * uEscala.z);
     c = min(c, vec3(uTeto));
     c = mix(c, uHorizonte, smoothstep(0.02, -0.06, d.y));
     gl_FragColor = vec4(c, 1.0);
@@ -56,38 +73,69 @@ export class Ceu {
   private fotos: Foto[];
   private escala: THREE.Vector3;
   private peso = new THREE.Vector3(1, 0, 0);
+  /** fundo de 8K do dia e o fator que o põe na escala do HDR (0 = sem ele) */
+  private ldr: { tex: THREE.Texture | null; k: { value: number } } = { tex: null, k: { value: 0 } };
 
   private constructor(fotos: Foto[], escala: THREE.Vector3, raio: number) {
     this.fotos = fotos;
     this.escala = escala;
     // fundo: o sol fica um disco claro, sem estourar (o bloom é só para luzes acesas)
-    this.fundo = new THREE.Mesh(new THREE.SphereGeometry(raio, 48, 24), this.material(5));
+    this.fundo = new THREE.Mesh(new THREE.SphereGeometry(raio, 48, 24), this.material(5, true));
     this.fundo.frustumCulled = false;
     this.fundo.renderOrder = -10;
   }
 
   /** Baixa as três fotos (≈3,4 MB). null sem rede. */
-  static async carregar(raio: number): Promise<Ceu | null> {
+  static async carregar(raio: number, fundo8k = true): Promise<Ceu | null> {
     try {
       const ld = new HDRLoader();
       const texs = await Promise.all(ARQUIVOS.map((u) => ld.loadAsync(u)));
       const fotos = texs.map((t) => analisar(t as THREE.DataTexture));
       const k = texs.map((t, i) => BRILHO_ALVO[i] / Math.max(1e-3, brilhoMedio(t as THREE.DataTexture)));
       fotos.forEach((f, i) => f.horizonte.multiplyScalar(k[i]));
-      return new Ceu(fotos, new THREE.Vector3(k[0], k[1], k[2]), raio);
+      const ceu = new Ceu(fotos, new THREE.Vector3(k[0], k[1], k[2]), raio);
+      void ceu.carregarFundo(k[0] * brilhoMedio(texs[0] as THREE.DataTexture), fundo8k ? FUNDO_DIA : FUNDO_DIA_4K);
+      return ceu;
     } catch (e) {
       console.warn("céu HDRI indisponível", e);
       return null;
     }
   }
 
+  /** Fundo de 8K: chega depois; a média do céu fica igual à do HDR já calibrado (`alvo`). */
+  private async carregarFundo(alvo: number, url: string): Promise<void> {
+    try {
+      const t = await new THREE.TextureLoader().loadAsync(url);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = THREE.RepeatWrapping;
+      t.anisotropy = 4;
+      // média (linear) da foto em miniatura, pulando o sol
+      const c = document.createElement("canvas");
+      c.width = 256; c.height = 64;
+      const x = c.getContext("2d", { willReadFrequently: true })!;
+      x.drawImage(t.image as CanvasImageSource, 0, 0, 256, 64);
+      const d = x.getImageData(0, 0, 256, 64).data;
+      const lin = (v: number) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+      let s = 0, n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const l = 0.2126 * lin(d[i]) + 0.7152 * lin(d[i + 1]) + 0.0722 * lin(d[i + 2]);
+        if (l > 0.92) continue;
+        s += l; n++;
+      }
+      this.ldr.tex = t;
+      this.ldr.k.value = alvo / Math.max(1e-3, s / Math.max(1, n));
+      this.fundo.material.uniforms.tL.value = t;
+    } catch { /* fica o HDR */ }
+  }
+
   /** Material do céu; `teto` limita o disco do sol (no reflexo ele vira mancha, o sol de verdade é a luz direcional). */
-  material(teto: number): THREE.ShaderMaterial {
+  material(teto: number, fundo = false): THREE.ShaderMaterial {
     return new THREE.ShaderMaterial({
       uniforms: {
         t0: { value: this.fotos[0].tex }, t1: { value: this.fotos[1].tex }, t2: { value: this.fotos[2].tex },
         uPeso: { value: this.peso }, uGiro: { value: new THREE.Vector3() }, uEscala: { value: this.escala },
         uTeto: { value: teto }, uHorizonte: { value: new THREE.Color() },
+        tL: { value: fundo ? this.ldr.tex : null }, uLdr: fundo ? this.ldr.k : { value: 0 },
       },
       vertexShader: VERT, fragmentShader: FRAG,
       side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false,
@@ -118,6 +166,7 @@ export class Ceu {
     this.fundo.geometry.dispose();
     this.fundo.material.dispose();
     for (const f of this.fotos) f.tex.dispose();
+    this.ldr.tex?.dispose();
   }
 }
 

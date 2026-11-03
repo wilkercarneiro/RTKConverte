@@ -14,3 +14,6 @@ tests/corpus-real/
 docs/prototipos/linha-central/demo/dados.json
 docs/prototipos/linha-central/demo/app.js
 docs/prototipos/linha-central/demo/linha-central.html
+
+# modelos da Poly Haven para assar as árvores da maquete (centenas de MB)
+scripts/maquete-arvores/.modelos/

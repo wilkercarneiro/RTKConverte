@@ -58,6 +58,9 @@ interface Uniforms {
 // Shaders: altura pela cota real
 // ---------------------------------------------------------------------------
 
+import { carregarTexCasa, triplanar, uniformsCasa } from "./materiais3d";
+import { aparelhoModesto, carregarEspecies, especieDe, materialImpostor, sombraImpostor, type Especie, type IdEspecie } from "./arvores3d";
+
 type Tipo = "terreno" | "parede" | "objeto" | "instancia" | "entorno";
 
 /**
@@ -333,6 +336,8 @@ export class Maquete {
   private mesa!: THREE.Mesh;
   private grupoCasas = new THREE.Group();
   private grupoArvores = new THREE.Group();
+  /** árvores de geometria simples (o GLB usa estas quando as da Poly Haven estão na cena) */
+  private arvoresGLB: THREE.Object3D[] | null = null;
   private grupoPostes = new THREE.Group();
   /** redes de infraestrutura projetadas (fios, hidrantes, tampas, reservatório, estação) */
   private grupoInfra = new THREE.Group();
@@ -359,6 +364,8 @@ export class Maquete {
   private fundo: { canvas: HTMLCanvasElement; tex: THREE.CanvasTexture };
   private matParede: THREE.MeshStandardMaterial | null = null;
   private matVidro: THREE.MeshStandardMaterial | null = null;
+  private matMadeira: THREE.MeshStandardMaterial | null = null;
+  private texCasa = uniformsCasa();
   private matLampada: THREE.MeshStandardMaterial | null = null;
   private matPoca: THREE.MeshBasicMaterial | null = null;
   private ultimoRumo = NaN;
@@ -481,7 +488,8 @@ export class Maquete {
     this.scene.fog = this.nevoa;
     this.pos = new Pos(this.renderer, this.scene, this.camera, caixa.clientWidth, caixa.clientHeight);
     this.pos.setSize(caixa.clientWidth, caixa.clientHeight);
-    void Ceu.carregar(this.raio * 30).then((c) => {
+    const fundo8k = this.renderer.capabilities.maxTextureSize >= 8192 && !aparelhoModesto();
+    void Ceu.carregar(this.raio * 30, fundo8k).then((c) => {
       if (!c || this.destruida) { c?.dispose(); return; }
       this.ceu = c;
       this.ceuEnv = new THREE.Mesh(new THREE.SphereGeometry(1000, 48, 24), c.material(3));
@@ -742,11 +750,20 @@ export class Maquete {
         if (uDetOn > 0.5) {
           vec3 mm = texture2D(tMat, vMapUv).rgb * uMisturaCor;
           float perto = 1.0 - smoothstep(70.0, 320.0, length(vViewPosition));
+          // gramado de verdade: manchas grandes (mais seco, mais escuro) em qualquer distância e
+          // um verde menos "de maquete" (a cor do projeto continua mandando)
+          if (mm.b > 0.01) {
+            float m1 = texture2D(tGra, vMundo / 37.0 + 0.21).r, m2 = texture2D(tGra, vMundo / 131.0 + 0.63).r;
+            float lum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+            vec3 gram = mix(vec3(lum), diffuseColor.rgb, 0.8);
+            gram *= mix(vec3(0.9, 0.97, 0.84), vec3(1.08, 1.02, 0.78), smoothstep(0.3, 0.75, m1)) * (0.84 + 0.3 * m2);
+            diffuseColor.rgb = mix(diffuseColor.rgb, gram, mm.b);
+          }
           if (perto > 0.0 && mm.r + mm.g + mm.b > 0.01) {
             float a = texture2D(tAsf, vMundo / 4.0).r * 2.0 - 1.0;
             float c = texture2D(tCal, vMundo / 2.4).r * 2.0 - 1.0;
             float g = texture2D(tGra, vMundo / 2.2).r * 2.0 - 1.0;
-            float d = mm.r * a * 0.42 + mm.g * c * 0.3 + mm.b * g * 0.38;
+            float d = mm.r * a * 0.42 + mm.g * c * 0.3 + mm.b * g * 0.55;
             diffuseColor.rgb *= 1.0 + d * perto;
           }
         }`);
@@ -1108,17 +1125,21 @@ export class Maquete {
     };
     if (!P.length) return;
     const fachada = texturaFachada();
+    const UC = this.texCasa;
     const mP = elevar(new THREE.MeshStandardMaterial({
       vertexColors: true, map: fachada, roughness: 0.82, side: THREE.DoubleSide,
       emissive: 0xffd48a, emissiveMap: texturaJanelas(), emissiveIntensity: 0,
-    }), "objeto", this.U);
+    }), "objeto", this.U, (sh) => triplanar(sh, UC, 0));
+    mP.customProgramCacheKey = () => "elevar-objeto-reboco";
     this.matParede = mP;
-    const mT = elevar(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.66, side: THREE.DoubleSide }), "objeto", this.U);
+    const mT = elevar(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.66, side: THREE.DoubleSide }), "objeto", this.U, (sh) => triplanar(sh, UC, 1));
+    mT.customProgramCacheKey = () => "elevar-objeto-laje";
     const casasP = new THREE.Mesh(mk(paredes), mP), casasT = new THREE.Mesh(mk(telhados), mT);
     for (const m of [casasP, casasT]) { m.castShadow = m.receiveShadow = true; m.customDepthMaterial = sombraDe("objeto", this.U); }
     this.grupoCasas.add(casasP, casasT);
     if (madeira.P.length) {
       const mM = elevar(new THREE.MeshStandardMaterial({ map: texturaRipado(), roughness: 0.72, side: THREE.DoubleSide }), "objeto", this.U);
+      this.matMadeira = mM;
       const casasM = new THREE.Mesh(mk(madeira), mM);
       casasM.castShadow = casasM.receiveShadow = true;
       casasM.customDepthMaterial = sombraDe("objeto", this.U);
@@ -1129,13 +1150,37 @@ export class Maquete {
       const texVidro = texturaVidro();
       this.matVidro = elevar(new THREE.MeshStandardMaterial({
         // luz ambiente da cena é baixa (sombras marcadas): vidro metálico ficaria preto
-        color: 0x5d7688, map: texVidro, emissiveMap: texVidro, roughness: 0.14, metalness: 0.2,
+        // vidro escuro que espelha o céu (o reflexo, não a cor, é o que se vê numa fachada)
+        color: 0x63798a, map: texVidro, emissiveMap: texVidro, roughness: 0.05, metalness: 0.62, envMapIntensity: 2.4,
         emissive: 0xffcf94, emissiveIntensity: 0, side: THREE.DoubleSide,
-      }), "objeto", this.U);
+      }), "objeto", this.U, (sh) => {
+        // de cima, o reflexo "de verdade" da janela é o chão escuro do HDRI; a fotografia de
+        // arquitetura mostra o céu na fachada — o reflexo sobe para o céu (sem inverter o azimute)
+        const alvo = "reflectVec = transformDirectionByInverseViewMatrix( reflectVec, viewMatrix );";
+        sh.fragmentShader = sh.fragmentShader.replace("#include <envmap_physical_pars_fragment>", THREE.ShaderChunk.envmap_physical_pars_fragment.replace(
+          alvo, `${alvo} reflectVec.y = abs( reflectVec.y ) * 0.75 + 0.08; reflectVec = normalize( reflectVec );`,
+        ));
+      });
+      this.matVidro.customProgramCacheKey = () => "elevar-objeto-vidro";
       const casasV = new THREE.Mesh(mk(vidros), this.matVidro);
       casasV.receiveShadow = true;
       this.grupoCasas.add(casasV);
     }
+    // texturas da Poly Haven: reboco, laje de concreto e ripado de cedro (chegam pela rede)
+    void carregarTexCasa(this.renderer.capabilities.getMaxAnisotropy()).then((t) => {
+      if (!t || this.destruida) return;
+      UC.tReb.value = t.reboco; UC.tRebN.value = t.rebocoN; UC.tCon.value = t.concreto; UC.uTexCasa.value = 1;
+      const mM = this.matMadeira;
+      if (mM) {
+        // ripado: a textura cobre ~1,6 m (uv da malha em metros)
+        for (const x of [t.cedro, t.cedroN, t.cedroR]) x.repeat.set(1 / 1.6, 1 / 1.6);
+        mM.map = t.cedro; mM.normalMap = t.cedroN; mM.roughnessMap = t.cedroR;
+        mM.normalScale.set(1.2, 1.2);
+        mM.roughness = 1;
+        mM.needsUpdate = true;
+      }
+      this.sujo = 3;
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -1183,6 +1228,58 @@ export class Maquete {
     instancias(tronco, arv, mats.tronco, (a) => [0, a.copa * 0.22, a.altura * 0.62, a.copa * 0.22, 0]);
     instancias(redonda, redondas, mats.copa, (a, i) => [a.altura - a.copa * 0.85, a.copa, a.copa * 0.82, a.copa, i]);
     instancias(conica, conicas, mats.cone, (a) => [a.altura * 0.42 + a.copa, a.copa * 0.7, a.altura / 3.2, a.copa * 0.7, 0]);
+    // as árvores de verdade (Poly Haven) chegam pela rede e trocam as de geometria simples
+    void carregarEspecies(this.renderer.capabilities.getMaxAnisotropy()).then((esp) => {
+      if (esp && !this.destruida) this.montarImpostores(esp);
+    });
+  }
+
+  /** Uma malha instanciada por espécie: cada árvore é um quadrado com a vista certa do atlas. */
+  private montarImpostores(esp: Map<IdEspecie, Especie>): void {
+    const arv = this.cena.arvores;
+    const grupos = new Map<IdEspecie, number[]>();
+    arv.forEach((a, i) => {
+      const id = especieDe(a, i);
+      if (!esp.has(id)) return;
+      if (!grupos.has(id)) grupos.set(id, []);
+      grupos.get(id)!.push(i);
+    });
+    const velhas = [...this.grupoArvores.children];
+    const quad = new THREE.PlaneGeometry(2, 2);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), s = new THREE.Vector3();
+    for (const [id, idx] of grupos) {
+      const E = esp.get(id)!;
+      const geo = quad.clone();
+      const base = new Float32Array(idx.length), atraso = new Float32Array(idx.length);
+      const mat = materialImpostor(E, DECL, this.U as unknown as Record<string, THREE.IUniform>);
+      const im = new THREE.InstancedMesh(geo, mat, idx.length);
+      idx.forEach((k, n) => {
+        const a = arv[k];
+        const [x, z] = this.xz(a.p);
+        // a altura manda; a copa não passa muito da largura que a cena reservou (quintal, calçada)
+        const esc = Math.min(a.altura / E.meta.H, (a.copa * 1.35) / E.meta.raioCopa);
+        e.set(0, ((k * 2.399963) % (Math.PI * 2)), 0);
+        q.setFromEuler(e);
+        m4.compose(v.set(x, 0, z), q, s.set(esc, esc, esc));
+        im.setMatrixAt(n, m4);
+        base[n] = a.z;
+        atraso[n] = Math.min(1, dist(a.p, this.centro) / this.raio) * 0.8 + ((k * 0.381) % 1) * 0.2;
+      });
+      geo.setAttribute("aBase", new THREE.InstancedBufferAttribute(base, 1));
+      geo.setAttribute("aAtraso", new THREE.InstancedBufferAttribute(atraso, 1));
+      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+      im.castShadow = true;
+      im.receiveShadow = true;
+      im.customDepthMaterial = sombraImpostor(E, DECL, this.U as unknown as Record<string, THREE.IUniform>);
+      im.frustumCulled = false;
+      this.grupoArvores.add(im);
+    }
+    quad.dispose();
+    // as simples saem da cena mas ficam para o modelo GLB (um quadrado com atlas não serve fora daqui)
+    for (const o of velhas) this.grupoArvores.remove(o);
+    this.arvoresGLB = velhas;
+    this.sombraSuja = true;
+    this.sujo = 3;
   }
 
   // -------------------------------------------------------------------------
@@ -1821,7 +1918,7 @@ export class Maquete {
     // árvores: cada instância vira geometria (altura somada na matriz) com a cor no vértice
     const partes: THREE.BufferGeometry[] = [];
     const m4 = new THREE.Matrix4(), c = new THREE.Color();
-    for (const im of [...this.grupoArvores.children, ...this.grupoPostes.children] as THREE.InstancedMesh[]) {
+    for (const im of [...(this.arvoresGLB ?? this.grupoArvores.children), ...this.grupoPostes.children] as THREE.InstancedMesh[]) {
       if (im.material === this.matPoca) continue;
       const corMat = (im.material as THREE.MeshStandardMaterial).color;
       const base = im.geometry.getAttribute("aBase") as THREE.InstancedBufferAttribute;

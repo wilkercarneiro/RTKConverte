@@ -19,6 +19,7 @@ const LENTE = {
     uFaixa: { value: 0.12 },
     uVinheta: { value: 0.22 },
     uGrao: { value: 0.025 },
+    uGrade: { value: 1 },
     uTempo: { value: 0 },
     uRes: { value: new THREE.Vector2(1, 1) },
   },
@@ -27,7 +28,7 @@ const LENTE = {
     void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
-    uniform float uTilt, uFoco, uFaixa, uVinheta, uGrao, uTempo;
+    uniform float uTilt, uFoco, uFaixa, uVinheta, uGrao, uTempo, uGrade;
     uniform vec2 uRes;
     varying vec2 vUv;
     float ruido(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -47,6 +48,15 @@ const LENTE = {
           soma += textureLod(tDiffuse, vUv + d, 0.0).rgb; peso += 1.0;
         }
         cor.rgb = soma / peso;
+      }
+      // gradação de filme: curva S suave, sombras frias e luzes quentes, um pouco mais de cor
+      if (uGrade > 0.0) {
+        vec3 g = clamp(cor.rgb, 0.0, 1.0);
+        g = mix(g, g * g * (3.0 - 2.0 * g), 0.22);
+        float l = dot(g, vec3(0.2126, 0.7152, 0.0722));
+        g *= mix(vec3(0.965, 0.99, 1.04), vec3(1.035, 1.0, 0.955), smoothstep(0.15, 0.8, l));
+        g = mix(vec3(dot(g, vec3(0.2126, 0.7152, 0.0722))), g, 1.08);
+        cor.rgb = mix(cor.rgb, g, uGrade);
       }
       vec2 c = vUv - 0.5;
       cor.rgb *= 1.0 - uVinheta * smoothstep(0.25, 0.85, dot(c, c) * 2.2);

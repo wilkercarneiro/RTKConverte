@@ -43,3 +43,47 @@ por árvore), kits Kenney/Quaternius para casas (estilo de jogo).
 - A resolução adaptativa existente continua; se o quadro passa de ~40 ms na
   resolução mínima, a N8AO desliga sozinha.
 - Gravação de vídeo: mesma pipeline (o vídeo sai igual à tela).
+
+## Biblioteca Poly Haven (2026-11-02)
+
+Pedido do Wilker: usar a Poly Haven para a maquete ficar mais cinematográfica na
+apresentação. Tudo CC0, hospedado em `public/maquete/` (nada de link para o site deles).
+
+| Pedaço | Ativo da Poly Haven | Como entra |
+|---|---|---|
+| Árvores | `tree_small_02` (rua e ipê), `island_tree_01` (copa larga), `jacaranda_tree` (sombra grande), `fir_sapling_medium` nó a (conífera) | **Impostores**: cada modelo (300 mil a 4,7 milhões de triângulos) é assado em 64 vistas (hemisfério octaédrico 8×8). Cor 3072² (webp com alfa) + normal/profundidade 1024² (RG = normal em octaedro, B = profundidade). Na cena, cada árvore é um quadrado que vira para a câmera (para o sol na sombra), escolhe a vista, escreve a profundidade real (entra atrás das casas) e é iluminada como volume (normal da esfera da copa misturada à do atlas). |
+| Ipê amarelo e rosa | o mesmo `tree_small_02` | a placa de vídeo pinta a folha (o que é mais verde que vermelho) com a cor da flor; sem atlas próprio |
+| Céu do dia | `kloofendal_48d_partly_cloudy_puresky` (cúmulos) | HDR 1k para luz e reflexo; o JPG tonemapeado da Poly Haven, só a metade de cima, em 8192×2048 (4096 no celular) para o fundo — com 1k as nuvens borravam |
+| Céu da tarde e anoitecer | `qwantani_late_afternoon_puresky`, `qwantani_dusk_2_puresky` | como antes |
+| Reboco das paredes | `white_stucco` (cor + normal) | triplanar no mundo (as casas não têm uv de verdade), relevo pela normal, só de perto |
+| Laje | `concrete_floor_01` | triplanar de cima, só de perto |
+| Ripado | `japanese_cedar_planks` (cor, normal, rugosidade) | uv em metros da malha de madeira, a textura cobre 1,6 m |
+
+Outros acertos da mesma entrega: vidro semimetálico refletindo o céu (de cima o
+reflexo "certo" é o chão escuro do HDRI; o reflexo sobe para o céu), gramado com
+manchas grandes e verde menos "de maquete", gradação de filme no passe da lente
+(curva S, sombra fria, luz quente; `uGrade`), e a borda da caixa da rua
+suavizada no greide (`cena3d.ts`: a máscara por célula deixava a calçada em
+escadinha de perto).
+
+**Assar de novo:** `node scripts/maquete-arvores/assar.mjs [id]` baixa os modelos
+para `scripts/maquete-arvores/.modelos/` (fora do Git, ~440 MB) e grava
+`public/maquete/arvores/`. Usa o Chrome pelo playwright-core (`PLAYWRIGHT_CORE`).
+A convenção das vistas (linha 0 no topo, decodificação do octaedro, eixo da câmera
+de assar) tem de bater com `arvores3d.ts`.
+
+**Memória de vídeo:** cada atlas de cor de 3072² com mipmaps ocupa ~50 MB; são 4.
+Celular/tablet (`pointer: coarse`) ou `deviceMemory < 8` carrega pela metade
+(`aparelhoModesto`) e o céu de 4K. O GLB exportado continua com as árvores de
+geometria simples (`arvoresGLB`), porque o quadrado com atlas não serve fora daqui.
+
+**Armadilhas:** (1) `projectionMatrix` não existe no fragment shader do three:
+declarar; (2) mipmap tira a média do alfa das folhas com o vazio e a árvore
+distante vira esqueleto — o alfa sobe com o nível de mip (`alfaCheio`) e a
+assadura fecha os furinhos da copa; (3) normal de 128 px por vista mostrava blocos
+de perto — a normal da esfera da copa manda; (4) canvas 2D guarda alfa
+pré-multiplicado: por isso a normal/profundidade vai em RGB opaco, não no alfa;
+(5) `#include` do three só é resolvido depois do `onBeforeCompile`: para mexer no
+reflexo, troque o `#include <envmap_physical_pars_fragment>` pelo chunk editado;
+(6) material com shader extra precisa de `customProgramCacheKey` próprio (senão
+reaproveita o programa de outro material "elevar-objeto").

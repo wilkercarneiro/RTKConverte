@@ -1,0 +1,38 @@
+{
+  "rua": {
+    "N": 8,
+    "S": 3.222,
+    "H": 4.557,
+    "cy": 2.278,
+    "raioCopa": 2.923,
+    "nome": "árvore de calçada",
+    "fonte": "Poly Haven tree_small_02 (CC0)"
+  },
+  "copa": {
+    "N": 8,
+    "S": 3.295,
+    "H": 5.027,
+    "cy": 2.514,
+    "raioCopa": 2.84,
+    "nome": "copa larga",
+    "fonte": "Poly Haven island_tree_01 (CC0)"
+  },
+  "jacaranda": {
+    "N": 8,
+    "S": 14.42,
+    "H": 19.469,
+    "cy": 9.734,
+    "raioCopa": 12.923,
+    "nome": "sombra grande",
+    "fonte": "Poly Haven jacaranda_tree (CC0)"
+  },
+  "conifera": {
+    "N": 8,
+    "S": 4.563,
+    "H": 8.826,
+    "cy": 4.413,
+    "raioCopa": 2.959,
+    "nome": "conífera",
+    "fonte": "Poly Haven fir_sapling_medium (CC0)"
+  }
+}

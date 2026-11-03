@@ -352,6 +352,23 @@ export function montarCena(res: Resultado, params: Parametros, terreno: GradeTer
       const t = d[k] / w, s = t * t * (3 - 2 * t);
       g.final[k] = greide + (g.natural[k] - greide) * s;
     }
+    // a borda da caixa da rua sai da grade em degraus (máscara por célula) e, de perto,
+    // a calçada ficava com a beirada em escadinha: suaviza a diferença final − natural
+    // numa faixa de ~2 células dos dois lados da borda (o miolo da rua fica no greide)
+    const D = new Float32Array(n);
+    for (let k = 0; k < n; k++) D[k] = g.final[k] - g.natural[k];
+    const Db = D.slice();
+    borrar(Db, nx, ny, 1, 2);
+    const fora = new Uint8Array(n);
+    for (let k = 0; k < n; k++) fora[k] = g.rua[k] ? 0 : 1;
+    const dIn = distanciaAte(fora, nx, ny, passo);
+    for (let k = 0; k < n; k++) {
+      if (!g.gleba[k]) continue;
+      const dd = g.rua[k] ? dIn[k] : d[k];
+      const t = Math.min(1, Math.max(0, (dd - passo) / (passo * 1.5)));
+      const w = 1 - t * t * (3 - 2 * t);
+      if (w > 0) g.final[k] = g.natural[k] + D[k] + (Db[k] - D[k]) * w;
+    }
     const a2 = passo * passo;
     for (let k = 0; k < n; k++) {
       const dz = g.final[k] - g.natural[k];
