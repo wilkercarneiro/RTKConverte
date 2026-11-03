@@ -1407,7 +1407,9 @@ export function igualarAreas(pr0: Projeto, res: Resultado, q: Quadra, indices: n
   // forma do lote: o que encosta na rua (a testada) não some. Igualar a área a
   // qualquer custo deixava, na ponta de uma quadra em leque, lote sem frente e
   // lote comprido de 60 m de fundo — ali a divisa para e a mensagem avisa
-  const frenteMinima = Math.max(2.5, 0.5 * (pr0.params.frenteMin || 5));
+  // (a testada mínima do PROJETO: com metade da mínima, o igualar deixava lote com
+  // 6,35 m de frente num loteamento de mínimo 8 — pendência nova que o operador não pediu)
+  const frenteMinima = Math.max(2.5, pr0.params.frenteMin || 5);
   const frenteNaBorda = (x: Pt[]) => x.reduce((t, v, j) => { const w = x[(j + 1) % x.length]; return t + (naBorda(q, lerp(v, w, 0.5)) && naBorda(q, v) && naBorda(q, w) ? dist(v, w) : 0); }, 0);
   // e não vira faixa: alongamento (perímetro² ÷ área; 10×25 dá 19,6 e 7×40 dá 31) até 34 —
   // lote que já era mais comprido que isso não pode ficar mais comprido do que era
