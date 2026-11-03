@@ -327,6 +327,30 @@ export function contextoDe(sel: Selecao): "nada" | "lote" | "quadra" | "rua" | "
 const TIPOS_AREA: Record<string, TipoArea> = { verde: "verde", institucional: "institucional", lazer: "lazer", app: "app" };
 const SOBRAS: Record<string, Sobra> = { esquinas: "esquinas", esquina: "esquinas", ultimo: "ultimo", distribuir: "distribuir", extra: "extra" };
 
+/** Comando que pode levar segundos (rearranjo dos lotes selecionados): roda fora da tela. */
+export function comandoPesado(texto: string, sel: Selecao): boolean {
+  const t = texto.trim().toLowerCase();
+  if (/^(igualar|equalizar|iguais)(\s|$)/.test(t)) return sel?.tipo === "lotes";
+  return /^(ajustar\s+)?fundo\s+com\s+fundo\s*$/.test(t) && sel?.tipo === "lotes";
+}
+
+/** Roda o comando num Web Worker (a tela segue respondendo); sem worker, roda aqui mesmo. */
+export function executarEmSegundoPlano(texto: string, pr: Projeto, res: Resultado, sel: Selecao): Promise<Saida> {
+  return new Promise((resolve, reject) => {
+    const aqui = () => { try { resolve(executar(texto, pr, res, sel)); } catch (e) { reject(e); } };
+    let w: Worker;
+    try {
+      w = new Worker(new URL("./comando.worker.ts", import.meta.url), { type: "module" });
+    } catch { aqui(); return; }
+    w.onmessage = (e: MessageEvent<{ ok: boolean; s?: Saida; erro?: string }>) => {
+      w.terminate();
+      if (e.data.ok && e.data.s) resolve(e.data.s); else reject(new Error(e.data.erro ?? "o comando falhou"));
+    };
+    w.onerror = (ev) => { ev.preventDefault?.(); w.terminate(); aqui(); };
+    try { w.postMessage({ texto, projeto: pr, res, sel }); } catch { w.terminate(); aqui(); }
+  });
+}
+
 export function executar(texto: string, pr: Projeto, res: Resultado, sel: Selecao): Saida {
   const bruto = texto.trim();
   if (!bruto) return { msg: "" };

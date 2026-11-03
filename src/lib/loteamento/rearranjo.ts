@@ -674,7 +674,7 @@ function melhorComDobra(pc: Peca, n: number, juncoesDe?: Pt[], regua: Regua = pe
   return melhor;
 }
 
-export interface Blocos { aneis: Pt[][]; formas: Forma[]; custo: number; resumo: string }
+export interface Blocos { aneis: Pt[][]; formas: Forma[]; custo: number; resumo: string; /** lotes fora das medidas da planta */ fora: number }
 
 /**
  * Divisão em blocos de uma quadra de três frentes (ver acima). R é o contorno da
@@ -737,7 +737,10 @@ export function blocosTresFrentes(R: Pt[], tipos: TipoAresta[], refs: string[], 
     for (let i = 0; i < n; i++) if (rua[i] && distSegmento(a, E.anel[i], E.anel[(i + 1) % n]).d < 0.05 && distSegmento(b, E.anel[i], E.anel[(i + 1) % n]).d < 0.05) return E.refs[i] || E.tipos[i];
     return null;
   };
-  const medida = (an: Pt[]) => {
+  // (a mesma divisão de um bloco volta em vários candidatos: a medida de cada lote fica guardada)
+  const medidas = new WeakMap<Pt[], { fora: number; custo: number }>();
+  const medida = (an: Pt[]) => { let m = medidas.get(an); if (!m) { m = medir(an); medidas.set(an, m); } return m; };
+  const medir = (an: Pt[]) => {
     const segs: [Pt, Pt][] = [], refsL = new Set<string>();
     let frente = 0;
     an.forEach((a, i) => {
@@ -935,7 +938,7 @@ export function blocosTresFrentes(R: Pt[], tipos: TipoAresta[], refs: string[], 
   }
   const fim = melhor as (Blocos & { fora: number }) | null;
   if (!fim) return null;
-  return { aneis: fim.aneis, formas: fim.formas, custo: fim.custo, resumo: fim.resumo };
+  return { aneis: fim.aneis, formas: fim.formas, custo: fim.custo, resumo: fim.resumo, fora: fim.fora };
 }
 const temRot = (pc: Peca, r: Rotulo) => pc.rot.some((y) => y === r);
 const mult2 = (a: Pt, k: number): Pt => [a[0] * k, a[1] * k];
@@ -1001,7 +1004,11 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
   let duas = false;
   let soUmaFileira = true;
   let emOrdem = false;
-  try {
+  // quadra de três frentes: os blocos primeiro — a linha central não fecha nesse formato e
+  // levava ~9 s tentando (a tela travava). Ela só roda se os blocos deixarem lote fora
+  const blocos = blocosTresFrentes(R, tipos, refs, N, p);
+  if (blocos && blocos.fora === 0 && !quebra(blocos.aneis)) { novos = blocos.aneis; formasFinal = blocos.formas; resumo = blocos.resumo; duas = true; emOrdem = true; soUmaFileira = false; }
+  if (!novos) try {
     const E = estruturar(R, tipos, refs);
     soUmaFileira = false;
     const temRua = (e: [number, number]) => E.cadeias.some((c) => ehRua(c.tipo) && c !== E.f1 && c !== E.f2 && dentroDe(c.s0, c.s1, e, E.P));
@@ -1115,7 +1122,7 @@ export function rearranjarSelecao(pr0: Projeto, res: Resultado, q: Quadra, indic
   // quadra de três frentes (triângulo entre três ruas): nem a linha central nem as faixas
   // fecham — a terra vai em blocos (testa, miolo fundo com fundo, ponta de rua a rua)
   if (!novos && !soUmaFileira) {
-    const b = blocosTresFrentes(R, tipos, refs, N, p);
+    const b = blocos;
     if (b && !quebra(b.aneis)) { novos = b.aneis; formasFinal = b.formas; resumo = b.resumo; duas = true; emOrdem = true; }
   }
 

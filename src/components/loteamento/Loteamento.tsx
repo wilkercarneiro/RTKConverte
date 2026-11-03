@@ -13,11 +13,11 @@ import { calcular, fmt } from "../../lib/loteamento/calculo.ts";
 import type { Resultado } from "../../lib/loteamento/calculo.ts";
 import type { Projeto } from "../../lib/loteamento/modelo.ts";
 import { carregarProjeto, perimetroDoServico, projetoInicial, salvarProjeto } from "../../lib/loteamento/persistencia.ts";
-import { COMANDOS, chaveDoLote, contextoDe, executar, lotesDaSelecao } from "../../lib/loteamento/acoes.ts";
+import { COMANDOS, chaveDoLote, comandoPesado, contextoDe, executar, executarEmSegundoPlano, lotesDaSelecao } from "../../lib/loteamento/acoes.ts";
 import { dentroPol } from "../../lib/loteamento/geom.ts";
 import { pontoInterno } from "../../lib/loteamento/auto.ts";
 import { fixarEstrutura, fundoComFundoEmTodasAsQuadras, melhorEstrutura, pedirEstrutura } from "../../lib/loteamento/edicao.ts";
-import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
+import type { Ferramenta, Saida, Selecao } from "../../lib/loteamento/acoes.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { Passos, StatusSalvamento } from "../ui";
 import { BotaoConcluir, useConclusao } from "../ConcluirServico";
@@ -123,6 +123,8 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   const [vista, setVista] = useState<OpcoesVista>({ satelite: true, medidas: true, cores: "situacao" });
   const [focar, setFocar] = useState<{ pt: Pt; n: number } | null>(null);
   const [msg, setMsg] = useState<{ t: string; erro?: boolean } | null>(null);
+  // comando pesado rodando no worker (o rótulo aparece na barra de comando)
+  const [ocupado, setOcupado] = useState<string | null>(null);
   const [cmd, setCmd] = useState("");
   const [historicoCmd, setHistoricoCmd] = useState<string[]>([]);
   const [ajuda, setAjuda] = useState(false);
@@ -338,8 +340,28 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
 
   function rodarComando(texto: string) {
     if (!projeto || !res) return;
+    if (ocupado) { mostrar(`Aguarde: ${ocupado.toLowerCase()}`, true); return; }
     if (/^\s*(ajustar\s+)?fundo\s+com\s+fundo\s+(em\s+)?tod[ao]s/i.test(texto)) { fundoComFundoEmTodas(); setHistoricoCmd((h) => [texto, ...h.filter((x) => x !== texto)].slice(0, 30)); return; }
-    const s = concluirEstrutura(executar(texto, projeto, res, sel));
+    // rearranjo dos lotes selecionados: pode levar segundos — fora da thread da tela, com aviso
+    if (comandoPesado(texto, sel)) {
+      const antes = projeto;
+      const rotulo = /fundo/i.test(texto) ? "Ajustando fundo com fundo…" : "Igualando os lotes…";
+      setOcupado(rotulo);
+      setMsg(null);
+      executarEmSegundoPlano(texto, projeto, res, sel)
+        .then((s) => {
+          // o projeto mudou enquanto calculava (desfazer, outra edição): o resultado é de outro estado
+          if (projetoAtual.current !== antes) { mostrar("O projeto mudou enquanto o comando calculava — nada foi aplicado. Rode de novo.", true); return; }
+          aplicarRef.current(concluirEstrutura(s), texto);
+        })
+        .catch((e) => mostrar(`O comando falhou: ${e instanceof Error ? e.message : String(e)}`, true))
+        .finally(() => setOcupado(null));
+      return;
+    }
+    aplicar(concluirEstrutura(executar(texto, projeto, res, sel)), texto);
+  }
+
+  function aplicar(s: Saida, texto: string) {
     if (s.desfazer) { lembrarSelecao(); hist.desfazer(); }
     if (s.refazer) { lembrarSelecao("refazer"); hist.refazer(); }
     if (s.ajuda) setAjuda(true);
@@ -350,6 +372,11 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
     if (aceito && s.msg) mostrar(s.msg, s.erro);
     if (texto.trim()) setHistoricoCmd((h) => [texto, ...h.filter((x) => x !== texto)].slice(0, 30));
   }
+
+  const projetoAtual = useRef(projeto);
+  projetoAtual.current = projeto;
+  const aplicarRef = useRef(aplicar);
+  aplicarRef.current = aplicar;
 
   if (erroCarga) {
     return (
@@ -468,8 +495,9 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
                 <button type="submit" className="principal">Executar</button>
               </div>
               <div className="lot-cmd-sugestoes">
-                {msg && <span className={`lot-cmd-msg${msg.erro ? " erro" : ""}`}>{msg.t}</span>}
-                {!msg && sugestoes.map((c) => (
+                {ocupado && <span className="lot-cmd-msg ocupado" role="status"><span className="spinner" aria-hidden="true" />&nbsp; {ocupado}</span>}
+                {!ocupado && msg && <span className={`lot-cmd-msg${msg.erro ? " erro" : ""}`}>{msg.t}</span>}
+                {!ocupado && !msg && sugestoes.map((c) => (
                   <button type="button" key={c.cmd} title={c.desc} onClick={() => { const temNum = /\d/.test(c.exemplo); if (temNum) { setCmd(c.exemplo.replace(/\d+.*$/, "")); cmdRef.current?.focus(); } else rodarComando(c.exemplo); }}>{c.exemplo}</button>
                 ))}
                 {msg && <button type="button" className="fantasma" onClick={() => setMsg(null)}>×</button>}

@@ -195,6 +195,13 @@ Agora, quando a linha central e as faixas não fecham, `blocosTresFrentes` (rear
 
 Limite que a conta mostra: com T = 353 m², frente máxima de 15 m e fundo máximo de 42 m (3% de folga), duas fileiras pedem pelo menos 45,7 m de largura, e o lote de rua a rua aceita no máximo 43,3 m. Com a reta da ponta perpendicular sobra sempre um lote fora; por isso a reta gira.
 
+**Sem travar a tela (03/11, tarde).** O igualar rodava na thread da tela, que congelava de 10 a 17 s (13 s na E). Agora:
+- o "Igualar áreas" e o "fundo com fundo" nos lotes selecionados rodam num Web Worker (`comando.worker.ts`, `executarEmSegundoPlano` em acoes.ts), com recuo para a própria thread se o navegador não deixar;
+- a barra de comando mostra "Igualando os lotes…" com spinner, um segundo comando espera, e se o projeto mudar no meio o resultado é descartado;
+- na quadra de três frentes os blocos rodam antes da linha central, que só entra se sobrar lote fora (E: de 13 s para 3 s);
+- a medida de cada lote nos blocos fica guardada entre os candidatos.
+Medido no laboratório: a maior pausa da tela durante o cálculo foi de 120 a 133 ms.
+
 ### Geração já ajustada (02/11/2026)
 
 - Depois de traçar as ruas, `estruturarQuadras` (auto.ts) refaz cada quadra de duas fileiras pela linha central.
