@@ -332,7 +332,7 @@ export function pintarProjeto(ctx: Ctx, q: Quadro, d: DadosPintura): void {
   });
   if (modo === "terraplenagem") pintarCampoGrade(ctx, q, cena.grade, (g, kk) => {
     if (!g.gleba[kk]) return null;
-    const dz = g.final[kk] - g.natural[kk];
+    const dz = g.projeto[kk] - g.natural[kk];
     if (Math.abs(dz) < 0.05) return g.rua[kk] ? null : [255, 255, 255, 0.35];
     const t = Math.min(1, Math.abs(dz) / 2.5);
     return dz > 0 ? [40, 110, 230, 0.35 + 0.6 * t] : [225, 60, 40, 0.35 + 0.6 * t];

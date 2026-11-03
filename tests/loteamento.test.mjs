@@ -917,6 +917,31 @@ test("maquete 3D: casas dentro dos lotes e fora da rua, árvores fora da pista, 
   }
 });
 
+test("maquete 3D: casa em lote inclinado assenta num platô (não sobe num pedestal)", () => {
+  // terreno com 12% de rampa: no lote, o canto alto e o baixo da casa diferem em metros
+  const t = terrenoSintetico(r0);
+  t.h = t.h.map((h, k) => h + 0.12 * 8 * (k % t.nx));
+  const c = montarCena(r0, pr0.params, t);
+  const casas = c.casas.filter((x) => x.lote >= 0);
+  let desnivelNatural = 0;
+  for (const k of casas) {
+    const v = [-k.u[1], k.u[0]];
+    const P = (a, b) => [k.c[0] + k.u[0] * a + v[0] * b, k.c[1] + k.u[1] * a + v[1] * b];
+    const cantos = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => P(a * k.larg / 2, b * k.prof / 2));
+    const nat = cantos.map((p) => cotaFinal(c.grade, p, "natural"));
+    desnivelNatural = Math.max(desnivelNatural, Math.max(...nat) - Math.min(...nat));
+    // o chão em volta da planta é o platô: o piso fica só o baldrame acima dele
+    for (const p of [...cantos, k.c]) {
+      const vao = k.piso - cotaFinal(c.grade, p);
+      assert.ok(vao > 0.05 && vao < 0.3, `lote ${r0.lotes[k.lote].id}: piso ${vao.toFixed(2)} m acima do chão`);
+    }
+  }
+  assert.ok(desnivelNatural > 1.5, "o terreno do teste devia ser inclinado");
+  // o platô das casas não entra na terraplenagem do projeto (só ruas e taludes)
+  const g = c.grade;
+  for (let k = 0; k < g.rua.length; k++) if (g.rua[k]) assert.equal(g.final[k], g.projeto[k]);
+});
+
 test("maquete 3D: casas modernas dentro da planta, fachada para a rua, vidros nas faces", () => {
   const c = montarCena(r0, pr0.params, terrenoSintetico(r0));
   const casas = c.casas.filter((x) => x.lote >= 0);

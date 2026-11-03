@@ -33,8 +33,11 @@ export interface Grade3D {
   ny: number;
   /** cota do terreno natural em cada nó */
   natural: Float32Array;
-  /** cota do terreno projetado (ruas no greide, taludes) */
+  /** cota do terreno da maquete (ruas no greide, taludes, platô de cada casa) */
   final: Float32Array;
+  /** cota do projeto de terraplenagem: só as ruas e os taludes (sem os platôs das
+   *  casas, que são simulação de ocupação) — é o que a análise de corte/aterro mede */
+  projeto: Float32Array;
   /** declividade do terreno natural (%) */
   decl: Float32Array;
   /** 1 = rua (dentro da caixa da rua) */
@@ -52,7 +55,7 @@ export interface Casa {
   u: Pt;
   larg: number;
   prof: number;
-  /** piso (ponto alto do terreno sob a casa) e fundo da fundação */
+  /** piso (platô do terreno sob a casa + baldrame) e fundo da fundação */
   piso: number;
   fundacao: number;
   andares: number;
@@ -319,7 +322,7 @@ export function montarCena(res: Resultado, params: Parametros, terreno: GradeTer
   const n = nx * ny;
   const g: Grade3D = {
     x0, y0, passo, nx, ny,
-    natural: new Float32Array(n), final: new Float32Array(n), decl: new Float32Array(n),
+    natural: new Float32Array(n), final: new Float32Array(n), projeto: new Float32Array(n), decl: new Float32Array(n),
     rua: new Uint8Array(n), gleba: new Uint8Array(n), lote: new Int32Array(n).fill(-1),
   };
 
@@ -429,7 +432,12 @@ export function montarCena(res: Resultado, params: Parametros, terreno: GradeTer
   }
 
   const rs = op.infra?.agua.reservatorio;
+  g.projeto.set(g.final);
   const casas = [...montarCasas(res, g), ...montarEquipamentos(res, g, rs ? { p: rs.p, r: Math.max(2.5, Math.sqrt(rs.volume / (Math.PI * 4))) } : null)];
+  // cada casa ganha o seu platô (corte de um lado, aterro do outro), como na obra:
+  // sem isso o piso ficava no canto mais alto e, no lote inclinado, a casa subia
+  // num pedestal de metros (ainda mais com o exagero vertical da maquete)
+  for (const c of casas) nivelarCasa(g, c);
   let arvores = montarArvores(res, g, pista, calcada);
   // com o projeto elétrico, os postes são os dele (na divisa dos lotes, vão de 35 m)
   const projetados = op.infra ? postesDoProjeto(op.infra).map((x) => ({ ...x, z: cotaFinal(g, x.p) })) : null;
@@ -473,6 +481,54 @@ export function montarCena(res: Resultado, params: Parametros, terreno: GradeTer
 // ---------------------------------------------------------------------------
 // Simulação de ocupação: uma casa por lote, de frente para a rua
 // ---------------------------------------------------------------------------
+
+/** Altura do piso da casa acima do platô (baldrame + contrapiso). */
+export const BALDRAME = 0.15;
+
+/**
+ * Terraplenagem do lote para a casa: o chão sob a planta (com 1 m de calçada em
+ * volta) vira um platô na cota média do terreno ali — o corte e o aterro se
+ * compensam — e volta ao terreno num talude 1:1,5 dentro do próprio lote (nunca
+ * mexe na rua nem no vizinho). O piso fica um baldrame acima do platô.
+ */
+function nivelarCasa(g: Grade3D, c: Casa): void {
+  const V = esquerda(c.u);
+  let a0 = -c.larg / 2, a1 = c.larg / 2, b0 = -c.prof / 2, b1 = c.prof / 2;
+  for (const v of c.volumes ?? []) { a0 = Math.min(a0, v.a0); a1 = Math.max(a1, v.a1); b0 = Math.min(b0, v.b0); b1 = Math.max(b1, v.b1); }
+  // margem: a calçada em volta, e pelo menos um nó da grade além da parede
+  const m = Math.max(1, g.passo * 1.05);
+  const ca = (a0 + a1) / 2, cb = (b0 + b1) / 2, ha = (a1 - a0) / 2 + m, hb = (b1 - b0) / 2 + m;
+  const meu = (k: number) => !g.rua[k] && g.gleba[k] === 1 && (c.lote >= 0 ? g.lote[k] === c.lote : g.lote[k] < 0);
+  const local = (i: number, j: number): [number, number] => {
+    const d: Pt = [g.x0 + i * g.passo - c.c[0], g.y0 + j * g.passo - c.c[1]];
+    return [dot(d, c.u) - ca, dot(d, V) - cb];
+  };
+  const alcance = Math.hypot(ha, hb) + 8;
+  const i0 = Math.max(0, Math.floor((c.c[0] - alcance - g.x0) / g.passo)), i1 = Math.min(g.nx - 1, Math.ceil((c.c[0] + alcance - g.x0) / g.passo));
+  const j0 = Math.max(0, Math.floor((c.c[1] - alcance - g.y0) / g.passo)), j1 = Math.min(g.ny - 1, Math.ceil((c.c[1] + alcance - g.y0) / g.passo));
+  // cota do platô: média do terreno sob a planta (amostrada, não só nos cantos)
+  let soma = 0, cont = 0;
+  for (let a = -0.5; a <= 0.5001; a += 0.125) for (let b = -0.5; b <= 0.5001; b += 0.125) {
+    const pa = ca + a * (a1 - a0), pb = cb + b * (b1 - b0);
+    soma += cotaFinal(g, [c.c[0] + c.u[0] * pa + V[0] * pb, c.c[1] + c.u[1] * pa + V[1] * pb]);
+    cont++;
+  }
+  const plato = soma / cont;
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const k = j * g.nx + i;
+    if (!meu(k)) continue;
+    const [la, lb] = local(i, j);
+    const d = Math.hypot(Math.max(0, Math.abs(la) - ha), Math.max(0, Math.abs(lb) - hb));
+    const dh = g.final[k] - plato;
+    if (d <= 0) { g.final[k] = plato; continue; }
+    const w = Math.min(8, Math.max(1.5, Math.abs(dh) * 1.5));
+    if (d >= w) continue;
+    const t = d / w, s = t * t * (3 - 2 * t);
+    g.final[k] = plato + dh * s;
+  }
+  c.piso = plato + BALDRAME;
+  c.fundacao = plato - 0.5;
+}
 
 // casa moderna: branco, off-white e cinzas claros; laje de brita cinza
 const PAREDES = [0xf4f3ef, 0xf1efe9, 0xeae7e0, 0xe2e1dc, 0xd6d7d4, 0xf6f4ee, 0xe6e2d8];
@@ -840,7 +896,7 @@ function fiacaoSimples(postes: Poste[], padroes: { p: Pt; z: number }[], pista: 
 /** Área do lote que precisa de corte/aterro além do talude da rua (m²) — ficha do lote. */
 export function areaComTalude(g: Grade3D, idx: number): number {
   let n = 0;
-  for (let k = 0; k < g.lote.length; k++) if (g.lote[k] === idx && Math.abs(g.final[k] - g.natural[k]) > 0.05) n++;
+  for (let k = 0; k < g.lote.length; k++) if (g.lote[k] === idx && Math.abs(g.projeto[k] - g.natural[k]) > 0.05) n++;
   return n * g.passo * g.passo;
 }
 
