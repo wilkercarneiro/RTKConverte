@@ -38,6 +38,7 @@ import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 import { aplicarTimbreAutomatico, identidadeDaEmpresa, precisaTimbreAutomatico } from "../_shared/timbre_automatico.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -114,7 +115,7 @@ Deno.serve(async (req) => {
     // fornece a área e o perímetro certificados para as plantas exibirem no
     // lugar dos calculados. Sem ela, tudo sai como sempre saiu.
     // metragem: comprimento de cada lado escrito na planta (escolha do operador ao gerar)
-    const { servico_id, folha: folhaPedida, pdf_base64, metragem } = await req.json();
+    const { servico_id, folha: folhaPedida, pdf_base64, metragem } = await lerJson(req, LIMITE_MB(40));
     // A imagem de satélite não vem mais da tela: o servidor usa a guardada em
     // entrada/ ou busca no Mapbox pelo anel do imóvel (e de cada gleba).
     const tokenMapbox = Deno.env.get("MAPBOX_TOKEN");
@@ -127,6 +128,8 @@ Deno.serve(async (req) => {
     const autor = await autorDaChamada(clienteDoUsuario(req));
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    // auditoria 04/11/2026: limite de frequência por usuário/empresa (tabela limites_uso, 0038)
+    if (!(await dentroDoLimite(supa, `gerar:${autor ?? servico_id}`, 30, 300))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
 
     const { data: servico, error: eS } = await supa.from("servicos").select().eq("id", servico_id).single();
     if (eS || !servico) return json({ erro: "Serviço não encontrado" }, 404);
@@ -786,6 +789,7 @@ Deno.serve(async (req) => {
       },
     });
   } catch (err) {
+    if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);
     console.error("gerar-documentos:", err);
     return json({ erro: mensagemDeErro(err) }, 400);
   }

@@ -166,10 +166,23 @@ export function MapaInterativo(props: Props) {
       const p = f.properties as Record<string, string | number | null>;
       mapa.getCanvas().style.cursor = "pointer";
       const area = p.area_ha != null ? `${Number(p.area_ha).toFixed(4).replace(".", ",")} ha` : "";
-      popup.setLngLat(e.lngLat).setHTML(
-        `<b>${p.nome ?? "Parcela certificada"}</b><br><span class="mono">${p.codigo ?? ""}</span>` +
-        `${p.municipio ? `<br>${p.municipio}${p.uf ? "/" + p.uf : ""}` : ""}${area ? `<br>${area}` : ""}${p.situacao ? `<br>${p.situacao}` : ""}`,
-      ).addTo(mapa);
+      // Auditoria 04/11/2026: montado com textContent, nunca HTML. Nome e código
+      // vêm do banco (CSV do vizinho enviado por qualquer membro, WFS do INCRA):
+      // com setHTML, um nome "<img onerror=…>" rodava script na sessão de quem
+      // passasse o mouse.
+      const caixa = document.createElement("div");
+      const linha = (texto: string, tag: "b" | "span" | "div" = "div", classe?: string) => {
+        const el = document.createElement(tag);
+        el.textContent = texto;
+        if (classe) el.className = classe;
+        caixa.appendChild(el);
+      };
+      linha(String(p.nome ?? "Parcela certificada"), "b");
+      if (p.codigo) linha(String(p.codigo), "div", "mono");
+      if (p.municipio) linha(`${p.municipio}${p.uf ? "/" + p.uf : ""}`);
+      if (area) linha(area);
+      if (p.situacao) linha(String(p.situacao));
+      popup.setLngLat(e.lngLat).setDOMContent(caixa).addTo(mapa);
     };
     const esconder = () => { mapa.getCanvas().style.cursor = ""; popup.remove(); };
     mapa.on("mousemove", "parcelas-fill", mostrar);

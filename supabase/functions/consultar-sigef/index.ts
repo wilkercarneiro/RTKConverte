@@ -16,8 +16,9 @@
 // cópia oficial o que sumiu do INCRA quando a resposta veio inteira — nunca
 // numa resposta cortada (pelo nosso limite ou pelo do GeoServer) nem vazia.
 import { createClient } from "@supabase/supabase-js";
-import { ehRecusa, exigirUsuario } from "../_shared/acesso.ts";
+import { ehRecusa, escritorioDoUsuario, exigirUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -146,7 +147,13 @@ Deno.serve(async (req) => {
   try {
     const quem = await exigirUsuario(clienteDoUsuario(req));
     if (ehRecusa(quem)) return json({ erro: quem.erro }, quem.status);
-    const { imovel, uf: ufBruta, margem_m } = await req.json();
+    // auditoria 04/11/2026: só login não bastava — conta sem empresa ou de empresa
+    // suspensa disparava a sincronização (escrita pesada na base global)
+    const acesso = await escritorioDoUsuario(clienteDoUsuario(req));
+    if (ehRecusa(acesso)) return json({ erro: acesso.erro }, acesso.status);
+    const svcLimite = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    if (!(await dentroDoLimite(svcLimite, `sigef:${acesso.escritorioId}`, 12, 60))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
+    const { imovel, uf: ufBruta, margem_m } = await lerJson(req, LIMITE_MB(5));
     const uf = String(ufBruta ?? "").trim().toUpperCase();
     if (!UFS.has(uf)) return json({ erro: "Informe a UF do imóvel para consultar o SIGEF" }, 422);
     const caixa = caixaDe(imovel, Math.min(Math.max(Number(margem_m) || 300, 0), 3000));
@@ -184,6 +191,7 @@ Deno.serve(async (req) => {
     }
     return json({ ok, uf, caixa, camadas, guardadas: data?.guardadas ?? 0, removidas: data?.removidas ?? 0, avisos });
   } catch (e) {
+    if (e instanceof CorpoInvalido) return json({ erro: e.message }, e.status);
     return json({ erro: e instanceof Error ? e.message : String(e) }, 500);
   }
 });

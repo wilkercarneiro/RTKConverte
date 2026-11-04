@@ -43,6 +43,7 @@ import type { GrupoCertificado, VerticeUnido } from "../_shared/certificados.ts"
 import { autorDaChamada, ehRecusa, escritorioDoUsuario, exigirPermissao } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -185,10 +186,19 @@ function camposDaModalidade(c: unknown): Record<string, unknown> {
   return out;
 }
 
+/** Nome de arquivo para o Storage: sem pasta, sem "..", só [letras números . _ - espaço], até 120. */
+function nomeSeguro(bruto: string, padrao: string): string {
+  const base = bruto.split(/[\\/]/).pop() ?? "";
+  const limpo = base.normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^\w.\- ]/g, "_").replace(/\.{2,}/g, "_").replace(/^[.\s]+/, "")
+    .slice(0, 120).trim();
+  return limpo || padrao;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { nome_arquivo, conteudo, arquivo_base64, leitura: leituraPedida, uf, fuso, certificados, tolerancia_certificados, tolerancia_linha, campos } = await req.json();
+    const { nome_arquivo, conteudo, arquivo_base64, leitura: leituraPedida, uf, fuso, certificados, tolerancia_certificados, tolerancia_linha, campos } = await lerJson(req, LIMITE_MB(40));
     const temBytes = typeof arquivo_base64 === "string" && arquivo_base64.length > 0;
     if (!temBytes && (typeof conteudo !== "string" || !conteudo.trim())) return json({ erro: "Conteúdo do TXT ausente" }, 400);
     // o serviço nasce no escritório de quem enviou (null = banco ainda sem escritórios)
@@ -198,15 +208,21 @@ Deno.serve(async (req) => {
     if (semPermissao) return json({ erro: semPermissao.erro }, semPermissao.status);
     // quem criou (auditoria, 0026): a gravação abaixo é com a service_role
     const autor = await autorDaChamada(clienteDoUsuario(req));
-    const nomeArquivo = typeof nome_arquivo === "string" && nome_arquivo ? nome_arquivo : "pontos.txt";
+    // auditoria 04/11/2026: limite de frequência por usuário/empresa (tabela limites_uso, 0038)
+    if (!(await dentroDoLimite(createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!), `ler:${acesso.escritorioId}`, 40, 300))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
+    // auditoria 04/11/2026: o nome vira caminho no Storage — sem pasta, sem "..",
+    // só caracteres seguros (antes "../<outro>/x" saía da pasta do serviço)
+    const nomeArquivo = nomeSeguro(typeof nome_arquivo === "string" ? nome_arquivo : "", "pontos.txt");
 
     // ---- confrontantes com área certificada (opcional) ----
     const grupos: GrupoCertificado[] = [];
     const csvsBrutos: { nome: string; conteudo: string }[] = [];
     if (Array.isArray(certificados)) {
+      if (certificados.length > 30) return json({ erro: "No máximo 30 CSVs de vizinhos por envio." }, 413);
       for (const c of certificados as CertificadoEntrada[]) {
         if (!c || typeof c.conteudo !== "string" || !c.conteudo.trim()) continue;
-        const nome = typeof c.nome === "string" && c.nome ? c.nome : `certificado-${grupos.length + 1}.csv`;
+        if (c.conteudo.length > 5_000_000) return json({ erro: "CSV de vizinho maior que 5 MB." }, 413);
+        const nome = nomeSeguro(typeof c.nome === "string" ? c.nome : "", `certificado-${grupos.length + 1}.csv`);
         const parsed = parseCsvSigef(nome, c.conteudo);
         const sel = new Set(Array.isArray(c.selecionados) ? c.selecionados.map(String) : []);
         const vertices = parsed.vertices.filter((v) => sel.has(v.codigo));
@@ -421,6 +437,7 @@ Deno.serve(async (req) => {
     };
     return json({ servico, vertices, trechos, preview });
   } catch (err) {
+    if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);
     console.error("parse-txt:", err);
     return json({ erro: mensagemDeErro(err) }, 400);
   }

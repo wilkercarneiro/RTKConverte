@@ -3,6 +3,15 @@
 // tabela `config_setup` (RLS sem políticas → legível apenas via service role).
 // Aceita SOMENTE os dois nomes fixos de template.
 import { createClient } from "@supabase/supabase-js";
+import { dentroDoLimite } from "../_shared/limite.ts";
+
+/** Compara sem atalho de tempo (não revela quantos caracteres batem). */
+function mesmo(a: string, b: string): boolean {
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  let dif = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) dif |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return dif === 0;
+}
 
 const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PERMITIDOS: Record<string, string> = {
@@ -30,8 +39,11 @@ Deno.serve(async (req) => {
     if (!contentType) return new Response("template não permitido", { status: 400 });
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    // auditoria 04/11/2026: no máximo 60 chamadas por hora (os 13 modelos cabem;
+    // adivinhar o segredo fica inviável) e comparação em tempo constante
+    if (!(await dentroDoLimite(supa, "admin-setup", 60, 3600))) return new Response("muitas tentativas", { status: 429 });
     const { data: cfg } = await supa.from("config_setup").select("value").eq("key", "setup_secret").single();
-    if (!cfg || !segredo || cfg.value !== segredo) return new Response("não autorizado", { status: 401 });
+    if (!cfg || !segredo || !mesmo(String(cfg.value), segredo)) return new Response("não autorizado", { status: 401 });
 
     const corpo = new Uint8Array(await req.arrayBuffer());
     if (corpo.length === 0 || corpo.length > 10_000_000) return new Response("corpo inválido", { status: 400 });

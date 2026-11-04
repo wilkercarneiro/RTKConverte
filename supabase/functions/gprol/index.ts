@@ -14,6 +14,7 @@
 // verify_jwt desligado no gateway (o GPROL chama sem usuário): cada ação de
 // tela confere o usuário aqui dentro. A chave do GPROL só a service_role lê.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 import {
   camposClienteParaGprol, chaveDoServico, esperaDaTentativa, localParaGprol, nomeParaGprol, notaDoCard,
   rotuloDoServico, ultimasVersoes, urlDeAutorizacao,
@@ -349,6 +350,10 @@ async function acaoDoGprol(db: SupabaseClient, esc: string, acao: string, b: Rec
   if (acao === "documento") {
     const d = todos.find((x) => x.id === b.documento_id);
     if (!d) return erro("Documento não encontrado.", 404);
+    // auditoria 04/11/2026: o path vem de uma linha que o próprio cliente pode
+    // gravar; assinar com a service_role um caminho de OUTRO serviço vazava o
+    // arquivo de outra empresa. Só a pasta do próprio serviço, sem "..".
+    if (!d.path.startsWith(`${d.servico_id}/`) || d.path.includes("..")) return erro("Documento não encontrado.", 404);
     const { data: assinada, error } = await db.storage.from("gerados").createSignedUrl(d.path, 300);
     if (error || !assinada) return erro("Não foi possível abrir o arquivo agora.", 500);
     return json({ url: assinada.signedUrl, titulo: d.titulo, expira_em_s: 300 });
@@ -558,7 +563,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return erro("Método inválido", 405);
   const db = admin();
   let b: Record<string, unknown>;
-  try { b = await req.json(); } catch { return erro("Corpo inválido."); }
+  try { b = await lerJson(req, LIMITE_MB(1)); } catch { return erro("Corpo inválido."); }
   const acao = String(b.acao ?? "");
   try {
     const chave = req.headers.get("x-integracao-chave");

@@ -18,6 +18,7 @@
 // Permissão de gerenciar a equipe só o dono concede (o banco também confere).
 import { createClient } from "@supabase/supabase-js";
 import { emailValido } from "../_shared/cnpj.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -75,7 +76,7 @@ Deno.serve(async (req) => {
     const { data: u } = await cli.auth.getUser();
     if (!u?.user) return json({ erro: "Sessão inválida ou expirada. Entre de novo." }, 401);
     const eu = u.user.id;
-    const b = await req.json() as Record<string, unknown>;
+    const b = await lerJson(req, LIMITE_MB(1)) as Record<string, unknown>;
     const svc = admin();
 
     // empresa de quem chama, e se pode gerenciar a equipe
@@ -94,11 +95,22 @@ Deno.serve(async (req) => {
 
     // o alvo precisa ser da MESMA empresa (e nunca o dono)
     async function alvoDaEquipe(userId: string) {
-      const { data } = await svc.from("membros_escritorio").select("user_id, papel, nome, escritorio_id")
+      const { data } = await svc.from("membros_escritorio").select("user_id, papel, nome, escritorio_id, permissoes")
         .eq("user_id", userId).maybeSingle();
-      const m = data as { user_id: string; papel: string; nome: string | null; escritorio_id: string } | null;
+      const m = data as { user_id: string; papel: string; nome: string | null; escritorio_id: string; permissoes: string[] | null } | null;
       if (!m || m.escritorio_id !== escId) return null;
       return m;
+    }
+
+    // Auditoria 04/11/2026: um gestor (equipe.gerenciar, sem ser dono) trocava a
+    // senha de QUALQUER membro — inclusive de um superadmin que estivesse na
+    // equipe, ou de outro gestor — e entrava na conta dele. Conta com poder de
+    // administração só o dono mexe (ou a própria pessoa).
+    async function contaProtegida(m: { user_id: string; permissoes: string[] | null }): Promise<boolean> {
+      if (souDono || m.user_id === eu) return false;
+      if ((m.permissoes ?? []).includes("equipe.gerenciar")) return true;
+      const { data: sa } = await svc.from("super_admins").select("user_id").eq("user_id", m.user_id).maybeSingle();
+      return !!sa;
     }
 
     switch (b.acao) {
@@ -145,6 +157,7 @@ Deno.serve(async (req) => {
         const m = await alvoDaEquipe(String(b.user_id ?? ""));
         if (!m) return json({ erro: "Pessoa não encontrada na sua equipe." }, 404);
         if (m.papel === "dono" && m.user_id !== eu) return json({ erro: "A senha do dono só ele mesmo troca." }, 403);
+        if (await contaProtegida(m)) return json({ erro: "A senha de quem gerencia a equipe só o dono da empresa troca." }, 403);
         const { senha, erro: eSenha } = senhaDoPedido(b);
         if (eSenha) return json({ erro: eSenha }, 400);
         const trocar = b.trocar !== false;
@@ -162,6 +175,7 @@ Deno.serve(async (req) => {
         if (!m) return json({ erro: "Pessoa não encontrada na sua equipe." }, 404);
         if (m.papel === "dono") return json({ erro: "O dono não pode ser removido." }, 403);
         if (m.user_id === eu) return json({ erro: "Você não pode remover a si mesmo." }, 403);
+        if (await contaProtegida(m)) return json({ erro: "Quem gerencia a equipe só o dono da empresa remove." }, 403);
         const { data: sa } = await svc.from("super_admins").select("user_id").eq("user_id", m.user_id).maybeSingle();
         const { data: au } = await svc.auth.admin.getUserById(m.user_id);
         if (sa) {
@@ -179,6 +193,7 @@ Deno.serve(async (req) => {
         return json({ erro: "Ação desconhecida" }, 400);
     }
   } catch (err) {
+    if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);
     return json({ erro: String(err instanceof Error ? err.message : err) }, 500);
   }
 });

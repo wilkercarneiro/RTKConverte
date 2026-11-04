@@ -24,6 +24,7 @@ import { buscarImagemMapbox, enquadrar, guardarImagem, urlMapaSatelite } from ".
 import type { GeorefMapa, LonLat } from "../_shared/satelite.ts";
 import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -76,7 +77,7 @@ function anelDaGleba(anel: [number, number][], fuso: number): LonLat[] {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { servico_id, imovel, glebas: glebasPedidas, faltantes, mapa: mapaPedido } = await req.json();
+    const { servico_id, imovel, glebas: glebasPedidas, faltantes, mapa: mapaPedido } = await lerJson(req, LIMITE_MB(2));
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
     const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
     if (recusa) return json({ erro: recusa.erro }, recusa.status);
@@ -84,6 +85,9 @@ Deno.serve(async (req) => {
     if (!token) return json({ erro: "MAPBOX_TOKEN não configurado no servidor" }, 500);
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    // auditoria 04/11/2026: cada chamada gasta a cota paga do Mapbox — no máximo
+    // 15 buscas por minuto por serviço
+    if (!(await dentroDoLimite(supa, `satelite:${servico_id}`, 15, 60))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
     const { data: servico } = await supa.from("servicos").select("id, fuso_utm, tem_glebas").eq("id", servico_id).single();
     if (!servico) return json({ erro: "Serviço não encontrado" }, 404);
     const { data: vertRows } = await supa.from("vertices").select("ordem, e, n, lat_gms, lon_gms").eq("servico_id", servico_id).order("ordem");
@@ -96,7 +100,7 @@ Deno.serve(async (req) => {
     let glebas: GlebaRow[] = [];
     if (servico.tem_glebas) {
       const { data } = await supa.from("glebas").select("nome, anel").eq("servico_id", servico_id).order("ordem");
-      glebas = ((data ?? []) as GlebaRow[]).filter((g) => (g.anel?.length ?? 0) >= 3);
+      glebas = ((data ?? []) as GlebaRow[]).filter((g) => (g.anel?.length ?? 0) >= 3).slice(0, 60);
     }
 
     // o que já existe em entrada/ (só interessa no modo `faltantes`)
@@ -164,6 +168,7 @@ Deno.serve(async (req) => {
     }
     return json({ gerados, mapa, avisos });
   } catch (e) {
+    if (e instanceof CorpoInvalido) return json({ erro: e.message }, e.status);
     return json({ erro: e instanceof Error ? e.message : String(e) }, 500);
   }
 });

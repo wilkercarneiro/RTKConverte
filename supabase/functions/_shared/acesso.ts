@@ -52,8 +52,9 @@ export async function escritorioDoUsuario(cli: ClienteUsuario): Promise<{ escrit
   const u = await exigirUsuario(cli);
   if (ehRecusa(u)) return u;
   const { data, error } = await cli.rpc("meu_escritorio");
-  // a RPC só existe depois da migração de escritórios
-  if (error) return { escritorioId: null };
+  // Falha fecha (auditoria 04/11/2026): o banco tem a 0020 há tempos, então erro
+  // aqui é instabilidade — seguir sem escritório criaria serviço sem dono.
+  if (error) return { erro: "Não foi possível conferir o seu escritório agora. Tente de novo em instantes.", status: 503 };
   const linha = (Array.isArray(data) ? data[0] : data) as { id?: string } | null | undefined;
   if (!linha?.id) {
     return {
@@ -66,12 +67,13 @@ export async function escritorioDoUsuario(cli: ClienteUsuario): Promise<{ escrit
 
 /**
  * Exige uma permissão da equipe (0025: servicos.criar, documentos.gerar…). O dono
- * tem todas. Banco sem a 0025 (a RPC não existe): não trava, como sempre foi.
- * Só um `false` explícito recusa.
+ * tem todas. Só um `true` explícito libera (auditoria 04/11/2026: antes, erro
+ * na consulta liberava).
  */
 export async function exigirPermissao(cli: ClienteUsuario, permissao: string, oQue: string): Promise<Recusa | null> {
   const { data, error } = await cli.rpc("tem_permissao", { p: permissao });
-  if (error || data !== false) return null;
+  if (error) return { erro: "Não foi possível conferir a sua permissão agora. Tente de novo em instantes.", status: 503 };
+  if (data === true) return null;
   return { erro: `Você não tem permissão para ${oQue}. Fale com o responsável pela equipe.`, status: 403 };
 }
 

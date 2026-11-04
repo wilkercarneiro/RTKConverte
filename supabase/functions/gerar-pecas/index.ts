@@ -17,10 +17,11 @@ import { ehViaPorLimite, montarServico, origemDaConfrontacaoHoraria } from "../_
 import { carregarLogoPlanta, geometriaDoCalculo, sigefDoCalculo } from "../_shared/planta_dados.ts";
 import { aplicarTimbreAutomatico, identidadeDaEmpresa, precisaTimbreAutomatico } from "../_shared/timbre_automatico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
-import { autorDaChamada, exigirPermissao, exigirServicoDoUsuario, gravarHistoricoDocumentos } from "../_shared/acesso.ts";
+import { autorDaChamada, ehRecusa, escritorioDoUsuario, exigirPermissao, exigirServicoDoUsuario, gravarHistoricoDocumentos } from "../_shared/acesso.ts";
 import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -92,13 +93,25 @@ Deno.serve(async (req) => {
     // Tabular: conferência é o que se faz ANTES de mandar ao SIGEF, então exigir
     // o PDF ali seria exigir o resultado do passo que ainda não aconteceu.
     // `apenas` restringe quais peças saem (a conferência pede só a "2").
-    const { servico_id, pdf_base64, modo, origem, apenas } = await req.json();
+    const { servico_id, pdf_base64, modo, origem, apenas } = await lerJson(req, LIMITE_MB(40));
     const doCalculo = origem === "calculo";
     if (!pdf_base64 && !doCalculo) return json({ erro: "pdf_base64 é obrigatório" }, 400);
 
     // ---------------- modo "analisar": só lê o PDF e devolve o resumo ----------------
     // Usado pelo Serviço 2 (peças direto do PDF) p/ pré-preencher o cadastro.
     if (modo === "analisar") {
+      // Auditoria 04/11/2026: este modo lia o PDF (pdf.js, CPU pesada) sem
+      // conferir login — bastava a chave pública. Agora: usuário com escritório
+      // ativo, permissão de criar serviço e no máximo 20 leituras por minuto.
+      const acessoAnalise = await escritorioDoUsuario(clienteDoUsuario(req));
+      if (ehRecusa(acessoAnalise)) return json({ erro: acessoAnalise.erro }, acessoAnalise.status);
+      const semPermAnalise = await exigirPermissao(clienteDoUsuario(req), "servicos.criar", "criar serviços");
+      if (semPermAnalise) return json({ erro: semPermAnalise.erro }, semPermAnalise.status);
+      const svcAnalise = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      if (!(await dentroDoLimite(svcAnalise, `analisar-pdf:${acessoAnalise.escritorioId}`, 20, 60))) {
+        return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
+      }
+      if (typeof pdf_base64 !== "string" || pdf_base64.length > 30_000_000) return json({ erro: "PDF inválido ou maior que 20 MB." }, 413);
       const bytes = b64ToBytes(pdf_base64);
       const proxy = await getDocumentProxy(bytes);
       const { text: txt } = await extractText(proxy, { mergePages: true });
@@ -138,6 +151,8 @@ Deno.serve(async (req) => {
     const autor = await autorDaChamada(clienteDoUsuario(req));
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    // auditoria 04/11/2026: limite de frequência por usuário/empresa (tabela limites_uso, 0038)
+    if (!(await dentroDoLimite(supa, `gerar:${autor ?? servico_id}`, 30, 300))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
 
     const { data: servico } = await supa.from("servicos").select().eq("id", servico_id).single();
     if (!servico) return json({ erro: "Serviço não encontrado" }, 404);
@@ -587,6 +602,7 @@ Deno.serve(async (req) => {
       avisos: avisos.length ? avisos : undefined,
     });
   } catch (err) {
+    if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);
     console.error("gerar-pecas:", err);
     return json({ erro: mensagemDeErro(err) }, 400);
   }

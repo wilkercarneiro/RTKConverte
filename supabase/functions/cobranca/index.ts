@@ -9,6 +9,7 @@
 //   - o site, com o JWT da pessoa: as ações em fluxos.ts.
 import { createClient } from "@supabase/supabase-js";
 import { tratarAcao, tratarWebhook, ErroUsuario } from "./fluxos.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, lerTexto, LIMITE_MB } from "../_shared/limite.ts";
 import type { Banco, CartaoSalvo, Deps, EmpresaCobranca, PedidoCredito, ReservaRecarga, Usuario } from "./fluxos.ts";
 import type { CarteiraDoPlano } from "../_shared/mensagens_cobranca.ts";
 
@@ -182,7 +183,8 @@ async function usuario(req: Request, svc: Svc): Promise<Usuario | null> {
   if (!u?.user) return null;
   const [{ data: sou }, { data: mem }] = await Promise.all([
     cli.rpc("sou_superadmin"),
-    svc.from("membros_escritorio").select("escritorio_id, papel").eq("user_id", u.user.id).maybeSingle(),
+    // auditoria 04/11/2026: membro desativado não compra nem dispara cobrança no cartão
+    svc.from("membros_escritorio").select("escritorio_id, papel").eq("user_id", u.user.id).eq("ativo", true).maybeSingle(),
   ]);
   const membro = mem as { escritorio_id: string; papel: string } | null;
   return {
@@ -217,18 +219,22 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ erro: "Método inválido" }, 405);
   try {
     const svc = servico();
-    const deps: Deps = { banco: banco(svc), fetch, hoje: hojeBrasil, aleatorio: tokenNovo };
+    const deps: Deps = {
+      banco: banco(svc), fetch, hoje: hojeBrasil, aleatorio: tokenNovo,
+      limite: (chave, max, janelaS) => dentroDoLimite(svc, chave, max, janelaS),
+    };
     const doAsaas = new URL(req.url).searchParams.get("origem") === "asaas" || req.headers.has("asaas-access-token");
     if (doAsaas) {
-      const r = await tratarWebhook(deps, req.headers.get("asaas-access-token"), await req.text());
+      const r = await tratarWebhook(deps, req.headers.get("asaas-access-token"), await lerTexto(req, 256 * 1024));
       return json(r.corpo, r.status);
     }
     const u = await usuario(req, svc);
     if (!u) return json({ erro: "Sessão inválida ou expirada. Entre de novo." }, 401);
-    const b = await req.json().catch(() => ({})) as Record<string, unknown>;
+    const b = await lerJson(req, LIMITE_MB(1)).catch((e) => { if (e instanceof CorpoInvalido && e.status === 413) throw e; return {}; }) as Record<string, unknown>;
     const r = await tratarAcao(deps, u, b);
     return json(r.corpo, r.status);
   } catch (err) {
+    if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);
     return json({ erro: String(err instanceof Error ? err.message : err) }, 500);
   }
 });

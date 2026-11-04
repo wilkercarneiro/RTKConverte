@@ -24,6 +24,7 @@ import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
 import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
 import type { ClienteVertices } from "../_shared/vertices_db.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -46,14 +47,18 @@ interface CsvEntrada { nome: string; conteudo: string }
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { servico_id, csvs, afastamento, usar_vertices_certificados, tolerancia_igualar } = await req.json() as {
+    const { servico_id, csvs, afastamento, usar_vertices_certificados, tolerancia_igualar } = await lerJson(req, LIMITE_MB(30)) as {
       servico_id?: string; csvs?: CsvEntrada[]; afastamento?: number;
       usar_vertices_certificados?: boolean; tolerancia_igualar?: number;
     };
     if (!servico_id) return json({ erro: "servico_id ausente" }, 400);
     const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
     if (recusa) return json({ erro: recusa.erro }, recusa.status);
-    if (!csvs?.length) return json({ erro: "Envie ao menos um CSV de exportação do SIGEF" }, 400);
+    if (!Array.isArray(csvs) || !csvs.length) return json({ erro: "Envie ao menos um CSV de exportação do SIGEF" }, 400);
+    // auditoria 04/11/2026: a correção é geometria pesada — teto de entrada e de frequência
+    if (csvs.length > 30) return json({ erro: "No máximo 30 CSVs por correção." }, 413);
+    const supaLimite = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    if (!(await dentroDoLimite(supaLimite, `sobreposicao:${servico_id}`, 20, 300))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
     const afastamentoM = Number(afastamento) || 0.5;
     // ausente = ligado: a divisa com o vizinho certificado é descrita pelos vértices dele
     const usarCertificados = usar_vertices_certificados !== false;
@@ -278,6 +283,7 @@ Deno.serve(async (req) => {
       },
     });
   } catch (err) {
+    if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);
     console.error("corrigir-sobreposicao:", err);
     return json({ erro: mensagemDeErro(err) }, 400);
   }

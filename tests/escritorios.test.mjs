@@ -41,9 +41,10 @@ test("serviço visível: passa", async () => {
   assert.equal(await exigirServicoDoUsuario(cliente({ visiveis: ["s1"] }), "s1"), null);
 });
 
-test("banco sem escritórios (RPC inexistente): segue sem escritório, como antes", async () => {
+test("erro ao consultar o escritório: recusa (falha fecha, auditoria 04/11)", async () => {
   const r = await escritorioDoUsuario(cliente({ rpc: { data: null, error: { code: "PGRST202" } } }));
-  assert.deepEqual(r, { escritorioId: null });
+  assert.ok(ehRecusa(r));
+  assert.equal(r.status, 503);
 });
 
 test("usuário sem escritório: 403", async () => {
@@ -116,11 +117,12 @@ test("escritorioDoServico: serviço sem escritorio_id = antes da migração", as
   assert.deepEqual(await escritorioDoServico(supa, { escritorio_id: "e1" }), { id: "e1", compartilhados: true });
 });
 
-test("exigirPermissao: só um false explícito do banco recusa", async () => {
+test("exigirPermissao: só um true explícito do banco libera", async () => {
   const cli = (rpc) => ({ rpc: async () => rpc });
   assert.equal(await exigirPermissao(cli({ data: true, error: null }), "servicos.criar", "criar serviços"), null);
-  // banco sem a 0025: a RPC não existe → não trava
-  assert.equal(await exigirPermissao(cli({ data: null, error: { code: "PGRST202" } }), "servicos.criar", "x"), null);
+  // erro na consulta: recusa (antes liberava — auditoria 04/11)
+  assert.equal((await exigirPermissao(cli({ data: null, error: { code: "PGRST202" } }), "servicos.criar", "x"))?.status, 503);
+  assert.equal((await exigirPermissao(cli({ data: null, error: null }), "servicos.criar", "x"))?.status, 403);
   const r = await exigirPermissao(cli({ data: false, error: null }), "documentos.gerar", "gerar documentos");
   assert.equal(r?.status, 403);
   assert.match(r?.erro ?? "", /gerar documentos/);

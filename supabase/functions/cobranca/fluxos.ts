@@ -121,6 +121,8 @@ export interface Deps {
   hoje: () => string;
   /** token novo do webhook */
   aleatorio: () => string;
+  /** trava de frequência (auditoria 04/11/2026); ausente = sem trava */
+  limite?: (chave: string, max: number, janelaS: number) => Promise<boolean>;
 }
 
 export interface Resposta { status: number; corpo: Record<string, unknown> }
@@ -158,7 +160,9 @@ export async function tratarWebhook(d: Deps, token: string | null, texto: string
   let corpo: { id?: string; event?: string; payment?: CobrancaAsaas } | null = null;
   try { corpo = JSON.parse(texto); } catch { /* corpo inválido */ }
   if (!cfg.asaas_webhook_token || !mesmoToken(token ?? "", cfg.asaas_webhook_token)) {
-    // a recusa deixa rastro: sem isto, um token trocado só aparece quando o Asaas desliga a fila
+    // a recusa deixa rastro: sem isto, um token trocado só aparece quando o Asaas desliga a fila.
+    // Auditoria 04/11/2026: no máximo 30 rastros por hora — sem teto, qualquer um enchia a tabela
+    if (d.limite && !(await d.limite("webhook-asaas-falha", 30, 3600))) return falha(401, "Token do webhook inválido.");
     await d.banco.registrarEvento({
       evento_id: null, evento: "AUTH_FAILED", pagamento_asaas_id: corpo?.payment?.id ?? null,
       corpo: corpo ?? { texto: texto.slice(0, 2000) }, resultado: "token inválido",

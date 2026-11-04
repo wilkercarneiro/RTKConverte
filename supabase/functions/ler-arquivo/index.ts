@@ -21,6 +21,7 @@ import { validarReceita } from "../_shared/leitor/receita.ts";
 import { interpretarComIA } from "../_shared/leitor/ia.ts";
 import { autorDaChamada, ehRecusa, escritorioDoUsuario, exigirPermissao } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -60,7 +61,7 @@ const leituraUtil = (l: Leitura | null) => !!l && l.anel.length >= 3 && !l.aviso
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const corpo = await req.json();
+    const corpo = await lerJson(req, LIMITE_MB(40));
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
     // ---- regressão dos perfis (superadmin) ----
@@ -75,6 +76,8 @@ Deno.serve(async (req) => {
     const semPermissao = await exigirPermissao(clienteDoUsuario(req), "servicos.criar", "criar serviços");
     if (semPermissao) return json({ erro: semPermissao.erro }, semPermissao.status);
     const autor = await autorDaChamada(clienteDoUsuario(req));
+    // auditoria 04/11/2026: limite de frequência por usuário/empresa (tabela limites_uso, 0038)
+    if (!(await dentroDoLimite(supa, `ler:${acesso.escritorioId}`, 40, 300))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
     const escritorioId = acesso.escritorioId;
 
     const nome = typeof corpo.nome_arquivo === "string" && corpo.nome_arquivo ? corpo.nome_arquivo.slice(0, 200) : "pontos.txt";
@@ -123,6 +126,14 @@ Deno.serve(async (req) => {
         const { count } = await supa.from("chamadas_ia").select("id", { count: "exact", head: true })
           .eq("escritorio_id", escritorioId).gte("created_at", new Date(Date.now() - 86400_000).toISOString());
         if (liberada && (count ?? 0) >= limite) { liberada = false; ia.motivo = `limite de ${limite} chamadas de IA por dia atingido`; }
+        // auditoria 04/11/2026: a contagem acima tem corrida (envios em paralelo
+        // passam juntos); a reserva atômica fecha a porta — no máximo 10 por minuto
+        if (liberada && !(await dentroDoLimite(supa, `ia:${escritorioId}`, 10, 60))) {
+          liberada = false; ia.motivo = "muitas leituras com IA seguidas; aguarde um minuto";
+        }
+      } else if (liberada) {
+        // sem escritório não há a quem atribuir o custo: sem IA
+        liberada = false; ia.motivo = "IA só para contas ligadas a uma empresa";
       }
       if (liberada) {
         const r = await interpretarComIA(aberto.linhas, nome, proj4, {
@@ -171,6 +182,7 @@ Deno.serve(async (req) => {
       ajustes: 1,
     });
   } catch (err) {
+    if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);
     console.error("ler-arquivo:", err);
     return json({ erro: err instanceof Error ? err.message : String(err) }, 400);
   }

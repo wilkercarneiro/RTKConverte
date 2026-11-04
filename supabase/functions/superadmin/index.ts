@@ -17,6 +17,7 @@
 //
 // Se um passo da criação falha, o que já foi criado é desfeito.
 import { createClient } from "@supabase/supabase-js";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 import {
   cnpjValido, emailValido, problemaDaSenha, soDigitos, telefoneValido,
 } from "../_shared/cnpj.ts";
@@ -156,7 +157,7 @@ Deno.serve(async (req) => {
     const { data: sou, error: eSou } = await cli.rpc("sou_superadmin");
     if (eSou || sou !== true) return json({ erro: "Acesso restrito ao administrador do sistema." }, 403);
 
-    const b = await req.json() as Record<string, unknown>;
+    const b = await lerJson(req, LIMITE_MB(1)) as Record<string, unknown>;
     const svc = admin();
     switch (b.acao) {
       case "criar_empresa": return await criarEmpresa(svc, b);
@@ -166,6 +167,7 @@ Deno.serve(async (req) => {
       default: return json({ erro: "Ação desconhecida" }, 400);
     }
   } catch (err) {
+    if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);
     return json({ erro: String(err instanceof Error ? err.message : err) }, 500);
   }
 });

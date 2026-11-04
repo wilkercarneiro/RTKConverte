@@ -20,6 +20,7 @@ import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
 import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
 import type { ClienteVertices } from "../_shared/vertices_db.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -50,7 +51,7 @@ const CONFRONTACAO = ["descritivo", "tipo_limite", "eh_via", "cns", "matricula",
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
-    const { servico_id, fuso, tolerancia, tolerancia_linha } = await req.json();
+    const { servico_id, fuso, tolerancia, tolerancia_linha } = await lerJson(req, LIMITE_MB(2));
     if (typeof servico_id !== "string" || !servico_id) return json({ erro: "servico_id ausente" }, 400);
     const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
     if (recusa) return json({ erro: recusa.erro }, recusa.status);
@@ -223,6 +224,7 @@ Deno.serve(async (req) => {
       },
     });
   } catch (err) {
+    if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);
     console.error("reunir-certificados:", err);
     return json({ erro: mensagemDeErro(err) }, 400);
   }

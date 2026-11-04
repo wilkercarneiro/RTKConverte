@@ -29,6 +29,7 @@ import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { escritorioDoServico } from "../_shared/modelos.ts";
 import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
 import type { ClienteVertices } from "../_shared/vertices_db.ts";
+import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -62,7 +63,7 @@ Deno.serve(async (req) => {
   try {
     // `folha` (A1/A3) é escolha do operador na tela; ausente = regra histórica
     // (posse → A3, matrícula → A1)
-    const { servico_id, pdf_base64, folha, metragem } = await req.json();
+    const { servico_id, pdf_base64, folha, metragem } = await lerJson(req, LIMITE_MB(40));
     if (!servico_id) return json({ erro: "servico_id é obrigatório" }, 400);
     const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
     if (recusa) return json({ erro: recusa.erro }, recusa.status);
@@ -72,6 +73,8 @@ Deno.serve(async (req) => {
     const autor = await autorDaChamada(clienteDoUsuario(req));
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    // auditoria 04/11/2026: limite de frequência por usuário/empresa (tabela limites_uso, 0038)
+    if (!(await dentroDoLimite(supa, `gerar:${autor ?? servico_id}`, 30, 300))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
     const { data: servico } = await supa.from("servicos").select().eq("id", servico_id).single();
     if (!servico) return json({ erro: "Serviço não encontrado" }, 404);
     const { data: vertRows } = await supa.from("vertices").select().eq("servico_id", servico_id).order("ordem");
@@ -336,6 +339,7 @@ Deno.serve(async (req) => {
       resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!dados.logo, folha: folhaSaida },
     });
   } catch (err) {
+    if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);
     console.error("gerar-planta:", err);
     return json({ erro: mensagemDeErro(err) }, 400);
   }
