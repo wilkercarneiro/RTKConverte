@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import type { AvisoItem, EstadoSalvamento } from "../lib/ux";
 import { assinarAvisos, avisarGlobal, avisosAtuais, fecharAviso } from "../lib/ux";
 import { Icone, ICONE } from "./Icone";
+import { telaParaCss } from "../lib/zoom";
 
 // ---------------------------------------------------------------------------
 // Secao — grupo de campos recolhível
@@ -77,7 +78,8 @@ export function Dica({ children, lado = "cima" }: { children: ReactNode; lado?: 
     if (!r) return;
     // sem espaço em cima, abre embaixo
     const baixo = lado === "baixo" || r.top < 140;
-    setPos({ x: r.left + r.width / 2, y: baixo ? r.bottom + 8 : r.top - 8, baixo });
+    // o balão é position: fixed em px do CSS; o retângulo vem na escala da tela (lib/zoom.ts)
+    setPos({ x: telaParaCss(r.left + r.width / 2), y: telaParaCss(baixo ? r.bottom : r.top) + (baixo ? 8 : -8), baixo });
   };
   const fechar = () => setPos(null);
   useEffect(() => {
@@ -94,7 +96,7 @@ export function Dica({ children, lado = "cima" }: { children: ReactNode; lado?: 
       ?
       {pos && createPortal(
         <span id={id} role="tooltip" className={`dica-balao${pos.baixo ? " baixo" : ""}`}
-          style={{ left: Math.max(150, Math.min(innerWidth - 150, pos.x)), top: pos.y }}>
+          style={{ left: Math.max(150, Math.min(telaParaCss(innerWidth) - 150, pos.x)), top: pos.y }}>
           {children}
         </span>,
         document.body,
@@ -320,7 +322,7 @@ function lugarDosAvisos(): CSSProperties | null {
   const esquerda = Math.min(...paineis.map((p) => p.getBoundingClientRect().left));
   const livre = esquerda - 2 * MARGEM_AVISOS;
   if (livre >= LARGURA_MIN_AVISOS) {
-    return { left: "auto", right: innerWidth - esquerda + MARGEM_AVISOS, maxWidth: Math.min(420, livre) };
+    return { left: "auto", right: telaParaCss(innerWidth - esquerda) + MARGEM_AVISOS, maxWidth: Math.min(420, telaParaCss(livre)) };
   }
   // só conta o pé que está mesmo no fundo do painel (não um rodapé no meio do conteúdo)
   const topos = paineis.flatMap((p) => {
@@ -331,7 +333,7 @@ function lugarDosAvisos(): CSSProperties | null {
       .map((r) => r.top);
   });
   if (!topos.length) return null;
-  return { bottom: Math.max(innerHeight - Math.min(...topos) + 12, MARGEM_AVISOS) };
+  return { bottom: Math.max(telaParaCss(innerHeight - Math.min(...topos)) + 12, MARGEM_AVISOS) };
 }
 
 /** Recalcula o lugar dos avisos enquanto há aviso na tela: painel abrindo/fechando, animação, janela. */

@@ -15,6 +15,7 @@ import {
   PALETA, blocoDeTexto, caixaDe, corCss, corHex, deHex, escalar, mesmaCor, mover, pecaNoPonto, uniao, type Caixa,
 } from "../../lib/planta_editor";
 import { Dica } from "../ui";
+import { pontoNoElemento, telaParaCss } from "../../lib/zoom";
 
 type Texto = Extract<ItemCena, { k: "texto" }>;
 interface Doc { itens: ItemCena[]; objetos: Record<string, ObjetoCena> }
@@ -255,7 +256,8 @@ export function EditorPlanta({ cena, original, chaveRascunho, onConcluir, onVolt
   const ajustar = useCallback(() => {
     const el = telaRef.current;
     if (!el) return;
-    const r = el.getBoundingClientRect();
+    // em px do CSS (a vista é aplicada dentro da página com zoom — ver lib/zoom.ts)
+    const r = { width: el.clientWidth, height: el.clientHeight };
     const z = Math.min((r.width - 48) / W, (r.height - 48) / H);
     setVista({ z, px: (r.width - W * z) / 2, py: (r.height - H * z) / 2 });
   }, [W, H]);
@@ -263,9 +265,8 @@ export function EditorPlanta({ cena, original, chaveRascunho, onConcluir, onVolt
   const zoomEm = useCallback((fator: number, cx?: number, cy?: number) => {
     const el = telaRef.current;
     if (!el) return;
-    const r = el.getBoundingClientRect();
     const v = vistaRef.current;
-    const x = cx ?? r.width / 2, y = cy ?? r.height / 2;
+    const x = cx ?? el.clientWidth / 2, y = cy ?? el.clientHeight / 2;
     const z = Math.max(0.05, Math.min(12, v.z * fator));
     const k = z / v.z;
     setVista({ z, px: x - (x - v.px) * k, py: y - (y - v.py) * k });
@@ -275,8 +276,8 @@ export function EditorPlanta({ cena, original, chaveRascunho, onConcluir, onVolt
     if (!el) return;
     const roda = (e: WheelEvent) => {
       e.preventDefault();
-      const r = el.getBoundingClientRect();
-      if (e.ctrlKey || !e.shiftKey) zoomEm(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0018)), e.clientX - r.left, e.clientY - r.top);
+      const [lx, ly] = pontoNoElemento(el, e);
+      if (e.ctrlKey || !e.shiftKey) zoomEm(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0018)), lx, ly);
       else setVista((v) => ({ ...v, px: v.px - e.deltaY }));
     };
     el.addEventListener("wheel", roda, { passive: false });
@@ -285,9 +286,9 @@ export function EditorPlanta({ cena, original, chaveRascunho, onConcluir, onVolt
 
   /** ponto do evento → coordenadas da planta (pontos, y para cima) */
   const ptPlanta = (e: { clientX: number; clientY: number }) => {
-    const r = telaRef.current!.getBoundingClientRect();
+    const [sx, sy] = pontoNoElemento(telaRef.current!, e);
     const v = vistaRef.current;
-    return { x: (e.clientX - r.left - v.px) / v.z, y: H - (e.clientY - r.top - v.py) / v.z, sx: e.clientX - r.left, sy: e.clientY - r.top };
+    return { x: (sx - v.px) / v.z, y: H - (sy - v.py) / v.z, sx, sy };
   };
 
   // ---------------- seleção ----------------
@@ -316,7 +317,7 @@ export function EditorPlanta({ cena, original, chaveRascunho, onConcluir, onVolt
     const v = vistaRef.current;
     setDicaTravado(null);
     if (e.button === 1 || espaco.current || ferramenta === "mao") {
-      arrasto.current = { t: "pan", sx: e.clientX, sy: e.clientY, px0: v.px, py0: v.py };
+      arrasto.current = { t: "pan", sx: telaParaCss(e.clientX), sy: telaParaCss(e.clientY), px0: v.px, py0: v.py };
       return;
     }
     if (ferramenta === "texto") { criarTexto(p.x, p.y); return; }
@@ -377,7 +378,7 @@ export function EditorPlanta({ cena, original, chaveRascunho, onConcluir, onVolt
     const base = new Map(docRef.current.itens.map((i) => [i.id, i]));
     switch (a.t) {
       case "pan":
-        setVista((v) => ({ ...v, px: a.px0 + e.clientX - a.sx, py: a.py0 + e.clientY - a.sy }));
+        setVista((v) => ({ ...v, px: a.px0 + telaParaCss(e.clientX) - a.sx, py: a.py0 + telaParaCss(e.clientY) - a.sy }));
         break;
       case "mover": {
         let dx = p.x - a.x0, dy = p.y - a.y0;

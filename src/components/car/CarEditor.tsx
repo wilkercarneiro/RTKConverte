@@ -16,6 +16,7 @@ import type { Anel, Poligono, Pt } from "../../lib/loteamento/geom.ts";
 import type { ProjetoCar, ResultadoCar } from "../../lib/car/motor.ts";
 import { fmtNum } from "../../lib/car/motor.ts";
 import type { LonLat } from "../../lib/car/kml.ts";
+import { pontoNoElemento } from "../../lib/zoom";
 
 export type FerramentaCar = "mover" | "lado" | "reserva" | "vegetacao" | "rio";
 export type SelecaoCar = { tipo: "reserva"; i: number } | { tipo: "vegetacao"; i: number } | { tipo: "rio"; id: string } | null;
@@ -249,8 +250,8 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
 
   // ---------------- ponteiro ----------------
   const pos = (e: { clientX: number; clientY: number }): [number, number] => {
-    const r = caixaRef.current!.getBoundingClientRect();
-    return [e.clientX - r.left, e.clientY - r.top];
+    // px do CSS: a página roda com zoom (lib/zoom.ts) e o retângulo vem na escala da tela
+    return pontoNoElemento(caixaRef.current!, e);
   };
 
   function onDown(e: RPointerEvent) {

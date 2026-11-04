@@ -57,6 +57,8 @@ interface Props {
   /** guarda o rascunho da prancheta no serviço (só no serviço de divisão) */
   onRascunho?: (d: ParametrosDivisao) => void;
   /** ações do serviço de glebas que moram na barra de baixo (ex.: separar em serviços) */
+  /** partilha: o que vem embaixo das partes no painel (o GEO de cada parte, depois de salva) */
+  extrasPartes?: ReactNode;
   extrasGlebas?: ReactNode;
 }
 
@@ -85,7 +87,7 @@ function useHistorico(inicial: () => Projeto | null) {
   return { h, mudar, fimArraste, desfazer, refazer };
 }
 
-export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, glebas, onAplicar, onGlebas, onRascunho, extrasGlebas }: Props) {
+export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, glebas, onAplicar, onGlebas, onRascunho, extrasGlebas, extrasPartes }: Props) {
   const ehGleba = modo === "glebas";
 
   // ---------------- glebas: o contorno como ligações entre pontos ----------------
@@ -632,6 +634,12 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
             </div>
             {rd?.ok && <div className="sub dv-resumo-pe">{rd.divisas.length} divisa(s) · {fmtM(rd.divisas.reduce((s, d) => s + d.comprimentoM, 0))} m de cerca · {rd.novos.length} marcos novos · maior diferença p/ a cota: {rd.erroAreaM2 < 0.05 ? "< 0,1" : fmtM2(rd.erroAreaM2)} m²</div>}
             {rd && !rd.ok && <div className="dv-alerta">{rd.motivo}</div>}
+            {!ehGleba && extrasPartes && (
+              <section className="dv-geo-partes">
+                <header><b>GEO de cada parte</b><Dica lado="baixo">Um serviço completo por parte, no nome do herdeiro, com os mesmos marcos do imóvel e as divisas internas já confrontando com a parte vizinha. Marque as partes: cada GEO é um serviço novo e gasta 1 crédito.</Dica></header>
+                {extrasPartes}
+              </section>
+            )}
           </aside>
         </div>
       )}

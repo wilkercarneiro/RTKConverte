@@ -22,6 +22,7 @@ import type { Legenda } from "../../lib/loteamento/cinema3d.ts";
 import type { Rotulo } from "./maquete3d.ts";
 import { MOTIVO_SEM_WEBGL, webglDisponivel } from "../../lib/webgl";
 import "./maquete3d.css";
+import { telaParaCss } from "../../lib/zoom";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
 
@@ -327,7 +328,7 @@ export default function Visao3D({ projeto: projetoAberto, res: resAberto, perime
   return (
     <div className={`m3d${apresentando || gravando ? " m3d-apresentando" : ""}`} role="dialog" aria-modal="true" aria-label="Maquete 3D do loteamento" tabIndex={-1} ref={raiz}
       style={{ "--m3d-fundo": fundoDaHora(hora) } as React.CSSProperties}
-      onPointerMove={(e) => { const d = dicaRef.current; if (d) d.style.transform = `translate(${e.clientX + 16}px, ${e.clientY + 18}px)`; }}>
+      onPointerMove={(e) => { const d = dicaRef.current; if (d) d.style.transform = `translate(${telaParaCss(e.clientX) + 16}px, ${telaParaCss(e.clientY) + 18}px)`; }}>
       <div className="m3d-tela" ref={caixa} />
 
       {/* rótulos das quadras */}

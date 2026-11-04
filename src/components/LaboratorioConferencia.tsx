@@ -3,6 +3,9 @@
 //   ?glebas     serviço com glebas (carregadas do "banco" depois do 1º desenho)
 //   ?quebrar    o mapa lança um erro qualquer ao desenhar (barreira do mapa)
 //   ?pecas      a tela de peças (serviço do PDF do SIGEF): abrir não grava nada
+//   ?divisao    serviço completo em partilha (etapa Divisão); +&salva: a divisão já salva em 2 partes;
+//               +&codigos: marcos já com código definitivo (o GEO de cada parte pode ser gerado,
+//               com 37 + 2 créditos gerais de exemplo)
 // Dados fictícios, sem banco: troca `from`/`rpc`/`storage`/`auth` do cliente do
 // Supabase por respostas fixas e GUARDA toda escrita em window.__labEscritas —
 // abrir o serviço e trocar de etapa não pode gravar nada.
@@ -46,15 +49,33 @@ const VERTICES: Vertice[] = PONTOS.map(([num, e, n, h, lat, lon], ordem) => ({
   lat_gms: lat, lon_gms: lon,
   descritivo: MS.get(ordem) ?? null, tipo_limite: MS.has(ordem) ? (ordem === 5 ? "LA3" : "LA1") : null,
   eh_via: ordem === 5, cns: null, matricula: null, apelido_txt: null, numerado: false, exibir_planta: true,
+  ...(q.has("codigos") ? { codigo: `XXXX-${MS.has(ordem) ? "M" : "P"}-${String(ordem + 1).padStart(4, "0")}` } : {}),
 }) as Vertice);
 
-const COM_GLEBAS = q.has("glebas");
+const DIVISAO = q.has("divisao");
+const COM_GLEBAS = q.has("glebas") || DIVISAO;
 const SERVICO = {
-  id: SID, tipo: "geo", modalidade: "conferencia", status: "gerado", tem_glebas: COM_GLEBAS,
+  id: SID, tipo: "geo", modalidade: DIVISAO ? "completo" : "conferencia", status: "gerado", tem_glebas: COM_GLEBAS,
+  ...(DIVISAO ? { divisao: { iguais: true } } : {}),
   nome_arquivo_txt: "LABORATORIO.txt", fuso_utm: 24, credenciado_id: "c1", rt_id: "rt1",
   denominacao: "FAZENDA LABORATÓRIO", detentor_nome: "FULANO DE TAL", detentor_cpf: "000.000.000-00",
   municipio: "ARACI", uf: "BA", trt: "BR0000000000", created_at: new Date(Date.now() - 864e5).toISOString(),
 } as unknown as Servico;
+
+// partilha já salva: duas partes pelos vértices 0 e 7 (a divisa liga os dois)
+const SALVA = DIVISAO && q.has("salva");
+if (SALVA) for (const o of [0, 7]) VERTICES[o] = { ...VERTICES[o], rotulo_txt: "DIVISÃO", tipo: "M" } as Vertice;
+const anelDe = (ordens: number[]) => ordens.map((o) => [VERTICES[o].e!, VERTICES[o].n!] as [number, number]);
+const PARTES_SALVAS = [
+  { id: "p1", servico_id: SID, ordem: 0, nome: "PARTE 1", anel: anelDe([0, 1, 2, 3, 4, 5, 6, 7]), confrontante_interno: null, detentor_nome: "MARIA DE TAL", detentor_cpf: "000.000.000-01" },
+  { id: "p2", servico_id: SID, ordem: 1, nome: "PARTE 2", anel: anelDe([7, 8, 9, 10, 11, 12, 13, 0]), confrontante_interno: null, detentor_nome: "JOÃO DE TAL", detentor_cpf: "000.000.000-02" },
+] as unknown as Gleba[];
+const CREDITOS_LAB = {
+  periodo: { inicio: "2026-11-01", renova_em: "2026-12-01", dia: 1 },
+  carteiras: [{ chave: "geral", nome: "Créditos gerais", descricao: null, servicos: null, por_mes: 50, usado: 13, extra: 2, precos: [] }],
+  servicos: { "servico.completo": { disponivel: true, carteira: "geral", precisa_aceite: false } },
+  sou_dono: true, pagamento_online: false, compras: [],
+};
 
 const GLEBAS: Gleba[] = [
   { id: "g1", servico_id: SID, ordem: 0, nome: "GLEBA 1", anel: [[0, 7], [7, 13]] as [number, number][], confrontante_interno: null },
@@ -70,7 +91,7 @@ const TABELAS: Record<string, unknown[]> = {
   trechos_confrontantes: TRECHOS_PECAS,
   credenciados: [{ id: "c1", nome: "CREDENCIADO EXEMPLO", prefixo_vertice: "XXXX", contador_m: 1, contador_p: 1, contador_v: 1 }],
   responsaveis_tecnicos: [{ id: "rt1", nome: "TECNICO EXEMPLO", formacao: "Técnico em Agrimensura", conselho_sigla: "CREA", conselho_numero: "12345-D", identidade: "00.000.000-00 SSP/BA", cpf: "000.000.000-00", trt: "BR0000000000" }],
-  glebas: COM_GLEBAS ? GLEBAS : [],
+  glebas: SALVA ? PARTES_SALVAS : COM_GLEBAS && !DIVISAO ? GLEBAS : [],
 };
 
 /** O que a tela mandou gravar (insert/update/upsert/delete). */
@@ -107,7 +128,7 @@ function instalar() {
     (maplibregl.Map.prototype as unknown as { addControl: () => never }).addControl = () => { throw new Error("falha simulada do mapa (laboratório)"); };
   }
   const s = supabase as unknown as Record<string, unknown>;
-  s.rpc = () => Promise.resolve({ data: [], error: null });
+  s.rpc = (nome: string) => Promise.resolve({ data: nome === "meus_creditos" && DIVISAO ? CREDITOS_LAB : [], error: null });
   s.from = (t: string) => consulta(t);
   const storage = supabase.storage as unknown as Record<string, unknown>;
   storage.from = () => ({

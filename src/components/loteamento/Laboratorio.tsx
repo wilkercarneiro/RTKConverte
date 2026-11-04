@@ -5,6 +5,7 @@
 import type { Servico, Vertice } from "../../lib/types";
 import type { Projeto } from "../../lib/loteamento/modelo.ts";
 import { Loteamento } from "./Loteamento";
+import { CascaLab } from "../CascaLab";
 
 const E0 = 491000, N0 = 8738800;
 const REL: [number, number][] = [[0, 0], [372, 18], [395, 140], [360, 268], [210, 290], [175, 230], [60, 262], [-12, 120]];
@@ -35,10 +36,10 @@ const vertices: Vertice[] = GLEBA.map(([e, n, h, conf, via], i) => ({
 
 export function Laboratorio() {
   return (
-    <Loteamento servico={servico} vertices={vertices} onVoltar={() => { location.hash = "#/"; }}
+    <CascaLab><Loteamento servico={servico} vertices={vertices} onVoltar={() => { location.hash = "#/"; }}
       armazenamento={{
         carregar: async () => { try { return JSON.parse(localStorage.getItem(CHAVE) ?? "null") as Partial<Projeto> | null; } catch { return null; } },
         salvar: async (_id, p) => { try { localStorage.setItem(CHAVE, JSON.stringify(p)); } catch { /* sem armazenamento */ } },
-      }} />
+      }} /></CascaLab>
   );
 }

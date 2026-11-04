@@ -136,3 +136,34 @@ export function custoDoServico(c: Creditos | null, chave: ChaveServico): CustoSe
     detalhe: `Os créditos do mês já foram usados: este sai dos extras comprados. Depois dele, ${depois === 0 ? "não sobra nenhum extra" : depois === 1 ? "sobra 1 extra" : `sobram ${depois} extras`}.`,
   };
 }
+
+/**
+ * O custo de criar `n` serviços de uma vez — o GEO de cada parte da divisão:
+ * cada parte é um serviço novo e gasta 1 crédito. Mesma ordem do banco: a
+ * carteira do serviço; nela, o crédito do mês e depois o extra. Sem crédito
+ * para todos, não deixa começar (criaria só uma parte das partes).
+ */
+export function custoDeVarios(c: Creditos | null, chave: ChaveServico, n: number): CustoServico {
+  const qtd = (k: Carteira | undefined, x: number) => `${x} ${k ? nomeCredito(k, x) : x === 1 ? "crédito" : "créditos"}`;
+  if (n <= 0) return { disponivel: false, credito: "0 créditos", detalhe: "Nenhuma parte selecionada." };
+  if (n === 1) return custoDoServico(c, chave);
+  if (!c) return { disponivel: true, credito: qtd(undefined, n), detalhe: "Os créditos são descontados quando os serviços são criados, 1 por parte." };
+  const s = doServico(c, chave);
+  const k = (s?.carteira ? carteiraDe(c, s.carteira) : undefined) ?? carteiraPropria(c, chave) ?? carteiraGeral(c);
+  if (!k) return { disponivel: true, credito: qtd(undefined, n), detalhe: "Os créditos são descontados quando os serviços são criados, 1 por parte." };
+  const credito = qtd(k, n);
+  if (s && !s.disponivel) return { disponivel: false, credito, detalhe: `Os ${nomeCredito(k)} acabaram. Compre mais créditos para gerar os GEOs das partes.` };
+  const tem = disponivel(k);
+  if (tem === null) return { disponivel: true, credito, detalhe: `Seu plano não tem limite de ${nomeCredito(k)} no mês: 1 por parte, ${n} no total.` };
+  if (tem < n) {
+    return { disponivel: false, credito, detalhe: `Há ${tem === 0 ? "nenhum" : qtd(k, tem)} e são ${n} partes. Compre mais créditos ou selecione menos partes.` };
+  }
+  const doMes = Math.min(sobraDoMes(k) ?? 0, n);
+  const extras = n - doMes;
+  const depois = tem - n;
+  const origem = [doMes ? `${doMes} do${doMes === 1 ? "" : "s"} crédito${doMes === 1 ? "" : "s"} do mês` : "", extras ? `${extras} do${extras === 1 ? "" : "s"} extra${extras === 1 ? "" : "s"} comprado${extras === 1 ? "" : "s"}` : ""].filter(Boolean).join(" e ");
+  return {
+    disponivel: true, credito,
+    detalhe: `1 por parte: saem ${origem}. Depois, ${depois === 0 ? "não sobra nenhum" : depois === 1 ? "sobra 1" : `sobram ${depois}`}.`,
+  };
+}

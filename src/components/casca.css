@@ -402,7 +402,7 @@ fieldset.sem-borda:disabled input, fieldset.sem-borda:disabled select { backgrou
 .app.casca .preview-balao {
   position: absolute; left: var(--pad-x); right: var(--pad-x); bottom: calc(100% + 8px);
   display: flex; flex-direction: column; gap: 8px;
-  max-height: 40vh; overflow: auto;
+  max-height: calc(var(--vh) * .4); overflow: auto;
   padding: 12px 14px; border-radius: 12px;
   background: var(--card); border: 1px solid var(--borda); box-shadow: var(--anel-alto);
 }

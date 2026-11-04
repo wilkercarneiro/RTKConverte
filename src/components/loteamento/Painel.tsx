@@ -16,6 +16,7 @@ import type { Pt } from "../../lib/loteamento/geom.ts";
 import { paraUtm } from "../../lib/loteamento/plano.ts";
 import { cotaEm, declividadeEm } from "../../lib/loteamento/terreno.ts";
 import { Dica } from "../ui";
+import { Icone } from "../Icone";
 
 interface Props {
   projeto: Projeto;
@@ -29,6 +30,8 @@ interface Props {
   /** roda um comando da linha de comando (o painel e o teclado fazem a mesma coisa) */
   onComando: (texto: string) => void;
   onFerramenta: (f: Ferramenta) => void;
+  /** recolhe o painel num trilho de ações rápidas */
+  onRecolher?: () => void;
 }
 
 /** Campo numérico que só aplica ao sair ou dar Enter (não recalcula a cada tecla). */
@@ -73,7 +76,7 @@ function agruparArcos(lados: Resultado["lotes"][number]["lados"]): LadoLinha[] {
 /** Edição livre: o que sai das medidas do projeto é aplicado e vira aviso na mensagem. */
 const comAviso = (m: string, aviso: string | null | undefined) => (aviso ? `${m} Atenção: ${aviso}` : m);
 
-export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onComando, onFerramenta }: Props) {
+export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onComando, onFerramenta, onRecolher }: Props) {
   const lotes = lotesDaSelecao(res, sel);
   const quadra = sel?.tipo === "quadra" ? quadraDe(res, sel.nome) : undefined;
   const rua = sel?.tipo === "rua" ? res.ruas.find((r) => r.id === sel.id) : undefined;
@@ -104,6 +107,12 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
 
   return (
     <aside className="lot-painel">
+      {onRecolher && (
+        <div className="painel-barra">
+          <span>{lotes.length > 1 ? `${lotes.length} lotes selecionados` : lotes.length === 1 ? `Lote ${lotes[0].id}` : quadra ? `Quadra ${quadra.nome}` : rua ? "Rua" : area ? "Área pública" : "Projeto"}</span>
+          <button className="fantasma" onClick={onRecolher} title="Recolher o painel: o desenho fica maior e as ações rápidas continuam à mão">Recolher <b aria-hidden="true">»</b></button>
+        </div>
+      )}
       {/* ------------------------------------------------ seleção */}
       {lotes.length === 1 && (() => {
         const l = lotes[0];
@@ -140,15 +149,15 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
               <CampoNum valor={l.area} sufixo="m²" titulo="Digite a área: a divisa lateral desliza e o vizinho se ajusta"
                 onAplicar={(v) => { if (v !== undefined) onComando(`area ${String(v).replace(".", ",")}`); }} />
             </div>
-            <div className="lot-botoes">
-              <button onClick={() => onComando("unir")} title="Une com o vizinho de maior divisa em comum">Unir ao vizinho</button>
-              <button onClick={() => onComando("dividir 2")}>Dividir em 2</button>
-              <button onClick={() => onComando("dividir 3")}>Em 3</button>
+            <div className="lot-botoes lot-botoes-4">
+              <button onClick={() => onComando("unir")} title="Une com o vizinho de maior divisa em comum">Unir</button>
               <button className="perigo" onClick={() => onComando("apagar")} title="A área fica livre para desenhar outro lote (Delete)">Apagar</button>
+              <button className="verde" onClick={() => virarArea("verde")} title="O lote vira área verde">Área verde</button>
+              <button className="inst" onClick={() => virarArea("institucional")} title="O lote vira área institucional">Institucional</button>
             </div>
-            <div className="lot-botoes">
-              <button className="verde" onClick={() => virarArea("verde")}>→ Área verde</button>
-              <button className="inst" onClick={() => virarArea("institucional")}>→ Institucional</button>
+            <div className="lot-botoes lot-botoes-2">
+              <button onClick={() => onComando("dividir 2")}>Dividir em 2</button>
+              <button onClick={() => onComando("dividir 3")}>Dividir em 3</button>
             </div>
             <details className="lot-lados" open>
               <summary>Medidas e confrontações<Dica>☆ escolhe a frente do lote: o lado que dá para a servidão ou área verde (lote sem rua) ou a rua principal da esquina. Só o lado escolhido conta como frente. Ou use a ferramenta Frente (T) e clique no lado.</Dica></summary>
@@ -189,14 +198,16 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
             const media = lotes.reduce((s, l) => s + l.area, 0) / lotes.length;
             return (
               <>
-                <button className="principal lot-igualar" disabled={!umaQuadra} onClick={() => onComando("igualar")}
+                <div className="lot-acoes-2">
+                <button className="principal lot-acao" disabled={!umaQuadra} onClick={() => onComando("igualar")}
                   title={umaQuadra ? `Todos ficam com ${fmt(media)} m² (a soma dividida por igual). A terra dos selecionados é redividida só entre eles, com as laterais no esquadro da rua (ou acompanhando as pontas) e o fundo com fundo alinhado — os lotes de fora não mudam (Ctrl+Z desfaz).` : "Selecione lotes de uma quadra só"}>
-                  Igualar áreas · {fmt(media)} m² cada
+                  <b>Igualar áreas</b><small>{fmt(media)} m² cada</small>
                 </button>
-                <button className="lot-igualar" disabled={!umaQuadra} onClick={() => onComando("fundo com fundo")}
+                <button className="lot-acao" disabled={!umaQuadra} onClick={() => onComando("fundo com fundo")}
                   title={umaQuadra ? "Só os lotes selecionados: a área total deles é redividida entre eles, fundo com fundo pela linha central, laterais no esquadro da rua e a mesma área. Os outros lotes da quadra não mudam (Ctrl+Z desfaz). Para a quadra inteira, selecione a quadra (duplo clique)." : "Selecione lotes de uma quadra só"}>
-                  Ajustar fundo com fundo · {lotes.length} lotes
+                  <b>Fundo com fundo</b><small>ajustar {lotes.length} lotes</small>
                 </button>
+                </div>
               </>
             );
           })()}
@@ -204,11 +215,11 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
             <label>Frente de todos</label>
             <CampoNum valor={undefined} sufixo="m" onAplicar={(v) => { if (v !== undefined) onComando(`frente ${String(v).replace(".", ",")}`); }} />
           </div>
-          <div className="lot-botoes">
-            <button onClick={() => onComando("unir")}>Unir em um lote</button>
-            <button className="perigo" onClick={() => onComando("apagar")}>Apagar</button>
-            <button className="verde" onClick={() => virarArea("verde")}>→ Área verde</button>
-            <button className="inst" onClick={() => virarArea("institucional")}>→ Institucional</button>
+          <div className="lot-botoes lot-botoes-4">
+            <button onClick={() => onComando("unir")} title="Os selecionados viram um lote só">Unir lotes</button>
+            <button className="perigo" onClick={() => onComando("apagar")} title="A área fica livre para desenhar outros lotes (Delete)">Apagar</button>
+            <button className="verde" onClick={() => virarArea("verde")} title="Os selecionados viram área verde">Área verde</button>
+            <button className="inst" onClick={() => virarArea("institucional")} title="Os selecionados viram área institucional">Institucional</button>
           </div>
         </section>
       )}
@@ -248,7 +259,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
                     <option value="iguais">todos iguais (laterais giram um pouco)</option>
                   </select>
                 </div>
-                <div className="lot-botoes">
+                <div className="lot-botoes lot-botoes-2">
                   <button onClick={() => onComando("fundo com fundo")} title="Recalcula a linha central automática (equidistante das ruas, empatando as fileiras)">Linha automática</button>
                   <button onClick={() => onComando("automatico")} title="A quadra volta a ser dividida pelo gerador">Voltar ao automático</button>
                 </div>
@@ -256,7 +267,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
             );
           })() : null}
           {!quadra.estruturada && (
-            <div className="lot-botoes">
+            <div className="lot-botoes lot-botoes-1">
               <button className="principal" onClick={() => onComando("fundo com fundo")}
                 title="Refaz a quadra pela linha central: fundo com fundo alinhado, laterais no esquadro da rua e todos os lotes com a mesma área. Vale também para a quadra desenhada à mão (Ctrl+Z desfaz).">
                 Ajustar fundo com fundo
@@ -327,9 +338,9 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
               title="Para quadra sem rua (ou com acesso por outro lado): o lado marcado conta como frente dos lotes">Escolher o acesso (frente) da quadra</button>
           </div>
           {(quadra.acessos?.length ?? 0) > 0 && <p className="lot-dica">{quadra.acessos!.length} lado(s) marcados como acesso — traço laranja no desenho.</p>}
-          <div className="lot-botoes">
-            <button className="verde" onClick={() => virarArea("verde")}>→ Área verde</button>
-            <button className="inst" onClick={() => virarArea("institucional")}>→ Institucional</button>
+          <div className={`lot-botoes ${quadra.cfg >= 0 ? "lot-botoes-3" : "lot-botoes-2"}`}>
+            <button className="verde" onClick={() => virarArea("verde")} title="A quadra inteira vira área verde">Área verde</button>
+            <button className="inst" onClick={() => virarArea("institucional")} title="A quadra inteira vira área institucional">Institucional</button>
             {quadra.cfg >= 0 && <button onClick={() => { onMudar(restaurarQuadra(projeto, quadra)); onMsg(`Quadra ${quadra.nome} de volta ao padrão.`); }}>Voltar ao padrão</button>}
           </div>
         </section>
@@ -437,6 +448,74 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
           ))}
         </ul>
       </section>
+    </aside>
+  );
+}
+
+// ------------------------------------------------------------------ painel recolhido
+// O painel da direita fecha num trilho estreito: o desenho ganha a largura e
+// ficam à mão só as ações do que está selecionado (igualar, fundo com fundo,
+// unir, apagar, área verde, institucional) e a ida/volta entre as etapas.
+
+const ICO: Record<string, string> = {
+  igualar: "M5 9h14M5 15h14",
+  fundo: "M3 12h18M4 5h16v14H4zM9 5v14M15 5v14",
+  unir: "M4 5h16v14H4zM12 9v6M9 12h6",
+  dividir: "M4 5h16v14H4zM12 5v14",
+  apagar: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13",
+  verde: "M12 3l6 8h-3.5l4 6H5.5l4-6H6zM12 17v4",
+  inst: "M3 21h18M5 21V10l7-5 7 5v11M10 21v-5h4v5",
+  todas: "M3 4h8v7H3zM13 4h8v7h-8zM3 13h8v7H3zM13 13h8v7h-8zM3 7.5h8M13 7.5h8M3 16.5h8M13 16.5h8",
+  voltar: "M15 18l-6-6 6-6",
+  ir: "M9 18l6-6-6-6",
+  abrir: "M11 17l-5-5 5-5M18 17l-5-5 5-5",
+};
+const Ico = ({ d }: { d: string }) => <Icone d={d} size={18} />;
+
+export function PainelRapido({ projeto, res, sel, onSel, onMudar, onMsg, onComando, onAbrir, onPerguntas, onEntregas }: Omit<Props, "onFocar" | "onFerramenta"> & {
+  onAbrir: () => void; onPerguntas: () => void; onEntregas: () => void;
+}) {
+  const lotes = lotesDaSelecao(res, sel);
+  const quadra = sel?.tipo === "quadra" ? quadraDe(res, sel.nome) : undefined;
+  const umaQuadra = lotes.length > 0 && new Set(lotes.map((l) => l.quadra)).size === 1;
+  const virarArea = (tipo: TipoArea) => {
+    if (lotes.length) onComando(tipo);
+    else if (quadra) { onMudar(ajustarQuadra(projeto, res, quadra, { destino: tipo })); onSel(null); onMsg(`Quadra ${quadra.nome} → ${ROTULO_AREA[tipo]}.`); }
+  };
+  type Acao = { rot: string; ico: string; titulo: string; fazer: () => void; cls?: string; desab?: boolean };
+  const acoes: Acao[] = [];
+  if (lotes.length > 1) {
+    const media = lotes.reduce((s, l) => s + l.area, 0) / lotes.length;
+    acoes.push({ rot: "Igualar", ico: ICO.igualar, cls: "forte", desab: !umaQuadra, fazer: () => onComando("igualar"), titulo: umaQuadra ? `Igualar áreas: todos com ${fmt(media)} m²` : "Selecione lotes de uma quadra só" });
+    acoes.push({ rot: "Fundo c/ fundo", ico: ICO.fundo, desab: !umaQuadra, fazer: () => onComando("fundo com fundo"), titulo: `Ajustar fundo com fundo nos ${lotes.length} lotes` });
+  }
+  if (lotes.length === 1) acoes.push({ rot: "Dividir", ico: ICO.dividir, fazer: () => onComando("dividir 2"), titulo: "Dividir o lote em 2" });
+  if (lotes.length) {
+    acoes.push({ rot: lotes.length > 1 ? "Unir" : "Unir", ico: ICO.unir, fazer: () => onComando("unir"), titulo: lotes.length > 1 ? "Os selecionados viram um lote só" : "Une com o vizinho de maior divisa em comum" });
+    acoes.push({ rot: "Apagar", ico: ICO.apagar, cls: "perigo", fazer: () => onComando("apagar"), titulo: "Apagar (Delete): a área fica livre" });
+  }
+  if (quadra) acoes.push({ rot: "Fundo c/ fundo", ico: ICO.fundo, cls: "forte", fazer: () => onComando("fundo com fundo"), titulo: `Ajustar fundo com fundo na quadra ${quadra.nome}` });
+  if (lotes.length || quadra) {
+    acoes.push({ rot: "Á. verde", ico: ICO.verde, cls: "verde", fazer: () => virarArea("verde"), titulo: "Vira área verde" });
+    acoes.push({ rot: "Instituc.", ico: ICO.inst, cls: "inst", fazer: () => virarArea("institucional"), titulo: "Vira área institucional" });
+  }
+  if (!lotes.length && !quadra && res.quadras.some((q) => !q.estruturada && q.lotes.length >= 4)) {
+    acoes.push({ rot: "Todas f. c/ f.", ico: ICO.todas, fazer: () => onComando("fundo com fundo todas"), titulo: "Ajustar fundo com fundo em todas as quadras" });
+  }
+  const oQue = lotes.length > 1 ? `${lotes.length} lotes` : lotes.length === 1 ? lotes[0].id : quadra ? `Q. ${quadra.nome}` : null;
+  return (
+    <aside className="rapido lot-rapido" aria-label="Ações rápidas">
+      <button className="rapido-abrir" onClick={onAbrir} title="Abrir o painel (quadro de áreas, medidas, pendências)"><Ico d={ICO.abrir} /></button>
+      {oQue && <span className="rapido-sel" title="Seleção">{oQue}</span>}
+      {acoes.map((a) => (
+        <button key={a.rot + a.ico} className={a.cls} disabled={a.desab} onClick={a.fazer} title={a.titulo}>
+          <Ico d={a.ico} /><span>{a.rot}</span>
+        </button>
+      ))}
+      {!acoes.length && <span className="rapido-vazio">Selecione lotes ou uma quadra</span>}
+      <span className="rapido-esticar" />
+      <button onClick={onPerguntas} title="Rever as perguntas"><Ico d={ICO.voltar} /><span>Perguntas</span></button>
+      <button className="principal" onClick={onEntregas} title="Entregas: planta e locação"><Ico d={ICO.ir} /><span>Entregas</span></button>
     </aside>
   );
 }

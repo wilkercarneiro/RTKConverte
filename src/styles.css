@@ -34,6 +34,26 @@
   --pad-y: clamp(20px, 2.8vw, 40px);
 }
 
+/* O sistema a 80% em tela de computador (03/11/2026: "diminuir a proporção em
+   uns 20%") — o mesmo efeito do zoom de 80% do navegador. vh/vw não acompanham
+   o zoom: altura da tela é var(--vh), largura var(--vw). Clique × caixa e
+   balões com position: fixed convertem por src/lib/zoom.ts. Celular e tablet
+   (até 1099 px) ficam em 100%. */
+:root { --zoom: 1; --vh: 100vh; --vw: 100vw; --vh-d: 100dvh; }
+@media (min-width: 1100px) {
+  :root { zoom: 0.8; --zoom: 0.8; --vh: calc(100vh / 0.8); --vw: calc(100vw / 0.8); --vh-d: calc(100dvh / 0.8); }
+}
+
+/* Telas de trabalho (prancheta do loteamento, do CAR, da divisão): ocupam a
+   altura que sobra na tela — com a faixa do GPROL e o cabeçalho que tiverem —
+   e a página não rola; quem rola é o painel. No celular a página rola. */
+@media (min-width: 901px) {
+  .app-conteudo:has(> .tela-cheia) { height: var(--vh); min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .tela-cheia { height: var(--vh); display: flex; flex-direction: column; overflow: hidden; }
+  .app-conteudo > .tela-cheia { flex: 1 1 auto; height: auto; min-height: 0; }
+  .app-conteudo:has(> .tela-cheia) > :not(.tela-cheia) { flex: none; }
+}
+
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {
@@ -42,7 +62,7 @@ body {
   font-size: 14px;
   color: var(--texto);
   background: var(--bg);
-  min-height: 100vh;
+  min-height: var(--vh);
   -webkit-font-smoothing: antialiased;
 }
 h1, h2, h3 { margin: 0.2em 0; font-family: var(--fonte-titulo); font-weight: 600; letter-spacing: -0.015em; }
@@ -94,6 +114,9 @@ input, select, textarea {
   color: var(--texto);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
+/* caixa de marcar e opção não são campo de texto: sem os 40 px de altura do
+   input (eram eles que abriam buracos entre as opções empilhadas) */
+input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; padding: 0; flex: none; accent-color: var(--primaria); }
 textarea { height: auto; padding: 10px 12px; resize: vertical; line-height: 1.5; }
 input:focus, select:focus, textarea:focus {
   outline: none;
@@ -120,10 +143,10 @@ label small, label .sub { font-weight: 400; }
 .ok { color: var(--floresta); background: var(--primaria-clara); border-radius: 9px; padding: 8px 12px; margin-top: 8px; font-size: 13px; }
 .alerta { color: var(--alerta-escuro); background: var(--alerta-claro); border-radius: 8px; padding: 3px 10px; font-style: normal; font-size: 12px; font-weight: 600; }
 .sub { color: var(--texto-2); font-size: 13px; font-weight: 400; }
-.centro { display: grid; place-items: center; min-height: 100vh; text-align: center; }
+.centro { display: grid; place-items: center; min-height: var(--vh); text-align: center; }
 
 /* ===== Login (tela dividida) ===== */
-.login { min-height: 100vh; display: grid; grid-template-columns: 1.1fr 1fr; background: var(--floresta); }
+.login { min-height: var(--vh); display: grid; grid-template-columns: 1.1fr 1fr; background: var(--floresta); }
 .login-lado { padding: 56px 64px; display: flex; flex-direction: column; justify-content: space-between; color: var(--floresta-texto); }
 .login-lado h1 { color: #fff; font-size: clamp(36px, 4vw, 56px); line-height: 1.05; max-width: 14ch; margin: 0 0 18px; }
 .login-lado p { margin: 0; font-size: 17px; line-height: 1.5; max-width: 44ch; color: var(--floresta-texto); }
@@ -145,9 +168,9 @@ label small, label .sub { font-weight: 400; }
 .marca-nome { font-family: var(--fonte-titulo); font-size: 19px; font-weight: 600; letter-spacing: -0.01em; color: #fff; }
 
 /* ===== Casca: barra lateral + conteúdo ===== */
-.app { min-height: 100vh; display: grid; grid-template-columns: var(--largura-lateral) 1fr; }
+.app { min-height: var(--vh); display: grid; grid-template-columns: var(--largura-lateral) 1fr; }
 .barra-lateral {
-  position: sticky; top: 0; height: 100vh;
+  position: sticky; top: 0; height: var(--vh);
   display: flex; flex-direction: column;
   padding: 22px 14px;
   background: var(--floresta); color: var(--floresta-texto);
@@ -168,7 +191,7 @@ label small, label .sub { font-weight: 400; }
 .barra-rodape .papel { font-size: 11.5px; color: var(--floresta-texto-2); font-weight: 400; }
 .barra-rodape .sair { border: none; background: none; color: var(--floresta-texto-2); font-size: 12.5px; height: auto; padding: 0; font-weight: 500; }
 .barra-rodape .sair:hover { color: #fff; }
-.app-conteudo { min-width: 0; min-height: 100vh; }
+.app-conteudo { min-width: 0; min-height: var(--vh); }
 .pagina { width: 100%; padding: var(--pad-y) var(--pad-x) 60px; }
 .pagina-cabeca { display: flex; align-items: center; gap: 16px; margin-bottom: 22px; }
 .pagina-cabeca > div:first-child { flex: 1; }
@@ -627,13 +650,17 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .fieldset-plano { border: 1px solid var(--borda); border-radius: 10px; padding: 12px 16px; margin: 0; }
 .fieldset-plano legend { font-size: 12.5px; font-weight: 600; color: var(--texto-2); padding: 0 6px; }
 .fieldset-plano label { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 6px; font-weight: 500; }
+/* "O que sai na planta": as opções lado a lado */
+.fieldset-plano:has(> label + label) { display: flex; flex-wrap: wrap; gap: 4px 28px; align-items: center; }
+.fieldset-plano:has(> label + label) > label { margin-bottom: 0; }
 .linha-check { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 10px; font-weight: 600; }
 
 /* Confrontantes */
 .trechos { display: flex; flex-direction: column; gap: 12px; }
-.trecho-cabeca { display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap; }
-.trecho-cabeca input.apelido { width: 170px; height: 34px; font-size: 15px; font-weight: 600; border-color: transparent; padding: 0 8px; margin-left: -8px; background: transparent; }
+.trecho-cabeca { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
+.trecho-cabeca input.apelido { width: 150px; flex: 0 1 150px; min-width: 110px; height: 34px; font-size: 15px; font-weight: 600; border-color: transparent; padding: 0 8px; margin-left: -8px; background: transparent; }
 .trecho-cabeca input.apelido:hover, .trecho-cabeca input.apelido:focus { border-color: var(--borda-forte); background: #fff; }
+.trecho-cabeca > .remover { margin-left: auto; }
 .trecho-cabeca .ponto { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12.5px; color: var(--texto-2); white-space: nowrap; font-weight: 400; }
 .trecho-cabeca .ponto select { height: 30px; padding: 0 6px; border-radius: 7px; font: 700 12.5px var(--mono); }
 .trecho-cabeca select.limite { height: 30px; padding: 0 6px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #F0F3F1; border-color: transparent; color: #33453C; }
@@ -847,7 +874,7 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .escolha-cadastro label, .login-box label.aceite { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; }
 .escolha-cadastro input, .login-box label.aceite input { height: auto; width: auto; margin-top: 3px; }
 .legal-links { margin-top: 18px; font-size: 12.5px; }
-.pagina-publica { min-height: 100vh; background: var(--bg); padding: 40px 16px 80px; }
+.pagina-publica { min-height: var(--vh); background: var(--bg); padding: 40px 16px 80px; }
 .pagina-publica-conteudo { max-width: 780px; margin: 0 auto; background: var(--card); border: 1px solid var(--borda); border-radius: var(--raio-g); padding: 32px clamp(18px, 4vw, 48px); }
 .pagina-publica .voltar { display: inline-block; margin-bottom: 16px; font-size: 13.5px; }
 .documento { line-height: 1.6; font-size: 15px; color: var(--texto); }
@@ -985,7 +1012,7 @@ button.link:hover:not(:disabled) { color: var(--floresta); text-decoration: unde
 .dv-m-divisa td:first-child { font-style: italic; }
 .dv-m-total td { font-weight: 700; }
 .dv-gerar .dv-campo { margin: 0; }
-.dv-prancheta { height: max(640px, calc(100vh - 170px)); min-height: 560px; border: 1px solid var(--borda); border-radius: var(--raio); overflow: hidden; background: var(--card); }
+.dv-prancheta { height: max(640px, calc(var(--vh) - 170px)); min-height: 560px; border: 1px solid var(--borda); border-radius: var(--raio); overflow: hidden; background: var(--card); }
 .dv-painel header { display: flex; align-items: center; gap: 8px; }
 .dv-painel header h3 { margin: 0; font-size: 15px; }
 .dv-painel header .fantasma { margin-left: auto; height: 26px; padding: 0 8px; }
@@ -1360,3 +1387,61 @@ button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #f
 .aviso-fuso strong { font-size: 14.5px; }
 .aviso-fuso p { margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--texto-2); }
 .aviso-fuso-opcoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* ---------------------------------------------------------------- trilho de ações rápidas
+   O painel da direita das pranchetas (loteamento, CAR, divisão) recolhe num
+   trilho estreito: o desenho ganha a largura e ficam à mão só as ações do
+   momento, com ícone e nome curto. */
+.rapido { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 10px 8px; border-left: 1px solid var(--borda); background: var(--card); min-height: 0; overflow-y: auto; scrollbar-width: none; }
+.rapido button, .rapido button.principal, .rapido button.perigo { height: auto; min-height: 50px; padding: 6px 2px 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-radius: 10px; font-size: 10.5px; font-weight: 600; line-height: 1.1; text-align: center; }
+.rapido button span { display: block; }
+.rapido button.forte { border-color: var(--primaria); color: var(--floresta); background: var(--primaria-clara); }
+.rapido button.verde { border-color: #8CCB72; color: #2E6B1C; }
+.rapido button.inst { border-color: #EFB86A; color: #8A4B00; }
+.rapido button.perigo { border-color: transparent; background: var(--perigo-claro); color: var(--perigo); }
+.rapido button.perigo:hover:not(:disabled) { background: var(--perigo); color: #fff; }
+.rapido button.ativo { background: var(--primaria-clara); color: var(--floresta); border-color: var(--primaria); }
+.rapido .rapido-abrir { min-height: 36px; border-style: dashed; color: var(--texto-2); }
+.rapido-sel { font: 600 10.5px var(--mono); color: var(--floresta); text-align: center; background: var(--primaria-clara); border-radius: 7px; padding: 4px 2px; overflow-wrap: anywhere; }
+.rapido-sel.falta { color: var(--perigo); background: var(--perigo-claro); }
+.rapido-vazio { font-size: 10.5px; color: var(--texto-3); text-align: center; line-height: 1.3; padding: 4px 0; }
+.rapido-esticar { flex: 1; min-height: 6px; }
+/* barra do painel aberto: título + recolher */
+.painel-barra { position: sticky; top: -14px; z-index: 3; margin: -14px -14px 0; padding: 8px 10px 8px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: #FAFBFA; border-bottom: 1px solid var(--borda); font-size: 12.5px; font-weight: 600; color: var(--texto-2); }
+.painel-barra button { font-size: 12.5px; color: var(--texto-2); padding: 4px 8px; border-radius: 8px; }
+.painel-barra button:hover:not(:disabled) { background: #EEF2F0; color: var(--texto); }
+
+/* ---------------------------------------------------------------- etapa Divisão em tela cheia
+   A prancheta da partilha ocupa o que sobra entre as etapas e a barra de
+   gerar (fixa embaixo, ~65 px): a página não rola, rola só o painel das partes. */
+.conf-divisao > .topo, .conf-divisao > .etapas-barra { flex: none; }
+.conf-divisao > .conferencia-corpo { flex: 1 1 auto; min-height: 0; padding-top: 14px; padding-bottom: 12px; } /* a folga da barra de gerar vem da casca (.conferencia:has(> .preview-fina)) */
+.conf-divisao #bloco-divisao { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding: 14px 18px; gap: 10px; }
+.conf-divisao #bloco-divisao > header { flex: none; }
+.conf-divisao #bloco-divisao > header h3 { font-size: 16px; }
+.conf-divisao .dv-prancheta { flex: 1 1 auto; height: auto; min-height: 380px; }
+.conf-divisao #bloco-divisao > .dv-barra { flex: none; margin-top: 0; padding-top: 10px; }
+
+/* GEO de cada parte (Divisão e Documentos): marcar as partes, 1 crédito por parte */
+.geo-partes ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.geo-partes li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 14px; align-items: center; padding: 8px 12px; border: 1px solid var(--borda); border-radius: 10px; background: var(--card); }
+.geo-partes li.feito { background: var(--primaria-clara); border-color: transparent; }
+.geo-partes label { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; font-weight: 400; }
+.geo-partes label input { width: 16px; height: 16px; flex: none; margin: 0; }
+.geo-nome { display: flex; flex-direction: column; min-width: 0; }
+.geo-nome b { font-size: 13.5px; }
+.geo-nome small { font-size: 11.5px; color: var(--texto-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.geo-area { font-size: 12px; color: var(--texto-2); }
+.geo-link { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.geo-falta { font-size: 12px; color: var(--texto-3); white-space: nowrap; }
+.geo-pe { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; margin-top: 10px; }
+.geo-pe .sub { margin: 0; font-size: 12.5px; }
+/* no painel estreito da divisão: área embaixo do nome, botão na largura toda */
+.geo-partes.compacto li { grid-template-columns: minmax(0, 1fr) auto; padding: 7px 10px; }
+.geo-partes.compacto .geo-area { display: none; }
+.geo-partes.compacto .geo-pe { flex-direction: column; align-items: stretch; }
+.geo-partes.compacto .geo-pe button { width: 100%; }
+.geo-partes.compacto .geo-pe .sub { font-size: 11.5px; text-align: center; }
+.dv-geo-partes { border-top: 1px solid var(--linha); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.dv-geo-partes > header { display: flex; align-items: center; gap: 6px; }
+.dv-geo-partes > header b { font-size: 14px; color: var(--texto); }

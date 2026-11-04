@@ -65,10 +65,18 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 
 /* ---------- prancheta ---------- */
 .lot-area-trabalho {
-  display: grid; grid-template-columns: 52px minmax(0, 1fr) 360px; grid-template-rows: minmax(0, 1fr) auto;
-  height: calc(100vh - 118px); min-height: 560px;
+  display: grid; grid-template-columns: 52px minmax(0, 1fr) 392px; grid-template-rows: minmax(0, 1fr) auto;
+  height: calc(var(--vh) - 118px); min-height: 560px;
 }
-.lot-area-trabalho.com-avisos { grid-template-columns: 52px 268px minmax(0, 1fr) 360px; }
+/* na tela cheia a prancheta é o resto da coluna (sem conta de altura fixa) */
+.tela-cheia > .lot-area-trabalho { flex: 1 1 auto; height: auto; min-height: 420px; }
+.tela-cheia > .topo { flex: none; }
+/* painel recolhido: trilho de ações rápidas */
+.lot-area-trabalho.painel-recolhido { grid-template-columns: 52px minmax(0, 1fr) 76px; }
+.lot-area-trabalho.com-avisos.painel-recolhido { grid-template-columns: 52px 268px minmax(0, 1fr) 76px; }
+.lot-rapido { grid-row: 1 / 3; grid-column: 3; }
+.lot-area-trabalho.com-avisos .lot-rapido { grid-column: 4; }
+.lot-area-trabalho.com-avisos { grid-template-columns: 52px 268px minmax(0, 1fr) 392px; }
 .lot-area-trabalho.com-avisos .lot-painel, .lot-area-trabalho.com-avisos .lot-rodape-etapa { grid-column: 4; }
 .lot-avisos { grid-row: 1 / 3; grid-column: 2; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--borda); background: #FFFBFA; }
 .lot-avisos > header { display: flex; gap: 10px; align-items: flex-start; padding: 12px 12px 10px; border-bottom: 1px solid var(--borda); background: var(--card); }
@@ -145,8 +153,8 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 .lot-cmd-msg { font-size: 13px; line-height: 1.35; color: var(--floresta); background: var(--primaria-clara); padding: 4px 10px; border-radius: 8px; max-height: 44px; box-sizing: border-box; overflow-y: auto; flex: 1; min-width: 0; }
 .lot-cmd-msg.erro { color: var(--perigo); background: var(--perigo-claro); }
 .lot-painel { grid-row: 1 / 2; grid-column: 3; overflow-y: auto; border-left: 1px solid var(--borda); background: #FAFBFA; padding: 14px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-.lot-rodape-etapa { grid-column: 3; grid-row: 2; display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-left: 1px solid var(--borda); border-top: 1px solid var(--borda); background: var(--card); }
-.lot-rodape-etapa button { width: 100%; }
+.lot-rodape-etapa { grid-column: 3; grid-row: 2; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; padding: 10px 14px; border-left: 1px solid var(--borda); border-top: 1px solid var(--borda); background: var(--card); }
+.lot-rodape-etapa button { width: 100%; height: 38px; padding: 0 12px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lot-cartao { background: var(--card); border: 1px solid var(--borda); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .lot-cartao header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .lot-cartao header h3 { font-size: 15px; margin: 0; }
@@ -164,6 +172,20 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 /* lotes selecionados: igualar as áreas (a soma dividida por igual) */
 .lot-igualar { width: 100%; height: 36px; font-size: 13px; }
 .lot-botoes button { height: 32px; font-size: 12.5px; padding: 0 10px; }
+/* botões em grade: todos na mesma linha, da mesma largura */
+.lot-botoes-1, .lot-botoes-2, .lot-botoes-3, .lot-botoes-4 { display: grid; gap: 6px; }
+.lot-botoes-1 { grid-template-columns: minmax(0, 1fr); }
+.lot-botoes-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.lot-botoes-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.lot-botoes-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.lot-botoes-1 button, .lot-botoes-2 button, .lot-botoes-3 button, .lot-botoes-4 button { min-width: 0; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lot-botoes-4 { display: flex; }
+.lot-botoes-4 button { flex: 1 1 auto; font-size: 12px; padding: 0 6px; }
+/* igualar × fundo com fundo, lado a lado */
+.lot-acoes-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.lot-acoes-2 button.lot-acao { height: auto; min-height: 48px; padding: 6px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; line-height: 1.15; min-width: 0; }
+.lot-acao b { font-size: 13px; white-space: nowrap; }
+.lot-acao small { font-size: 11px; font-weight: 500; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .lot-botoes button.verde { border-color: #8CCB72; color: #2E6B1C; }
 .lot-botoes button.inst { border-color: #EFB86A; color: #8A4B00; }
 /* perigo no padrão do sistema (.perigo-btn): fundo claro e letra vermelha, cheio
@@ -201,7 +223,7 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 
 /* ---------- ajuda ---------- */
 .lot-modal { position: fixed; inset: 0; background: rgb(14 32 26 / 40%); z-index: 100; display: grid; place-items: center; padding: 24px; }
-.lot-modal-caixa { background: var(--card); border-radius: var(--raio-g); max-width: 1080px; width: 100%; max-height: 86vh; overflow: auto; padding: 22px 26px; box-shadow: var(--sombra-alta); }
+.lot-modal-caixa { background: var(--card); border-radius: var(--raio-g); max-width: 1080px; width: 100%; max-height: calc(var(--vh) * .86); overflow: auto; padding: 22px 26px; box-shadow: var(--sombra-alta); }
 .lot-modal-caixa header { display: flex; justify-content: space-between; align-items: center; }
 .lot-ajuda-grade { display: grid; grid-template-columns: 1fr 1.3fr; gap: 26px; }
 .lot-ajuda-grade ul { padding-left: 18px; font-size: 13.5px; line-height: 1.7; }
@@ -230,6 +252,8 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 @media (max-width: 1180px) {
   .lot-area-trabalho { grid-template-columns: 48px minmax(0, 1fr) 300px; }
   .lot-area-trabalho.com-avisos { grid-template-columns: 48px 230px minmax(0, 1fr) 300px; }
+  .lot-area-trabalho.painel-recolhido { grid-template-columns: 48px minmax(0, 1fr) 76px; }
+  .lot-area-trabalho.com-avisos.painel-recolhido { grid-template-columns: 48px 230px minmax(0, 1fr) 76px; }
   .lot-terreno, .lot-entrega-grade, .lot-campo-grade, .lot-ajuda-grade { grid-template-columns: 1fr; }
 }
 .lot-checks input[type="checkbox"], .lot-formatos input[type="radio"], .lot-opcoes-ruas input[type="radio"] { width: auto; height: auto; flex: none; margin: 0; }

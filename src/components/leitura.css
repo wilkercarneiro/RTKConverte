@@ -182,7 +182,7 @@ button.lt-esboco-convite:hover:not(:disabled) { border-color: var(--primaria); c
 
 /* ampliação do esboço */
 .lt-luz { position: fixed; inset: 0; z-index: 90; background: rgb(8 14 11 / 86%); display: grid; place-items: center; padding: 24px; gap: 12px; grid-template-rows: 1fr auto; cursor: zoom-out; }
-.lt-luz img { max-width: 100%; max-height: calc(100vh - 110px); border-radius: 10px; box-shadow: 0 20px 60px rgb(0 0 0 / 50%); }
+.lt-luz img { max-width: 100%; max-height: calc(var(--vh) - 110px); border-radius: 10px; box-shadow: 0 20px 60px rgb(0 0 0 / 50%); }
 .lt-luz-acoes { display: flex; gap: 10px; cursor: default; }
 .lt-luz-acoes button:not(.principal) { background: #fff; }
 

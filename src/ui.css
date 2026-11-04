@@ -132,7 +132,7 @@ button[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
   animation: dialogo-fundo 0.15s ease;
 }
 .dialogo {
-  width: min(440px, 100%); background: var(--card); border-radius: 18px; box-shadow: var(--anel-alto), 0 30px 60px -20px rgb(0 0 0 / 30%);
+  width: min(500px, 100%); background: var(--card); border-radius: 18px; box-shadow: var(--anel-alto), 0 30px 60px -20px rgb(0 0 0 / 30%);
   padding: 24px 24px 20px; display: grid; gap: 10px;
   animation: dialogo-entrar 0.18s ease;
 }
@@ -142,12 +142,15 @@ button[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
   width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
   background: var(--perigo-claro); color: var(--perigo); font-weight: 800; font-size: 18px;
 }
-.dialogo-acoes { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
-.dialogo-acoes button { height: 40px; }
+/* os dois botões sempre lado a lado (03/11/2026): texto longo ("Prosseguir e usar
+   1 crédito geral") quebra dentro do botão, não joga um botão para baixo do outro */
+.dialogo-acoes { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; flex-wrap: nowrap; }
+.dialogo-acoes button { height: auto; min-height: 40px; padding-top: 6px; padding-bottom: 6px; flex: 0 1 auto; min-width: 0; line-height: 1.2; white-space: normal; }
+.dialogo-acoes button:last-child { flex-shrink: 0.4; }
 @keyframes dialogo-fundo { from { opacity: 0; } }
 @keyframes dialogo-entrar { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
 @media (prefers-reduced-motion: reduce) { .dialogo, .dialogo-fundo { animation: none; } }
-@media (max-width: 480px) { .dialogo-acoes button { flex: 1; } }
+@media (max-width: 480px) { .dialogo-acoes button { flex: 1 1 0; } }
 
 /* ---------- abas ---------- */
 .abas { display: flex; gap: 4px; padding: 4px; background: #E9EEEB; border-radius: 13px; width: fit-content; max-width: 100%; overflow-x: auto; scrollbar-width: none; }

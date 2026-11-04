@@ -1,9 +1,10 @@
 /* Serviço de CAR: prancheta + painel, no mesmo desenho do loteamento. */
 /* A página é uma coluna da altura da tela: o cabeçalho ocupa o que precisa e a
-   área de trabalho o resto. A conta fixa (100vh - 118px) supunha um cabeçalho
+   área de trabalho o resto. A conta fixa (var(--vh) - 118px) supunha um cabeçalho
    de duas linhas e deixava uma faixa vazia embaixo; e .conferencia (120px de
    folga para o rodapé de gerar, que o CAR não tem) ganhava do padding-bottom. */
-.conferencia.car-pagina { padding-bottom: 0; height: 100vh; display: flex; flex-direction: column; }
+.conferencia.car-pagina { padding-bottom: 0; display: flex; flex-direction: column; }
+/* a altura vem de .tela-cheia (styles.css): a do que sobra na tela, com a faixa do GPROL */
 .car-resumo-topo { font-size: 13px; color: var(--texto-2); white-space: nowrap; }
 .car-resumo-topo b { color: var(--texto); font-variant-numeric: tabular-nums; }
 .car-dica { font-size: 12.5px; color: var(--texto-3); line-height: 1.5; margin: 0; }
@@ -13,8 +14,9 @@
 
 .car-area-trabalho {
   display: grid; grid-template-columns: 52px minmax(0, 1fr) 370px;
-  flex: 1 1 auto; min-height: 560px;
+  flex: 1 1 auto; min-height: 420px;
 }
+.car-area-trabalho.painel-recolhido { grid-template-columns: 52px minmax(0, 1fr) 76px; }
 .car-ferramentas { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0; border-right: 1px solid var(--borda); background: var(--card); }
 .car-ferramentas button { width: 38px; height: 38px; padding: 0; display: grid; place-items: center; border-radius: 10px; font-size: 17px; border: 1px solid transparent; background: transparent; color: var(--texto-2); }
 .car-ferramentas button:hover:not(:disabled) { background: #F0F3F1; color: var(--texto); }
@@ -94,6 +96,11 @@
   .conferencia.car-pagina { height: auto; }
   .car-area-trabalho { grid-template-columns: 52px minmax(0, 1fr); grid-template-rows: minmax(420px, 1fr) auto; height: auto; }
   .car-painel { grid-column: 1 / 3; border-left: 0; border-top: 1px solid var(--borda); }
+  /* celular: o trilho recolhido vira uma faixa de botões embaixo do mapa */
+  .car-area-trabalho.painel-recolhido { grid-template-columns: 52px minmax(0, 1fr); }
+  .car-rapido { grid-column: 1 / 3; flex-direction: row; flex-wrap: wrap; border-left: 0; border-top: 1px solid var(--borda); }
+  .car-rapido > * { flex: 1 1 70px; }
+  .car-rapido .rapido-esticar { display: none; }
 }
 
 /* Reserva legal: % + "Encostar num lado" + "Desenhar à mão" na mesma linha */

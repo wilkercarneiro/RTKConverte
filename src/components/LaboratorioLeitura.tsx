@@ -95,7 +95,7 @@ export function LaboratorioLeitura() {
           uf={uf} fuso={fuso} onEscolherFuso={setFuso}
           onConfirmar={async (l) => {
             // a mesma pergunta do Upload (aqui sem banco: o texto genérico)
-            const ok = await confirmar({ titulo: "Prosseguir vai consumir 1 crédito", texto: <p>{`O serviço será criado com ${l.resumo.pontos} pontos. (laboratório: nada é criado)`}</p>, confirmar: "Prosseguir e usar 1 crédito", cancelar: "Voltar à conferência" });
+            const ok = await confirmar({ titulo: "Prosseguir vai consumir 1 crédito geral", texto: <><p>Sai dos créditos do mês: depois dele, sobram 37 de 50 (renova em 10/11).</p><p className="sub">{`O serviço será criado com ${l.resumo.pontos} pontos. (laboratório: nada é criado)`}</p></>, confirmar: "Prosseguir e usar 1 crédito geral", cancelar: "Voltar à conferência" });
             if (ok) setConfirmada(l);
           }}
           onTrocarArquivo={() => setConfirmada(null)} />

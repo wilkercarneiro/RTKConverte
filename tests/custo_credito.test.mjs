@@ -62,3 +62,29 @@ test("usa a carteira que o banco indicou (CAR gasta CAR)", () => {
   assert.equal(r.credito, "1 crédito de CAR");
   assert.match(r.detalhe, /sobram 3 de 5/);
 });
+
+// GEO de cada parte da divisão: 1 crédito por parte selecionada
+import { custoDeVarios } from "../src/lib/creditos_regras.ts";
+
+test("GEO das partes: n créditos, do mês e depois dos extras", () => {
+  const c = situacao([geral({ usado: 48, extra: 5 })], { "servico.completo": { disponivel: true, carteira: "geral", precisa_aceite: false } });
+  const r = custoDeVarios(c, "completo", 4);
+  assert.equal(r.disponivel, true);
+  assert.equal(r.credito, "4 créditos gerais");
+  assert.match(r.detalhe, /2 dos créditos do mês e 2 dos extras comprados/);
+  assert.match(r.detalhe, /sobram 3/);
+});
+
+test("GEO das partes: sem crédito para todas, não deixa começar", () => {
+  const c = situacao([geral({ usado: 49, extra: 1 })], { "servico.completo": { disponivel: true, carteira: "geral", precisa_aceite: false } });
+  const r = custoDeVarios(c, "completo", 3);
+  assert.equal(r.disponivel, false);
+  assert.match(r.detalhe, /2 créditos gerais e são 3 partes/);
+});
+
+test("GEO das partes: plano sem limite e uma parte só", () => {
+  const c = situacao([geral({ por_mes: null })], { "servico.completo": { disponivel: true, carteira: "geral", precisa_aceite: false } });
+  assert.match(custoDeVarios(c, "completo", 3).detalhe, /sem limite|não tem limite/);
+  assert.equal(custoDeVarios(c, "completo", 1).credito, "1 crédito geral");
+  assert.equal(custoDeVarios(null, "completo", 2).credito, "2 créditos");
+});

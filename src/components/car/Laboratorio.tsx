@@ -10,6 +10,7 @@ import { definicaoDe } from "../../lib/modalidades";
 import { rotaParaHash, voltarDoNovo } from "../../lib/rota";
 import { Car } from "./Car";
 import { CarNovo } from "./CarNovo";
+import { CascaLab } from "../CascaLab";
 
 const servico = {
   id: "lab-car", tipo: "geo", modalidade: "car", tem_glebas: false, status: "rascunho",
@@ -29,7 +30,7 @@ export function LaboratorioCar() {
     );
   }
   return (
-    <Car servico={servico} onVoltar={() => { location.hash = "#/"; }}
+    <CascaLab><Car servico={servico} onVoltar={() => { location.hash = "#/"; }}
       armazenamento={{
         carregar: async () => {
           try {
@@ -40,6 +41,6 @@ export function LaboratorioCar() {
           return projetoNovo("FAZENDA DEMO", k.perimetro, k.rios);
         },
         salvar: async (_id, p) => { try { localStorage.setItem(CHAVE, JSON.stringify(p)); } catch { /* sem armazenamento */ } },
-      }} />
+      }} /></CascaLab>
   );
 }

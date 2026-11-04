@@ -21,6 +21,7 @@ import { BotaoConcluir, useConclusao } from "../ConcluirServico";
 import { CarEditor, COR } from "./CarEditor";
 import type { FerramentaCar, SelecaoCar } from "./CarEditor";
 import "./car.css";
+import { Icone } from "../Icone";
 
 export interface ArmazenamentoCar {
   carregar: (servicoId: string) => Promise<Partial<ProjetoCar> | null>;
@@ -31,6 +32,18 @@ export interface ArmazenamentoCar {
 const BANCO: ArmazenamentoCar = { carregar: carregarProjetoCar, salvar: salvarProjetoCar, marcarExportado: marcarCarExportado };
 
 interface Historico { passado: ProjetoCar[]; atual: ProjetoCar | null; futuro: ProjetoCar[]; base: ProjetoCar | null }
+
+/** Ícones do trilho recolhido (traço único, viewBox 24). */
+const ICO_CAR = {
+  abrir: "M11 17l-5-5 5-5M18 17l-5-5 5-5",
+  encostar: "M4 4v16M8 6h12v12H8z",
+  desenhar: "M12 3l8 6-3 10H7L4 9z",
+  ajustar: "M4 12a8 8 0 1 0 8-8M4 4v4h4",
+  vegetacao: "M12 3l6 8h-3.5l4 6H5.5l4-6H6zM12 17v4",
+  rio: "M3 8c3-3 5 3 8 0s5 3 8 0M3 15c3-3 5 3 8 0s5 3 8 0",
+  kml: "M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21zM12 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",
+  baixar: "M12 3v12M7 10l5 5 5-5M4 21h16",
+};
 
 export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }: {
   servico: Servico; onVoltar: () => void; armazenamento?: ArmazenamentoCar;
@@ -44,6 +57,9 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
   const [h, setH] = useState<Historico>({ passado: [], atual: null, futuro: [], base: null });
   const [erroCarga, setErroCarga] = useState<string | null>(null);
   const [ferramenta, setFerramenta] = useState<FerramentaCar>("mover");
+  // painel da direita recolhido num trilho de ações rápidas (lembrado neste navegador)
+  const [recolhido, setRecolhido] = useState(() => { try { return localStorage.getItem("vertces.car.painelRecolhido") === "1"; } catch { return false; } });
+  const recolher = (v: boolean) => { setRecolhido(v); try { localStorage.setItem("vertces.car.painelRecolhido", v ? "1" : "0"); } catch { /* sem armazenamento */ } };
   /** o que a ferramenta "lado" encosta: a reserva ou a vegetação nativa */
   const [alvoLado, setAlvoLado] = useState<"reserva" | "vegetacao">("reserva");
   const [sel, setSel] = useState<SelecaoCar>(null);
@@ -231,7 +247,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
   const rioSel = sel?.tipo === "rio" ? projeto.rios.find((r) => r.id === sel.id) : undefined;
 
   return (
-    <div className="conferencia car-pagina">
+    <div className="conferencia car-pagina tela-cheia">
       <header className="topo">
         <button className="fantasma voltar" onClick={onVoltar}>← Serviços</button>
         <span className="sep" aria-hidden="true">/</span>
@@ -246,7 +262,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
         </span>
       </header>
 
-      <div className="car-area-trabalho">
+      <div className={`car-area-trabalho${recolhido ? " painel-recolhido" : ""}`}>
         <nav className="car-ferramentas" aria-label="Ferramentas">
           {ferramentas.map(([f, i, t]) => (
             <button key={f} title={t} aria-label={t} className={ferramenta === f && (f !== "lado" || alvoLado === "reserva") ? "ativo" : ""}
@@ -288,7 +304,29 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
           )}
         </div>
 
+        {recolhido ? (
+          <aside className="rapido car-rapido" aria-label="Ações rápidas">
+            <button className="rapido-abrir" onClick={() => recolher(false)} title="Abrir o painel (quadro de áreas, reserva, vegetação, rios, arquivos)"><Icone d={ICO_CAR.abrir} size={18} /></button>
+            <span className={`rapido-sel${res.reservaOk ? "" : " falta"}`} title={`Reserva legal: ${fmtPct(res.pctReserva)} (pedido ${fmtPct(projeto.reserva.pct)})`}>RL {fmtPct(res.pctReserva)}</span>
+            <button className={ferramenta === "lado" && alvoLado === "reserva" ? "ativo" : ""} onClick={() => encostar("reserva")} title="Encostar a reserva num lado do imóvel"><Icone d={ICO_CAR.encostar} size={18} /><span>Encostar</span></button>
+            <button className={ferramenta === "reserva" ? "ativo" : ""} onClick={() => setFerramenta("reserva")} title="Desenhar a reserva à mão"><Icone d={ICO_CAR.desenhar} size={18} /><span>Desenhar</span></button>
+            {projeto.reserva.poligonos.length > 0 && (
+              <button className="forte" onClick={ajustar} disabled={res.reservaOk && Math.abs(res.pctReserva - projeto.reserva.pct) < 0.01} title={`Ajustar a reserva a ${fmtPct(projeto.reserva.pct)}`}>
+                <Icone d={ICO_CAR.ajustar} size={18} /><span>Ajustar</span>
+              </button>
+            )}
+            <button className={ferramenta === "vegetacao" ? "ativo" : ""} onClick={() => setFerramenta("vegetacao")} title="Desenhar a vegetação nativa à mão"><Icone d={ICO_CAR.vegetacao} size={18} /><span>Vegetação</span></button>
+            <button className={ferramenta === "rio" ? "ativo" : ""} onClick={() => setFerramenta("rio")} title="Traçar um rio (APP)"><Icone d={ICO_CAR.rio} size={18} /><span>Rio</span></button>
+            <span className="rapido-esticar" />
+            <button onClick={() => exportar("kml")} disabled={!!baixando} title="KML de conferência"><Icone d={ICO_CAR.kml} size={18} /><span>KML</span></button>
+            <button className="principal" disabled={!!baixando} onClick={() => exportar("tudo")} title="Baixar tudo para o SICAR (zip)"><Icone d={ICO_CAR.baixar} size={18} /><span>{baixando === "tudo" ? "Gerando…" : "SICAR"}</span></button>
+          </aside>
+        ) : (
         <aside className="car-painel">
+          <div className="painel-barra">
+            <span>Projeto do CAR</span>
+            <button className="fantasma" onClick={() => recolher(true)} title="Recolher o painel: o mapa fica maior e as ações rápidas continuam à mão">Recolher <b aria-hidden="true">»</b></button>
+          </div>
           <section className="car-cartao">
             <header><h3>Quadro de áreas</h3></header>
             <table className="car-quadro">
@@ -423,6 +461,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
             <p className="car-dica">Área total {fmtNum(a.imovel, 2)} m² · reserva {fmtNum(a.reserva, 2)} m²{a.vegetacao > 0 ? ` · vegetação nativa ${fmtNum(a.vegetacao, 2)} m²` : ""} · produtiva {fmtNum(a.produtiva, 2)} m² · APP {fmtNum(a.app, 2)} m²</p>
           </section>
         </aside>
+        )}
       </div>
     </div>
   );

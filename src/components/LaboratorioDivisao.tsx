@@ -17,6 +17,7 @@ import { gerarPlantaPdf } from "../../supabase/functions/_shared/planta.ts";
 import { ANEL, dadosPlantaDe } from "../../tests/fixtures/salgada_velha.mjs";
 // @ts-expect-error fixture em JS dos testes, sem declaração de tipos
 import { VERTICES as IBERA_V, GLEBAS as IBERA_G } from "../../tests/fixtures/ibera.mjs";
+import { CascaLab } from "./CascaLab";
 
 const SID = "lab-divisao";
 const VIZINHOS = ["", "", "", "", "FAZENDA BOA ESPERANÇA\\JOSÉ PEREIRA\\CPF:000.000.001-00", "", "", "", "", "", "", "", "", "", "", "SÍTIO SÃO JOSÉ\\MARIA LIMA\\CPF:000.000.002-00"];
@@ -68,8 +69,8 @@ function LaboratorioGlebas() {
 }
 
 export function LaboratorioDivisao() {
-  if (location.hash.startsWith("#/lab/divisao/glebas")) return <LaboratorioGlebas />;
-  return <LaboratorioDivisaoPartes />;
+  if (location.hash.startsWith("#/lab/divisao/glebas")) return <CascaLab><LaboratorioGlebas /></CascaLab>;
+  return <CascaLab><LaboratorioDivisaoPartes /></CascaLab>;
 }
 
 // o rascunho da prancheta fica no navegador, como no serviço: reabrir volta como estava

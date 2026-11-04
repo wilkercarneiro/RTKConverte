@@ -25,7 +25,7 @@ import type { Passo } from "../ui";
 import { Assistente } from "./Assistente";
 import { Editor } from "./Editor";
 import type { OpcoesVista } from "./Editor";
-import { Painel } from "./Painel";
+import { Painel, PainelRapido } from "./Painel";
 import { Avisos } from "./Avisos";
 import { Entregas } from "./Entregas";
 import { PainelRedes } from "./Redes";
@@ -129,6 +129,9 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   const [historicoCmd, setHistoricoCmd] = useState<string[]>([]);
   const [ajuda, setAjuda] = useState(false);
   const [verAvisos, setVerAvisos] = useState(true);
+  // painel da direita recolhido num trilho de ações rápidas (lembrado neste navegador)
+  const [painelRecolhido, setPainelRecolhido] = useState(() => { try { return localStorage.getItem("vertces.lot.painelRecolhido") === "1"; } catch { return false; } });
+  const recolherPainel = (v: boolean) => { setPainelRecolhido(v); try { localStorage.setItem("vertces.lot.painelRecolhido", v ? "1" : "0"); } catch { /* sem armazenamento */ } };
   // redes de infraestrutura (água, esgoto, drenagem, energia, iluminação) por cima dos lotes
   const [verRedes, setVerRedes] = useState(false);
   const [camadasRedes, setCamadasRedes] = useState<Set<Rede>>(() => new Set<Rede>(["agua", "esgoto", "energia"]));
@@ -407,7 +410,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   const qtdSel = lotesDaSelecao(res ?? ({ lotes: [] } as unknown as Resultado), sel).length;
 
   return (
-    <div className={`conferencia lot-pagina etapa-${etapa}`}>
+    <div className={`conferencia lot-pagina etapa-${etapa}${etapa === "projeto" && res ? " tela-cheia" : ""}`}>
       <header className="topo">
         <button className="fantasma voltar" onClick={onVoltar}>← Serviços</button>
         <span className="sep" aria-hidden="true">/</span>
@@ -433,7 +436,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
       )}
 
       {etapa === "projeto" && res && (
-        <div className={`lot-area-trabalho${verAvisos ? " com-avisos" : ""}`}>
+        <div className={`lot-area-trabalho${verAvisos ? " com-avisos" : ""}${painelRecolhido ? " painel-recolhido" : ""}`}>
           <nav className="lot-ferramentas" aria-label="Ferramentas">
             {([
               ["selecionar", "Seta (V): clique seleciona · arraste uma caixa para selecionar vários lotes (da esquerda para a direita: os que ficam inteiros dentro; da direita para a esquerda: os que a caixa toca) · Shift soma · mover a vista: botão do meio/direito ou Espaço", "M5 3l14 9-6 1.5L10 20z"],
@@ -513,13 +516,20 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
             </form>
           </div>
 
-          <Painel projeto={projeto} res={res} sel={sel} onSel={setSel} onMudar={(p) => mudar(p)}
-            onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onMsg={mostrar} onComando={rodarComando} onFerramenta={setFerramenta} />
-
-          <div className="lot-rodape-etapa">
-            <button onClick={() => setEtapa("perguntas")}>← Rever as perguntas</button>
-            <button className="principal" onClick={() => setEtapa("entregas")}>Entregas: planta e locação →</button>
-          </div>
+          {painelRecolhido ? (
+            <PainelRapido projeto={projeto} res={res} sel={sel} onSel={setSel} onMudar={(p) => mudar(p)} onMsg={mostrar} onComando={rodarComando}
+              onAbrir={() => recolherPainel(false)} onPerguntas={() => setEtapa("perguntas")} onEntregas={() => setEtapa("entregas")} />
+          ) : (
+            <>
+              <Painel projeto={projeto} res={res} sel={sel} onSel={setSel} onMudar={(p) => mudar(p)}
+                onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onMsg={mostrar} onComando={rodarComando} onFerramenta={setFerramenta}
+                onRecolher={() => recolherPainel(true)} />
+              <div className="lot-rodape-etapa">
+                <button onClick={() => setEtapa("perguntas")} title="Rever as perguntas do projeto">← Perguntas</button>
+                <button className="principal" onClick={() => setEtapa("entregas")}>Entregas: planta e locação →</button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

@@ -22,6 +22,7 @@ import { alcasDoLote, cortarLotes, definirFrente, desenharLote, ladosRetos, linh
 import { alternarAcesso } from "../../lib/loteamento/acoes.ts";
 import type { Rede, ResultadoInfra } from "../../lib/loteamento/infra/index.ts";
 import { DefsRedes, RedesGeo, RedesSimbolos } from "./Redes";
+import { pontoNoElemento } from "../../lib/zoom";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
 
@@ -358,8 +359,8 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
 
   // ---------------- ponteiro ----------------
   const pos = (e: { clientX: number; clientY: number }): [number, number] => {
-    const r = caixaRef.current!.getBoundingClientRect();
-    return [e.clientX - r.left, e.clientY - r.top];
+    // px do CSS: a página roda com zoom (lib/zoom.ts) e o retângulo vem na escala da tela
+    return pontoNoElemento(caixaRef.current!, e);
   };
 
   function alvoNoPonto(p: Pt): { tipo: "lote"; l: Lote } | { tipo: "area"; id: string } | { tipo: "rua"; id: string } | null {

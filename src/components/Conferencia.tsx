@@ -39,7 +39,8 @@ import type { DocHistorico } from "../lib/historico";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { temRecurso } from "../lib/recursos";
 import { temPermissao } from "../lib/permissoes";
-import { Avisos, BarraEtapas, BotaoPerigo, Dica, ProximaAcao, Rotulo, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { Avisos, BarraEtapas, BotaoPerigo, confirmar, Dica, ProximaAcao, Rotulo, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { avisarConsumo, carregarCreditos, custoDeVarios, textoSemCredito } from "../lib/creditos";
 import { BotaoConcluir, useConclusao } from "./ConcluirServico";
 import { AutoriaServico } from "./Auditoria";
 import { BarreiraErro } from "./BarreiraErro";
@@ -845,19 +846,50 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
   // Um serviço completo por parte, no nome do herdeiro. Os vértices levam os
   // códigos do imóvel (o marco tem o mesmo nome nos dois GEOs) e as divisas
   // internas já confrontam com a parte vizinha — ver verticesDaParte.
+  // Cada GEO é um serviço novo e gasta 1 crédito (0036): a pessoa escolhe as
+  // partes e a pergunta antes diz quantos créditos saem — um por parte.
   const [criandoGeos, setCriandoGeos] = useState(false);
   const semCodigo = vertices.filter((v) => !v.codigo || v.codigo_provisorio).length;
+  const chaveGeo = (g: Gleba, i: number) => g.id ?? `i${i}`;
+  // partes escolhidas para gerar o GEO (null = todas as que ainda não têm)
+  const [geoEscolha, setGeoEscolha] = useState<Set<string> | null>(null);
+  const partesGeo = glebas.filter((g) => g.anel.length >= 3);
+  const geoMarcadas = (g: Gleba, i: number) => !g.servico_parte_id && (geoEscolha ? geoEscolha.has(chaveGeo(g, i)) : true);
+  const qtdGeo = partesGeo.filter(geoMarcadas).length;
+  function marcarGeo(g: Gleba, i: number, sim: boolean) {
+    const atual = new Set(geoEscolha ?? partesGeo.filter((x) => !x.servico_parte_id).map((x) => chaveGeo(x, partesGeo.indexOf(x))));
+    if (sim) atual.add(chaveGeo(g, i)); else atual.delete(chaveGeo(g, i));
+    setGeoEscolha(atual);
+  }
   async function criarGeosIndividuais() {
-    const partes = glebas.filter((g) => g.anel.length >= 3);
+    const partes = partesGeo;
     if (semCodigo > 0) { setErro("Gere os documentos do imóvel primeiro: os GEOs das partes usam os mesmos códigos dos marcos."); return; }
+    const alvo = partes.filter(geoMarcadas);
+    if (!alvo.length) { setErro("Marque as partes que vão ganhar o GEO."); return; }
+    // cada parte é um serviço novo: 1 crédito por parte, perguntado antes
+    const custo = custoDeVarios(await carregarCreditos().catch(() => null), "completo", alvo.length);
+    if (!custo.disponivel) { setErro(custo.detalhe); avisar("erro", custo.detalhe); return; }
+    const ok = await confirmar({
+      titulo: `Gerar o GEO de ${alvo.length === 1 ? "1 parte" : `${alvo.length} partes`} vai consumir ${custo.credito}`,
+      texto: (
+        <>
+          <p>Cada GEO é um <b>serviço novo</b>, no nome do herdeiro, com SIGEF e peças próprios — por isso gasta 1 crédito por parte.</p>
+          <p>{custo.detalhe}</p>
+          <p className="sub">{alvo.map((g) => g.nome).join(", ")}</p>
+        </>
+      ),
+      confirmar: `Gerar e usar ${custo.credito}`,
+      cancelar: "Voltar",
+    });
+    if (!ok) return;
     setCriandoGeos(true);
     setErro(null);
+    let criados = 0;
+    const novas = [...glebas];
     try {
       await salvar();
-      const novas = [...glebas];
-      let criados = 0;
       for (const [k, g] of partes.entries()) {
-        if (g.servico_parte_id) continue;
+        if (g.servico_parte_id || !alvo.includes(g)) continue;
         const { data: novo, error } = await supabase.from("servicos").insert(servicoDaParte(servico, g)).select().single();
         if (error) throw error;
         const linhas = verticesDaParte(servico, vertices, partes, k, (novo as Servico).id);
@@ -868,16 +900,55 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         if (g.id) await supabase.from("glebas").update({ servico_parte_id: (novo as Servico).id }).eq("id", g.id);
         criados++;
       }
-      setGlebas(novas);
+      setGeoEscolha(null);
       avisar("ok", criados
         ? `${criados} GEO(s) individual(is) criado(s), cada um no nome do herdeiro. Abra cada um para completar os dados da pessoa e gerar os documentos.`
         : "Todas as partes já têm o seu GEO individual.");
     } catch (e) {
-      setErro(e instanceof Error ? e.message : String(e));
+      const m = e instanceof Error ? e.message : (e as { message?: string })?.message ?? String(e);
+      setErro(`${criados ? `${criados} GEO(s) criado(s); parou na parte seguinte: ` : ""}${textoSemCredito(m)}`);
     } finally {
+      // as partes já criadas ficam ligadas mesmo se uma das seguintes falhar
+      if (criados) { setGlebas(novas); void avisarConsumo("completo"); }
       setCriandoGeos(false);
     }
   }
+
+  /** A lista do GEO de cada parte: marcar quais partes, o custo e o botão (Divisão e Documentos). */
+  const blocoGeoPartes = (compacto: boolean) => (
+    <div className={`geo-partes${compacto ? " compacto" : ""}`}>
+      <ul>
+        {partesGeo.map((g, i) => {
+          const feito = !!g.servico_parte_id;
+          return (
+            <li key={chaveGeo(g, i)} className={feito ? "feito" : ""}>
+              <label>
+                <input type="checkbox" disabled={feito || criandoGeos} checked={feito || geoMarcadas(g, i)} onChange={(e) => marcarGeo(g, i, e.target.checked)} />
+                <span className="geo-nome"><b>{g.nome}</b><small>{g.detentor_nome || "sem herdeiro (sai no nome do proprietário)"}</small></span>
+              </label>
+              <span className="geo-area mono">{areaHaDoAnel(g.anel).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} ha</span>
+              {feito ? <a className="geo-link" href={`#/servico/${g.servico_parte_id}`}>abrir o GEO →</a> : <span className="geo-falta">sem GEO</span>}
+            </li>
+          );
+        })}
+      </ul>
+      {semCodigo > 0 ? (
+        <div className="geo-pe">
+          <p className="sub">Os GEOs das partes usam os mesmos códigos dos marcos do imóvel: gere os documentos do imóvel primeiro ({semCodigo} marco{semCodigo === 1 ? "" : "s"} sem código definitivo).</p>
+          {etapa !== "documentos" && <button type="button" onClick={() => trocarEtapa("documentos")}>Ir para Documentos →</button>}
+        </div>
+      ) : partesGeo.every((g) => g.servico_parte_id) ? (
+        <p className="sub geo-pe">Todas as partes já têm o seu GEO.</p>
+      ) : (
+        <div className="geo-pe">
+          <button type="button" className="principal" disabled={criandoGeos || qtdGeo === 0} onClick={criarGeosIndividuais}>
+            {criandoGeos ? "Gerando os GEOs…" : `Gerar GEO${qtdGeo === 1 ? "" : "s"} (${qtdGeo} parte${qtdGeo === 1 ? "" : "s"})`}
+          </button>
+          <span className="sub">Cada GEO é um serviço novo: <b>1 crédito por parte</b>, confirmado antes.</span>
+        </div>
+      )}
+    </div>
+  );
 
   // ------- entradas que sobrevivem à geração -------
   //
@@ -1330,7 +1401,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
   }
 
   return (
-    <div className="conferencia">
+    <div className={`conferencia${etapa === "glebas" && ehDivisao ? " tela-cheia conf-divisao" : ""}`}>
       <Avisos avisos={avisos} onFechar={fechar} />
 
       {/* Cabeçalho em três faixas: quem é o serviço; o que pede decisão (fuso
@@ -1392,7 +1463,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         onIr={(d) => trocarEtapa((d < 0 ? etapaAnterior : etapaSeguinte)!.chave)} />
 
       <div className="conferencia-corpo fade" key={etapa}>
-        <ProximaAcao acao={acaoTopo} />
+        {/* na própria etapa da divisão/glebas o aviso "Divida o imóvel… → Ir para a divisão" não serve: a prancheta é a ação */}
+        {!(etapa === "glebas" && temGlebas) && <ProximaAcao acao={acaoTopo} />}
 
         {/* ================= Etapa · Dados ================= */}
         {etapa === "dados" && (
@@ -1592,7 +1664,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                         {/* Trocar o ponto aqui move a confrontação inteira — o descritivo,
                             o apelido, o CNS e a matrícula vão junto. */}
                         <span className="ponto" title="Vértice M onde esta confrontação começa; ela vai até o próximo M. Trocar move a confrontação para o outro ponto, sem redigitar nada.">
-                          a partir do ponto
+                          do ponto
                           <select value={t.vertice_inicio_ordem} aria-label="Ponto inicial da confrontação"
                             onChange={(e) => moverTrecho(t, Number(e.target.value))}>
                             {[...vertices]
@@ -1932,6 +2004,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {ehDivisao && (
               <DivisaoEditor servico={servico} vertices={vertices} glebas={glebas}
                 onAplicar={aplicarDivisaoNaTela} onGlebas={setGlebas}
+                extrasPartes={partesGeo.length >= 2 && vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO) ? blocoGeoPartes(true) : undefined}
                 onRascunho={(d) => setServico((x) => ({ ...x, divisao: d }))} />
             )}
             {/* Serviço de glebas: "Pontos e ligações" + prancheta é o caminho
@@ -2304,36 +2377,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 <header>
                   <h3>GEO de cada parte<Dica>um serviço completo por parte, no nome do herdeiro, com os mesmos marcos do imóvel e as divisas internas já confrontando com a parte vizinha — segue para o SIGEF e para as peças como qualquer serviço</Dica></h3>
                 </header>
-                <div className="tabela-scroll">
-                  <table className="dv-tabela">
-                    <thead><tr><th>Parte</th><th>Herdeiro</th><th>Área (ha)</th><th>GEO individual</th></tr></thead>
-                    <tbody>
-                      {glebas.filter((g) => g.anel.length >= 3).map((g, i) => (
-                        <tr key={g.id ?? i}>
-                          <td><b>{g.nome}</b></td>
-                          <td>{g.detentor_nome || <span className="sub">— sem herdeiro informado (sai no nome do proprietário)</span>}</td>
-                          <td className="mono">{areaHaDoAnel(g.anel).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</td>
-                          <td>{g.servico_parte_id
-                            ? <a href={`#/servico/${g.servico_parte_id}`}>abrir o GEO da parte →</a>
-                            : <span className="sub">ainda não criado</span>}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="acoes-linha">
-                  <button className="principal" disabled={criandoGeos || semCodigo > 0 || glebas.every((g) => g.anel.length < 3 || g.servico_parte_id)}
-                    onClick={criarGeosIndividuais}>
-                    {criandoGeos ? "Criando os GEOs…" : `Criar os GEOs individuais (${glebas.filter((g) => g.anel.length >= 3 && !g.servico_parte_id).length})`}
-                  </button>
-                  <Dica>O GEO geral (todas as partes) é este serviço; cada parte ganha o seu.</Dica>
-                  {/* pendência que trava o botão: fica à vista */}
-                  {semCodigo > 0 && (
-                    <span className="sub">
-                      Gere os documentos do imóvel primeiro: {semCodigo} marco(s) ainda sem código definitivo, e os GEOs das partes usam os mesmos códigos.
-                    </span>
-                  )}
-                </div>
+                {blocoGeoPartes(false)}
               </section>
             )}
 

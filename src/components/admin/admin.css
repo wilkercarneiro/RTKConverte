@@ -8,11 +8,11 @@
   --sa-anel-alto: 0 0 0 1px rgb(14 59 43 / 10%), 0 18px 40px -18px rgb(14 59 43 / 38%);
   display: grid;
   grid-template-columns: 248px 1fr;
-  min-height: 100vh;
+  min-height: var(--vh);
   background: var(--sa-papel);
 }
 .sa-lateral {
-  position: sticky; top: 0; height: 100vh;
+  position: sticky; top: 0; height: var(--vh);
   display: flex; flex-direction: column; gap: 4px;
   padding: 20px 14px;
   background: var(--floresta);
@@ -310,7 +310,7 @@ button.sa-kpi:hover, button.sa-kpi:focus-visible { transform: translateY(-2px); 
 
 .sa-cx {
   display: grid; grid-template-columns: minmax(290px, 340px) minmax(0, 1fr);
-  height: max(560px, calc(100vh - 262px));
+  height: max(560px, calc(var(--vh) - 262px));
   background: var(--card); border-radius: 18px; box-shadow: var(--sa-anel); overflow: hidden;
 }
 .sa-cx-lista { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--linha); background: #FBFCFB; }
@@ -476,7 +476,7 @@ button.sa-kpi:hover, button.sa-kpi:focus-visible { transform: translateY(-2px); 
 
 .sa-cx-luz { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 28px; background: rgb(8 22 16 / 82%); backdrop-filter: blur(4px); animation: sa-aparece 0.18s ease both; }
 .sa-cx-luz figure { margin: 0; display: grid; gap: 12px; max-width: min(1200px, 94vw); }
-.sa-cx-luz img { max-width: 100%; max-height: 80vh; border-radius: 12px; box-shadow: 0 30px 80px -20px rgb(0 0 0 / 60%); background: #fff; justify-self: center; }
+.sa-cx-luz img { max-width: 100%; max-height: calc(var(--vh) * .8); border-radius: 12px; box-shadow: 0 30px 80px -20px rgb(0 0 0 / 60%); background: #fff; justify-self: center; }
 .sa-cx-luz figcaption { display: flex; align-items: center; gap: 10px; color: #fff; font-size: 13.5px; }
 .sa-cx-luz figcaption span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sa-cx-luz figcaption a, .sa .sa-cx-luz figcaption button { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 9px; background: rgb(255 255 255 / 12%); color: #fff; border: 1px solid rgb(255 255 255 / 20%); font-weight: 600; font-size: 13px; }
@@ -579,7 +579,7 @@ button.sa-kpi:hover, button.sa-kpi:focus-visible { transform: translateY(-2px); 
   .sa-cx-cabeca h2 { white-space: normal; font-size: 17px; }
   .sa-suporte.com-aberto .sa-kpis, .sa-suporte.com-aberto .sa-topo { display: none; }
   .sa-suporte.com-aberto .sa-cx { margin-top: 16px; }
-  .sa-cx-conversa { height: max(520px, calc(100vh - 32px)); }
+  .sa-cx-conversa { height: max(520px, calc(var(--vh) - 32px)); }
   .sa-cx-msgs { padding: 12px 12px 16px; }
   .sa-cx-msg { max-width: 92%; }
   .sa .sa-cx-mini { width: 160px; height: 104px; }
