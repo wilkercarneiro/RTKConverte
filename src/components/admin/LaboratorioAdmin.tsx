@@ -10,6 +10,7 @@ import { PainelAdmin } from "./PainelAdmin";
 import type { AbaAdmin } from "./PainelAdmin";
 import { MENSAGENS, RPC_SUPORTE, STORAGE_SUPORTE, TUTORIAIS } from "./laboratorioSuporte";
 import { definirCobrancaFalsa } from "../../lib/cobranca";
+import { qrDeExemplo } from "../laboratorioCreditos";
 import { mensagemCobranca } from "../../../supabase/functions/_shared/mensagens_cobranca.ts";
 
 const dia = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
@@ -223,9 +224,9 @@ function instalar() {
   // a função `cobranca` (Asaas + WhatsApp) responde daqui
   definirCobrancaFalsa(async (b) => {
     const status = {
-      asaas: { configurado: true, ambiente: "sandbox", chave_final: "9f3a", saldo: 1840.35, erro: null,
+      asaas: { configurado: true, ambiente: "producao", chave_final: "9f3a", saldo: 1840.35, erro: null, tokenizacao: "bloqueada",
         webhook: { url: "https://api.exemplo/functions/v1/cobranca?origem=asaas", ativo: true, interrompido: false, penalizados: 0 } },
-      whatsapp: { configurado: true, url: "https://evolution.exemplo.com.br", instancia: "vertces", estado: "open" },
+      whatsapp: { configurado: true, url: "https://evolution.exemplo.com.br", instancia: "vertces", estado: "close" },
       url_app: "https://vertces.com.br/app/",
       ultimo_evento: { evento: "PAYMENT_RECEIVED", resultado: "creditos · WhatsApp enviado", recebido_em: dia(0.05) },
     };
@@ -241,6 +242,15 @@ function instalar() {
       };
     }
     if (b.acao === "conferir") return { conferidos: 2, mudancas: [] };
+    // o QR aparece; o "celular" lê depois de 9 s e a instância conecta
+    if (b.acao === "whatsapp_qrcode") {
+      (window as { _qrEm?: number })._qrEm ??= Date.now();
+      return { estado: "close", qrcode: `data:image/png;base64,${qrDeExemplo()}` };
+    }
+    if (b.acao === "whatsapp_estado") {
+      const em = (window as { _qrEm?: number })._qrEm;
+      return { configurado: true, estado: em && Date.now() - em > 9000 ? "open" : "close" };
+    }
     if (b.acao === "atualizar_assinatura") return { valor: 199.9 };
     return { ok: true };
   });

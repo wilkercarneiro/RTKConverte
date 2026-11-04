@@ -4,6 +4,8 @@
 // (tests/cobranca.test.mjs). Erro do Asaas vira ErroAsaas com a descrição que
 // ele mandou ("errors[0].description"), em português.
 
+import type { CartaoAsaas, TitularAsaas } from "./cartao.ts";
+
 export type Ambiente = "sandbox" | "producao";
 
 export const BASE_ASAAS: Record<Ambiente, string> = {
@@ -38,7 +40,18 @@ export interface CobrancaAsaas {
   subscription?: string | null;
   externalReference?: string | null;
   deleted?: boolean;
+  /** pago no cartão: o Asaas pode devolver o token junto (com a tokenização liberada) */
+  creditCard?: CartaoDaCobranca | null;
 }
+export interface CartaoDaCobranca { creditCardNumber?: string; creditCardBrand?: string; creditCardToken?: string | null }
+export interface AssinaturaAsaas {
+  id: string; status?: string; nextDueDate?: string; billingType?: string; value?: number; deleted?: boolean;
+  creditCard?: CartaoDaCobranca | null;
+}
+/** O cartão: os dados digitados (só nesta chamada) ou o token. */
+export type CartaoParaAsaas =
+  | { creditCard: CartaoAsaas; creditCardHolderInfo: TitularAsaas; creditCardToken?: undefined }
+  | { creditCardToken: string; creditCard?: undefined; creditCardHolderInfo?: undefined };
 export interface PixAsaas { encodedImage: string; payload: string; expirationDate?: string }
 export interface WebhookAsaas {
   id: string; name?: string; url: string; enabled: boolean; interrupted: boolean;
@@ -54,14 +67,15 @@ export const EVENTOS_WEBHOOK = [
 ];
 
 export function clienteAsaas(chave: string, ambiente: Ambiente, f: typeof fetch = fetch) {
-  async function chamar<T>(metodo: string, caminho: string, corpo?: unknown): Promise<T> {
+  // cartão: o Asaas pede 60 s de espera (a operadora pode demorar)
+  async function chamar<T>(metodo: string, caminho: string, corpo?: unknown, espera = 20_000): Promise<T> {
     let r: Response;
     try {
       r = await f(BASE_ASAAS[ambiente] + caminho, {
         method: metodo,
         headers: { "Content-Type": "application/json", "access_token": chave, "User-Agent": "Vertces" },
         body: corpo === undefined ? undefined : JSON.stringify(corpo),
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(espera),
       });
     } catch (e) {
       throw new ErroAsaas(`Sem resposta do Asaas (${e instanceof Error ? e.message : e}).`, 0);
@@ -87,12 +101,25 @@ export function clienteAsaas(chave: string, ambiente: Ambiente, f: typeof fetch 
 
     criarCobranca: (d: { customer: string; billingType: string; value: number; dueDate: string; description: string; externalReference?: string }) =>
       chamar<CobrancaAsaas>("POST", "/payments", d),
+    /** Cobra o cartão na hora: aprovada = 200 (CONFIRMED); recusada = ErroAsaas 400. */
+    cobrarNoCartao: (d: { customer: string; value: number; dueDate: string; description: string; externalReference?: string; remoteIp: string } & CartaoParaAsaas) =>
+      chamar<CobrancaAsaas>("POST", "/payments", { billingType: "CREDIT_CARD", ...d }, 60_000),
+    /** Paga uma cobrança que já existe (a mensalidade em aberto) com o cartão. */
+    pagarComCartao: (pagamento: string, d: CartaoParaAsaas & { remoteIp?: string }) =>
+      chamar<CobrancaAsaas>("POST", `/payments/${id(pagamento)}/payWithCreditCard`, d, 60_000),
+    /** Guarda o cartão no Asaas sem cobrar. Sem a tokenização liberada: ErroAsaas 403. */
+    tokenizar: (d: { customer: string; remoteIp: string; creditCard: CartaoAsaas; creditCardHolderInfo: TitularAsaas }) =>
+      chamar<{ creditCardToken: string; creditCardNumber?: string; creditCardBrand?: string }>("POST", "/creditCard/tokenizeCreditCard", d, 60_000),
     cobranca: (pagamento: string) => chamar<CobrancaAsaas>("GET", `/payments/${id(pagamento)}`),
     removerCobranca: (pagamento: string) => chamar<{ deleted: boolean }>("DELETE", `/payments/${id(pagamento)}`),
     pix: (pagamento: string) => chamar<PixAsaas>("GET", `/payments/${id(pagamento)}/pixQrCode`),
 
     criarAssinatura: (d: { customer: string; billingType: string; value: number; nextDueDate: string; cycle: string; description: string; externalReference?: string }) =>
-      chamar<{ id: string }>("POST", "/subscriptions", d),
+      chamar<AssinaturaAsaas>("POST", "/subscriptions", d),
+    /** Assinatura no cartão: o Asaas valida o cartão; vencendo hoje, cobra na hora. */
+    criarAssinaturaNoCartao: (d: { customer: string; value: number; nextDueDate: string; cycle: string; description: string; externalReference?: string; remoteIp: string } & CartaoParaAsaas) =>
+      chamar<AssinaturaAsaas>("POST", "/subscriptions", { billingType: "CREDIT_CARD", ...d }, 60_000),
+    assinatura: (assinatura: string) => chamar<AssinaturaAsaas>("GET", `/subscriptions/${id(assinatura)}`),
     async cobrancasDaAssinatura(assinatura: string): Promise<CobrancaAsaas[]> {
       return (await chamar<{ data?: CobrancaAsaas[] }>("GET", `/subscriptions/${id(assinatura)}/payments`)).data ?? [];
     },

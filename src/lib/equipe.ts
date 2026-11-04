@@ -138,6 +138,9 @@ const ROTULOS: Record<string, string> = {
   "membro.senha": "definiu uma senha nova para",
   "creditos.pedido": "pediu créditos:",
   "creditos.pagos": "pagou créditos:",
+  "creditos.recarga": "compra automática de créditos:",
+  "cartao.cadastrado": "cadastrou o cartão de cobrança:",
+  "cartao.removido": "removeu o cartão de cobrança",
   "empresa.ativada": "acesso liberado:",
   "empresa.suspensa": "acesso suspenso:",
 };

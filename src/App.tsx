@@ -35,9 +35,10 @@ import { Equipe } from "./components/Equipe";
 import { TrocarSenhaObrigatoria } from "./components/TrocarSenha";
 import { AceiteCreditoGeral, SemCreditos } from "./components/Creditos";
 import { AguardandoPagamento } from "./components/Mensalidade";
-import { avisarConsumo, carregarCreditos, precisaAceite, temCredito } from "./lib/creditos";
+import { avisarConsumo, aVenda, carregarCreditos, precisaAceite, temCredito } from "./lib/creditos";
 import type { Creditos } from "./lib/creditos";
 import { minhaCobranca } from "./lib/cobranca";
+import { cartaoAdiado, TelaCartao, useRecargaAutomatica } from "./components/Cartao";
 import type { MinhaCobranca } from "./lib/cobranca";
 import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
 import { camposDoPedido, sincronizarGprol, useSincronismoPeriodico } from "./lib/gprol";
@@ -57,6 +58,7 @@ const LaboratorioAdmin = lazy(() => import("./components/admin/LaboratorioAdmin"
 const LaboratorioCasca = lazy(() => import("./components/LaboratorioCasca").then((m) => ({ default: m.LaboratorioCasca })));
 const LaboratorioSistema = lazy(() => import("./components/LaboratorioSistema").then((m) => ({ default: m.LaboratorioSistema })));
 const LaboratorioConferencia = lazy(() => import("./components/LaboratorioConferencia").then((m) => ({ default: m.LaboratorioConferencia })));
+const LaboratorioCartao = lazy(() => import("./components/LaboratorioCartao").then((m) => ({ default: m.LaboratorioCartao })));
 const LaboratorioLeitura = lazy(() => import("./components/LaboratorioLeitura").then((m) => ({ default: m.LaboratorioLeitura })));
 // painel do superadmin: só quem administra o SaaS baixa este pedaço
 const PainelAdmin = lazy(() => import("./components/admin/PainelAdmin").then((m) => ({ default: m.PainelAdmin })));
@@ -81,6 +83,11 @@ export default function App() {
   const [aceiteGeral, setAceiteGeral] = useState<string | null>(null);
   // mensalidade em aberto ou vencida (aviso no Início; null = sem cobrança ou banco sem a 0034)
   const [cobranca, setCobranca] = useState<MinhaCobranca | null>(null);
+  const atualizarCobranca = () => { minhaCobranca().then(setCobranca).catch(() => setCobranca(null)); };
+  // "Agora não" na tela do cartão (vale até sair do sistema)
+  const [cartaoAgoraNao, setCartaoAgoraNao] = useState(cartaoAdiado);
+  // carteira zerada com a compra automática ligada: compra no cartão
+  useRecargaAutomatica(creditos, atualizarCreditos);
 
   useEffect(() => {
     if (!configOk) return;
@@ -144,6 +151,12 @@ export default function App() {
     if (!escritorioOk || rota.t !== "inicio") return;
     minhaCobranca().then(setCobranca).catch(() => setCobranca(null));
   }, [escritorioOk, rota.t]);
+  // a cobrança e os créditos já ao entrar (em qualquer tela): decidem a tela do cartão
+  useEffect(() => {
+    if (!escritorioOk) return;
+    atualizarCobranca();
+    atualizarCreditos();
+  }, [escritorioOk]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A rota é a fonte da verdade da navegação: o serviço da URL é carregado aqui,
   // e não empurrado por quem clicou. É isso que faz atualizar a página (F5) e o
@@ -182,6 +195,8 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/loteamento")) return <Laboratorio />;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/planta")) return <Suspense fallback={null}><LaboratorioPlanta /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/divisao")) return <Suspense fallback={null}><LaboratorioDivisao /></Suspense>;
+  // antes do #/lab/car (que também casaria com "#/lab/cartao")
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/cartao")) return <Suspense fallback={null}><LaboratorioCartao /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/car")) return <Suspense fallback={null}><LaboratorioCar /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/admin")) return <Suspense fallback={null}><LaboratorioAdmin /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/casca")) return <Suspense fallback={null}><LaboratorioCasca /></Suspense>;
@@ -228,6 +243,15 @@ export default function App() {
   if (escritorio.estado === "sem-escritorio") return <SemEscritorio email={usuario} />;
   if (empresaBloqueada && escritorio.estado === "ok" && escritorio.escritorio.status === "aguardando_pagamento") {
     return <AguardandoPagamento nome={escritorio.escritorio.nome} />;
+  }
+  // Ao entrar (inclusive no 1º acesso, logo depois de trocar a senha): o dono de
+  // empresa que paga e não tem cartão vê a tela do cartão, com "Agora não".
+  if (escritorio.estado === "ok" && !empresaBloqueada && cobranca?.precisa_cartao && cobranca.sou_dono && !cartaoAgoraNao) {
+    return (
+      <TelaCartao cobranca={cobranca} carteirasVenda={creditos?.carteiras.filter(aVenda)}
+        onAdiar={() => setCartaoAgoraNao(true)}
+        onPronto={() => { atualizarCobranca(); atualizarCreditos(); }} />
+    );
   }
   if (empresaBloqueada && escritorio.estado === "ok") return <EmpresaBloqueada nome={escritorio.escritorio.nome} status={escritorio.escritorio.status!} />;
   if (escritorio.estado === "ok" && escritorio.escritorio.ativo === false) return <EmpresaBloqueada nome={escritorio.escritorio.nome} status="desativado" />;
@@ -442,6 +466,7 @@ export default function App() {
           <Inicio onNovo={(chave) => ir({ t: "novo", chave })} onAbrir={abrirServico}
             onVerServicos={() => ir({ t: "servicos" })} nome={usuario ?? undefined}
             creditos={creditos} onAtualizarCreditos={atualizarCreditos} cobranca={cobranca}
+            onCobrancaMudou={() => { atualizarCobranca(); atualizarCreditos(); }}
             onExecutarPedido={(p, chave) => ir({ t: "novo", chave, clienteId: p.cliente_id ?? undefined, pedidoId: p.id })}
             onConfigurarGprol={() => { guardar("config.aba", "integracoes"); ir({ t: "config" }); }} />
         </AppShell>

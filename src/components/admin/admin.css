@@ -695,6 +695,10 @@ button.sa-kpi:hover, button.sa-kpi:focus-visible { transform: translateY(-2px); 
 .sa-msg-cobranca { box-shadow: 0 0 0 2px var(--primaria-clara), var(--sa-anel); }
 .sa-gaveta .sa-msg-cobranca { margin-top: 16px; box-shadow: 0 0 0 1px var(--borda); }
 .sa-config { display: grid; gap: 18px; max-width: 920px; }
+.sa-qr { display: flex; align-items: center; gap: 18px; margin: 4px 0 14px; }
+.sa-qr img { width: 240px; height: 240px; border-radius: 10px; background: #fff; padding: 8px; flex: none; }
+.sa-qr p { margin: 0; line-height: 1.5; }
+@media (max-width: 640px) { .sa-qr { flex-direction: column; align-items: flex-start; } }
 .sa-teste-zap { display: flex; gap: 8px; margin-right: auto; }
 .sa-teste-zap input { width: 170px; height: 38px; }
 .sa-cobranca-nova { margin: 18px 0 0; border: 1px solid var(--borda); border-radius: 14px; padding: 10px 14px 12px; display: grid; gap: 8px; }

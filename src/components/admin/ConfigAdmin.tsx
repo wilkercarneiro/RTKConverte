@@ -6,7 +6,7 @@
 // Asaas, a função testa a chave e cria (ou religa) o webhook sozinha.
 import { useEffect, useState } from "react";
 import { lerSenhaPadrao, salvarSenhaPadrao } from "../../lib/admin";
-import { salvarPagamentos, statusPagamentos, testarWhatsApp, urlWebhook } from "../../lib/cobranca";
+import { estadoWhatsApp, qrcodeWhatsApp, salvarPagamentos, statusPagamentos, urlWebhook } from "../../lib/cobranca";
 import type { StatusPagamentos } from "../../lib/cobranca";
 import { fmtPreco } from "../../lib/creditos";
 import { problemaDaSenha } from "../../../supabase/functions/_shared/cnpj.ts";
@@ -69,7 +69,7 @@ function Pagamentos() {
   return (
     <>
       <Asaas st={st} onSalvo={setSt} />
-      <WhatsApp st={st} onSalvo={setSt} />
+      <WhatsApp st={st} />
     </>
   );
 }
@@ -113,12 +113,20 @@ function Asaas({ st, onSalvo }: { st: StatusPagamentos; onSalvo: (s: StatusPagam
       </header>
       {msg && <div className={`sa-aviso ${msg.tipo}`}>{msg.texto}</div>}
       {a.configurado && (
-        <div className="sa-cobranca">
+        <div className="sa-cobranca" data-grade>
           <div><span>Chave</span><b className="mono">…{a.chave_final}</b></div>
           <div><span>Saldo no Asaas</span><b>{a.saldo == null ? "—" : fmtPreco(a.saldo)}</b></div>
           <div><span>Webhook</span><b>{!w ? "não criado" : w.erro ? "erro" : w.interrompido ? "fila interrompida" : w.ativo ? "ativo" : "desligado"}</b></div>
           <div><span>Último aviso recebido</span><b>{st.ultimo_evento ? quando(st.ultimo_evento.recebido_em) : "nenhum ainda"}</b>
             {st.ultimo_evento && <small className="sub">{st.ultimo_evento.evento}{st.ultimo_evento.resultado ? ` · ${st.ultimo_evento.resultado}` : ""}</small>}</div>
+          <div><span>Cartão salvo (tokenização)</span><b>{a.tokenizacao === "liberada" ? "liberada" : a.tokenizacao === "bloqueada" ? "não liberada" : "—"}</b></div>
+        </div>
+      )}
+      {a.configurado && a.tokenizacao === "bloqueada" && (
+        <div className="sa-aviso info" style={{ marginTop: 12 }}>
+          A conta do Asaas ainda não guarda cartões. O cartão que o cliente cadastra paga a mensalidade, mas a compra de créditos no cartão
+          (na hora e a automática) fica desligada. Peça ao gerente de contas do Asaas a liberação da <b>tokenização de cartão de crédito</b>;
+          liberada, este aviso some sozinho e quem cadastrar o cartão de novo passa a ter a compra automática.
         </div>
       )}
       {a.erro && <div className="sa-aviso erro" style={{ marginTop: 12 }}>{a.erro}</div>}
@@ -151,63 +159,61 @@ function Asaas({ st, onSalvo }: { st: StatusPagamentos; onSalvo: (s: StatusPagam
   );
 }
 
-function WhatsApp({ st, onSalvo }: { st: StatusPagamentos; onSalvo: (s: StatusPagamentos) => void }) {
-  const z = st.whatsapp;
-  const [f, setF] = useState({ url: z.url ?? "", instancia: z.instancia ?? "", chave: "", url_app: st.url_app });
-  const [tel, setTel] = useState("");
+/**
+ * O número que manda as cobranças: a instância da Evolution já está configurada
+ * no servidor; aqui só se lê o QR Code no celular. Enquanto o QR está na tela,
+ * pergunta o estado a cada 3 s e troca o QR a cada 30 s (ele expira).
+ */
+function WhatsApp({ st }: { st: StatusPagamentos }) {
+  const [estado, setEstado] = useState<string | null | undefined>(st.whatsapp.estado);
+  const [qr, setQr] = useState<string | null>(null);
   const [msg, setMsg] = useState<Msg>(null);
   const [ocupado, setOcupado] = useState(false);
-  const conectado = z.estado === "open";
+  const conectado = estado === "open";
 
-  async function salvar(ev: React.FormEvent) {
-    ev.preventDefault();
+  async function gerar() {
     setOcupado(true); setMsg(null);
     try {
-      onSalvo(await salvarPagamentos({
-        whatsapp_url: f.url, whatsapp_instancia: f.instancia, whatsapp_chave: f.chave || undefined, url_app: f.url_app,
-      }));
-      setF({ ...f, chave: "" });
-      setMsg({ tipo: "ok", texto: "WhatsApp salvo." });
+      const r = await qrcodeWhatsApp();
+      setEstado(r.estado);
+      if (r.qrcode) setQr(r.qrcode);
+      else { setQr(null); setMsg({ tipo: "ok", texto: "O WhatsApp das cobranças já está conectado." }); }
     } catch (x) { setMsg({ tipo: "erro", texto: String(x instanceof Error ? x.message : x) }); }
     finally { setOcupado(false); }
   }
 
-  async function testar() {
-    setOcupado(true); setMsg(null);
-    try { await testarWhatsApp(tel); setMsg({ tipo: "ok", texto: "Mensagem de teste enviada." }); }
-    catch (x) { setMsg({ tipo: "erro", texto: String(x instanceof Error ? x.message : x) }); }
-    finally { setOcupado(false); }
-  }
+  useEffect(() => {
+    if (!qr) return;
+    const t = setInterval(async () => {
+      const r = await estadoWhatsApp().catch(() => null);
+      if (!r) return;
+      setEstado(r.estado);
+      if (r.estado === "open") { setQr(null); setMsg({ tipo: "ok", texto: "WhatsApp conectado. As cobranças já saem por este número." }); }
+    }, 3000);
+    const renovar = setInterval(() => { qrcodeWhatsApp().then((r) => r.qrcode && setQr(r.qrcode)).catch(() => null); }, 30_000);
+    return () => { clearInterval(t); clearInterval(renovar); };
+  }, [!!qr]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <form className="sa-card" onSubmit={salvar}>
+    <section className="sa-card">
       <header>
-        <h3>WhatsApp das cobranças<Dica>A Evolution API manda o link de pagamento da empresa nova, o aviso de acesso liberado e a confirmação de créditos comprados. Sem ela, o painel mostra a mensagem pronta para você mandar.</Dica></h3>
-        <span className={`sa-pill ${!z.configurado ? "neutro" : conectado ? "ativo" : "cancelado"}`} style={{ marginLeft: "auto" }}>
-          {!z.configurado ? "Não configurado" : conectado ? "Conectado" : z.estado ? `Instância: ${z.estado}` : "Sem resposta"}
+        <h3>WhatsApp das cobranças<Dica>Manda o link de pagamento da empresa nova, o aviso de acesso liberado, o de mensalidade vencida e a confirmação de créditos comprados.</Dica></h3>
+        <span className={`sa-pill ${!st.whatsapp.configurado ? "neutro" : conectado ? "ativo" : "cancelado"}`} style={{ marginLeft: "auto" }}>
+          {!st.whatsapp.configurado ? "Não configurado" : conectado ? "Conectado" : "Desconectado"}
         </span>
       </header>
       {msg && <div className={`sa-aviso ${msg.tipo}`}>{msg.texto}</div>}
-      {z.configurado && !conectado && <div className="sa-aviso erro">A instância não está conectada ao WhatsApp: leia o QR Code na Evolution e salve de novo.</div>}
-      <div className="sa-campos">
-        <label>Endereço da Evolution API<input className="mono" placeholder="https://evolution.seudominio.com.br" value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} /></label>
-        <label>Instância<input placeholder="vertces" value={f.instancia} onChange={(e) => setF({ ...f, instancia: e.target.value })} /></label>
-        <label><Rotulo dica="só é enviada ao servidor">Chave (apikey) {z.configurado ? "(para trocar)" : ""}</Rotulo>
-          <input type="password" autoComplete="off" className="mono" value={f.chave} onChange={(e) => setF({ ...f, chave: e.target.value })} />
-        </label>
-        <label><Rotulo dica="o endereço que vai nas mensagens para a empresa entrar">Endereço do sistema</Rotulo>
-          <input className="mono" value={f.url_app} onChange={(e) => setF({ ...f, url_app: e.target.value })} />
-        </label>
-      </div>
+      {qr && (
+        <div className="sa-qr">
+          <img src={qr} alt="QR Code do WhatsApp" width={240} height={240} />
+          <p>No celular: WhatsApp → <b>Aparelhos conectados</b> → <b>Conectar um aparelho</b> e aponte para o código.</p>
+        </div>
+      )}
       <div className="sa-rodape-form">
-        {z.configurado && (
-          <span className="sa-teste-zap">
-            <input inputMode="tel" placeholder="(71) 99999-0000" value={tel} onChange={(e) => setTel(e.target.value)} aria-label="Telefone para o teste" />
-            <button type="button" disabled={ocupado || tel.replace(/\D/g, "").length < 10} onClick={testar}>Enviar teste</button>
-          </span>
-        )}
-        <button type="submit" className="principal" disabled={ocupado || !f.url || !f.instancia || (!z.configurado && !f.chave)}>{ocupado ? "Salvando…" : "Salvar"}</button>
+        <button type="button" className="principal" disabled={ocupado} onClick={gerar}>
+          {ocupado ? "Gerando…" : qr ? "Gerar outro QR Code" : "QR Code"}
+        </button>
       </div>
-    </form>
+    </section>
   );
 }

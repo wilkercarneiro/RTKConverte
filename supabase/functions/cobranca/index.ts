@@ -9,7 +9,7 @@
 //   - o site, com o JWT da pessoa: as ações em fluxos.ts.
 import { createClient } from "@supabase/supabase-js";
 import { tratarAcao, tratarWebhook, ErroUsuario } from "./fluxos.ts";
-import type { Banco, Deps, EmpresaCobranca, PedidoCredito, Usuario } from "./fluxos.ts";
+import type { Banco, CartaoSalvo, Deps, EmpresaCobranca, PedidoCredito, ReservaRecarga, Usuario } from "./fluxos.ts";
 import type { CarteiraDoPlano } from "../_shared/mensagens_cobranca.ts";
 
 const CORS = {
@@ -78,11 +78,12 @@ function banco(svc: Svc): Banco {
         id: string; nome: string; cnpj: string | null; email: string | null; telefone: string | null; responsavel: string | null;
         status: string; mensalidade: number | null; plano: { nome: string; preco_mensal: number | null } | null;
       };
-      const [cob, dono, sit] = await Promise.all([
+      const [cob, dono, sit, renova] = await Promise.all([
         svc.from("cobranca_empresas").select("asaas_cliente_id, asaas_assinatura_id, situacao, link_pagamento, valor, proximo_vencimento")
           .eq("escritorio_id", id).maybeSingle(),
         svc.from("membros_escritorio").select("user_id").eq("escritorio_id", id).eq("papel", "dono").order("created_at").limit(1).maybeSingle(),
         svc.rpc("situacao_creditos", { p_escritorio: id }),
+        svc.rpc("renovacao_periodo", { p_escritorio: id }),
       ]);
       let login: string | null = null;
       const donoId = (dono.data as { user_id: string } | null)?.user_id;
@@ -93,6 +94,7 @@ function banco(svc: Svc): Banco {
         plano: e.plano?.nome ?? null,
         mensalidade: e.mensalidade ?? e.plano?.preco_mensal ?? null,
         login, creditos,
+        renovacao: typeof renova.data === "string" ? renova.data : null,
         cobranca: (cob.data as EmpresaCobranca["cobranca"]) ?? null,
       };
     },
@@ -131,7 +133,47 @@ function banco(svc: Svc): Banco {
       const r = await svc.from("creditos_extras").select("descricao").eq("id", creditoId).maybeSingle();
       return (r.data as { descricao: string | null } | null)?.descricao ?? null;
     },
+    async detalheCompra(creditoId) {
+      if (!creditoId) return null;
+      const r = await svc.from("pagamentos").select("automatica, valor").eq("credito_id", creditoId)
+        .order("criado_em", { ascending: false }).limit(1).maybeSingle();
+      const p = r.data as { automatica: boolean; valor: number | null } | null;
+      return p ? { automatica: !!p.automatica, valor: p.valor === null ? null : Number(p.valor) } : null;
+    },
+    async cartao(escritorioId) {
+      const r = await svc.from("cobranca_cartoes").select("*").eq("escritorio_id", escritorioId).maybeSingle();
+      falhou(r, "cartão");
+      return (r.data as CartaoSalvo | null) ?? null;
+    },
+    async salvarCartao(escritorioId, campos) {
+      if (campos === null) {
+        falhou(await svc.from("cobranca_cartoes").delete().eq("escritorio_id", escritorioId), "cartão");
+        return;
+      }
+      // cartão novo (com o final) grava a linha inteira; o resto (recusa) só atualiza a que existe
+      if ("final" in campos) falhou(await svc.from("cobranca_cartoes").upsert({ escritorio_id: escritorioId, ...campos }), "cartão");
+      else falhou(await svc.from("cobranca_cartoes").update(campos).eq("escritorio_id", escritorioId), "cartão");
+    },
+    async recargasLigadas(escritorioId) {
+      const r = await svc.from("recarga_automatica").select("tipo").eq("escritorio_id", escritorioId).eq("ativo", true);
+      falhou(r, "recarga");
+      return ((r.data ?? []) as { tipo: string }[]).map((x) => x.tipo);
+    },
+    async reservarRecarga(escritorioId, tipo, userId) {
+      const r = await svc.rpc("reservar_recarga_automatica", { p_escritorio: escritorioId, p_tipo: tipo, p_user: userId });
+      if (r.error) return { pode: false, motivo: `erro: ${r.error.message}` };
+      return r.data as ReservaRecarga;
+    },
+    async atividade(escritorioId, acao, alvo, userId) {
+      await svc.from("atividades").insert({ escritorio_id: escritorioId, user_id: userId, acao, alvo: alvo.slice(0, 200) });
+    },
   };
+}
+
+/** O IP de quem chamou (o 1º do X-Forwarded-For, que o proxy da VPS preenche). */
+function ipDoPedido(req: Request): string | null {
+  const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || req.headers.get("x-real-ip")?.trim() || "";
+  return /^[0-9a-fA-F:.]{3,45}$/.test(ip) ? ip : null;
 }
 
 async function usuario(req: Request, svc: Svc): Promise<Usuario | null> {
@@ -140,11 +182,14 @@ async function usuario(req: Request, svc: Svc): Promise<Usuario | null> {
   if (!u?.user) return null;
   const [{ data: sou }, { data: mem }] = await Promise.all([
     cli.rpc("sou_superadmin"),
-    svc.from("membros_escritorio").select("escritorio_id").eq("user_id", u.user.id).maybeSingle(),
+    svc.from("membros_escritorio").select("escritorio_id, papel").eq("user_id", u.user.id).maybeSingle(),
   ]);
+  const membro = mem as { escritorio_id: string; papel: string } | null;
   return {
     id: u.user.id, email: u.user.email ?? null, superadmin: sou === true,
-    escritorioId: (mem as { escritorio_id: string } | null)?.escritorio_id ?? null,
+    escritorioId: membro?.escritorio_id ?? null,
+    souDono: membro?.papel === "dono",
+    ip: ipDoPedido(req),
     async pedirCreditos(tipo, quantidade) {
       const r = await cli.rpc("pedir_creditos", { p_tipo: tipo, p_quantidade: quantidade });
       if (r.error) throw new ErroUsuario(r.error.message);

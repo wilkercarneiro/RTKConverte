@@ -17,6 +17,7 @@ import { NovoServico } from "./NovoServico";
 import { CreditosResumo } from "./Creditos";
 import type { Creditos } from "../lib/creditos";
 import { AvisoMensalidade } from "./Mensalidade";
+import { AvisoCartao } from "./Cartao";
 import type { MinhaCobranca } from "../lib/cobranca";
 import { PedidosGprol } from "./gprol/PedidosGprol";
 import type { PedidoGprol } from "../lib/gprol";
@@ -33,6 +34,8 @@ interface Props {
   onAtualizarCreditos?: () => void;
   /** mensalidade em aberto ou vencida (0034) */
   cobranca?: MinhaCobranca | null;
+  /** o cartão foi cadastrado pela faixa do Início */
+  onCobrancaMudou?: () => void;
   /** executar um pedido do GPROL */
   onExecutarPedido?: (p: PedidoGprol, chave: ChaveServico) => void;
   /** abre Configurações → Integrações */
@@ -59,7 +62,7 @@ function primeiroNome(nome?: string): string | null {
   return base.charAt(0).toUpperCase() + base.slice(1).toLowerCase();
 }
 
-export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, cobranca, onExecutarPedido, onConfigurarGprol }: Props) {
+export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, cobranca, onCobrancaMudou, onExecutarPedido, onConfigurarGprol }: Props) {
   // null = carregando; erro separado: falha nunca aparece como "nenhum serviço"
   const [servicos, setServicos] = useState<Servico[] | null>(null);
   const [docs, setDocs] = useState<Record<string, DocsDoServico>>({});
@@ -117,6 +120,7 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
       {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} />}
 
       <AvisoMensalidade cobranca={cobranca ?? null} />
+      <AvisoCartao cobranca={cobranca ?? null} creditos={creditos} onCadastrado={onCobrancaMudou ?? (() => {})} />
       {creditos && <CreditosResumo creditos={creditos} onAtualizar={onAtualizarCreditos ?? (() => {})} />}
 
       {erro && (

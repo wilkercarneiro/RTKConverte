@@ -17,6 +17,7 @@ import type { ChaveRecurso } from "../../lib/recursos";
 import { temPermissao } from "../../lib/permissoes";
 import { abrirSuporte } from "../suporte/SuporteChat";
 import { ComprarCreditos } from "../Creditos";
+import { PainelCartao } from "../Cartao";
 import { Dica, Esqueleto } from "../ui";
 import "./config.css";
 
@@ -84,7 +85,7 @@ export function PlanoUso({ escritorio }: { escritorio: EstadoEscritorio }) {
 
       {cobranca && cobranca.situacao !== "sem_assinatura" && (
         <section className="bloco">
-          <header><h3>Mensalidade<Dica>cobrada pelo Asaas; dá para pagar por Pix, boleto ou cartão</Dica></h3></header>
+          <header><h3>Mensalidade<Dica>{cobranca.cartao ? `cobrada no cartão final ${cobranca.cartao.final} no vencimento` : "cobrada pelo Asaas; dá para pagar por Pix, boleto ou cartão"}</Dica></h3></header>
           <div className="pu-mensalidade">
             <div><span>Valor</span><b>{cobranca.valor !== null ? fmtPreco(Number(cobranca.valor)) : "—"}</b></div>
             <div><span>Situação</span><b className={`pu-sit ${cobranca.situacao}`}>{ROTULO_SITUACAO[cobranca.situacao]}</b></div>
@@ -95,6 +96,9 @@ export function PlanoUso({ escritorio }: { escritorio: EstadoEscritorio }) {
           </div>
         </section>
       )}
+
+      <PainelCartao cobranca={cobranca} creditos={creditos}
+        onMudou={() => { recarregarCreditos(); minhaCobranca().then(setCobranca).catch(() => setCobranca(null)); }} />
 
       <section className="bloco">
         <header>

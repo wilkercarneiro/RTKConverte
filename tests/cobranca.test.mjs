@@ -6,7 +6,8 @@
 // mesmos casos de lá.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mesmoToken, somarDias, tratarAcao, tratarWebhook } from "../supabase/functions/cobranca/fluxos.ts";
+import { mesmoToken, somarDias, somarMes, tratarAcao, tratarWebhook } from "../supabase/functions/cobranca/fluxos.ts";
+import { bandeiraDoNumero, cpfValido, lerValidade, luhnValido, problemasDoCartao } from "../supabase/functions/_shared/cartao.ts";
 import { cotar, faixasEmTexto, minimoDe, problemaDasFaixas } from "../supabase/functions/_shared/precos.ts";
 import { dataBr, mensagemAcessoLiberado, mensagemCobranca, textoCreditos } from "../supabase/functions/_shared/mensagens_cobranca.ts";
 import { numeroWhatsApp } from "../supabase/functions/_shared/whatsapp.ts";
@@ -18,7 +19,10 @@ function asaasFalso() {
   const s = {
     chamadas: [], clientes: [], cobrancas: new Map(), assinaturas: new Map(), webhooks: [],
     chaveValida: "$aact_boa", falharCobranca: null, seq: 0,
+    // cartão: tokenização bloqueada (403, como a conta real até o Asaas liberar) e recusa da operadora
+    tokenizacaoBloqueada: false, recusarCartao: null, tokens: [],
   };
+  const recusa = () => resp(400, { errors: [{ code: "invalid_creditCard", description: s.recusarCartao }] });
   const resp = (status, corpo) => new Response(corpo === undefined ? "" : JSON.stringify(corpo), { status });
   s.fetch = async (url, init = {}) => {
     const u = new URL(url);
@@ -26,7 +30,8 @@ function asaasFalso() {
     const corpo = init.body ? JSON.parse(init.body) : undefined;
     if (u.hostname.includes("evolution")) {
       s.chamadas.push({ metodo, caminho: u.pathname, corpo, whatsapp: true });
-      if (u.pathname.startsWith("/instance/connectionState")) return resp(200, { instance: { state: "open" } });
+      if (u.pathname.startsWith("/instance/connectionState")) return resp(200, { instance: { state: s.estadoZap ?? "open" } });
+      if (u.pathname.startsWith("/instance/connect/")) return resp(200, { base64: "data:image/png;base64,QR", code: "2@x", count: 1 });
       return resp(201, { key: { id: "m1" }, status: "PENDING" });
     }
     const caminho = u.pathname.replace(/^\/v3/, "") + u.search;
@@ -36,12 +41,31 @@ function asaasFalso() {
     if (caminho === "/finance/balance") return resp(200, { balance: 1234.5 });
     if (caminho.startsWith("/customers?")) return resp(200, { data: s.clientes.filter((c) => c.cpfCnpj === u.searchParams.get("cpfCnpj")) });
     if (caminho === "/customers" && metodo === "POST") { const c = { id: id("cus"), ...corpo }; s.clientes.push(c); return resp(200, c); }
+    if (caminho === "/creditCard/tokenizeCreditCard" && metodo === "POST") {
+      if (s.tokenizacaoBloqueada) return resp(403, { errors: [{ code: "forbidden", description: "Você não possui permissão para utilizar este recurso. Entre em contato com seu gerente de contas." }] });
+      if (corpo.customer === "cus_000000000000") return resp(400, { errors: [{ code: "invalid_customer", description: "Cliente inexistente." }] });
+      if (s.recusarCartao) return recusa();
+      const t = { creditCardToken: `tok_${++s.seq}`, creditCardNumber: corpo.creditCard.number.slice(-4), creditCardBrand: "VISA" };
+      s.tokens.push({ ...t, customer: corpo.customer });
+      return resp(200, t);
+    }
     if (caminho === "/payments" && metodo === "POST") {
       if (s.falharCobranca) return resp(400, { errors: [{ code: "invalid", description: s.falharCobranca }] });
+      if (corpo.billingType === "CREDIT_CARD") {
+        if (s.recusarCartao) return recusa();
+        const c = { id: id("pay"), status: "CONFIRMED", invoiceUrl: `https://sandbox.asaas.com/i/${s.seq}`, ...corpo };
+        s.cobrancas.set(c.id, c); return resp(200, c);
+      }
       const c = { id: id("pay"), status: "PENDING", invoiceUrl: `https://sandbox.asaas.com/i/${s.seq}`, ...corpo };
       s.cobrancas.set(c.id, c); return resp(200, c);
     }
     let m;
+    if ((m = /^\/payments\/([^/]+)\/payWithCreditCard$/.exec(caminho))) {
+      if (s.recusarCartao) return recusa();
+      const c = s.cobrancas.get(m[1]);
+      Object.assign(c, { status: "CONFIRMED", billingType: "CREDIT_CARD", pagoCom: corpo });
+      return resp(200, c);
+    }
     if ((m = /^\/payments\/([^/]+)\/pixQrCode$/.exec(caminho))) return resp(200, { encodedImage: "iVBOR", payload: "000201pix", expirationDate: "2026-11-01 23:59:59" });
     if ((m = /^\/payments\/([^/?]+)$/.exec(caminho))) {
       const c = s.cobrancas.get(m[1]);
@@ -50,6 +74,7 @@ function asaasFalso() {
       return resp(200, c);
     }
     if (caminho === "/subscriptions" && metodo === "POST") {
+      if (corpo.billingType === "CREDIT_CARD" && s.recusarCartao) return recusa();
       const a = { id: id("sub"), ...corpo }; s.assinaturas.set(a.id, a);
       const c = { id: id("pay"), status: "PENDING", subscription: a.id, value: corpo.value, dueDate: corpo.nextDueDate, invoiceUrl: `https://sandbox.asaas.com/i/${s.seq}` };
       s.cobrancas.set(c.id, c); return resp(200, a);
@@ -57,7 +82,11 @@ function asaasFalso() {
     if ((m = /^\/subscriptions\/([^/]+)\/payments$/.exec(caminho))) return resp(200, { data: [...s.cobrancas.values()].filter((c) => c.subscription === m[1]) });
     if ((m = /^\/subscriptions\/([^/?]+)$/.exec(caminho))) {
       const a = s.assinaturas.get(m[1]);
-      if (metodo === "DELETE") { s.assinaturas.delete(m[1]); return resp(200, { deleted: true }); }
+      if (metodo === "DELETE") {
+        // como no Asaas: as faturas em aberto da assinatura saem junto; as pagas ficam
+        for (const c of s.cobrancas.values()) if (c.subscription === m[1] && ["PENDING", "OVERDUE"].includes(c.status)) c.deleted = true;
+        s.assinaturas.delete(m[1]); return resp(200, { deleted: true });
+      }
       Object.assign(a, corpo); return resp(200, a);
     }
     if (caminho.startsWith("/webhooks?")) return resp(200, { data: s.webhooks });
@@ -98,6 +127,21 @@ function bancoFalso(cfg = {}) {
     async cancelarCompra(creditoId, pagamentoId, motivo) { b.cancelados.push({ creditoId, pagamentoId, motivo }); },
     async pagamentosPendentes() { return b.pagamentos.filter((x) => x.asaas_id && ["PENDING", "OVERDUE"].includes(x.status)); },
     async descricaoCredito() { return "10 créditos de car"; },
+    cartoes: {}, recargas: [], reserva: { pode: false, motivo: "desligada" }, atividades: [],
+    async detalheCompra(id) { return b.pagamentos.find((x) => x.credito_id === id) ? { automatica: !!b.pagamentos.find((x) => x.credito_id === id).automatica, valor: 50 } : null; },
+    async cartao(id) { return b.cartoes[id] ?? null; },
+    async salvarCartao(id, campos) {
+      if (campos === null) delete b.cartoes[id];
+      else if ("final" in campos) b.cartoes[id] = { ...campos };
+      else if (b.cartoes[id]) Object.assign(b.cartoes[id], campos);
+    },
+    async recargasLigadas() { return b.recargas; },
+    async reservarRecarga(esc, tipo) {
+      const r = typeof b.reserva === "function" ? b.reserva(tipo) : b.reserva;
+      if (r.pode) b.pagamentos.push({ id: r.pagamento_id, credito_id: r.credito_id, status: "CRIANDO", asaas_id: null, automatica: true });
+      return r;
+    },
+    async atividade(esc, acao, alvo, user) { b.atividades.push({ esc, acao, alvo, user }); },
   };
   return b;
 }
@@ -116,7 +160,7 @@ function cenario({ cfg = {}, superadmin = false, pedido } = {}) {
   banco.empresas[EMPRESA.id] = { ...EMPRESA };
   const deps = { banco, fetch: asaas.fetch, hoje: () => "2026-10-30", aleatorio: () => "t".repeat(48) };
   const usuario = {
-    id: "u1", email: "wilker@vertces.test", superadmin, escritorioId: EMPRESA.id, cancelou: [],
+    id: "u1", email: "wilker@vertces.test", superadmin, escritorioId: EMPRESA.id, cancelou: [], souDono: true, ip: "200.10.20.30",
     async pedirCreditos(tipo, quantidade) {
       const p = pedido ?? { credito_id: "cred-1", pagamento_id: "pag-1", escritorio_id: EMPRESA.id, online: true, quantidade, unitario: 15, valor: 15 * quantidade, descricao: `${quantidade} créditos de car` };
       if (p.pagamento_id) banco.pagamentos.push({ id: p.pagamento_id, credito_id: p.credito_id, status: "CRIANDO", asaas_id: null });
@@ -314,10 +358,34 @@ test("trocar de conta do Asaas esquece os clientes da conta antiga", async () =>
 
 test("só o superadmin mexe na configuração e cobra empresas", async () => {
   const { deps, usuario } = cenario({ cfg: ASAAS_OK });
-  for (const acao of ["config_status", "config_salvar", "cobrar_empresa", "cancelar_assinatura", "whatsapp_testar"]) {
+  for (const acao of ["config_status", "config_salvar", "cobrar_empresa", "cancelar_assinatura", "whatsapp_testar", "whatsapp_qrcode", "whatsapp_estado"]) {
     const r = await tratarAcao(deps, usuario, { acao, escritorio_id: EMPRESA.id });
     assert.equal(r.status, 403, acao);
   }
+});
+
+test("QR Code do WhatsApp: desconectado devolve a imagem; conectado não gera outro", async () => {
+  const { asaas, deps } = cenario({ cfg: { ...ASAAS_OK, ...ZAP } });
+  const sa = { id: "sa", email: "w@v.test", superadmin: true, escritorioId: null };
+  asaas.estadoZap = "close";
+  let r = await tratarAcao(deps, sa, { acao: "whatsapp_qrcode" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.qrcode, "data:image/png;base64,QR");
+  assert.equal(r.corpo.estado, "close");
+  asaas.estadoZap = "open";
+  const antes = asaas.chamadas.length;
+  r = await tratarAcao(deps, sa, { acao: "whatsapp_qrcode" });
+  assert.equal(r.corpo.estado, "open");
+  assert.equal(r.corpo.qrcode, undefined);
+  assert.ok(!asaas.chamadas.slice(antes).some((c) => c.caminho?.startsWith("/instance/connect/")), "conectado: não chama o connect");
+  r = await tratarAcao(deps, sa, { acao: "whatsapp_estado" });
+  assert.deepEqual(r.corpo, { ok: true, configurado: true, estado: "open" });
+});
+
+test("QR Code sem instância configurada: 409", async () => {
+  const { deps } = cenario({ cfg: ASAAS_OK });
+  const r = await tratarAcao(deps, { id: "sa", email: "w@v.test", superadmin: true, escritorioId: null }, { acao: "whatsapp_qrcode" });
+  assert.equal(r.status, 409);
 });
 
 // ------------------------------------------------------------------ mensalidade da empresa nova
@@ -436,4 +504,192 @@ test("textos: créditos do plano, data e número do WhatsApp", () => {
   assert.match(nova, /^Olá, Maria!/);
   assert.ok(nova.indexOf("https://l") < nova.indexOf("Senha provisória"), "o link vem antes dos dados de acesso");
   assert.match(mensagemAcessoLiberado({ responsavel: null, empresa: "X", url: "https://u" }), /^Olá!/);
+});
+
+// ------------------------------------------------------------------ cartão de crédito (0037)
+
+const CARTAO = { numero: "4111 1111 1111 1111", nome: "Maria Souza", validade: "12/29", cvv: "123" };
+const TITULAR = { nome: "Maria Souza", cpf_cnpj: "529.982.247-25", email: "maria@pagante.test", telefone: "(71) 99999-0000", cep: "40000-000", numero_endereco: "10" };
+const SA = { id: "sa", email: "w@v.test", superadmin: true, escritorioId: null };
+
+test("validação do cartão: Luhn, validade, CPF do titular; somarMes no fim do mês", () => {
+  assert.equal(luhnValido("4111111111111111"), true);
+  assert.equal(luhnValido("4111111111111112"), false);
+  assert.deepEqual(lerValidade("12/29", "2026-11-04"), { mes: "12", ano: "2029" });
+  assert.equal(lerValidade("10/26", "2026-11-04"), null, "vencido");
+  assert.equal(lerValidade("13/27", "2026-11-04"), null);
+  assert.equal(cpfValido("529.982.247-25"), true);
+  assert.equal(cpfValido("111.111.111-11"), false);
+  assert.deepEqual(problemasDoCartao(CARTAO, TITULAR, "2026-11-04"), {});
+  assert.ok(problemasDoCartao({ ...CARTAO, numero: "1234" }, TITULAR, "2026-11-04").numero);
+  assert.equal(bandeiraDoNumero("5162306219378829"), "Mastercard");
+  assert.equal(somarMes("2026-01-31"), "2026-02-28");
+  assert.equal(somarMes("2026-10-30"), "2026-11-30");
+  assert.equal(somarMes("2026-12-15"), "2027-01-15");
+});
+
+test("cartão na empresa que espera a 1ª mensalidade: o cartão paga o link em aberto, libera e a mensalidade vira cartão", async () => {
+  const { asaas, banco, deps, usuario } = cenario({ cfg: { ...ASAAS_OK, ...ZAP } });
+  await tratarAcao(deps, SA, { acao: "cobrar_empresa", escritorio_id: EMPRESA.id, enviar_whatsapp: false });
+  const antiga = banco.cobrancas[EMPRESA.id].asaas_assinatura_id;
+  banco.respostaAplicar = (ev, p) => ({ acao: p.status === "CONFIRMED" ? "ativou" : "atualizado", escritorio_id: EMPRESA.id });
+  const r = await tratarAcao(deps, usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.ativou, true, "pagou a 1ª e liberou na hora");
+  assert.equal(r.corpo.reutilizavel, true);
+  const tok = asaas.chamadas.find((c) => c.caminho === "/creditCard/tokenizeCreditCard");
+  assert.equal(tok.corpo.remoteIp, "200.10.20.30", "o IP é o do navegador");
+  const pago = asaas.chamadas.find((c) => /payWithCreditCard$/.test(c.caminho));
+  assert.deepEqual(pago.corpo, { creditCardToken: asaas.tokens[0].creditCardToken, remoteIp: "200.10.20.30" }, "paga com o token, sem repetir o número");
+  const nova = asaas.chamadas.filter((c) => c.caminho === "/subscriptions" && c.metodo === "POST").at(-1).corpo;
+  assert.equal(nova.billingType, "CREDIT_CARD");
+  assert.equal(nova.creditCardToken, asaas.tokens[0].creditCardToken);
+  assert.equal(nova.nextDueDate, "2026-11-30", "a próxima no cartão é a do mês seguinte");
+  assert.ok(asaas.chamadas.some((c) => c.metodo === "DELETE" && c.caminho === `/subscriptions/${antiga}`), "a assinatura de boleto/Pix sai");
+  assert.notEqual(banco.cobrancas[EMPRESA.id].asaas_assinatura_id, antiga);
+  assert.equal(banco.cobrancas[EMPRESA.id].link_pagamento, null);
+  const c = banco.cartoes[EMPRESA.id];
+  assert.deepEqual({ final: c.final, validade: c.validade, bandeira: c.bandeira, token: !!c.asaas_token }, { final: "1111", validade: "12/2029", bandeira: "VISA", token: true });
+  const tudo = JSON.stringify(banco);
+  assert.ok(!tudo.includes("4111111111111111") && !tudo.includes("\"123\""), "número e CVV não ficam gravados");
+  assert.equal(banco.atividades[0].acao, "cartao.cadastrado");
+});
+
+test("cartão sem tokenização liberada no Asaas: a mensalidade vai para o cartão com os dados, mas não compra créditos", async () => {
+  const { asaas, banco, deps, usuario } = cenario({ cfg: ASAAS_OK });
+  asaas.tokenizacaoBloqueada = true;
+  banco.empresas[EMPRESA.id].status = "ativo";
+  banco.empresas[EMPRESA.id].renovacao = "2026-11-15";
+  const r = await tratarAcao(deps, usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.reutilizavel, false);
+  assert.equal(banco.cfg.asaas_tokenizacao, "bloqueada");
+  const sub = asaas.chamadas.find((c) => c.caminho === "/subscriptions" && c.metodo === "POST").corpo;
+  assert.equal(sub.creditCard.number, "4111111111111111", "sem token, o cartão vai direto na assinatura");
+  assert.equal(sub.creditCardHolderInfo.cpfCnpj, "52998224725");
+  assert.equal(sub.nextDueDate, "2026-11-15", "quem já usa começa a pagar na renovação dos créditos");
+  assert.equal(banco.cobrancas[EMPRESA.id].situacao, "em_dia");
+  assert.equal(banco.cartoes[EMPRESA.id].asaas_token, null);
+});
+
+test("empresa nova sem cobrança gerada: a 1ª é cobrada no cartão já; recusado, nada fica pendurado", async () => {
+  const { asaas, banco, deps, usuario } = cenario({ cfg: ASAAS_OK });
+  banco.respostaAplicar = { acao: "ativou", escritorio_id: EMPRESA.id };
+  const r = await tratarAcao(deps, usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.ativou, true);
+  assert.equal(asaas.chamadas.find((c) => c.caminho === "/subscriptions" && c.metodo === "POST").corpo.nextDueDate, "2026-10-31",
+    "vence amanhã (o Asaas não cobra sozinho na criação) e o sistema paga a 1ª agora");
+  assert.equal(asaas.chamadas.filter((c) => /payWithCreditCard$/.test(c.caminho)).length, 1, "uma cobrança só");
+  assert.equal(banco.empresas[EMPRESA.id].dia_renovacao, 31, "o mês do crédito começa no vencimento");
+
+  const s2 = cenario({ cfg: ASAAS_OK });
+  s2.asaas.tokenizacaoBloqueada = true;
+  const rotas = s2.asaas.fetch;
+  // a operadora recusa na hora de cobrar (a assinatura nasce, a cobrança não passa)
+  const recusando = async (url, init = {}) => (/payWithCreditCard$/.test(String(url))
+    ? new Response(JSON.stringify({ errors: [{ description: "Transação não autorizada." }] }), { status: 400 }) : rotas(url, init));
+  const r2 = await tratarAcao({ ...s2.deps, fetch: recusando }, s2.usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
+  assert.equal(r2.status, 400);
+  assert.match(r2.corpo.erro, /O cartão não foi aceito: Transação não autorizada/);
+  assert.equal(s2.banco.cobrancas[EMPRESA.id].asaas_assinatura_id, null, "a assinatura recusada sai");
+  assert.equal(s2.asaas.assinaturas.size, 0);
+  assert.equal(s2.banco.cartoes[EMPRESA.id], undefined, "cartão recusado não fica salvo");
+});
+
+test("cartão: só o dono cadastra; dado inválido nem chega ao Asaas; recusa na tokenização vira mensagem clara", async () => {
+  const { asaas, deps, usuario } = cenario({ cfg: ASAAS_OK });
+  let r = await tratarAcao(deps, { ...usuario, souDono: false }, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 403);
+  r = await tratarAcao(deps, usuario, { acao: "cartao_salvar", cartao: { ...CARTAO, numero: "4111 1111 1111 1112" }, titular: TITULAR });
+  assert.equal(r.status, 400);
+  assert.match(r.corpo.erro, /Número do cartão inválido/);
+  assert.equal(asaas.chamadas.length, 0);
+  asaas.recusarCartao = "Cartão sem limite.";
+  r = await tratarAcao(deps, usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 400);
+  assert.equal(r.corpo.erro, "O cartão não foi aceito: Cartão sem limite.");
+});
+
+test("comprar créditos no cartão salvo: cobra com o token e os créditos entram na hora", async () => {
+  const { asaas, banco, deps, usuario } = cenario({ cfg: ASAAS_OK });
+  banco.cartoes[EMPRESA.id] = { asaas_token: "tok_salvo", final: "1111" };
+  banco.respostaAplicar = { acao: "creditos", escritorio_id: EMPRESA.id, credito_id: "cred-1" };
+  const r = await tratarAcao(deps, usuario, { acao: "comprar_creditos", tipo: "car", quantidade: 10, forma: "cartao" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.pago, true);
+  const cob = asaas.chamadas.find((c) => c.caminho === "/payments" && c.metodo === "POST").corpo;
+  assert.deepEqual({ b: cob.billingType, t: cob.creditCardToken, v: cob.value, ip: cob.remoteIp }, { b: "CREDIT_CARD", t: "tok_salvo", v: 150, ip: "200.10.20.30" });
+  assert.equal(banco.pagamentos.find((p) => p.id === "pag-1").forma, "CREDIT_CARD");
+  assert.equal(banco.aplicados.at(-1).pagamento.status, "CONFIRMED");
+  asaas.recusarCartao = "Saldo insuficiente.";
+  const r2 = await tratarAcao(deps, usuario, { acao: "comprar_creditos", tipo: "car", quantidade: 10, forma: "cartao" });
+  assert.equal(r2.status, 400);
+  assert.equal(banco.cancelados.length, 1, "recusado: a compra é cancelada");
+});
+
+test("compra automática: carteira zerada compra no cartão e avisa no WhatsApp; recusa segura e avisa", async () => {
+  const { asaas, banco, deps, usuario } = cenario({ cfg: { ...ASAAS_OK, ...ZAP } });
+  banco.cartoes[EMPRESA.id] = { asaas_token: "tok_salvo", final: "4242" };
+  banco.recargas = ["car", "geral"];
+  banco.reserva = (tipo) => (tipo === "car"
+    ? { pode: true, credito_id: "cred-auto", pagamento_id: "pag-auto", escritorio_id: EMPRESA.id, online: true, quantidade: 10, unitario: 15, valor: 150, descricao: "10 créditos de CAR" }
+    : { pode: false, motivo: "tem_saldo" });
+  banco.respostaAplicar = { acao: "creditos", escritorio_id: EMPRESA.id, credito_id: "cred-auto" };
+  const r = await tratarAcao(deps, usuario, { acao: "recarga_automatica" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.deepEqual(r.corpo.compras, [{ tipo: "car", descricao: "10 créditos de CAR", valor: 150, ok: true }]);
+  assert.deepEqual(r.corpo.motivos, { geral: "tem_saldo" });
+  const cob = asaas.chamadas.find((c) => c.caminho === "/payments" && c.metodo === "POST").corpo;
+  assert.equal(cob.creditCardToken, "tok_salvo");
+  assert.match(cob.description, /compra automática/);
+  const zap = asaas.chamadas.filter((c) => c.whatsapp && c.metodo === "POST").at(-1).corpo.text;
+  assert.match(zap, /compra automática repôs: 10 créditos de car \(R\$\s50,00\), no cartão final 4242/);
+
+  asaas.recusarCartao = "Cartão bloqueado.";
+  const r2 = await tratarAcao(deps, usuario, { acao: "recarga_automatica", tipo: "car" });
+  assert.equal(r2.corpo.compras[0].ok, false);
+  assert.ok(banco.cartoes[EMPRESA.id].recusa_em, "a recusa fica marcada (segura novas tentativas)");
+  assert.equal(banco.cartoes[EMPRESA.id].recusa_motivo, "Cartão bloqueado.");
+  assert.equal(banco.cancelados.at(-1).creditoId, "cred-auto");
+  assert.match(asaas.chamadas.filter((c) => c.whatsapp && c.metodo === "POST").at(-1).corpo.text, /foi recusada no cartão final 4242: Cartão bloqueado/);
+});
+
+test("remover o cartão: a mensalidade volta para boleto/Pix no mesmo vencimento", async () => {
+  const { asaas, banco, deps, usuario } = cenario({ cfg: ASAAS_OK });
+  banco.empresas[EMPRESA.id].status = "ativo";
+  banco.empresas[EMPRESA.id].renovacao = "2026-11-15";
+  await tratarAcao(deps, usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
+  const noCartao = banco.cobrancas[EMPRESA.id].asaas_assinatura_id;
+  const r = await tratarAcao(deps, usuario, { acao: "cartao_remover" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const nova = asaas.chamadas.filter((c) => c.caminho === "/subscriptions" && c.metodo === "POST").at(-1).corpo;
+  assert.deepEqual({ b: nova.billingType, v: nova.nextDueDate }, { b: "UNDEFINED", v: "2026-11-15" });
+  assert.ok(asaas.chamadas.some((c) => c.metodo === "DELETE" && c.caminho === `/subscriptions/${noCartao}`));
+  assert.equal(banco.cartoes[EMPRESA.id], undefined);
+});
+
+test("empresa criada já liberada: 1ª mensalidade vence em 3 dias e a mensagem diz que o acesso está liberado", async () => {
+  const { asaas, banco, deps } = cenario({ cfg: { ...ASAAS_OK, ...ZAP } });
+  banco.empresas[EMPRESA.id].status = "ativo";
+  const r = await tratarAcao(deps, SA, { acao: "cobrar_empresa", escritorio_id: EMPRESA.id, liberada: true, senha: "Vt12345678ab" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(asaas.chamadas.find((c) => c.caminho === "/subscriptions").corpo.nextDueDate, "2026-11-02");
+  assert.match(r.corpo.mensagem, /e o acesso já está liberado/);
+  assert.match(r.corpo.mensagem, /vence em 02\/11\/2026/);
+  assert.match(r.corpo.mensagem, /cadastre o cartão de crédito no primeiro acesso/);
+});
+
+test("painel: mostra se a conta do Asaas guarda cartões (tokenização)", async () => {
+  const { asaas, banco, deps } = cenario({ cfg: ASAAS_OK });
+  asaas.tokenizacaoBloqueada = true;
+  let r = await tratarAcao(deps, SA, { acao: "config_status" });
+  assert.equal(r.corpo.asaas.tokenizacao, "bloqueada");
+  asaas.tokenizacaoBloqueada = false;
+  r = await tratarAcao(deps, SA, { acao: "config_status" });
+  assert.equal(r.corpo.asaas.tokenizacao, "liberada");
+  assert.equal(banco.cfg.asaas_tokenizacao, "liberada");
+  const antes = asaas.chamadas.length;
+  await tratarAcao(deps, SA, { acao: "config_status" });
+  assert.ok(!asaas.chamadas.slice(antes).some((c) => c.caminho.includes("tokenize")), "liberada uma vez, não pergunta mais");
 });

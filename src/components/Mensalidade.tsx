@@ -10,11 +10,13 @@ import { fmtPreco } from "../lib/creditos";
 import { dataBr } from "../../supabase/functions/_shared/mensagens_cobranca.ts";
 import { SUPORTE_WHATSAPP } from "../lib/config";
 import { Logo } from "./Logo";
+import { FormCartao } from "./Cartao";
 
 export function AguardandoPagamento({ nome }: { nome: string }) {
   const [c, setC] = useState<MinhaCobranca | null | undefined>(undefined);
   const [conferindo, setConferindo] = useState(false);
   const [nota, setNota] = useState<string | null>(null);
+  const [cartao, setCartao] = useState(false);
 
   async function ler(perguntarAoAsaas: boolean) {
     if (perguntarAoAsaas) await conferirPagamentos().catch(() => null);
@@ -42,7 +44,7 @@ export function AguardandoPagamento({ nome }: { nome: string }) {
   const vencida = c?.situacao === "atrasada";
   return (
     <div className="centro">
-      <div className="login-box mens-box" style={{ textAlign: "left" }}>
+      <div className={`login-box mens-box${c?.pagamento_online && c.sou_dono ? " com-cartao" : ""}`} style={{ textAlign: "left" }}>
         <Logo size={28} />
         <h2 style={{ marginTop: 14 }}>{vencida ? "Acesso suspenso: a mensalidade venceu" : "Falta o pagamento para liberar o acesso"}</h2>
         {c === undefined ? <p className="sub">Carregando a cobrança…</p> : (
@@ -50,7 +52,34 @@ export function AguardandoPagamento({ nome }: { nome: string }) {
             {vencida
               ? <p>A mensalidade da <b>{c?.empresa ?? nome}</b> não foi paga e o acesso ao Vertces está suspenso. Os seus dados continuam guardados: pagou, o acesso volta na hora.</p>
               : <p>A conta da <b>{c?.empresa ?? nome}</b> está pronta{c?.plano ? <> no plano <b>{c.plano}</b></> : null}. O acesso é liberado assim que a primeira mensalidade for paga.</p>}
-            {c?.link ? (
+            {c?.pagamento_online && c.sou_dono && c.valor ? (
+              <div className="mens-formas">
+                <div className="mens-forma destaque">
+                  <header><b>Cartão de crédito</b><small>{fmtPreco(Number(c.valor))}/mês · libera na hora</small></header>
+                  {cartao ? (
+                    <FormCartao contato={c.contato} botao={`Pagar ${fmtPreco(Number(c.valor))} no cartão`}
+                      rodape={<button type="button" className="fantasma" onClick={() => setCartao(false)}>Voltar</button>}
+                      onSalvo={async (r) => {
+                        if (r.ativou) { location.reload(); return; }
+                        const atual = await ler(true);
+                        if (atual?.status !== "ativo") setNota("O cartão foi cadastrado, mas o pagamento ainda não confirmou. Esta tela entra sozinha quando confirmar.");
+                      }} />
+                  ) : (
+                    <>
+                      <span className="sub">Paga agora e as próximas mensalidades saem sozinhas. Com o cartão salvo, os créditos também podem ser repostos quando acabarem.</span>
+                      <button className="principal" onClick={() => setCartao(true)}>Pagar com cartão</button>
+                    </>
+                  )}
+                </div>
+                {c.link && !cartao && (
+                  <div className="mens-forma">
+                    <header><b>Pix ou boleto</b>{c.vencimento && <small>{vencida ? "venceu" : "vence"} em {dataBr(c.vencimento)}</small>}</header>
+                    <span className="sub">Pix confirma em segundos; boleto em até 3 dias úteis.</span>
+                    <a className="botao-download" href={c.link} target="_blank" rel="noreferrer">Abrir a página de pagamento</a>
+                  </div>
+                )}
+              </div>
+            ) : c?.link ? (
               <div className="mens-cobranca">
                 <div><span>Mensalidade</span><b>{c.valor !== null ? fmtPreco(Number(c.valor)) : "—"}</b>{c.vencimento && <small>{vencida ? "venceu" : "vence"} em {dataBr(c.vencimento)}</small>}</div>
                 <a className="botao-download principal" href={c.link} target="_blank" rel="noreferrer">Pagar agora (Pix, boleto ou cartão)</a>

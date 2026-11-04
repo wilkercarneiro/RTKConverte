@@ -73,7 +73,14 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
           {a?.proximo_vencimento && <div><span>{a.situacao === "em_dia" ? "Próximo vencimento" : "Vencimento"}</span><b>{dataBr(a.proximo_vencimento)}</b></div>}
           {a?.ultimo_pagamento_em && <div><span>Último pagamento</span><b>{fmtData(a.ultimo_pagamento_em)}</b></div>}
           {a?.whatsapp_em && <div><span>WhatsApp</span><b>enviado {fmtData(a.whatsapp_em)}</b></div>}
+          <div><span>Cartão</span><b>{c.cartao ? `${c.cartao.bandeira ?? "Cartão"} •••• ${c.cartao.final}` : "não cadastrado"}</b>
+            {c.cartao && <small className="sub">{c.cartao.reutilizavel ? "mensalidade e créditos" : "só mensalidade (sem token)"} · validade {c.cartao.validade}</small>}</div>
+          {c.recarga && Object.entries(c.recarga).filter(([, r]) => r.ativo).map(([tipo, r]) => (
+            <div key={tipo}><span>Compra automática · {tipo === "car" ? "CAR" : tipo}</span><b>{r.quantidade} por vez</b>
+              <small className="sub">{r.limite_periodo ? `limite ${fmtPreco(Number(r.limite_periodo))}/mês · ` : ""}gasto {fmtPreco(Number(r.gasto_periodo))}</small></div>
+          ))}
         </div>
+        {c.cartao?.recusa_em && <div className="sa-aviso erro" style={{ marginTop: 12 }}>Compra automática recusada em {fmtData(c.cartao.recusa_em)}: {c.cartao.recusa_motivo}</div>}
         {a?.whatsapp_erro && <div className="sa-aviso erro" style={{ marginTop: 12 }}>Último envio no WhatsApp falhou: {a.whatsapp_erro}</div>}
         {valorDiferente && (
           <div className="sa-aviso info" style={{ marginTop: 12 }}>

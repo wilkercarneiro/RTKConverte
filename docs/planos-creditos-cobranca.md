@@ -85,3 +85,50 @@ vem depois da migração.
 (tests/cobranca.test.mjs: fluxos inteiros com Asaas, Evolution e banco falsos).
 Telas: `#/lab/casca/{inicio,aceite,creditos,socar,pagamento}[?semasaas]`,
 `#/lab/sistema/config`, `#/lab/admin/{planos,empresas/e1,empresas/e5,config}`.
+
+## Cartão de crédito e compra automática (0037, 04/11/2026)
+
+**O que o cliente vê**
+- Dono de empresa que paga algo (mensalidade > 0 ou crédito à venda), com o Asaas
+  ligado e sem cartão: ao entrar (inclusive no 1º acesso, logo depois de trocar a
+  senha) aparece a tela **"Cadastre o cartão para cobrança automática e compra de
+  crédito"**, com "Agora não" (vale até sair). No Início fica a faixa com o mesmo texto.
+- "Falta o pagamento" (empresa nova ou suspensa): **Pagar com cartão** — paga a fatura
+  em aberto na hora e libera; Pix/boleto continuam como alternativa.
+- Configurações → Plano e uso → **Cartão e compra automática**: cartão salvo
+  (bandeira, final, validade), trocar, remover e, por carteira, ligar a compra
+  automática (quantos comprar e limite por mês, em R$).
+- Comprar créditos: com cartão salvo que compra créditos, **Pagar no cartão •••• 1234**
+  (entra na hora) e Pix/boleto como segunda opção.
+- Créditos acabaram e a compra automática está ligada: a tela "créditos acabaram"
+  mostra que está repondo; o WhatsApp avisa a compra (ou a recusa).
+
+**Como funciona**
+- Os dados do cartão vão da tela à função `cobranca` e dela ao Asaas, só naquela
+  chamada; o banco guarda bandeira, final, validade e o token (`cobranca_cartoes`,
+  que ninguém lê pelo navegador).
+- `cartao_salvar`: tokeniza; paga com o cartão o que venceu ou vence hoje; troca a
+  assinatura de boleto/Pix por uma no cartão (próximo vencimento) e remove a antiga.
+  Empresa nova sem cobrança: assinatura no cartão vencendo amanhã e a 1ª paga na
+  hora (assim o Asaas não cobra duas vezes). Recusado: nada fica salvo.
+- `cartao_remover`: a mensalidade volta a boleto/Pix no mesmo vencimento.
+- Compra automática: a tela vê uma carteira zerada com a recarga ligada e chama
+  `recarga_automatica`; o banco decide (`reservar_recarga_automatica`, empresa
+  travada): carteira zerada, cartão com token, nenhuma compra em curso (10 min),
+  teto do período, nenhuma recusa nas últimas 6 h. Recusado: cancela, marca a
+  recusa e avisa no WhatsApp.
+- Painel → empresa: 3 formas de criar — **liberar depois do pagamento** (link da 1ª,
+  vence hoje), **liberar agora e cobrar** (entra já; link vence em 3 dias; sem pagar,
+  suspende) e **liberar sem cobrança**.
+
+**Depende do Asaas:** reusar o cartão (compra na hora e automática) precisa da
+**tokenização liberada** na conta — em 04/11 a conta GRUPO D'PROL respondia
+"Você não possui permissão… Entre em contato com seu gerente de contas". Sem ela o
+cartão é enviado direto na assinatura (paga a mensalidade) e os créditos continuam
+por Pix; o painel (Configurações → Pagamentos) mostra "Cartão salvo (tokenização):
+não liberada". Liberada, quem cadastrar o cartão de novo ganha a compra automática.
+
+**Testes:** `tests/rls/cartao_recarga.sql` (no `npm run test:rls`) e os cenários de
+cartão em `tests/cobranca.test.mjs`. Telas: `#/lab/cartao/{tela,aviso,painel,
+painel-mensal,pagamento,comprar,semcredito}` e `#/lab/admin/config` (QR do WhatsApp).
+Publicação: `bash scripts/publicar-cartao.sh [--executar]` e depois o push.

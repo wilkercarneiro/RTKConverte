@@ -4,7 +4,7 @@
 // banco (0027 + 0034).
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-  aVenda, assinarAvisoCredito, avisoCreditoAtual, cancelarPedido, carteiraGeral, carteiraPropria, diaMes, disponivel,
+  aVenda, assinarAvisoCredito, avisoCreditoAtual, cancelarPedido, carteiraDe, carteiraGeral, carteiraPropria, diaMes, disponivel,
   fecharAvisoCredito, fmtPreco, naoExibirMaisAvisoCredito, nomeCredito, pedirCreditos, sobraDoMes,
 } from "../lib/creditos";
 import type { Carteira, Compra, Creditos } from "../lib/creditos";
@@ -64,7 +64,12 @@ export function SemCreditos({ def, creditos, onVoltar, onAtualizar, voltarPara =
   const relevantes = [propria, geral].filter((k): k is Carteira =>
     !!k && (k === propria || !propria || k.por_mes === null || k.por_mes > 0 || k.extra > 0));
   const pendentes = creditos.compras.filter((p) => p.status === "pendente").length;
-  const podeComprar = !!carteiraParaComprar(creditos, def.chave);
+  const alvo = carteiraParaComprar(creditos, def.chave);
+  const podeComprar = !!alvo;
+  // compra automática ligada para esta carteira: o App já está comprando (useRecargaAutomatica)
+  const cartao = creditos.cartao?.reutilizavel ? creditos.cartao : null;
+  const recusaRecente = !!cartao?.recusa_em && Date.now() - new Date(cartao.recusa_em).getTime() < 6 * 3600_000;
+  const auto = !!(alvo && cartao && creditos.recarga?.[alvo]?.ativo);
   return (
     <div className="centro">
       <div className="sem-credito">
@@ -82,7 +87,13 @@ export function SemCreditos({ def, creditos, onVoltar, onAtualizar, voltarPara =
           Cada serviço novo usa um crédito, descontado quando você clica em Prosseguir depois de conferir os pontos. Os créditos do mês renovam em {diaMes(creditos.periodo.renova_em)}
           {podeComprar ? "; para continuar agora, compre mais créditos." : "."}
         </p>
-        {pendentes > 0 && <p className="nota-permissao">{pendentes === 1 ? "Há 1 compra" : `Há ${pendentes} compras`} esperando pagamento.</p>}
+        {auto && !recusaRecente && (
+          <p className="cr-esperando" role="status"><span className="spinner" /> A compra automática está repondo {creditos.recarga![alvo!].quantidade} {nomeCredito(carteiraDe(creditos, alvo!))} no cartão final {cartao!.final}. Esta tela segue sozinha quando os créditos entrarem.</p>
+        )}
+        {auto && recusaRecente && (
+          <p className="nota-permissao">A compra automática foi recusada no cartão final {cartao!.final}: {cartao!.recusa_motivo}. Compre por Pix ou troque o cartão em Configurações → Plano e uso.</p>
+        )}
+        {pendentes > 0 && !auto && <p className="nota-permissao">{pendentes === 1 ? "Há 1 compra" : `Há ${pendentes} compras`} esperando pagamento.</p>}
         <div className="acoes-linha">
           <button onClick={onVoltar}>Voltar para {voltarPara}</button>
           {podeComprar && <button className="principal" onClick={() => setComprando(true)}>Comprar créditos</button>}
@@ -211,11 +222,17 @@ export function ComprarCreditos({ creditos, tipo, onFechar, onPedido }: {
     return () => clearInterval(t);
   }, [pagando?.credito_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function comprar() {
+  const cartao = creditos.cartao?.reutilizavel ? creditos.cartao : null;
+
+  async function comprar(forma?: "cartao") {
     if (!k || erroQtd) return;
     setOcupado(true); setMsg(null); setPago(null);
     try {
-      if (creditos.pagamento_online) {
+      if (creditos.pagamento_online && forma === "cartao") {
+        const r = await comprarCreditos(k.chave, n, "cartao");
+        if (r.pago) setPago(`${r.descricao.replace(/^./, (x) => x.toUpperCase())} já estão na sua conta (cartão final ${cartao?.final}).`);
+        else setMsg({ tipo: "ok", texto: "O cartão está em análise no Asaas. Os créditos entram sozinhos quando o pagamento confirmar." });
+      } else if (creditos.pagamento_online) {
         const r = await comprarCreditos(k.chave, n);
         setPagando({ credito_id: r.credito_id, descricao: r.descricao, valor: r.valor, link: r.link, pix: r.pix });
       } else {
@@ -308,14 +325,26 @@ export function ComprarCreditos({ creditos, tipo, onFechar, onPedido }: {
                     <small className="cr-dica">Com {proxima.a_partir_de} ou mais, cada um sai por {fmtPreco(Number(proxima.preco))}.</small>
                   )}
                 </div>
-                <button type="button" className="principal cr-pagar" disabled={ocupado || !!erroQtd || !cot} onClick={comprar}>
-                  {ocupado ? "Gerando o pagamento…" : creditos.pagamento_online ? `Pagar ${cot ? fmtPreco(cot.total) : ""}` : "Pedir créditos"}
-                </button>
-                <p className="sub cr-nota">
-                  {creditos.pagamento_online
-                    ? "Pix, boleto ou cartão. Os créditos entram sozinhos quando o pagamento é confirmado e não vencem."
-                    : "A equipe do Vertces confirma o pagamento e os créditos entram. Créditos extras não vencem."}
-                </p>
+                {cartao && creditos.pagamento_online ? (
+                  <>
+                    <button type="button" className="principal cr-pagar" disabled={ocupado || !!erroQtd || !cot} onClick={() => comprar("cartao")}>
+                      {ocupado ? "Pagando…" : `Pagar ${cot ? fmtPreco(cot.total) : ""} no cartão •••• ${cartao.final}`}
+                    </button>
+                    <button type="button" className="cr-pagar" disabled={ocupado || !!erroQtd || !cot} onClick={() => comprar()}>Pagar com Pix ou boleto</button>
+                    <p className="sub cr-nota">No cartão, os créditos entram na hora. Créditos extras não vencem.</p>
+                  </>
+                ) : (
+                  <>
+                    <button type="button" className="principal cr-pagar" disabled={ocupado || !!erroQtd || !cot} onClick={() => comprar()}>
+                      {ocupado ? "Gerando o pagamento…" : creditos.pagamento_online ? `Pagar ${cot ? fmtPreco(cot.total) : ""}` : "Pedir créditos"}
+                    </button>
+                    <p className="sub cr-nota">
+                      {creditos.pagamento_online
+                        ? "Pix, boleto ou cartão. Os créditos entram sozinhos quando o pagamento é confirmado e não vencem."
+                        : "A equipe do Vertces confirma o pagamento e os créditos entram. Créditos extras não vencem."}
+                    </p>
+                  </>
+                )}
               </div>
             )}
           </>

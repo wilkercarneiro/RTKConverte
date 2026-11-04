@@ -42,6 +42,24 @@ export async function enviarWhatsApp(c: ConfigWhatsApp, telefone: string | null 
   }
 }
 
+/**
+ * QR Code para conectar a instância (Evolution: GET /instance/connect). A
+ * imagem vem em data URL (base64). null = sem resposta ou já conectada.
+ */
+export async function qrcodeWhatsApp(c: ConfigWhatsApp, f: typeof fetch = fetch): Promise<string | null> {
+  try {
+    const r = await f(`${base(c)}/instance/connect/${encodeURIComponent(c.instancia)}`, {
+      headers: { apikey: c.chave }, signal: AbortSignal.timeout(20_000),
+    });
+    if (!r.ok) return null;
+    const j = await r.json() as { base64?: string; qrcode?: { base64?: string } };
+    const img = j.base64 ?? j.qrcode?.base64 ?? null;
+    return typeof img === "string" && img.startsWith("data:image") ? img : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Estado da instância: "open" = conectada. null = sem resposta. */
 export async function estadoWhatsApp(c: ConfigWhatsApp, f: typeof fetch = fetch): Promise<string | null> {
   try {

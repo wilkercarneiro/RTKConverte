@@ -5,6 +5,7 @@ import { chamarFuncao, supabase } from "./supabase";
 import { RECURSOS } from "./recursos";
 import type { SituacaoCobranca } from "./cobranca";
 import type { Carteira, Faixa } from "./creditos";
+import type { CartaoPublico, RecargaCarteira } from "./creditos_regras";
 
 export type StatusEmpresa = "ativo" | "aguardando_pagamento" | "suspenso" | "cancelado";
 
@@ -198,6 +199,9 @@ export interface CobrancaEmpresa {
     link_pagamento: string | null; proximo_vencimento: string | null; ultimo_pagamento_em: string | null;
     whatsapp_em: string | null; whatsapp_erro: string | null;
   } | null;
+  /** 0037: o cartão (sem o token) e a compra automática */
+  cartao?: CartaoPublico | null;
+  recarga?: Record<string, RecargaCarteira>;
   pagamentos: PagamentoEmpresa[];
 }
 export const cobrancaDaEmpresa = async (id: string): Promise<CobrancaEmpresa> =>

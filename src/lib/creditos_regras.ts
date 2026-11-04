@@ -26,7 +26,23 @@ export interface Compra {
   id: string; tipo: string; quantidade: number; valor: number | null; unitario: number | null;
   descricao: string | null; status: StatusCompra; origem: "pedido" | "manual" | "compra";
   created_at: string; link: string | null; pagamento: string | null;
+  /** feita pela compra automática (cartão) */
+  automatica?: boolean;
+  /** forma do pagamento no Asaas (CREDIT_CARD, PIX…) */
+  forma?: string | null;
 }
+
+/** O cartão da empresa como as telas veem (o token fica no servidor). */
+export interface CartaoPublico {
+  bandeira: string | null; final: string | null; validade: string | null; titular: string | null;
+  /** o Asaas guardou o cartão (token): ele compra créditos na hora e sozinho */
+  reutilizavel: boolean;
+  cadastrado_em: string;
+  recusa_em: string | null; recusa_motivo: string | null;
+}
+
+/** Compra automática de uma carteira. */
+export interface RecargaCarteira { ativo: boolean; quantidade: number; limite_periodo: number | null; gasto_periodo: number }
 
 export interface Creditos {
   periodo: { inicio: string; renova_em: string; dia: number };
@@ -36,6 +52,9 @@ export interface Creditos {
   /** Asaas configurado: a compra gera cobrança e os créditos entram sozinhos */
   pagamento_online: boolean;
   compras: Compra[];
+  /** 0037: o cartão salvo e a compra automática por carteira */
+  cartao?: CartaoPublico | null;
+  recarga?: Record<string, RecargaCarteira>;
 }
 
 export const doServico = (c: Creditos | null, chave: ChaveServico) => c?.servicos[`servico.${chave}`];

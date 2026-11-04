@@ -1,0 +1,86 @@
+/* Cartão de crédito da empresa (Cartao.tsx) */
+
+.ct-form { display: grid; gap: 18px; }
+.ct-bloco { border: 0; padding: 0; margin: 0; min-width: 0; }
+.ct-bloco legend { font-weight: 600; font-size: 13px; color: var(--texto-2); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 10px; padding: 0; display: flex; align-items: center; gap: 4px; }
+
+/* o plástico: acompanha o que se digita */
+.ct-plastico {
+  position: relative; aspect-ratio: 1.586; width: min(340px, 100%); justify-self: center;
+  border-radius: 16px; padding: 20px 22px; color: #fff; display: grid; grid-template-rows: auto 1fr auto;
+  background: radial-gradient(120% 140% at 0% 0%, #1f7a52 0%, var(--floresta) 55%, #071f17 100%);
+  box-shadow: 0 18px 40px -22px rgb(14 59 43 / 70%), inset 0 1px 0 rgb(255 255 255 / 12%);
+  overflow: hidden;
+}
+.ct-plastico::after {
+  content: ""; position: absolute; inset: auto -30% -60% auto; width: 80%; aspect-ratio: 1; border-radius: 50%;
+  background: radial-gradient(circle, rgb(123 211 166 / 22%), transparent 65%);
+}
+.ct-chip { width: 38px; height: 28px; border-radius: 6px; background: linear-gradient(135deg, #e9d48b, #b8963e); }
+.ct-bandeira { position: absolute; top: 20px; right: 22px; font-weight: 700; font-size: 15px; letter-spacing: .02em; }
+.ct-numero { align-self: center; font-family: var(--mono); font-size: clamp(16px, 4.6vw, 21px); letter-spacing: .08em; white-space: nowrap; }
+.ct-rodape { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; letter-spacing: .06em; color: rgb(255 255 255 / 82%); }
+.ct-rodape span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ct-opcao { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--borda); border-radius: var(--raio); background: var(--primaria-clara); cursor: pointer; }
+.ct-opcao input { margin-top: 3px; }
+.ct-opcao span { display: grid; gap: 3px; }
+.ct-opcao small { color: var(--texto-2); line-height: 1.45; }
+
+.ct-seguro { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 12.5px; color: var(--texto-2); line-height: 1.45; }
+.ct-seguro svg { flex: none; margin-top: 2px; color: var(--primaria); }
+.ct-acoes { display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ct-acoes .fantasma { margin-right: auto; }
+
+/* tela cheia ao entrar */
+.ct-tela { align-items: flex-start; padding-block: 32px; }
+.ct-caixa, .ct-form, .mens-formas { text-align: left; }
+.ct-caixa { width: 640px; max-width: 100%; background: var(--card); border: 1px solid var(--borda); border-radius: var(--raio-g); padding: clamp(20px, 4vw, 36px); box-shadow: var(--sombra-alta); }
+.ct-caixa h2 { font-family: var(--fonte-titulo); font-size: clamp(22px, 3.2vw, 28px); line-height: 1.15; margin: 6px 0 14px; }
+.ct-vantagens { list-style: none; margin: 0 0 22px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.ct-vantagens li { display: grid; gap: 4px; padding: 12px 14px; border-radius: var(--raio); background: var(--bg); border: 1px solid var(--linha); }
+.ct-vantagens span { color: var(--texto-2); font-size: 13px; line-height: 1.45; }
+
+/* faixa do Início */
+.ct-aviso {
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin: 0 0 16px;
+  border: 1px solid #cfe8da; border-left: 4px solid var(--primaria); border-radius: var(--raio); background: var(--primaria-clara);
+}
+.ct-aviso > span:nth-child(2) { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.ct-aviso b { color: var(--texto); }
+.ct-aviso small { color: var(--texto-2); }
+.ct-aviso-icone { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: #fff; color: var(--primaria); flex: none; }
+@media (max-width: 640px) {
+  .ct-aviso { flex-wrap: wrap; }
+  .ct-aviso .principal { width: 100%; }
+}
+
+/* Configurações → Plano e uso */
+.ct-cab-acoes { display: flex; gap: 14px; margin-left: auto; }
+.ct-cab-acoes button.ct-remover { color: var(--perigo); }
+.ct-vazio { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ct-vazio p { margin: 0; flex: 1; min-width: 220px; color: var(--texto-2); }
+.ct-salvo { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--borda); border-radius: var(--raio); }
+.ct-salvo > div { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.ct-salvo small { color: var(--texto-2); }
+.ct-mini { width: 52px; height: 34px; border-radius: 7px; display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .04em; color: #fff; background: linear-gradient(135deg, #1f7a52, var(--floresta)); flex: none; }
+.ct-selo { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--primaria-clara); color: var(--primaria-escura); white-space: nowrap; }
+.ct-nota { margin: 10px 0 0; }
+.ct-recargas { display: grid; gap: 10px; margin-top: 14px; }
+.ct-recarga { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--borda); border-radius: var(--raio); }
+.ct-recarga.ligada { border-color: #bfe0cd; background: #fbfdfc; }
+.ct-recarga > .principal { justify-self: end; }
+.ct-chave { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.ct-chave input { margin-top: 3px; }
+.ct-chave span { display: grid; gap: 2px; }
+.ct-chave small { color: var(--texto-2); }
+.ct-recarga-campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 16px; }
+.ct-recarga-campos label { display: grid; gap: 6px; }
+
+/* "Falta o pagamento": as duas formas */
+.mens-formas { display: grid; gap: 12px; margin: 6px 0 16px; }
+.mens-forma { border: 1px solid var(--borda); border-radius: var(--raio); padding: 14px 16px; display: grid; gap: 8px; }
+.mens-forma.destaque { border-color: #bfe0cd; background: #fbfdfc; }
+.mens-forma header { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.mens-forma header small { color: var(--texto-2); }
+.login-box.mens-box.com-cartao { width: 640px; max-width: 100%; }

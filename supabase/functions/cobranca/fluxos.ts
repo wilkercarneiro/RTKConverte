@@ -16,10 +16,14 @@
 //               atualizar_assinatura · cancelar_assinatura · conferir { escritorio_id? }
 
 import { ambienteValido, clienteAsaas, cobrancaPaga, ErroAsaas, garantirWebhook } from "../_shared/asaas.ts";
-import type { ClienteAsaas, CobrancaAsaas } from "../_shared/asaas.ts";
-import { enviarWhatsApp, estadoWhatsApp, whatsappConfigurado } from "../_shared/whatsapp.ts";
+import type { AssinaturaAsaas, CartaoParaAsaas, ClienteAsaas, CobrancaAsaas } from "../_shared/asaas.ts";
+import { bandeiraDoNumero, lerValidade, paraAsaas, problemasDoCartao } from "../_shared/cartao.ts";
+import type { CartaoDigitado, TitularDigitado } from "../_shared/cartao.ts";
+import { enviarWhatsApp, estadoWhatsApp, qrcodeWhatsApp, whatsappConfigurado } from "../_shared/whatsapp.ts";
 import type { ConfigWhatsApp } from "../_shared/whatsapp.ts";
-import { mensagemAcessoLiberado, mensagemAcessoSuspenso, mensagemCobranca, mensagemCreditosPagos, textoCreditos } from "../_shared/mensagens_cobranca.ts";
+import {
+  mensagemAcessoLiberado, mensagemAcessoSuspenso, mensagemCobranca, mensagemCreditosPagos, mensagemRecargaRecusada, textoCreditos,
+} from "../_shared/mensagens_cobranca.ts";
 import type { CarteiraDoPlano } from "../_shared/mensagens_cobranca.ts";
 
 export const URL_APP_PADRAO = "https://vertces.com.br/app/";
@@ -41,6 +45,8 @@ export interface EmpresaCobranca {
   /** e-mail do dono (o login) */
   login: string | null;
   creditos: CarteiraDoPlano[];
+  /** quando os créditos do plano renovam ("aaaa-mm-dd"): a 1ª mensalidade no cartão de quem já usa */
+  renovacao?: string | null;
   cobranca: {
     asaas_cliente_id: string | null; asaas_assinatura_id: string | null; situacao: string;
     link_pagamento: string | null; valor: number | null; proximo_vencimento: string | null;
@@ -69,7 +75,25 @@ export interface Banco {
   cancelarCompra(creditoId: string, pagamentoId: string | null, motivo: string): Promise<void>;
   pagamentosPendentes(escritorioId: string | null): Promise<{ asaas_id: string; status: string }[]>;
   descricaoCredito(creditoId: string | null | undefined): Promise<string | null>;
+  /** a compra foi da recarga automática? (a mensagem do WhatsApp muda) */
+  detalheCompra(creditoId: string | null | undefined): Promise<{ automatica: boolean; valor: number | null } | null>;
+  cartao(escritorioId: string): Promise<CartaoSalvo | null>;
+  /** null apaga o cartão */
+  salvarCartao(escritorioId: string, campos: Partial<CartaoSalvo> | null): Promise<void>;
+  /** carteiras com a compra automática ligada */
+  recargasLigadas(escritorioId: string): Promise<string[]>;
+  reservarRecarga(escritorioId: string, tipo: string, userId: string | null): Promise<ReservaRecarga>;
+  atividade(escritorioId: string, acao: string, alvo: string, userId: string | null): Promise<void>;
 }
+
+export interface CartaoSalvo {
+  asaas_token: string | null; bandeira: string | null; final: string | null; validade: string | null; titular: string | null;
+  cadastrado_por?: string | null; cadastrado_em?: string; recusa_em: string | null; recusa_motivo: string | null;
+}
+
+export type ReservaRecarga =
+  | ({ pode: true } & PedidoCredito)
+  | { pode: false; motivo: string; recusa_motivo?: string | null; limite?: number; gasto?: number };
 
 export interface PedidoCredito {
   credito_id: string; pagamento_id: string | null; escritorio_id: string; online: boolean;
@@ -80,6 +104,10 @@ export interface Usuario {
   id: string; email: string | null; superadmin: boolean;
   /** a empresa da pessoa, mesmo esperando pagamento */
   escritorioId: string | null;
+  /** dono da empresa (só ele mexe no cartão) */
+  souDono?: boolean;
+  /** IP do navegador (o Asaas pede o do pagador, não o do servidor) */
+  ip?: string | null;
   pedirCreditos(tipo: string, quantidade: number): Promise<PedidoCredito>;
   cancelarPedido(creditoId: string): Promise<void>;
   /** a compra é da empresa da pessoa (a RLS diz) */
@@ -172,9 +200,18 @@ async function aplicarEAvisar(d: Deps, cfg: Record<string, string>, evento: stri
         responsavel: e.responsavel, empresa: e.nome, valor: pagamento.value ?? e.cobranca?.valor ?? e.mensalidade,
         link: pagamento.invoiceUrl ?? e.cobranca?.link_pagamento ?? null, vencimento: pagamento.dueDate || e.cobranca?.proximo_vencimento,
       })
-      : mensagemCreditosPagos({ responsavel: e.responsavel, empresa: e.nome, descricao: (await d.banco.descricaoCredito(r.credito_id)) ?? "os créditos" });
+      : await textoCreditosPagos(d, e, r.credito_id);
   const env = await enviarWhatsApp(zap, e.telefone, texto, d.fetch);
   return { ...r, aviso: env.ok ? "WhatsApp enviado" : `WhatsApp: ${env.erro}` };
+}
+
+async function textoCreditosPagos(d: Deps, e: EmpresaCobranca, creditoId: string | null | undefined): Promise<string> {
+  const descricao = (await d.banco.descricaoCredito(creditoId)) ?? "os créditos";
+  const det = await d.banco.detalheCompra(creditoId).catch(() => null);
+  const cartao = det?.automatica ? await d.banco.cartao(e.id).catch(() => null) : null;
+  return mensagemCreditosPagos({
+    responsavel: e.responsavel, empresa: e.nome, descricao, automatica: !!det?.automatica, final: cartao?.final ?? null, valor: det?.valor ?? null,
+  });
 }
 
 // =========================================================================== ações
@@ -185,12 +222,17 @@ export async function tratarAcao(d: Deps, u: Usuario, b: Record<string, unknown>
     const superadmin = (f: () => Promise<Resposta>) => (u.superadmin ? f() : Promise.resolve(falha(403, "Acesso restrito ao administrador do sistema.")));
     switch (b.acao) {
       case "comprar_creditos": return await comprarCreditos(d, cfg, u, b);
+      case "cartao_salvar": return await cartaoSalvar(d, cfg, u, b);
+      case "cartao_remover": return await cartaoRemover(d, cfg, u);
+      case "recarga_automatica": return await recargaAutomatica(d, cfg, u, b);
       case "pix": return await pixDaCompra(d, cfg, u, b);
       case "cancelar_compra": return await cancelarCompra(d, cfg, u, b);
       case "conferir": return await conferir(d, cfg, u, b);
       case "config_status": return await superadmin(() => configStatus(d, cfg));
       case "config_salvar": return await superadmin(() => configSalvar(d, cfg, u, b));
       case "whatsapp_testar": return await superadmin(() => whatsappTestar(d, cfg, b));
+      case "whatsapp_qrcode": return await superadmin(() => whatsappQrcode(d, cfg));
+      case "whatsapp_estado": return await superadmin(() => whatsappEstado(d, cfg));
       case "cobrar_empresa": return await superadmin(() => cobrarEmpresa(d, cfg, b));
       case "atualizar_assinatura": return await superadmin(() => atualizarAssinatura(d, cfg, b));
       case "cancelar_assinatura": return await superadmin(() => cancelarAssinatura(d, cfg, b));
@@ -227,6 +269,7 @@ async function garantirCliente(d: Deps, asaas: ClienteAsaas, escritorioId: strin
 
 async function comprarCreditos(d: Deps, cfg: Record<string, string>, u: Usuario, b: Record<string, unknown>): Promise<Resposta> {
   const asaas = exigirAsaas(d, cfg);
+  if (b.forma === "cartao") return comprarNoCartao(d, cfg, asaas, u, b);
   const ped = await u.pedirCreditos(String(b.tipo ?? ""), Math.floor(Number(b.quantidade)));
   if (!ped.online || !ped.pagamento_id) return ok({ pedido: ped });
   try {
@@ -314,6 +357,7 @@ async function configStatus(d: Deps, cfg: Record<string, string>): Promise<Respo
       } catch (e) { a.webhook = { erro: msg(e) }; }
     }
   }
+  if (asaas && !a.erro) a.tokenizacao = await tokenizacaoLiberada(d, cfg, asaas);
   const zap = zapDe(cfg);
   const w = zap
     ? { configurado: true, url: zap.url, instancia: zap.instancia, estado: await estadoWhatsApp(zap, d.fetch) }
@@ -370,6 +414,22 @@ async function whatsappTestar(d: Deps, cfg: Record<string, string>, b: Record<st
   return r.ok ? ok() : falha(502, r.erro);
 }
 
+/** O QR Code para ler no celular. Já conectada, não gera outro (não derruba a sessão). */
+async function whatsappQrcode(d: Deps, cfg: Record<string, string>): Promise<Resposta> {
+  const zap = zapDe(cfg);
+  if (!zap) throw new ErroUsuario("A instância do WhatsApp não está configurada no servidor.", 409);
+  const estado = await estadoWhatsApp(zap, d.fetch);
+  if (estado === "open") return ok({ estado });
+  const qrcode = await qrcodeWhatsApp(zap, d.fetch);
+  if (!qrcode) throw new ErroUsuario("A Evolution não devolveu o QR Code. Tente de novo em instantes.", 502);
+  return ok({ estado, qrcode });
+}
+
+async function whatsappEstado(d: Deps, cfg: Record<string, string>): Promise<Resposta> {
+  const zap = zapDe(cfg);
+  return ok({ configurado: !!zap, estado: zap ? await estadoWhatsApp(zap, d.fetch) : null });
+}
+
 // ---------------------------------------------------------------- superadmin: mensalidade da empresa
 
 /** A mensalidade em aberto de uma assinatura (a que vence primeiro). */
@@ -403,8 +463,10 @@ async function cobrarEmpresa(d: Deps, cfg: Record<string, string>, b: Record<str
   } else {
     const cliente = await garantirCliente(d, asaas, e.id);
     const hoje = d.hoje();
+    // liberada agora: a 1ª vence em 3 dias (vencida, suspende como qualquer outra)
+    const primeiroVencimento = b.liberada ? somarDias(hoje, 3) : hoje;
     const sub = await asaas.criarAssinatura({
-      customer: cliente, billingType: "UNDEFINED", value: valor, nextDueDate: hoje, cycle: "MONTHLY",
+      customer: cliente, billingType: "UNDEFINED", value: valor, nextDueDate: primeiroVencimento, cycle: "MONTHLY",
       description: e.plano ? `Vertces: plano ${e.plano}` : "Vertces: mensalidade", externalReference: e.id,
     });
     const primeira = (await asaas.cobrancasDaAssinatura(sub.id)).sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
@@ -421,7 +483,7 @@ async function cobrarEmpresa(d: Deps, cfg: Record<string, string>, b: Record<str
       link_pagamento: primeira.invoiceUrl ?? null, proximo_vencimento: primeira.dueDate,
     });
     // empresa nova: o mês do crédito começa no dia do vencimento da mensalidade
-    if (e.status === "aguardando_pagamento") await d.banco.atualizarEmpresa(e.id, { dia_renovacao: Number(hoje.slice(8, 10)) });
+    if (e.status === "aguardando_pagamento") await d.banco.atualizarEmpresa(e.id, { dia_renovacao: Number(primeiroVencimento.slice(8, 10)) });
     link = primeira.invoiceUrl ?? null;
     vencimento = primeira.dueDate;
   }
@@ -432,6 +494,7 @@ async function cobrarEmpresa(d: Deps, cfg: Record<string, string>, b: Record<str
     login: typeof b.login === "string" && b.login ? b.login : e.login,
     senha: typeof b.senha === "string" && b.senha ? b.senha : null,
     creditos: textoCreditos(e.creditos),
+    liberada: e.status === "ativo",
   });
   const whatsapp = await avisarEmpresa(d, cfg, e, texto, b.enviar_whatsapp !== false);
   return ok({ link, valor, vencimento, mensagem: texto, whatsapp });
@@ -469,4 +532,300 @@ async function cancelarAssinatura(d: Deps, cfg: Record<string, string>, b: Recor
   await asaas.removerAssinatura(e.cobranca.asaas_assinatura_id);
   await d.banco.salvarCobranca(e.id, { situacao: "cancelada", link_pagamento: null });
   return ok();
+}
+
+// ---------------------------------------------------------------- empresa: o cartão de crédito
+//
+// O dono cadastra o cartão no sistema; os dados passam por aqui só nesta
+// chamada (vão ao Asaas e não são gravados). Com a tokenização liberada no
+// Asaas, guarda-se o token e o cartão também compra créditos (na hora ou sozinho,
+// quando a carteira zera). Sem ela, o cartão fica só na assinatura (mensalidade).
+
+const pendente = (c: CobrancaAsaas) => !c.deleted && (c.status === "PENDING" || c.status === "OVERDUE");
+const porVencimento = (a: CobrancaAsaas, b: CobrancaAsaas) => a.dueDate.localeCompare(b.dueDate);
+
+/** O mesmo dia no mês seguinte (31 → último dia do mês). */
+export function somarMes(iso: string): string {
+  const [a, m, d] = iso.split("-").map(Number);
+  const ultimo = new Date(Date.UTC(a, m + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(a, m, Math.min(d, ultimo))).toISOString().slice(0, 10);
+}
+
+/** Recusa do cartão (4xx do Asaas) vira mensagem para a pessoa; o resto segue como erro do Asaas. */
+function cartaoRecusado(e: unknown): unknown {
+  if (e instanceof ErroAsaas && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 403) {
+    return new ErroUsuario(`O cartão não foi aceito: ${e.message}`);
+  }
+  return e;
+}
+
+function exigirDono(u: Usuario): string {
+  if (!u.escritorioId) throw new ErroUsuario("Sua conta não está ligada a uma empresa.", 403);
+  if (!u.souDono) throw new ErroUsuario("Só o dono da empresa cadastra o cartão.", 403);
+  return u.escritorioId;
+}
+
+function ipDe(u: Usuario): string {
+  if (!u.ip) throw new ErroUsuario("Não foi possível identificar a sua conexão. Recarregue a página e tente de novo.");
+  return u.ip;
+}
+
+/** A conta do Asaas guarda cartões (tokenização)? Pergunta uma vez e lembra o "sim". */
+async function tokenizacaoLiberada(d: Deps, cfg: Record<string, string>, asaas: ClienteAsaas): Promise<"liberada" | "bloqueada" | null> {
+  if (cfg.asaas_tokenizacao === "liberada") return "liberada";
+  try {
+    // cliente que não existe: nada é guardado nem cobrado; só a permissão responde diferente
+    await asaas.tokenizar({
+      customer: "cus_000000000000", remoteIp: "127.0.0.1",
+      creditCard: { holderName: "TESTE", number: "0", expiryMonth: "01", expiryYear: "2000", ccv: "000" },
+      creditCardHolderInfo: { name: "TESTE", email: "teste@vertces.com.br", cpfCnpj: "0", postalCode: "0", addressNumber: "0", phone: "0", mobilePhone: "0" },
+    });
+  } catch (e) {
+    if (!(e instanceof ErroAsaas) || e.status === 0 || e.status >= 500) return (cfg.asaas_tokenizacao as "bloqueada") ?? null;
+    const v = e.status === 403 ? "bloqueada" : "liberada";
+    if (cfg.asaas_tokenizacao !== v) await d.banco.gravarConfig({ asaas_tokenizacao: v });
+    return v;
+  }
+  return "liberada";
+}
+
+interface ResultadoMensalidade { pagas: number; ativou: boolean; assinatura: string | null; token: string | null; bandeira: string | null }
+
+function lembrarCartao(r: ResultadoMensalidade, c: { creditCard?: { creditCardToken?: string | null; creditCardBrand?: string } | null } | null | undefined) {
+  if (c?.creditCard?.creditCardToken && !r.token) r.token = c.creditCard.creditCardToken;
+  if (c?.creditCard?.creditCardBrand && !r.bandeira) r.bandeira = c.creditCard.creditCardBrand;
+}
+
+/**
+ * A mensalidade passa para o cartão. O que já venceu (ou vence hoje) é pago
+ * agora com ele; a assinatura de boleto/Pix dá lugar a uma no cartão, que
+ * começa no próximo vencimento. Empresa nova sem assinatura: a 1ª é cobrada já.
+ */
+async function mensalidadeNoCartao(d: Deps, cfg: Record<string, string>, asaas: ClienteAsaas, esc: string, cliente: string,
+  meio: CartaoParaAsaas, ip: string): Promise<ResultadoMensalidade> {
+  const res: ResultadoMensalidade = { pagas: 0, ativou: false, assinatura: null, token: null, bandeira: null };
+  const e = await d.banco.empresa(esc);
+  if (!e) throw new ErroUsuario("Empresa não encontrada.", 404);
+  const valor = Number(e.mensalidade ?? 0);
+  if (!(valor > 0)) return res;
+  const hoje = d.hoje();
+  const antiga = e.cobranca?.asaas_assinatura_id && e.cobranca.situacao !== "cancelada" ? e.cobranca.asaas_assinatura_id : null;
+  const pagar = async (c: CobrancaAsaas) => {
+    let paga: CobrancaAsaas;
+    try { paga = await asaas.pagarComCartao(c.id, { ...meio, remoteIp: ip }); } catch (x) { throw cartaoRecusado(x); }
+    lembrarCartao(res, paga);
+    if (cobrancaPaga(paga.status)) {
+      const r = await aplicarEAvisar(d, cfg, "CONFERENCIA", { ...c, ...paga });
+      res.pagas++;
+      if (r.acao === "ativou") res.ativou = true;
+    }
+  };
+
+  let proximo: string;
+  let cobrarJa = false;
+  if (antiga) {
+    const [sub, cobs] = await Promise.all([asaas.assinatura(antiga).catch((): AssinaturaAsaas | null => null), asaas.cobrancasDaAssinatura(antiga)]);
+    const abertas = cobs.filter(pendente).sort(porVencimento);
+    // vencida ou vencendo hoje: o cartão paga agora (a empresa suspensa volta na hora)
+    for (const c of abertas.filter((x) => x.dueDate <= hoje)) await pagar(c);
+    const futura = abertas.find((x) => x.dueDate > hoje);
+    proximo = futura?.dueDate ?? (sub?.nextDueDate && sub.nextDueDate > hoje ? sub.nextDueDate : somarMes(hoje));
+    if (sub?.billingType === "CREDIT_CARD" && !abertas.length && sub.nextDueDate && sub.nextDueDate > hoje) proximo = sub.nextDueDate;
+  } else if (e.status === "aguardando_pagamento") {
+    // vence amanhã e o sistema paga a 1ª agora, uma vez, com resposta na hora. Vencendo
+    // hoje, o próprio Asaas também cobraria o cartão na criação: as duas cobranças se
+    // cruzariam e uma "recusa" desfaria uma assinatura paga.
+    proximo = somarDias(hoje, 1);
+    cobrarJa = true;
+  } else {
+    // já usa e não tem assinatura (cortesia que passou a pagar): começa na renovação dos créditos
+    proximo = e.renovacao && e.renovacao > hoje ? e.renovacao : somarMes(hoje);
+  }
+
+  let nova: AssinaturaAsaas;
+  try {
+    nova = await asaas.criarAssinaturaNoCartao({
+      customer: cliente, value: valor, nextDueDate: proximo, cycle: "MONTHLY",
+      description: e.plano ? `Vertces: plano ${e.plano}` : "Vertces: mensalidade", externalReference: e.id, remoteIp: ip, ...meio,
+    });
+  } catch (x) { throw cartaoRecusado(x); }
+  lembrarCartao(res, nova);
+  res.assinatura = nova.id;
+  await d.banco.salvarCobranca(e.id, {
+    asaas_cliente_id: cliente, asaas_assinatura_id: nova.id, valor, link_pagamento: null, proximo_vencimento: proximo,
+    ...(antiga ? {} : { situacao: cobrarJa ? "aguardando" : "em_dia" }),
+  });
+  // a antiga sai e leva as faturas de boleto/Pix que ainda não venceram (as pagas ficam)
+  if (antiga) await asaas.removerAssinatura(antiga).catch(() => null);
+
+  if (cobrarJa) {
+    await d.banco.atualizarEmpresa(e.id, { dia_renovacao: Number(proximo.slice(8, 10)) });
+    const cobs = (await asaas.cobrancasDaAssinatura(nova.id)).sort(porVencimento);
+    for (const c of cobs) {
+      await d.banco.inserirPagamento({
+        escritorio_id: e.id, finalidade: "mensalidade", asaas_id: c.id, valor: c.value ?? valor, status: c.status || "PENDING",
+        link: c.invoiceUrl ?? null, vencimento: c.dueDate,
+      });
+      if (cobrancaPaga(c.status)) {
+        const r = await aplicarEAvisar(d, cfg, "CONFERENCIA", c);
+        res.pagas++;
+        if (r.acao === "ativou") res.ativou = true;
+      } else if (pendente(c)) {
+        try { await pagar(c); } catch (x) {
+          // recusou: a empresa continua esperando o pagamento, sem assinatura pendurada
+          await asaas.removerAssinatura(nova.id).catch(() => null);
+          await d.banco.salvarCobranca(e.id, { asaas_assinatura_id: null, situacao: "sem_assinatura", proximo_vencimento: null });
+          throw x;
+        }
+      }
+    }
+  }
+  return res;
+}
+
+async function cartaoSalvar(d: Deps, cfg: Record<string, string>, u: Usuario, b: Record<string, unknown>): Promise<Resposta> {
+  const esc = exigirDono(u);
+  const asaas = exigirAsaas(d, cfg);
+  const cartao = (b.cartao ?? {}) as CartaoDigitado;
+  const titular = (b.titular ?? {}) as TitularDigitado;
+  const hoje = d.hoje();
+  const problema = Object.values(problemasDoCartao(cartao, titular, hoje))[0];
+  if (problema) throw new ErroUsuario(problema);
+  const ip = ipDe(u);
+  const dados = paraAsaas(cartao, titular, hoje);
+  const cliente = await garantirCliente(d, asaas, esc);
+
+  // 1. o cartão fica guardado no Asaas (token), sem cobrar nada
+  let token: string | null = null;
+  let bandeira: string | null = null;
+  try {
+    const t = await asaas.tokenizar({ customer: cliente, remoteIp: ip, ...dados });
+    token = t.creditCardToken;
+    bandeira = t.creditCardBrand ?? null;
+    if (cfg.asaas_tokenizacao !== "liberada") await d.banco.gravarConfig({ asaas_tokenizacao: "liberada" });
+  } catch (e) {
+    // 403 = a conta do Asaas não liberou a tokenização: segue só com a mensalidade
+    if (!(e instanceof ErroAsaas && e.status === 403)) throw cartaoRecusado(e);
+    if (cfg.asaas_tokenizacao !== "bloqueada") await d.banco.gravarConfig({ asaas_tokenizacao: "bloqueada" });
+  }
+  const meio: CartaoParaAsaas = token ? { creditCardToken: token } : dados;
+
+  // 2. a mensalidade passa para o cartão (e o que está em aberto é pago agora)
+  const m = await mensalidadeNoCartao(d, cfg, asaas, esc, cliente, meio, ip);
+  token = token ?? m.token;
+  bandeira = bandeira ?? m.bandeira ?? bandeiraDoNumero(dados.creditCard.number);
+
+  const v = lerValidade(cartao.validade, hoje)!;
+  const final = dados.creditCard.number.slice(-4);
+  await d.banco.salvarCartao(esc, {
+    asaas_token: token, bandeira, final, validade: `${v.mes}/${v.ano}`, titular: dados.creditCard.holderName,
+    cadastrado_por: u.id, cadastrado_em: new Date().toISOString(), recusa_em: null, recusa_motivo: null,
+  });
+  await d.banco.atividade(esc, "cartao.cadastrado", `${bandeira ?? "cartão"} final ${final}`, u.id).catch(() => {});
+  return ok({ reutilizavel: !!token, bandeira, final, pagas: m.pagas, ativou: m.ativou, assinatura: m.assinatura });
+}
+
+async function cartaoRemover(d: Deps, cfg: Record<string, string>, u: Usuario): Promise<Resposta> {
+  const esc = exigirDono(u);
+  const e = await d.banco.empresa(esc);
+  const asaas = asaasDe(cfg, d.fetch);
+  const sub = e?.cobranca?.asaas_assinatura_id && e.cobranca.situacao !== "cancelada" ? e.cobranca.asaas_assinatura_id : null;
+  if (asaas && e && sub && e.cobranca?.asaas_cliente_id) {
+    const atual = await asaas.assinatura(sub);
+    if (atual.billingType === "CREDIT_CARD") {
+      // a mensalidade volta para boleto/Pix, no mesmo vencimento
+      const hoje = d.hoje();
+      const nova = await asaas.criarAssinatura({
+        customer: e.cobranca.asaas_cliente_id, billingType: "UNDEFINED", value: Number(e.mensalidade ?? atual.value ?? 0),
+        nextDueDate: atual.nextDueDate && atual.nextDueDate > hoje ? atual.nextDueDate : hoje, cycle: "MONTHLY",
+        description: e.plano ? `Vertces: plano ${e.plano}` : "Vertces: mensalidade", externalReference: e.id,
+      });
+      await d.banco.salvarCobranca(e.id, { asaas_assinatura_id: nova.id });
+      await asaas.removerAssinatura(sub).catch(() => null);
+    }
+  }
+  await d.banco.salvarCartao(esc, null);
+  await d.banco.atividade(esc, "cartao.removido", "", u.id).catch(() => {});
+  return ok();
+}
+
+/** Compra de créditos paga na hora com o cartão salvo. */
+async function comprarNoCartao(d: Deps, cfg: Record<string, string>, asaas: ClienteAsaas, u: Usuario, b: Record<string, unknown>): Promise<Resposta> {
+  if (!u.escritorioId) throw new ErroUsuario("Sua conta não está ligada a uma empresa.", 403);
+  const cartao = await d.banco.cartao(u.escritorioId);
+  if (!cartao?.asaas_token) throw new ErroUsuario("Não há cartão salvo para compras. Cadastre o cartão ou pague por Pix.", 409);
+  const ip = ipDe(u);
+  const ped = await u.pedirCreditos(String(b.tipo ?? ""), Math.floor(Number(b.quantidade)));
+  if (!ped.online || !ped.pagamento_id) return ok({ pedido: ped });
+  let cob: CobrancaAsaas;
+  try {
+    const cliente = await garantirCliente(d, asaas, ped.escritorio_id);
+    cob = await asaas.cobrarNoCartao({
+      customer: cliente, value: ped.valor, dueDate: d.hoje(), description: `Vertces: ${ped.descricao}`,
+      externalReference: ped.credito_id, remoteIp: ip, creditCardToken: cartao.asaas_token,
+    });
+  } catch (e) {
+    await d.banco.cancelarCompra(ped.credito_id, ped.pagamento_id, `Cartão recusado: ${msg(e)}`);
+    throw cartaoRecusado(e);
+  }
+  await d.banco.atualizarPagamento(ped.pagamento_id, {
+    asaas_id: cob.id, status: cob.status || "PENDING", link: cob.invoiceUrl ?? null, vencimento: cob.dueDate ?? null, forma: "CREDIT_CARD",
+  });
+  if (cobrancaPaga(cob.status)) await aplicarEAvisar(d, cfg, "CONFERENCIA", cob);
+  return ok({ credito_id: ped.credito_id, valor: ped.valor, descricao: ped.descricao, pago: cobrancaPaga(cob.status), link: cob.invoiceUrl ?? null, pix: null });
+}
+
+// ---------------------------------------------------------------- compra automática
+//
+// Quem chama é a tela (ao ver a carteira zerada, ao abrir um serviço sem
+// crédito). O banco decide se pode (reservar_recarga_automatica: carteira
+// zerada, cartão com token, teto do período, nenhuma em curso, sem recusa
+// recente) e cria o pedido; aqui só se cobra o cartão.
+
+export interface CompraAutomatica { tipo: string; descricao: string; valor: number; ok: boolean; erro?: string }
+
+async function recargaAutomatica(d: Deps, cfg: Record<string, string>, u: Usuario, b: Record<string, unknown>): Promise<Resposta> {
+  const esc = u.escritorioId;
+  if (!esc) throw new ErroUsuario("Sua conta não está ligada a uma empresa.", 403);
+  const asaas = asaasDe(cfg, d.fetch);
+  if (!asaas || !u.ip) return ok({ compras: [], motivos: {} });
+  const tipos = typeof b.tipo === "string" && b.tipo ? [b.tipo] : await d.banco.recargasLigadas(esc);
+  const compras: CompraAutomatica[] = [];
+  const motivos: Record<string, string> = {};
+  for (const tipo of tipos) {
+    const r = await d.banco.reservarRecarga(esc, tipo, u.id);
+    if (!r.pode) { motivos[tipo] = r.motivo; continue; }
+    compras.push(await cobrarRecarga(d, cfg, asaas, u.ip, tipo, r));
+  }
+  return ok({ compras, motivos });
+}
+
+async function cobrarRecarga(d: Deps, cfg: Record<string, string>, asaas: ClienteAsaas, ip: string, tipo: string, r: PedidoCredito): Promise<CompraAutomatica> {
+  const cartao = await d.banco.cartao(r.escritorio_id);
+  try {
+    if (!cartao?.asaas_token) throw new ErroUsuario("sem cartão salvo");
+    const cliente = await garantirCliente(d, asaas, r.escritorio_id);
+    const cob = await asaas.cobrarNoCartao({
+      customer: cliente, value: r.valor, dueDate: d.hoje(), description: `Vertces: ${r.descricao} (compra automática)`,
+      externalReference: r.credito_id, remoteIp: ip, creditCardToken: cartao.asaas_token,
+    });
+    await d.banco.atualizarPagamento(r.pagamento_id!, {
+      asaas_id: cob.id, status: cob.status || "PENDING", link: cob.invoiceUrl ?? null, vencimento: cob.dueDate ?? null, forma: "CREDIT_CARD",
+    });
+    if (cobrancaPaga(cob.status)) await aplicarEAvisar(d, cfg, "CONFERENCIA", cob);
+    return { tipo, descricao: r.descricao, valor: r.valor, ok: cobrancaPaga(cob.status) };
+  } catch (e) {
+    const motivo = msg(e);
+    await d.banco.cancelarCompra(r.credito_id, r.pagamento_id, `Compra automática recusada: ${motivo}`);
+    // segura novas tentativas por umas horas (não insistir num cartão recusado)
+    await d.banco.salvarCartao(r.escritorio_id, { recusa_em: new Date().toISOString(), recusa_motivo: motivo.slice(0, 300) });
+    const zap = zapDe(cfg);
+    const emp = zap ? await d.banco.empresa(r.escritorio_id) : null;
+    if (zap && emp?.telefone) {
+      await enviarWhatsApp(zap, emp.telefone, mensagemRecargaRecusada({
+        responsavel: emp.responsavel, empresa: emp.nome, descricao: r.descricao, final: cartao?.final ?? null, motivo, url: urlApp(cfg),
+      }), d.fetch).catch(() => null);
+    }
+    return { tipo, descricao: r.descricao, valor: r.valor, ok: false, erro: motivo };
+  }
 }

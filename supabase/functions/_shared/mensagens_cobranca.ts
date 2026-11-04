@@ -32,9 +32,16 @@ export function textoCreditos(carteiras: CarteiraDoPlano[]): string {
 export function mensagemCobranca(o: {
   responsavel: string | null; empresa: string; plano: string | null; valor: number; link: string;
   vencimento?: string | null; url: string; login?: string | null; senha?: string | null; creditos?: string;
+  /** a empresa já entra; o link é só da 1ª mensalidade */
+  liberada?: boolean;
 }): string {
   const linhas = [ola(o.responsavel), ""];
-  if (o.senha) {
+  if (o.senha && o.liberada) {
+    linhas.push(
+      `A conta da ${o.empresa} no Vertces está criada${o.plano ? ` no plano ${o.plano}` : ""}${o.creditos ? ` (${o.creditos})` : ""} e o acesso já está liberado.`,
+      `A primeira mensalidade, de ${fmtReais(o.valor)}${o.vencimento ? `, vence em ${dataBr(o.vencimento)}` : ""}:`,
+    );
+  } else if (o.senha) {
     linhas.push(
       `A conta da ${o.empresa} no Vertces está criada${o.plano ? ` no plano ${o.plano}` : ""}${o.creditos ? ` (${o.creditos})` : ""}.`,
       `Para liberar o acesso, pague a primeira mensalidade de ${fmtReais(o.valor)}:`,
@@ -45,13 +52,15 @@ export function mensagemCobranca(o: {
   linhas.push(o.link, "", "Dá para pagar por Pix, boleto ou cartão.");
   if (o.senha) {
     linhas.push(
-      "Assim que o pagamento for confirmado, o acesso é liberado na hora e avisamos por aqui.",
+      o.liberada
+        ? "Se preferir, cadastre o cartão de crédito no primeiro acesso: ele paga esta mensalidade e as próximas sozinho."
+        : "Assim que o pagamento for confirmado, o acesso é liberado na hora e avisamos por aqui. Também dá para pagar com o cartão de crédito direto no sistema, no primeiro acesso.",
       "",
       "Seus dados de acesso:",
       `Endereço: ${o.url}`,
       ...(o.login ? [`Login: ${o.login}`] : []),
       `Senha provisória: ${o.senha}`,
-      "No primeiro acesso o sistema pede para você criar a sua senha.",
+      "No primeiro acesso o sistema pede para você criar a sua senha e cadastrar o cartão para a cobrança automática.",
     );
   }
   return linhas.join("\n");
@@ -81,7 +90,29 @@ export function mensagemAcessoSuspenso(o: {
   ].join("\n");
 }
 
-export function mensagemCreditosPagos(o: { responsavel: string | null; descricao: string; empresa: string }): string {
+/** A compra automática não passou no cartão. */
+export function mensagemRecargaRecusada(o: { responsavel: string | null; empresa: string; descricao: string; final?: string | null; motivo: string; url: string }): string {
+  return [
+    ola(o.responsavel),
+    "",
+    `Os créditos da ${o.empresa} acabaram, mas a compra automática (${o.descricao}) foi recusada no cartão${o.final ? ` final ${o.final}` : ""}: ${o.motivo}`,
+    "",
+    `Atualize o cartão ou compre os créditos por Pix em ${o.url} (Créditos).`,
+  ].join("\n");
+}
+
+export function mensagemCreditosPagos(o: {
+  responsavel: string | null; descricao: string; empresa: string; automatica?: boolean; final?: string | null; valor?: number | null;
+}): string {
+  if (o.automatica) {
+    return [
+      ola(o.responsavel),
+      "",
+      `Os créditos da ${o.empresa} acabaram e a compra automática repôs: ${o.descricao}${o.valor ? ` (${fmtReais(o.valor)})` : ""}, no cartão${o.final ? ` final ${o.final}` : ""} ✅`,
+      "",
+      "Para mudar a quantidade ou desligar: Créditos → Compra automática, no Vertces.",
+    ].join("\n");
+  }
   return [
     ola(o.responsavel),
     "",
