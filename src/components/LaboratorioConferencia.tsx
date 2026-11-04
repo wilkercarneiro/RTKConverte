@@ -128,7 +128,11 @@ function instalar() {
     (maplibregl.Map.prototype as unknown as { addControl: () => never }).addControl = () => { throw new Error("falha simulada do mapa (laboratório)"); };
   }
   const s = supabase as unknown as Record<string, unknown>;
-  s.rpc = (nome: string) => Promise.resolve({ data: nome === "meus_creditos" && DIVISAO ? CREDITOS_LAB : [], error: null });
+  // alocar_contadores: a reserva de números do credenciado (o GEO da parte numera os marcos sem gerar)
+  s.rpc = (nome: string) => {
+    if (nome === "alocar_contadores") { ESCRITAS.push({ tabela: "credenciados", op: "alocar_contadores" }); return Promise.resolve({ data: [{ base_m: 101, base_p: 501, base_v: 1 }], error: null }); }
+    return Promise.resolve({ data: nome === "meus_creditos" && DIVISAO ? CREDITOS_LAB : [], error: null });
+  };
   s.from = (t: string) => consulta(t);
   const storage = supabase.storage as unknown as Record<string, unknown>;
   storage.from = () => ({

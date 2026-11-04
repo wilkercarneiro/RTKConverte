@@ -41,6 +41,7 @@ import { temRecurso } from "../lib/recursos";
 import { temPermissao } from "../lib/permissoes";
 import { Avisos, BarraEtapas, BotaoPerigo, confirmar, Dica, ProximaAcao, Rotulo, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 import { avisarConsumo, carregarCreditos, custoDeVarios, textoSemCredito } from "../lib/creditos";
+import { consumoDaNumeracao, numeracaoDosMarcos, precisaNumerar } from "../lib/codigos_marcos";
 import { BotaoConcluir, useConclusao } from "./ConcluirServico";
 import { AutoriaServico } from "./Auditoria";
 import { BarreiraErro } from "./BarreiraErro";
@@ -861,9 +862,37 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     if (sim) atual.add(chaveGeo(g, i)); else atual.delete(chaveGeo(g, i));
     setGeoEscolha(atual);
   }
+  /**
+   * Numeração oficial dos marcos sem gerar os documentos (lib/codigos_marcos.ts):
+   * a mesma conta e os mesmos contadores do gerar-documentos, que depois
+   * encontra tudo numerado e reaproveita. Devolve os vértices com os códigos.
+   */
+  async function numerarMarcos(): Promise<Vertice[]> {
+    if (!servico.credenciado_id) throw new Error("Escolha o credenciado em Dados: os marcos levam a numeração dele.");
+    if (!servico.fuso_utm) throw new Error("Defina o fuso UTM do serviço antes de numerar os marcos.");
+    const { data: cred, error: eC } = await supabase.from("credenciados").select("id, prefixo_vertice").eq("id", servico.credenciado_id).single();
+    if (eC || !cred) throw new Error("Credenciado não encontrado.");
+    const prefixo = (cred as { prefixo_vertice: string }).prefixo_vertice;
+    // a conta roda antes de reservar: se o desenho não fechar, nenhum número é queimado
+    numeracaoDosMarcos(servico, vertices, prefixo, { M: 1, P: 1, V: 1 });
+    const c = consumoDaNumeracao(vertices);
+    const { data: base, error: eA } = await supabase.rpc("alocar_contadores", { p_credenciado: servico.credenciado_id, dm: c.M, dp: c.P, dv: c.V });
+    if (eA) throw eA;
+    const b = (Array.isArray(base) ? base[0] : base) as { base_m: number; base_p: number; base_v: number };
+    if (!b || b.base_m == null) throw new Error("Não foi possível reservar a numeração do credenciado (ele é de outra empresa?). Confira o credenciado em Dados.");
+    const cod = numeracaoDosMarcos(servico, vertices, prefixo, { M: b.base_m, P: b.base_p, V: b.base_v });
+    for (const [ordem, codigo] of cod) {
+      const { error } = await supabase.from("vertices").update({ codigo, codigo_provisorio: false }).eq("servico_id", servico.id).eq("ordem", ordem);
+      if (error) throw error;
+    }
+    const novos = vertices.map((v) => (cod.has(v.ordem) ? { ...v, codigo: cod.get(v.ordem)!, codigo_provisorio: false } : v));
+    setVertices(novos);
+    return novos;
+  }
+
   async function criarGeosIndividuais() {
     const partes = partesGeo;
-    if (semCodigo > 0) { setErro("Gere os documentos do imóvel primeiro: os GEOs das partes usam os mesmos códigos dos marcos."); return; }
+    const numerar = precisaNumerar(vertices);
     const alvo = partes.filter(geoMarcadas);
     if (!alvo.length) { setErro("Marque as partes que vão ganhar o GEO."); return; }
     // cada parte é um serviço novo: 1 crédito por parte, perguntado antes
@@ -875,6 +904,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         <>
           <p>Cada GEO é um <b>serviço novo</b>, no nome do herdeiro, com SIGEF e peças próprios — por isso gasta 1 crédito por parte.</p>
           <p>{custo.detalhe}</p>
+          {numerar && (
+            <p>Antes, os marcos do imóvel recebem a <b>numeração oficial do credenciado</b> — a mesma que os documentos do imóvel vão usar
+              ao gerar, sem trocar depois. Mudar a divisão depois disso renumera o imóvel, e os GEOs já criados ficariam com os códigos antigos.</p>
+          )}
           <p className="sub">{alvo.map((g) => g.nome).join(", ")}</p>
         </>
       ),
@@ -888,11 +921,13 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     const novas = [...glebas];
     try {
       await salvar();
+      // marcos novos da divisão sem código: numera agora (não precisa gerar os documentos antes)
+      const vs = numerar ? await numerarMarcos() : vertices;
       for (const [k, g] of partes.entries()) {
         if (g.servico_parte_id || !alvo.includes(g)) continue;
         const { data: novo, error } = await supabase.from("servicos").insert(servicoDaParte(servico, g)).select().single();
         if (error) throw error;
-        const linhas = verticesDaParte(servico, vertices, partes, k, (novo as Servico).id);
+        const linhas = verticesDaParte(servico, vs, partes, k, (novo as Servico).id);
         const { error: eV } = await supabase.from("vertices").insert(linhas);
         if (eV) throw eV;
         const i = novas.indexOf(g);
@@ -932,19 +967,14 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
           );
         })}
       </ul>
-      {semCodigo > 0 ? (
-        <div className="geo-pe">
-          <p className="sub">Os GEOs das partes usam os mesmos códigos dos marcos do imóvel: gere os documentos do imóvel primeiro ({semCodigo} marco{semCodigo === 1 ? "" : "s"} sem código definitivo).</p>
-          {etapa !== "documentos" && <button type="button" onClick={() => trocarEtapa("documentos")}>Ir para Documentos →</button>}
-        </div>
-      ) : partesGeo.every((g) => g.servico_parte_id) ? (
+      {partesGeo.every((g) => g.servico_parte_id) ? (
         <p className="sub geo-pe">Todas as partes já têm o seu GEO.</p>
       ) : (
         <div className="geo-pe">
           <button type="button" className="principal" disabled={criandoGeos || qtdGeo === 0} onClick={criarGeosIndividuais}>
             {criandoGeos ? "Gerando os GEOs…" : `Gerar GEO${qtdGeo === 1 ? "" : "s"} (${qtdGeo} parte${qtdGeo === 1 ? "" : "s"})`}
           </button>
-          <span className="sub">Cada GEO é um serviço novo: <b>1 crédito por parte</b>, confirmado antes.</span>
+          <span className="sub">Cada GEO é um serviço novo: <b>1 crédito por parte</b>, confirmado antes.{semCodigo > 0 ? " Os marcos recebem a numeração oficial na hora — não precisa gerar os documentos antes." : ""}</span>
         </div>
       )}
     </div>
