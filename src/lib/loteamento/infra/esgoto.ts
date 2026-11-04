@@ -22,6 +22,8 @@ import type { Resultado } from "../calculo.ts";
 import type { GrafoRede } from "./grafo.ts";
 import { dijkstra, projetar, trechoDaLinha } from "./grafo.ts";
 import type { ParametrosInfra } from "./parametros.ts";
+import { implantarFora } from "./implantar.ts";
+import type { Implantacao } from "./implantar.ts";
 import { arvoreDeEscoamento, componentePrincipal, lamina, noDeSaida, noMaisBaixo, secao } from "./gravidade.ts";
 
 export const DN_ESGOTO = [100, 150, 200, 250, 300, 350, 400];
@@ -68,7 +70,7 @@ export interface TrechoEsgoto {
 export interface RedeEsgoto {
   pvs: PvEsgoto[];
   trechos: TrechoEsgoto[];
-  saida: { pv: number; p: Pt; z: number; destino: "ete" | "rede"; q: number } | null;
+  saida: { pv: number; p: Pt; z: number; destino: "ete" | "rede"; q: number; predio?: Implantacao | null } | null;
   /**
    * Estação elevatória: o ponto baixo da rede fica abaixo da ligação na estrada —
    * o esgoto desce até a elevatória e sobe pela linha de recalque.
@@ -219,7 +221,13 @@ export function projetarEsgoto(res: Resultado, g: GrafoRede, prm: ParametrosInfr
   const saida = saidaPv >= 0 ? {
     pv: saidaPv, p: pvs[saidaPv].p, z: pvs[saidaPv].z, destino: prm.destinoEsgoto,
     q: (entram.get(saidaPv) ?? []).reduce((s, k) => s + qfJus[k], 0),
+    predio: null as Implantacao | null,
   } : null;
+  // a estação (ETE ou elevatória) fica ao lado do PV de chegada, fora da caixa da rua
+  if (saida && (prm.destinoEsgoto === "ete" || elevatoria)) {
+    saida.predio = implantarFora(res, saida.p, 6.5);
+    if (saida.predio.lote) avisos.push(`O projeto não deixou área livre para a ${elevatoria ? "elevatória" : "estação de tratamento"}: ela ocupa o lote ${saida.predio.lote}, que tem de ser reservado para o sistema de esgoto.`);
+  }
   if (profMax > 3) avisos.push(`Coletor chega a ${profMax.toFixed(2).replace(".", ",")} m de profundidade (acima de 3 m): avalie rede auxiliar ou elevatória nos trechos fundos.`);
   if (!g.temRelevo) avisos.push("Sem o relevo do terreno, o esgoto foi calculado com o terreno plano (declividade mínima em tudo). Gere o relevo nas Perguntas.");
   if (saida && prm.destinoEsgoto === "ete") avisos.push(`Estação de tratamento compacta junto ao ${pvs[saidaPv].id} (o ponto mais baixo): exige licença ambiental e outorga de lançamento.`);

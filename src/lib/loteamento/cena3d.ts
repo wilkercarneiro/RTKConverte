@@ -433,7 +433,9 @@ export function montarCena(res: Resultado, params: Parametros, terreno: GradeTer
 
   const rs = op.infra?.agua.reservatorio;
   g.projeto.set(g.final);
-  const casas = [...montarCasas(res, g), ...montarEquipamentos(res, g, rs ? { p: rs.p, r: Math.max(2.5, Math.sqrt(rs.volume / (Math.PI * 4))) } : null)];
+  // lote que o projeto de infraestrutura tomou para o reservatório ou a estação fica sem casa
+  const reservados = new Set([op.infra?.agua.reservatorio?.lote, op.infra?.esgoto.saida?.predio?.lote].filter((x): x is string => !!x));
+  const casas = [...montarCasas(res, g, reservados), ...montarEquipamentos(res, g, rs ? { p: rs.p, r: Math.max(2.5, Math.sqrt(rs.volume / (Math.PI * 4))) } : null)];
   // cada casa ganha o seu platô (corte de um lado, aterro do outro), como na obra:
   // sem isso o piso ficava no canto mais alto e, no lote inclinado, a casa subia
   // num pedestal de metros (ainda mais com o exagero vertical da maquete)
@@ -460,12 +462,23 @@ export function montarCena(res: Resultado, params: Parametros, terreno: GradeTer
   const postes = projetados ?? montarPostes(res, g, pista, calcada, arvores);
   const infra = op.infra ? infra3d(op.infra, g) : undefined;
   const padroes = ocupacao.lotes.flatMap((o) => (o.padrao ? [o.padrao] : []));
-  // o ramal do projeto termina no pontalete do padrão de entrada do lote (3,8 m)
-  if (infra) for (const f of infra.fios) {
-    if (f.tipo !== "ramal") continue;
-    let mais: (typeof padroes)[number] | null = null, dm = 8;
-    for (const pd of padroes) { const d = dist(pd.p, f.b); if (d < dm) { dm = d; mais = pd; } }
-    if (mais) { f.b = mais.p; f.zb = mais.z; f.hb = ALTURA_PONTALETE; }
+  // o ramal do projeto termina no pontalete do padrão de entrada do lote (3,8 m).
+  // Lote sem casa (pequeno, sem frente, tomado pelo reservatório ou pela estação)
+  // não tem padrão nem pontalete: o ramal dele não existe na maquete — antes o fio
+  // ficava pendurado no meio do terreno vazio, ligado a nada.
+  if (infra) {
+    const padraoDoLote = new Map(ocupacao.lotes.flatMap((o) => (o.padrao ? [[o.lote, o.padrao] as const] : [])));
+    infra.fios = infra.fios.filter((f) => {
+      if (f.tipo !== "ramal") return true;
+      let alvo = f.lote !== undefined ? padraoDoLote.get(f.lote) ?? null : null;
+      if (f.lote === undefined) {
+        let dm = 8;
+        for (const pd of padroes) { const d = dist(pd.p, f.b); if (d < dm) { dm = d; alvo = pd; } }
+      }
+      if (!alvo) return false;
+      f.b = alvo.p; f.zb = alvo.z; f.hb = ALTURA_PONTALETE;
+      return true;
+    });
   }
   const fiacao = projetados ? [] : fiacaoSimples(postes, padroes, pista);
 
@@ -654,10 +667,10 @@ export function frenteDaCasa(l: Lote): { a: Pt; b: Pt } | null {
   return cands.reduce((m, x) => (x.comp > m.comp ? x : m), cands[0]);
 }
 
-function montarCasas(res: Resultado, g: Grade3D): Casa[] {
+function montarCasas(res: Resultado, g: Grade3D, reservados: Set<string> = new Set()): Casa[] {
   const out: Casa[] = [];
   res.lotes.forEach((l, idx) => {
-    if (l.area < 90) return;
+    if (l.area < 90 || reservados.has(l.id)) return;
     const fr = frenteDaCasa(l);
     if (!fr) return;
     const rnd = sorteio(l.id);

@@ -8,7 +8,7 @@ import { cotaFinal } from "../cena3d.ts";
 import type { ResultadoInfra } from "./index.ts";
 
 /** Fio entre dois pontos: altura sobre o chão em cada ponta e a flecha no meio. */
-export interface Fio { a: Pt; b: Pt; ha: number; hb: number; za: number; zb: number; flecha: number; tipo: "mt" | "bt" | "ramal" }
+export interface Fio { a: Pt; b: Pt; ha: number; hb: number; za: number; zb: number; flecha: number; tipo: "mt" | "bt" | "ramal"; /** ramal: índice do lote que ele atende */ lote?: number }
 
 export interface Infra3D {
   fios: Fio[];
@@ -53,7 +53,7 @@ export function infra3d(r: ResultadoInfra, g: Grade3D): Infra3D {
   // ramais: do poste até o padrão de entrada na frente do lote
   for (const rm of e.ramais) {
     const P = e.postes[rm.poste];
-    fios.push({ a: rm.de, b: rm.ate, ha: alturaBT(P.altura) - 0.3, hb: 3.2, za: z(rm.de), zb: z(rm.ate), flecha: Math.max(0.1, 0.02 * rm.L), tipo: "ramal" });
+    fios.push({ a: rm.de, b: rm.ate, ha: alturaBT(P.altura) - 0.3, hb: 3.2, za: z(rm.de), zb: z(rm.ate), flecha: Math.max(0.1, 0.02 * rm.L), tipo: "ramal", lote: rm.lote });
   }
   // hidrante: na calçada, logo depois da esquina
   const hidrantes = r.agua.hidrantes.map((h) => {
@@ -77,6 +77,7 @@ export function infra3d(r: ResultadoInfra, g: Grade3D): Infra3D {
   // estação de tratamento ou elevatória (ligação direta na rede pública não tem prédio)
   const sd = r.esgoto.saida;
   const tipoEstacao = !sd ? null : r.esgoto.elevatoria ? "ee" as const : sd.destino === "ete" ? "ete" as const : null;
-  const estacao = sd && tipoEstacao ? { p: sd.p, z: z(sd.p), tipo: tipoEstacao } : null;
+  const pe = sd?.predio?.p ?? sd?.p;
+  const estacao = sd && pe && tipoEstacao ? { p: pe, z: z(pe), tipo: tipoEstacao } : null;
   return { fios, hidrantes, tampas, bocas, reservatorio, estacao };
 }

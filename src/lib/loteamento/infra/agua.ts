@@ -23,6 +23,7 @@ import type { GrafoRede } from "./grafo.ts";
 import { deslocar, outro, trechoDaLinha } from "./grafo.ts";
 import type { ParametrosInfra } from "./parametros.ts";
 import { paraPlano } from "../plano.ts";
+import { implantarFora } from "./implantar.ts";
 
 /** Diâmetros comerciais (PVC PBA até DN 100, DEFoFo acima). */
 export const DN_AGUA = [50, 75, 100, 150, 200, 250, 300];
@@ -80,6 +81,8 @@ export interface Reservatorio {
   noLigacao: number;
   /** nome da área pública onde ficou (ou null: área a reservar) */
   area: string | null;
+  /** lote que o reservatório ocupa quando o projeto não deixou chão livre (a reservar) */
+  lote?: string | null;
   /** nó crítico (o que fixou o nível) */
   critico: number;
 }
@@ -248,6 +251,10 @@ export function projetarAgua(res: Resultado, g: GrafoRede, prm: ParametrosInfra)
 
   // reservatório + adutora até o nó mais perto
   const lugar = lugarDoReservatorio(res, g, prm, alcancaveis);
+  // sem área pública (ou no lugar escolhido à mão) o ponto é um nó da rede, no eixo
+  // da rua: o reservatório vai para o chão livre mais perto, fora da caixa da rua
+  const imp = implantarFora(res, lugar.p, 3.5);
+  lugar.p = imp.p;
   const nosRede = g.nos.filter((n) => alcancaveis.has(n.id));
   const noLig = nosRede.reduce((a, b) => (dist(b.p, lugar.p) < dist(a.p, lugar.p) ? b : a), nosRede[0]);
   const R = g.nos.length; // índice do nó do reservatório
@@ -367,9 +374,10 @@ export function projetarAgua(res: Resultado, g: GrafoRede, prm: ParametrosInfra)
   const volume = arredondarVolume((populacao * prm.perCapita * prm.k1) / 1000 / 3);
   const reservatorio: Reservatorio = {
     p: lugar.p, z: zRes, na, tipo: elevado ? "elevado" : "apoiado", altura: elevado ? Math.ceil(altura) : 0, volume,
-    noLigacao: noLig.id, area: lugar.area, critico,
+    noLigacao: noLig.id, area: lugar.area, lote: imp.lote, critico,
   };
-  if (!lugar.area && !prm.reservatorio) avisos.push("Nenhuma área pública fica no alto: o reservatório foi posto junto ao ponto mais alto da rede — reserve uma área para ele (ou escolha o lugar).");
+  if (imp.lote) avisos.push(`O projeto não deixou área livre para o reservatório: ele ocupa o lote ${imp.lote}, que tem de ser reservado para o sistema de água (ou crie uma área institucional).`);
+  if (!lugar.area && !prm.reservatorio && !imp.lote) avisos.push("Nenhuma área pública fica no alto: o reservatório foi posto junto ao ponto mais alto da rede — reserve uma área para ele (ou escolha o lugar).");
 
   const nos: NoAgua[] = nosRede.map((n) => {
     const carga = hid.H[n.id] - 1000 + na;

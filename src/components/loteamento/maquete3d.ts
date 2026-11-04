@@ -282,6 +282,8 @@ export class Maquete {
   private chao!: THREE.Mesh;
   private mesa!: THREE.Mesh;
   private grupoCasas = new THREE.Group();
+  /** os ramais (poste → pontalete do padrão da casa): somem junto com as casas */
+  private fiosRamal: THREE.Mesh[] = [];
   private grupoArvores = new THREE.Group();
   /** árvores de geometria simples (o GLB usa estas quando as da Poly Haven estão na cena) */
   private arvoresGLB: THREE.Object3D[] | null = null;
@@ -1501,6 +1503,8 @@ export class Maquete {
   setVisivel(camada: "casas" | "arvores" | "meioFio" | "redes", v: boolean): void {
     const o = camada === "casas" ? this.grupoCasas : camada === "arvores" ? this.grupoArvores : camada === "redes" ? this.grupoInfra : this.meioFio;
     if (o) o.visible = v;
+    // sem as casas não há padrão de entrada: o ramal ficaria ligado a nada
+    if (camada === "casas") for (const f of this.fiosRamal) f.visible = v;
     this.sombraSuja = true;
     this.sujo = 3;
   }
@@ -2330,6 +2334,7 @@ export class Maquete {
       me.frustumCulled = false;
       me.renderOrder = 1;
       this.grupoInfra.add(me);
+      if (t === "ramal") this.fiosRamal.push(me);
     }
   }
 

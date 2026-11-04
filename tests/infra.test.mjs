@@ -15,7 +15,7 @@ import { projetoNovo } from "../src/lib/loteamento/modelo.ts";
 import { calcular } from "../src/lib/loteamento/calculo.ts";
 import { gerarPropostas } from "../src/lib/loteamento/auto.ts";
 import { paraUtm } from "../src/lib/loteamento/plano.ts";
-import { dist, distSegmento } from "../src/lib/loteamento/geom.ts";
+import { comprimento, dentroPol, dist, distSegmento, pontoNaPolilinha } from "../src/lib/loteamento/geom.ts";
 import { calcularInfra, IDF_SALVADOR } from "../src/lib/loteamento/infra/index.ts";
 import { intensidade } from "../src/lib/loteamento/infra/parametros.ts";
 import { TRAFOS, demandaPorUnidade } from "../src/lib/loteamento/infra/eletrica.ts";
@@ -195,6 +195,45 @@ test("maquete: os postes do projeto entram na cena, com fios, hidrantes e tampas
   // o prédio institucional não passa pelo reservatório
   const rs = r.agua.reservatorio;
   for (const casa of c.casas.filter((x) => x.lote < 0)) assert.ok(dist(casa.c, rs.p) > Math.min(casa.larg, casa.prof) / 2);
+});
+
+test("reservatório e estação de esgoto não ficam no meio da rua (caso IRAN)", () => {
+  // no IRAN (sem área pública) o lugar do reservatório era o nó mais alto da rede,
+  // no eixo da rua, e a torre de 10 m nascia no asfalto; a ETE, no PV de chegada.
+  // Aqui os dois lugares são escolhidos de propósito no eixo de ruas.
+  const eixoA = res.ruas[0].eixo, eixoB = res.ruas[res.ruas.length - 1].eixo;
+  const meio = (l) => pontoNaPolilinha(l, comprimento(l) / 2).pt;
+  const prx = { ...pr, infra: { ...(pr.infra ?? {}), reservatorio: paraUtm(res.plano, meio(eixoA)), lancamento: paraUtm(res.plano, meio(eixoB)), destinoEsgoto: "ete" } };
+  const inf = calcularInfra(res, prx);
+  const c = montarCena(res, prx.params, prx.terreno, { infra: inf });
+  const ruas = res.ruas.flatMap((x) => x.pols);
+  const predios = [
+    { p: c.infra.reservatorio.p, r: 3.5, lote: inf.agua.reservatorio.lote, nome: "reservatório" },
+    { p: c.infra.estacao.p, r: 6.5, lote: inf.esgoto.saida.predio?.lote, nome: "ETE" },
+  ];
+  for (const pd of predios) {
+    assert.ok(!ruas.some((pg) => dentroPol(pd.p, pg)), `${pd.nome} no meio da rua`);
+    // o lote tomado fica sem casa, e nenhuma casa encosta no prédio
+    if (pd.lote) assert.ok(!c.casas.some((k) => k.lote >= 0 && res.lotes[k.lote].id === pd.lote), `casa no lote ${pd.lote} do sistema`);
+    for (const k of c.casas) assert.ok(dist(k.c, pd.p) > pd.r, `casa em cima do ${pd.nome}`);
+  }
+});
+
+test("maquete: ramal só chega em lote com casa, sempre no pontalete do padrão", () => {
+  // antes, o projeto elétrico liga todos os lotes e a maquete desenhava o ramal até o
+  // lote vazio (sem casa, sem padrão, sem poste): o fio ficava pendurado no terreno
+  const inf = calcularInfra(res, pr);
+  const c = montarCena(res, pr.params, pr.terreno, { infra: inf });
+  const padroes = c.ocupacao.lotes.filter((o) => o.padrao);
+  const ramais = c.infra.fios.filter((f) => f.tipo === "ramal");
+  assert.ok(ramais.length > 0);
+  assert.ok(inf.eletrica.ramais.length > padroes.length || c.casas.filter((k) => k.lote >= 0).length === res.lotes.length, "o caso precisa ter lote sem casa");
+  for (const f of ramais) {
+    const o = padroes.find((x) => x.lote === f.lote);
+    assert.ok(o, `ramal para o lote ${res.lotes[f.lote]?.id} sem casa`);
+    assert.ok(dist(o.padrao.p, f.b) < 1e-9, "o ramal termina no pontalete");
+  }
+  assert.equal(ramais.length, padroes.length, "uma casa, um ramal");
 });
 
 test("saídas: planilhas, quantitativos, memorial, DXF, pranchas PDF e locação", async () => {
