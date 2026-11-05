@@ -25,6 +25,7 @@ import type { DadosMemorial } from "../_shared/memorial.ts";
 import { patchOdsContent } from "../_shared/ods.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { Folha } from "../_shared/planta.ts";
+import { naoEdificavelDaPlanta } from "../_shared/recuo.ts";
 import {
   anelExternoDasGlebas, bytesDeBase64, calcularGleba, glebaPorNome, servicoDaGleba, carregarLogoPlanta, dadosDasPartes, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta,
   ordensDasGlebas, verticesForaDasGlebas,
@@ -635,6 +636,10 @@ Deno.serve(async (req) => {
     /** A geometria com a área/perímetro do SIGEF por cima — nunca com a forma. */
     const comNumerosSigef = <T extends { areaFmt: string; perimetroFmt: string }>(g: T, n: NumerosSigef | null | undefined): T =>
       (n ? { ...g, areaFmt: n.areaFmt, perimetroFmt: n.perimetroFmt } : g);
+    // faixa não edificável das rodovias (recuo automático, 05/11/2026): na planta
+    // geral e na A3 de cada gleba/área; o serviço reduz (com a lei municipal,
+    // revalidada aqui) ou desliga em servicos.recuo_vias
+    const naoEdificavel = naoEdificavelDaPlanta((servico as { recuo_vias?: unknown }).recuo_vias);
 
     try {
       const geometriaGeral = dp ? dp.geometria : geometriaDoCalculo(calc);
@@ -678,7 +683,7 @@ Deno.serve(async (req) => {
           }
           : undefined,
       });
-      plantaBuf = await gerarPlantaPdf({ ...dadosPlanta, metragem: metragem === true }, undefined, { editavel: true });
+      plantaBuf = await gerarPlantaPdf({ ...dadosPlanta, metragem: metragem === true, naoEdificavel }, undefined, { editavel: true });
     } catch (e) {
       avisosGeracao.push(`Memorial e planilha gerados, mas a planta falhou: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -790,7 +795,7 @@ Deno.serve(async (req) => {
               ? { matricula: servico.conf_exibir_matricula !== false, denominacao: servico.conf_exibir_denominacao !== false, trt: servico.conf_exibir_trt !== false }
               : undefined,
           });
-          const pdfU = await gerarPlantaPdf({ ...dadosPlantaU, metragem: metragem === true }, undefined, { editavel: true });
+          const pdfU = await gerarPlantaPdf({ ...dadosPlantaU, metragem: metragem === true, naoEdificavel }, undefined, { editavel: true });
           const path = `${pastaU}/planta-A3.pdf`;
           const up = await supa.storage.from("gerados").upload(path, pdfU, { upsert: true, contentType: "application/pdf" });
           if (up.error) throw up.error;
