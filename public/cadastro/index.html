@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Assine o Vertces</title>
+  <!--
+    O link de cadastro (vertces.com.br/cadastro/?plano=<id>&ciclo=anual): leva
+    à página do autocadastro do sistema mantendo a escolha do plano e do
+    período. Sem JavaScript, o refresh leva à mesma página sem a escolha.
+  -->
+  <meta http-equiv="refresh" content="3; url=/app/#/assinar" />
+  <script>
+    location.replace("/app/#/assinar" + location.search);
+  </script>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #F4F6F5; color: #12201A;
+           font-family: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif; }
+    a { color: #178552; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <p>Abrindo o cadastro do Vertces… <a href="/app/#/assinar">clique aqui se não abrir</a>.</p>
+</body>
+</html>

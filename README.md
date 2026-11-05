@@ -50,7 +50,8 @@ precisa do secret `SUPABASE_ACCESS_TOKEN`).
 ## Variáveis de ambiente
 
 Ver `.env.example`. Frontend: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
-e as opcionais `VITE_CADASTRO_ABERTO`, `VITE_SUPORTE_*`, `VITE_SENTRY_DSN`.
+e as opcionais `VITE_SUPORTE_*`, `VITE_SENTRY_DSN` (o autocadastro, `#/assinar`,
+abre e fecha no painel do superadmin, não por variável).
 Scripts: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SETUP_SECRET`, `E2E_EMAIL`,
 `E2E_PASSWORD`, `SUPABASE_DB_URL` (backup).
 

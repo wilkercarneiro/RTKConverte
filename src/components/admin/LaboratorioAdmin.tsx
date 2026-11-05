@@ -16,8 +16,8 @@ import { mensagemCobranca } from "../../../supabase/functions/_shared/mensagens_
 const dia = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 // os planos da 0034 (e o Completo de antes, fora do cadastro)
 const PLANOS = [
-  { id: "p1", nome: "Autônomo", descricao: "Todos os serviços. Por mês: 6 créditos gerais e 12 de CAR.", cor: "#5B6B63", ordem: 10, ativo: true, preco_mensal: 149.9, libera_recursos_novos: true },
-  { id: "p2", nome: "Profissional", descricao: "Todos os serviços. Por mês: 12 créditos gerais e 25 de CAR.", cor: "#178552", ordem: 20, ativo: true, preco_mensal: 249.9, libera_recursos_novos: true },
+  { id: "p1", nome: "Autônomo", descricao: "Todos os serviços. Por mês: 6 créditos gerais e 12 de CAR.", cor: "#5B6B63", ordem: 10, ativo: true, preco_mensal: 149.9, libera_recursos_novos: true, vende_no_site: true },
+  { id: "p2", nome: "Profissional", descricao: "Todos os serviços. Por mês: 12 créditos gerais e 25 de CAR.", cor: "#178552", ordem: 20, ativo: true, preco_mensal: 249.9, libera_recursos_novos: true, vende_no_site: true },
   { id: "p3", nome: "Empresarial", descricao: "Todos os serviços. Por mês: 25 créditos gerais e 50 de CAR.", cor: "#0E3B2B", ordem: 30, ativo: true, preco_mensal: null, libera_recursos_novos: true },
   { id: "p4", nome: "Só CAR", descricao: "Só o serviço de CAR. Por mês: 5 créditos de CAR.", cor: "#C99A12", ordem: 40, ativo: true, preco_mensal: 49.9, libera_recursos_novos: false },
   { id: "p5", nome: "Completo", descricao: "", cor: "#2E4F43", ordem: 50, ativo: false, preco_mensal: null, libera_recursos_novos: true },
@@ -225,12 +225,18 @@ function instalar() {
   definirCobrancaFalsa(async (b) => {
     const status = {
       asaas: { configurado: true, ambiente: "producao", chave_final: "9f3a", saldo: 1840.35, erro: null, tokenizacao: "bloqueada",
-        webhook: { url: "https://api.exemplo/functions/v1/cobranca?origem=asaas", ativo: true, interrompido: false, penalizados: 0 } },
+        // 0040: os eventos da análise de risco ainda não chegam (pede "Religar o webhook")
+        webhook: { url: "https://api.exemplo/functions/v1/cobranca?origem=asaas", ativo: true, interrompido: false, penalizados: 0, faltando: 4 } },
       whatsapp: { configurado: true, url: "https://evolution.exemplo.com.br", instancia: "vertces", estado: "close" },
       url_app: "https://vertces.com.br/app/",
       ultimo_evento: { evento: "PAYMENT_RECEIVED", resultado: "creditos · WhatsApp enviado", recebido_em: dia(0.05) },
+      autocadastro: {
+        cadastro_aberto: true, parcelas_sem_juros: 6, parcelas_max: 12, juros_mes: 2.99, whatsapp_avisos: "71988887777", parcelado_value: false,
+        ciclos: { MONTHLY: { ativo: true, desconto: 0 }, SEMIANNUALLY: { ativo: true, desconto: 5 }, YEARLY: { ativo: true, desconto: 10 } },
+      },
     };
     if (b.acao === "config_status" || b.acao === "config_salvar") return status;
+    if (b.acao === "autocadastro_salvar") return { autocadastro: { ...status.autocadastro, ...b } };
     if (b.acao === "cobrar_empresa") {
       const e = EMPRESAS.find((x) => x.id === b.escritorio_id);
       const link = "https://sandbox.asaas.com/i/abc123";

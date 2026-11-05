@@ -18,6 +18,7 @@ import type { Perimetro, Resultado } from "./loteamento/calculo.ts";
 import { pontoInterno } from "./loteamento/auto.ts";
 import { paraUtm } from "./loteamento/plano.ts";
 import { acertarAreas } from "./loteamento/acoes.ts";
+import { bordaDaEstrada } from "./loteamento/perimetro.ts";
 
 type Ent = EntradaDivisao & { base: Vertice[]; confrontantes: string[] };
 
@@ -63,8 +64,10 @@ export function anelBruto(ent: Ent, p: ParteDivisao): Pt[] {
 export function projetoDaDivisao(ent: Ent, aneis: Pt[][], nome: string): Projeto {
   const pr = projetoNovo(nome, ent.base.length);
   pr.params = { ...pr.params, ...PARAMS_DIVISAO };
+  // estrada com o recuo da lei: rodovia BR/estadual mostra a faixa não
+  // edificável de 15 m dentro das partes (só desenho: não muda área nenhuma)
   pr.bordas = ent.base.map((_, i) => (ent.estrada?.[i]
-    ? { tipo: "via" as const, faixa: 0, nome: ent.confrontantes[i] ?? "" }
+    ? bordaDaEstrada(ent.confrontantes[i] ?? "")
     : { tipo: "divisa" as const, faixa: 0 }));
   pr.quadras = [{ ancora: pontoInterno({ ext: aneis[0], furos: [] }), ajustes: [], nome: " ", lotes: aneis.map((anel) => ({ anel })) }];
   pr.gerado = true;

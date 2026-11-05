@@ -10,8 +10,11 @@ import { vaiAoSigef } from "./modalidades.ts";
 export interface DocsDoServico { docs: boolean; planta: boolean; pecas: boolean }
 
 // a planta 'do sistema' sai junto do memorial e da planilha — é a mesma etapa;
-// a A3 de cada gleba e o Memorial Tabular de prévia (conferência) também
-const TIPOS_ETAPA1 = new Set(["memorial_docx", "planilha_ods", "planta_pdf_sistema", "gleba_planta_pdf", "memorial_tabular"]);
+// a A3 de cada gleba e o Memorial Tabular de prévia (conferência) também, e o
+// Memorial Tabular dos dados do sistema (gerar-documentos com `tabular: true`,
+// os documentos de cada área da divisão) — não é peça: contar como peça
+// marcava o serviço da área como pronto antes do SIGEF
+const TIPOS_ETAPA1 = new Set(["memorial_docx", "planilha_ods", "planta_pdf_sistema", "gleba_planta_pdf", "memorial_tabular", "tabular_docx"]);
 // a planta editada no visualizador é derivada de uma planta que já contou
 const TIPOS_SEM_ETAPA = new Set(["planta_pdf_editada"]);
 

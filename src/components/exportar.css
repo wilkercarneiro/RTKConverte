@@ -1,0 +1,23 @@
+/* "Exportar ▾" no cabeçalho dos serviços (ExportarArea.tsx). O menu vai para o
+   <body> com position: fixed — o cabeçalho é sticky e a posição passa pelo zoom
+   da raiz (lib/zoom.ts) —, por isso o estilo mora aqui, junto do componente. */
+.exportar-btn { white-space: nowrap; }
+
+.exportar-menu {
+  position: fixed; z-index: 1000; max-width: calc(100vw - 16px);
+  display: flex; flex-direction: column; padding: 6px;
+  border-radius: 14px; background: var(--card);
+  box-shadow: var(--anel-alto, 0 0 0 1px var(--borda)), 0 24px 48px -24px rgb(14 59 43 / 40%);
+  animation: exportar-cai 0.14s ease both;
+}
+@keyframes exportar-cai { from { opacity: 0; transform: translateY(-4px); } }
+
+/* rótulo e "para que serve" na mesma linha */
+.exportar-menu button {
+  display: flex; align-items: baseline; gap: 8px; width: 100%; height: auto; padding: 8px 10px;
+  border: 0; border-radius: 9px; background: transparent; color: var(--texto); text-align: left; font-size: 13.5px;
+}
+.exportar-menu button:hover:not(:disabled),
+.exportar-menu button:focus-visible { background: #F2F6F4; color: var(--texto); border: 0; }
+.exportar-menu b { font-weight: 600; white-space: nowrap; }
+.exportar-menu small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--texto-3); }

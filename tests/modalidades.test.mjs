@@ -53,10 +53,16 @@ test("rotas sobrevivem à ida e volta pelo hash", () => {
     { t: "servico", id: "def-456" },
     { t: "novo", chave: "gleba" },
     { t: "novo", chave: "conferencia", clienteId: "cli-9" },
+    { t: "assinar" },
+    { t: "assinar", plano: "1f0c8a2e-1111-4a1b-9c3d-0123456789ab", ciclo: "anual" },
   ];
   for (const r of rotas) {
     assert.deepEqual(hashParaRota(rotaParaHash(r)), r, `rota ${r.t} não sobreviveu`);
   }
+  // o link de cadastro (public/cadastro → /app/#/assinar?…) e o link antigo do "Criar conta"
+  assert.deepEqual(hashParaRota("#/assinar?plano=p-1&ciclo=semestral"), { t: "assinar", plano: "p-1", ciclo: "semestral" });
+  assert.deepEqual(hashParaRota("#/cadastro"), { t: "assinar" });
+  assert.deepEqual(hashParaRota("#/assinar?ciclo="), { t: "assinar" });
 });
 
 test("hash inválido ou vazio cai no início em vez de tela em branco", () => {

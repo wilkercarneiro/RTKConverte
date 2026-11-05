@@ -226,7 +226,8 @@ function CartaoPlano({ p, d, porMes, precos, onEditar }: {
       <header>
         <div>
           <h3>{p.nome}</h3>
-          <small className="sub">{empresas} empresa(s){p.libera_recursos_novos === false ? " · recursos novos bloqueados" : ""}</small>
+          <small className="sub">{empresas} empresa(s){p.libera_recursos_novos === false ? " · recursos novos bloqueados" : ""}
+            {p.vende_no_site && p.ativo && Number(p.preco_mensal ?? 0) > 0 ? " · no autocadastro" : ""}</small>
         </div>
         <button type="button" onClick={onEditar}>Editar</button>
       </header>
@@ -262,6 +263,11 @@ function FormPlano({ e, d, onChange, onCancelar, onSalvar, onExcluir }: {
         <label>Situação
           <select value={p.ativo === false ? "0" : "1"} onChange={(x) => set({ ativo: x.target.value === "1" })}>
             <option value="1">No cadastro de empresa nova</option><option value="0">Fora do cadastro</option>
+          </select>
+        </label>
+        <label><Rotulo dica="aparece no link de cadastro (#/assinar), onde a pessoa assina e paga sozinha; precisa de mensalidade e de estar no cadastro">Autocadastro</Rotulo>
+          <select value={p.vende_no_site ? "1" : "0"} onChange={(x) => set({ vende_no_site: x.target.value === "1" })}>
+            <option value="1">Vende no autocadastro</option><option value="0">Não vende no site</option>
           </select>
         </label>
         <label><Rotulo dica="vazio = sem limite; a empresa não ativa ninguém além disso">Limite de usuários ativos</Rotulo>

@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Vertice } from "../lib/types";
 import { desligar, excluirPonto, ligar, type Areas, type Ligacao } from "../lib/contorno";
 import { Dica } from "./ui";
+import { BotaoTelaCheia } from "./TelaCheia";
 
 const CORES = ["#2E86AB", "#E07A1F", "#3BA55C", "#A23B72", "#C9A227", "#5B5FC7", "#D1495B", "#1B998B"];
 
@@ -114,7 +115,7 @@ export function ContornoEditor({ vertices, ligacoes, areas, nomes, onLigacoes, o
   const raio = 5 * escala;
 
   return (
-    <div className="ct-editor">
+    <div className="ct-editor" data-tela-cheia="">
       <div className="ct-barra">
         {um !== null && !ligando && <b>Ponto {rot(um)}</b>}
         {escolhidos.length > 1 && <b>{escolhidos.length} pontos</b>}
@@ -131,6 +132,7 @@ export function ContornoEditor({ vertices, ligacoes, areas, nomes, onLigacoes, o
         <button type="button" className="fantasma" disabled={!podeDesfazer} onClick={onDesfazer} title="Ctrl+Z">↶ Desfazer</button>
         <button type="button" className="fantasma" onClick={() => { onRecomecar(); setEsc(null); setLigando(false); }}>Recomeçar</button>
         <button type="button" className="fantasma" onClick={() => setVb(caixa)}>Enquadrar</button>
+        <BotaoTelaCheia className="fantasma" rotulo />
         <Dica>Clique num ponto para escolher (Ctrl+clique soma vários). <b>Excluir e unir os vizinhos</b> (Delete) tira o ponto e fecha o contorno ligando os dois pontos do lado; <b>Excluir sem unir</b> deixa aberto para você ligar à mão. <b>Ligar a outro ponto</b> (L) cria a linha até o próximo ponto clicado — uma linha de um lado ao outro do imóvel é a divisa entre duas glebas. Clique numa linha e <b>Tirar a ligação</b> para soltar. Cada área fechada vira uma gleba. Ponto sem ligação sai do serviço ao salvar. Roda do mouse aproxima; arrastar o fundo move.</Dica>
       </div>
       <svg ref={svgRef} className={`ct-svg${ligando ? " ligando" : ""}`} viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} preserveAspectRatio="xMidYMid meet"

@@ -12,10 +12,12 @@ import { fmtPreco } from "../../lib/creditos";
 import { problemaDaSenha } from "../../../supabase/functions/_shared/cnpj.ts";
 import { Carregando, quando, Topo } from "./comum";
 import { confirmar, Dica, Rotulo } from "../ui";
+import { Autocadastro } from "./Autocadastro";
+import type { DadosAdmin } from "./PainelAdmin";
 
 type Msg = { tipo: "ok" | "erro"; texto: string } | null;
 
-export function ConfigAdmin() {
+export function ConfigAdmin({ d = null }: { d?: DadosAdmin | null }) {
   const [senha, setSenha] = useState("");
   const [msg, setMsg] = useState<Msg>(null);
   useEffect(() => { lerSenhaPadrao().then(setSenha).catch((e) => setMsg({ tipo: "erro", texto: String(e.message ?? e) })); }, []);
@@ -32,7 +34,7 @@ export function ConfigAdmin() {
     <>
       <Topo olho="Sistema" titulo="Configurações" />
       <div className="sa-config">
-        <Pagamentos />
+        <Pagamentos d={d} />
         <form className="sa-card" onSubmit={salvar}>
           <header><h3>Senha padrão das contas novas<Dica>
             Toda empresa e todo usuário cadastrados aqui entram com esta senha e o sistema pede uma senha própria no primeiro acesso.
@@ -49,7 +51,7 @@ export function ConfigAdmin() {
   );
 }
 
-function Pagamentos() {
+function Pagamentos({ d }: { d: DadosAdmin | null }) {
   const [st, setSt] = useState<StatusPagamentos | null | undefined>(undefined);
   const [erroLeitura, setErroLeitura] = useState<string | null>(null);
   useEffect(() => {
@@ -69,6 +71,7 @@ function Pagamentos() {
   return (
     <>
       <Asaas st={st} onSalvo={setSt} />
+      <Autocadastro st={st} d={d} onSalvo={(a) => setSt({ ...st, autocadastro: a })} />
       <WhatsApp st={st} />
     </>
   );
@@ -82,15 +85,17 @@ function Asaas({ st, onSalvo }: { st: StatusPagamentos; onSalvo: (s: StatusPagam
   const [ocupado, setOcupado] = useState(false);
   const w = a.webhook;
   const mudou = !!chave.trim() || (a.configurado && ambiente !== a.ambiente);
+  // a lista de eventos mudou (0040: análise de risco do cartão): religar manda a lista nova ao Asaas
+  const desatualizado = (w?.faltando ?? 0) > 0;
 
-  async function salvar(ev: React.FormEvent) {
+  async function salvar(ev: React.SyntheticEvent, religar = false) {
     ev.preventDefault();
     if (!a.configurado && !chave.trim()) { setMsg({ tipo: "erro", texto: "Cole a chave da API do Asaas." }); return; }
     setOcupado(true); setMsg(null);
     try {
-      onSalvo(await salvarPagamentos({ asaas_chave: chave.trim() || undefined, asaas_ambiente: ambiente, religar_webhook: !!w?.interrompido }));
+      onSalvo(await salvarPagamentos({ asaas_chave: chave.trim() || undefined, asaas_ambiente: ambiente, religar_webhook: religar || !!w?.interrompido || desatualizado }));
       setChave("");
-      setMsg({ tipo: "ok", texto: "Chave testada e salva. O webhook do Vertces está configurado no Asaas." });
+      setMsg({ tipo: "ok", texto: "Chave testada e salva. O webhook do Vertces está configurado no Asaas (com todos os eventos)." });
     } catch (x) { setMsg({ tipo: "erro", texto: String(x instanceof Error ? x.message : x) }); }
     finally { setOcupado(false); }
   }
@@ -135,6 +140,11 @@ function Asaas({ st, onSalvo }: { st: StatusPagamentos; onSalvo: (s: StatusPagam
           {w.erro ?? (w.interrompido ? "O Asaas interrompeu a fila do webhook (falhas seguidas). Clique em “Religar o webhook”; as cobranças pendentes também são conferidas quando a empresa abre a tela de pagamento." : `${w.penalizados} aviso(s) do Asaas falharam recentemente.`)}
         </div>
       )}
+      {desatualizado && !w?.interrompido && (
+        <div className="sa-aviso info" style={{ marginTop: 12 }}>
+          O webhook ainda não recebe {w!.faltando} aviso(s) novo(s) do Asaas (análise de risco e recusa do cartão). Clique em “Religar o webhook”.
+        </div>
+      )}
       <div className="sa-campos" style={{ marginTop: 14 }}>
         <label>Ambiente
           <select value={ambiente} onChange={(e) => setAmbiente(e.target.value as "sandbox" | "producao")}>
@@ -151,8 +161,11 @@ function Asaas({ st, onSalvo }: { st: StatusPagamentos; onSalvo: (s: StatusPagam
       </div>
       <div className="sa-rodape-form">
         {a.configurado && <button type="button" className="fantasma" style={{ marginRight: "auto" }} disabled={ocupado} onClick={desligar}>Desligar</button>}
-        <button type="submit" className="principal" disabled={ocupado || (a.configurado && !mudou && !w?.interrompido)}>
-          {ocupado ? "Testando…" : a.configurado ? (w?.interrompido && !mudou ? "Religar o webhook" : "Salvar e testar") : "Ligar os pagamentos"}
+        {a.configurado && !mudou && !w?.interrompido && !desatualizado && (
+          <button type="button" disabled={ocupado} onClick={(ev) => salvar(ev, true)}>Religar o webhook</button>
+        )}
+        <button type="submit" className="principal" disabled={ocupado || (a.configurado && !mudou && !w?.interrompido && !desatualizado)}>
+          {ocupado ? "Testando…" : a.configurado ? ((w?.interrompido || desatualizado) && !mudou ? "Religar o webhook" : "Salvar e testar") : "Ligar os pagamentos"}
         </button>
       </div>
     </form>

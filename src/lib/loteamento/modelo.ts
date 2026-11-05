@@ -312,10 +312,17 @@ export interface Rua {
   id: string;
   nome: string;
   largura: number;
-  /** eixo em UTM */
+  /** eixo em UTM (pode vir vazio na rua importada sem eixo: o corpo manda) */
   eixo: Pt[];
   /** raio do balão de retorno no fim do eixo (rua sem saída), m */
   balao?: number;
+  /**
+   * Corpo da rua pronto (anéis UTM): o loteamento importado traz o viário como
+   * ele é no arquivo, e o cálculo usa estes polígonos no lugar da faixa em volta
+   * do eixo. Anel anti-horário é o contorno; anel horário é furo (a quadra que a
+   * rua cerca por todos os lados).
+   */
+  corpo?: Pt[][];
 }
 
 export interface AreaDesenhada {
@@ -364,6 +371,12 @@ export interface LoteDesenhado {
    * vazia). A terra dele sai das quadras vizinhas e entra na quadra deste lote.
    */
   livre?: boolean;
+  /**
+   * Número do lote no arquivo importado, quando a numeração dele não é 1..n
+   * na ordem (lote 12 sem o 11, quadra que começa no 5). Sem ele o lote é
+   * numerado pela ordem do desenho. Número repetido na quadra é ignorado.
+   */
+  numero?: number;
 }
 
 /**
@@ -437,6 +450,12 @@ export interface Projeto {
   sobrasPublicas?: { ponto: Pt; tipo: TipoArea }[];
   /** parâmetros dos projetos de água, esgoto, drenagem, energia e iluminação (as redes são recalculadas) */
   infra?: Partial<ParametrosInfra>;
+  /**
+   * Loteamento que chegou pronto (DXF, KML/KMZ, GeoJSON): as quadras são as do
+   * arquivo, com os lotes desenhados (`QuadraCfg.lotes`) e o viário com corpo
+   * próprio (`Rua.corpo`). O cálculo não parte nem arredonda essas quadras.
+   */
+  importado?: { arquivo: string; em: string };
 }
 
 export function projetoNovo(nome: string, ladosPerimetro: number): Projeto {

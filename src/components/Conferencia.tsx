@@ -7,6 +7,7 @@
 // próxima ação diz em uma frase o que falta, e o trabalho é salvo sozinho.
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
+import { baixarZip, type ArquivoZip } from "../lib/zip_download";
 import {
   LADOS, METODOS_POSICIONAMENTO, NATUREZAS_AREA, NATUREZAS_SERVICO,
   rotuloRT, SITUACOES, TIPOS_LIMITE, TIPOS_PESSOA, UFS,
@@ -19,9 +20,10 @@ import {
   camposDaSituacao, chaveDoServico, pedeMatricula, rotuloCurto, situacaoDoImovel, vaiAoSigef,
 } from "../lib/modalidades";
 import type { SituacaoImovel } from "../lib/modalidades";
-import { areaHaDoAnel } from "../lib/glebas";
 import { DivisaoEditor } from "./DivisaoEditor";
-import { ROTULO_DIVISAO, servicoDaParte, verticesDaParte } from "../lib/divisao_servico";
+import { DocumentosDasAreas, useDocumentosDasAreas } from "./DocumentosDasAreas";
+import { ROTULO_DIVISAO } from "../lib/divisao_servico";
+import { ehDesmembramento } from "../lib/desmembramento";
 import { glebasCobremTodos, ordensDasGlebas, partesDasGlebas, verticesForaDasGlebas } from "../lib/glebas";
 import type { Gleba } from "../lib/types";
 import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux";
@@ -31,6 +33,7 @@ import { CORES, MapaSVG } from "./MapaSVG";
 import { PainelRelevo } from "./relevo/PainelRelevo";
 import type { FundoSatelite } from "./MapaSVG";
 import { PainelSigef } from "./PainelSigef";
+import { RecuoRodovias } from "./RecuoRodovias";
 import type { PontoMapa } from "./MapaInterativo";
 import { aneisLonLat, lonLatDoVertice } from "../lib/sigef";
 import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
@@ -40,10 +43,10 @@ import type { DocHistorico } from "../lib/historico";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { temRecurso } from "../lib/recursos";
 import { temPermissao } from "../lib/permissoes";
-import { Avisos, BarraEtapas, BotaoPerigo, confirmar, Dica, ProximaAcao, Rotulo, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
-import { avisarConsumo, carregarCreditos, custoDeVarios, textoSemCredito } from "../lib/creditos";
-import { consumoDaNumeracao, numeracaoDosMarcos, precisaNumerar } from "../lib/codigos_marcos";
+import { Avisos, BarraEtapas, BotaoPerigo, Dica, ProximaAcao, Rotulo, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
+import { consumoDaNumeracao, numeracaoDosMarcos } from "../lib/codigos_marcos";
 import { BotaoConcluir, useConclusao } from "./ConcluirServico";
+import { ExportarArea } from "./ExportarArea";
 import { AutoriaServico } from "./Auditoria";
 import { BarreiraErro } from "./BarreiraErro";
 import { MOTIVO_SEM_WEBGL, webglDisponivel } from "../lib/webgl";
@@ -133,6 +136,26 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [novoV, setNovoV] = useState({ aposOrdem: "", codigo: "", lat: "", lon: "", h: "", sigmaH: "0,02" });
   const [erro, setErro] = useState<string | null>(null);
   const [gerado, setGerado] = useState<Gerado | null>(null);
+  const [zipandoDocs, setZipandoDocs] = useState(false);
+  /** "Baixar tudo (ZIP)" dos documentos gerados: memorial, planilha, planta geral e as A3 das glebas. */
+  async function baixarTudoGerado() {
+    if (!gerado) return;
+    const base = servico.denominacao || servico.nome_arquivo_txt?.replace(/\.txt$/i, "") || "imovel";
+    const arquivos: ArquivoZip[] = [
+      { nome: `Memorial Descritivo - ${base}.docx`, url: gerado.memorial_docx },
+      { nome: `Planilha SIGEF - ${base}.ods`, url: gerado.planilha_ods },
+      ...(gerado.planta_pdf ? [{ nome: `Planta ${gerado.folha ?? "A1"} - ${base}.pdf`, url: gerado.planta_pdf }] : []),
+      ...(gerado.glebas ?? []).filter((g) => g.planta_pdf).map((g) => ({ nome: `Planta A3 - ${g.nome}.pdf`, url: g.planta_pdf!, pasta: "Plantas A3" })),
+    ];
+    setZipandoDocs(true);
+    try {
+      await baixarZip(arquivos, `Documentos - ${base}${gerado.versao != null ? ` - v${gerado.versao}` : ""}`);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      setZipandoDocs(false);
+    }
+  }
   const [ocupado, setOcupado] = useState(false);
   const [rtExtras, setRtExtras] = useState({ formacao: "", conselho_sigla: "CFTA", conselho_numero: "", identidade: "", cpf: "" });
   // Os extras do RT chegam do cadastro DEPOIS do primeiro desenho. Só o que o
@@ -443,8 +466,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // calcular o progresso, para que as duas telas nunca discordem.
   const ehConferencia = !vaiAoSigef(servico);
   const temGlebas = !!servico.tem_glebas;
-  // partilha: as glebas nasceram do motor de divisão em partes iguais
+  // divisão (partilha ou desmembramento): as glebas nasceram do motor de divisão
   const ehDivisao = !!servico.divisao;
+  // desmembramento: áreas que saem do imóvel + a área remanescente
+  const ehDesm = ehDivisao && ehDesmembramento(servico.divisao);
   const comMetragem = metragemPlanta ?? ehDivisao;
   // "temos o PDF" inclui o que ficou guardado: reabrir o serviço não pode
   // esconder a planta e as peças só porque o arquivo não está na memória
@@ -730,11 +755,20 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     }
   }
 
+  // Documentos de cada área da divisão (desmembramento ou partilha): o mesmo
+  // estado para o atalho do painel da prancheta e a lista da etapa Documentos.
+  const docsAreas = useDocumentosDasAreas({
+    servico, vertices, glebas, setGlebas, salvar, numerarMarcos,
+    avisar, setErro, folha: folhaEfetiva, metragem: comMetragem,
+  });
+
   // Autossalvamento de tudo que a tela edita — inclusive a confrontação, que
   // mora nos vértices. Suspenso enquanto uma rotina do servidor está no ar:
   // gerar/corrigir gravam e releem o serviço, e uma escrita concorrente
-  // sobrescreveria o que acabou de voltar.
-  const emRotina = ocupado || corrigindo || gerandoPecas || gerandoPlanta || gerandoTabular;
+  // sobrescreveria o que acabou de voltar. (Os documentos de cada área ligam
+  // glebas.servico_parte_id no banco: o autossalvamento com a lista antiga
+  // desligaria a área do serviço dela — e a próxima geração criaria outro.)
+  const emRotina = ocupado || corrigindo || gerandoPecas || gerandoPlanta || gerandoTabular || docsAreas.gerando;
   // `base`: as glebas chegam do banco depois do primeiro desenho; quando chegam,
   // o que está na tela passa a ser o "já gravado" (abrir não é editar).
   const auto = useAutosave(
@@ -815,12 +849,17 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     }
   }
 
-  // ------- divisão em partes iguais (partilha) -------
+  // ------- divisão do imóvel (partilha ou desmembramento) -------
   function aplicarDivisaoNaTela(r: { vertices: Vertice[]; glebas: Gleba[]; divisao: Servico["divisao"] }) {
     setVertices(r.vertices);
-    setGlebas(r.glebas);
+    // id já na tela: o autossalvamento grava sempre a mesma linha de cada gleba
+    // (sem ele, cada gravação sorteava um id novo) e a geração dos documentos de
+    // cada área liga o serviço dela pela gleba
+    setGlebas(r.glebas.map((g) => (g.id ? g : { ...g, id: crypto.randomUUID() })));
     setServico((s) => ({ ...s, tem_glebas: true, divisao: r.divisao ?? {} }));
-    avisar("ok", `Divisão salva em ${r.glebas.length} partes. Confira os confrontantes do perímetro e gere os documentos de novo: a planta A1 sai com as divisões e cada parte com a sua planta A3. ${ondeSaiMemorialDaGleba("parte")}`);
+    avisar("ok", ehDesmembramento(r.divisao)
+      ? `Desmembramento salvo em ${r.glebas.length} áreas. Confira os confrontantes do perímetro; em Documentos saem a planta A1 com as áreas e, em "Documentos de cada área", o memorial descritivo, o memorial tabular, a planta e a planilha da remanescente e de cada área desmembrada.`
+      : `Divisão salva em ${r.glebas.length} partes. Confira os confrontantes do perímetro e gere os documentos de novo: a planta A1 sai com as divisões e cada parte com a sua planta A3. ${ondeSaiMemorialDaGleba("parte")}`);
   }
   /** Serviço de glebas: as partes da prancheta viram glebas, sem virar partilha. */
   function aplicarGlebasNaTela(r: { vertices: Vertice[]; glebas: Gleba[] }) {
@@ -837,32 +876,27 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
   function ondeSaiMemorialDaGleba(unidade: "gleba" | "parte"): string {
     return ehConferencia
       ? `O memorial de cada ${unidade} não sai na conferência de área: é das peças técnicas do serviço completo, depois do SIGEF.`
-      : `O memorial de cada ${unidade} sai nas peças técnicas, depois do SIGEF${unidade === "parte" ? " (e no GEO individual dela)" : ""}.`;
+      : `O memorial de cada ${unidade} sai nas peças técnicas, depois do SIGEF${unidade === "parte" ? ` (e em "Documentos de cada parte", com o serviço dela)` : ""}.`;
   }
   /** Serviço completo que vira partilha: liga as glebas e abre a etapa Divisão. */
   function comecarDivisao() {
     setServico((s) => ({ ...s, tem_glebas: true, divisao: { iguais: true } }));
     setEtapa("glebas");
   }
-
-  // Um serviço completo por parte, no nome do herdeiro. Os vértices levam os
-  // códigos do imóvel (o marco tem o mesmo nome nos dois GEOs) e as divisas
-  // internas já confrontam com a parte vizinha — ver verticesDaParte.
-  // Cada GEO é um serviço novo e gasta 1 crédito (0036): a pessoa escolhe as
-  // partes e a pergunta antes diz quantos créditos saem — um por parte.
-  const [criandoGeos, setCriandoGeos] = useState(false);
-  const semCodigo = vertices.filter((v) => !v.codigo || v.codigo_provisorio).length;
-  const chaveGeo = (g: Gleba, i: number) => g.id ?? `i${i}`;
-  // partes escolhidas para gerar o GEO (null = todas as que ainda não têm)
-  const [geoEscolha, setGeoEscolha] = useState<Set<string> | null>(null);
-  const partesGeo = glebas.filter((g) => g.anel.length >= 3);
-  const geoMarcadas = (g: Gleba, i: number) => !g.servico_parte_id && (geoEscolha ? geoEscolha.has(chaveGeo(g, i)) : true);
-  const qtdGeo = partesGeo.filter(geoMarcadas).length;
-  function marcarGeo(g: Gleba, i: number, sim: boolean) {
-    const atual = new Set(geoEscolha ?? partesGeo.filter((x) => !x.servico_parte_id).map((x) => chaveGeo(x, partesGeo.indexOf(x))));
-    if (sim) atual.add(chaveGeo(g, i)); else atual.delete(chaveGeo(g, i));
-    setGeoEscolha(atual);
+  /**
+   * Serviço completo que vira desmembramento: começa com uma área desmembrada
+   * (10% do imóvel, arredondada) e a remanescente com o resto — a prancheta
+   * monta isso ao abrir a etapa, já chamada de "Desmembramento".
+   */
+  function comecarDesmembramento() {
+    setServico((s) => ({ ...s, tem_glebas: true, divisao: { tipo: "desmembramento", iguais: false, remanescente: 1 } }));
+    setEtapa("glebas");
   }
+
+  // Os documentos de cada área (um serviço completo por área, no nome de quem a
+  // recebe) moram em DocumentosDasAreas: lá estão a escolha das áreas, o
+  // crédito (1 por área nova, perguntado antes) e a geração com o tabular.
+  const partesGeo = glebas.filter((g) => g.anel.length >= 3);
   /**
    * Numeração oficial dos marcos sem gerar os documentos (lib/codigos_marcos.ts):
    * a mesma conta e os mesmos contadores do gerar-documentos, que depois
@@ -890,96 +924,6 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     setVertices(novos);
     return novos;
   }
-
-  async function criarGeosIndividuais() {
-    const partes = partesGeo;
-    const numerar = precisaNumerar(vertices);
-    const alvo = partes.filter(geoMarcadas);
-    if (!alvo.length) { setErro("Marque as partes que vão ganhar o GEO."); return; }
-    // cada parte é um serviço novo: 1 crédito por parte, perguntado antes
-    const custo = custoDeVarios(await carregarCreditos().catch(() => null), "completo", alvo.length);
-    if (!custo.disponivel) { setErro(custo.detalhe); avisar("erro", custo.detalhe); return; }
-    const ok = await confirmar({
-      titulo: `Gerar o GEO de ${alvo.length === 1 ? "1 parte" : `${alvo.length} partes`} vai consumir ${custo.credito}`,
-      texto: (
-        <>
-          <p>Cada GEO é um <b>serviço novo</b>, no nome do herdeiro, com SIGEF e peças próprios — por isso gasta 1 crédito por parte.</p>
-          <p>{custo.detalhe}</p>
-          {numerar && (
-            <p>Antes, os marcos do imóvel recebem a <b>numeração oficial do credenciado</b> — a mesma que os documentos do imóvel vão usar
-              ao gerar, sem trocar depois. Mudar a divisão depois disso renumera o imóvel, e os GEOs já criados ficariam com os códigos antigos.</p>
-          )}
-          <p className="sub">{alvo.map((g) => g.nome).join(", ")}</p>
-        </>
-      ),
-      confirmar: `Gerar e usar ${custo.credito}`,
-      cancelar: "Voltar",
-    });
-    if (!ok) return;
-    setCriandoGeos(true);
-    setErro(null);
-    let criados = 0;
-    const novas = [...glebas];
-    try {
-      await salvar();
-      // marcos novos da divisão sem código: numera agora (não precisa gerar os documentos antes)
-      const vs = numerar ? await numerarMarcos() : vertices;
-      for (const [k, g] of partes.entries()) {
-        if (g.servico_parte_id || !alvo.includes(g)) continue;
-        const { data: novo, error } = await supabase.from("servicos").insert(servicoDaParte(servico, g)).select().single();
-        if (error) throw error;
-        const linhas = verticesDaParte(servico, vs, partes, k, (novo as Servico).id);
-        const { error: eV } = await supabase.from("vertices").insert(linhas);
-        if (eV) throw eV;
-        const i = novas.indexOf(g);
-        novas[i] = { ...g, servico_parte_id: (novo as Servico).id };
-        if (g.id) await supabase.from("glebas").update({ servico_parte_id: (novo as Servico).id }).eq("id", g.id);
-        criados++;
-      }
-      setGeoEscolha(null);
-      avisar("ok", criados
-        ? `${criados} GEO(s) individual(is) criado(s), cada um no nome do herdeiro. Abra cada um para completar os dados da pessoa e gerar os documentos.`
-        : "Todas as partes já têm o seu GEO individual.");
-    } catch (e) {
-      const m = e instanceof Error ? e.message : (e as { message?: string })?.message ?? String(e);
-      setErro(`${criados ? `${criados} GEO(s) criado(s); parou na parte seguinte: ` : ""}${textoSemCredito(m)}`);
-    } finally {
-      // as partes já criadas ficam ligadas mesmo se uma das seguintes falhar
-      if (criados) { setGlebas(novas); void avisarConsumo("completo"); }
-      setCriandoGeos(false);
-    }
-  }
-
-  /** A lista do GEO de cada parte: marcar quais partes, o custo e o botão (Divisão e Documentos). */
-  const blocoGeoPartes = (compacto: boolean) => (
-    <div className={`geo-partes${compacto ? " compacto" : ""}`}>
-      <ul>
-        {partesGeo.map((g, i) => {
-          const feito = !!g.servico_parte_id;
-          return (
-            <li key={chaveGeo(g, i)} className={feito ? "feito" : ""}>
-              <label>
-                <input type="checkbox" disabled={feito || criandoGeos} checked={feito || geoMarcadas(g, i)} onChange={(e) => marcarGeo(g, i, e.target.checked)} />
-                <span className="geo-nome"><b>{g.nome}</b><small>{g.detentor_nome || "sem herdeiro (sai no nome do proprietário)"}</small></span>
-              </label>
-              <span className="geo-area mono">{areaHaDoAnel(g.anel).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} ha</span>
-              {feito ? <a className="geo-link" href={`#/servico/${g.servico_parte_id}`}>abrir o GEO →</a> : <span className="geo-falta">sem GEO</span>}
-            </li>
-          );
-        })}
-      </ul>
-      {partesGeo.every((g) => g.servico_parte_id) ? (
-        <p className="sub geo-pe">Todas as partes já têm o seu GEO.</p>
-      ) : (
-        <div className="geo-pe">
-          <button type="button" className="principal" disabled={criandoGeos || qtdGeo === 0} onClick={criarGeosIndividuais}>
-            {criandoGeos ? "Gerando os GEOs…" : `Gerar GEO${qtdGeo === 1 ? "" : "s"} (${qtdGeo} parte${qtdGeo === 1 ? "" : "s"})`}
-          </button>
-          <span className="sub">Cada GEO é um serviço novo: <b>1 crédito por parte</b>, confirmado antes.{semCodigo > 0 ? " Os marcos recebem a numeração oficial na hora — não precisa gerar os documentos antes." : ""}</span>
-        </div>
-      )}
-    </div>
-  );
 
   // ------- entradas que sobrevivem à geração -------
   //
@@ -1298,11 +1242,17 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     // confrontar — a planta dos confrontantes e o documento completo saem
     // pelos anéis das glebas, não pela sequência do TXT.
     if (temGlebas && !docsProntos && glebasOrdens.length === 0) {
-      return {
+      return ehDesm ? {
+        tom: "pendente",
+        titulo: "Salve o desmembramento",
+        detalhe: "a remanescente e cada área desmembrada viram um anel próprio na planta e nos documentos",
+        rotuloBotao: "Ir para o desmembramento",
+        onClick: () => irParaCampo("bloco-divisao"),
+      } : {
         tom: "pendente",
         titulo: "Divida o imóvel em glebas",
         detalhe: "cada gleba vira um anel próprio na planta e nos documentos; sem a divisão, a sequência do TXT cruzaria o imóvel",
-        rotuloBotao: ehDivisao ? "Ir para a divisão" : "Ir para as glebas",
+        rotuloBotao: ehDesm ? "Ir para o desmembramento" : ehDivisao ? "Ir para a divisão" : "Ir para as glebas",
         onClick: () => irParaCampo(ehDivisao ? "bloco-divisao" : "bloco-glebas-prancheta"),
       };
     }
@@ -1349,7 +1299,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
       };
     }
     return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, as duas plantas e as peças gerados — tudo disponível no histórico abaixo" };
-  }, [pendencias, docsProntos, temSigef, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia, temGlebas, glebasOrdens.length, verticesFora]);
+  }, [pendencias, docsProntos, temSigef, plantaUrl, pecasProntas, preview, confrontantesPreenchidos, servico.tipo_imovel, ehConferencia, temGlebas, glebasOrdens.length, verticesFora, ehDivisao, ehDesm]);
 
   // "Concluir serviço": tudo gerado → a próxima ação é fechar; concluído → o selo.
   // A conferência termina nos documentos; o completo, nas peças.
@@ -1392,7 +1342,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     { chave: "dados", rotulo: "Dados", feita: pendencias.length === 0 },
     // Glebas ANTES de confrontar: a divisão organiza o desenho — a planta da
     // etapa seguinte e o documento completo já nascem pelos anéis das glebas.
-    ...(temGlebas ? [{ chave: "glebas" as Etapa, rotulo: ehDivisao ? "Divisão" : "Glebas", feita: glebasOrdens.length > 0 }] : []),
+    ...(temGlebas ? [{ chave: "glebas" as Etapa, rotulo: ehDesm ? "Desmembramento" : ehDivisao ? "Divisão" : "Glebas", feita: glebasOrdens.length > 0 }] : []),
     { chave: "confrontantes", rotulo: "Confrontantes e vértices", feita: confrontantesPreenchidos > 0 },
     { chave: "documentos", rotulo: "Documentos", feita: ehConferencia ? docsProntos : !!plantaUrl && pecasProntas },
   ];
@@ -1446,7 +1396,11 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
           <span className={`chip mod-${chave}`}>{rotuloCurto[chave]}</span>
           <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
           <span className="esticar" />
-          {(docsProntos || conclusao.concluido) && <BotaoConcluir servico={servico} conclusao={conclusao} pronto={prontoParaConcluir} />}
+          <ExportarArea servicoId={servico.id} temPerimetro={vertices.length >= 3} antes={emRotina ? undefined : auto.agora} />
+          {/* pronto para concluir: a faixa da próxima ação já traz "Concluir serviço"
+              em destaque — o do cabeçalho repetia o mesmo botão na mesma tela */}
+          {(docsProntos || conclusao.concluido) && !(prontoParaConcluir && !conclusao.concluido)
+            && <BotaoConcluir servico={servico} conclusao={conclusao} pronto={prontoParaConcluir} />}
           {avisosTopo.length > 0 && (
             <button type="button" className={verAvisos ? "topo-selo ativo" : "topo-selo"} aria-expanded={verAvisos}
               onClick={() => setVerAvisos((v) => !v)}>
@@ -1637,10 +1591,13 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {!temGlebas && !ehConferencia && chave === "completo" && (
               <div className="bloco dv-convite">
                 <div>
-                  <b>Partilha ou herança?</b>
-                  <Dica>Divida este imóvel em partes iguais: sai o GEO do imóvel inteiro e um GEO para cada parte, no nome de cada herdeiro.</Dica>
+                  <b>Partilha, herança ou venda de parte?</b>
+                  <Dica>Partes iguais: divide o imóvel entre os herdeiros, todas com a mesma área. Desmembrar: uma área sai do imóvel com a área que você digitar, no nome do adquirente, e o resto fica como área remanescente. Nos dois, sai o GEO do imóvel inteiro e, em Documentos, o memorial descritivo, o memorial tabular, a planta e a planilha de cada área.</Dica>
                 </div>
-                <button type="button" onClick={comecarDivisao}>Dividir em partes iguais</button>
+                <div className="acoes-linha">
+                  <button type="button" onClick={comecarDivisao}>Dividir em partes iguais</button>
+                  <button type="button" onClick={comecarDesmembramento}>Desmembrar uma área</button>
+                </div>
               </div>
             )}
           </>
@@ -1783,6 +1740,15 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   }}>+ adicionar transição</button>
                 </div>
               </div>
+            {/* ------- Rodovias e recuo legal (recuo automático, 05/11/2026): o padrão
+                da lei com a fonte, a largura conferida e, nas BRs, o DNIT ------- */}
+            <RecuoRodovias
+              rotulos={trechosOrdenados.filter((t) => t.eh_via && !ehRioPorLimite(t.tipo_limite)).map((t) => t.descritivo || t.apelido_txt)}
+              aneisLonLat={aneisSigef} uf={servico.uf}
+              ajustes={servico.recuo_vias?.vias ?? {}}
+              onAjustes={(vias) => setServico((s) => ({ ...s, recuo_vias: { ...(s.recuo_vias ?? {}), vias } }))}
+              planta={servico.recuo_vias?.planta !== false}
+              onPlanta={(v) => setServico((s) => ({ ...s, recuo_vias: { ...(s.recuo_vias ?? {}), planta: v } }))} />
             {/* ------- Vértices: na mesma etapa, porque a ORDEM deles é o que define os
                 trechos e o mapa acima; reordenar aqui atualiza tudo ao mesmo tempo. ------- */}
             <div className="etapa-cabeca" id="bloco-vertices">
@@ -2040,7 +2006,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {ehDivisao && (
               <DivisaoEditor servico={servico} vertices={vertices} glebas={glebas}
                 onAplicar={aplicarDivisaoNaTela} onGlebas={setGlebas}
-                extrasPartes={partesGeo.length >= 2 && vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO) ? blocoGeoPartes(true) : undefined}
+                extrasPartes={partesGeo.length >= 2 && vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO)
+                  ? <DocumentosDasAreas estado={docsAreas} compacto onVerDocumentos={() => irParaCampo("bloco-docs-areas")} />
+                  : undefined}
                 onRascunho={(d) => setServico((x) => ({ ...x, divisao: d }))} />
             )}
             {/* Serviço de glebas: "Pontos e ligações" + prancheta é o caminho
@@ -2075,8 +2043,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {/* partilha sem a divisão salva: as plantas sairiam do imóvel inteiro */}
             {ehDivisao && !(vertices.some((v) => v.rotulo_txt === ROTULO_DIVISAO) && glebas.filter((g) => g.anel.length >= 3).length >= 2) && (
               <div className="dv-alerta">
-                A divisão ainda não foi salva: a planta A1 e os documentos sairiam do imóvel inteiro, sem as partes.{" "}
-                <button type="button" className="fantasma" onClick={() => setEtapa("glebas")}>Ir para a Divisão e salvar</button>
+                {ehDesm
+                  ? "O desmembramento ainda não foi salvo: a planta A1 e os documentos sairiam do imóvel inteiro, sem as áreas."
+                  : "A divisão ainda não foi salva: a planta A1 e os documentos sairiam do imóvel inteiro, sem as partes."}{" "}
+                <button type="button" className="fantasma" onClick={() => setEtapa("glebas")}>{ehDesm ? "Ir para o Desmembramento e salvar" : "Ir para a Divisão e salvar"}</button>
               </div>
             )}
             {/* ---- Conferência de área: para aqui. No lugar do SIGEF e das peças, o
@@ -2357,6 +2327,11 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 <header>
                   <h3>Documentos gerados<Dica>regeração ilimitada — cada geração vira uma nova versão no histórico</Dica></h3>
                   {gerado.versao != null && <span className="desc">última geração · v{gerado.versao}</span>}
+                  <span className="esticar" />
+                  {/* um clique para o pacote inteiro (memorial, planilha, plantas) */}
+                  <button type="button" className="fantasma" disabled={zipandoDocs} onClick={() => void baixarTudoGerado()}>
+                    {zipandoDocs ? "Montando o ZIP…" : "Baixar tudo (ZIP)"}
+                  </button>
                 </header>
                 <div className="downloads">
                   <a className="botao-download" href={gerado.memorial_docx} target="_blank" rel="noreferrer">
@@ -2395,7 +2370,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     <p className="sub" style={{ margin: 0 }}>
                       {ehConferencia
                         ? "Por gleba sai aqui a planta A3. O memorial de cada gleba é das peças técnicas do serviço completo."
-                        : "Por gleba sai aqui a planta A3. O memorial de cada gleba sai nas peças técnicas, depois do SIGEF."}
+                        : ehDivisao
+                          ? `Por ${ehDesm ? "área" : "parte"} sai aqui a planta A3. O memorial descritivo, o tabular, a planta e a planilha de cada uma saem em "Documentos de cada ${ehDesm ? "área" : "parte"}", logo abaixo.`
+                          : "Por gleba sai aqui a planta A3. O memorial de cada gleba sai nas peças técnicas, depois do SIGEF."}
                     </p>
                   </div>
                 )}
@@ -2407,13 +2384,17 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               </section>
             )}
 
-            {/* ---- GEOs individuais da partilha ---- */}
+            {/* ---- Documentos de cada área da divisão (desmembramento ou partilha) ----
+                Um lugar só: cada área com o papel, a área, quem recebe e os quatro
+                documentos dela; gerar (1 crédito por área nova) e baixar tudo. */}
             {ehDivisao && glebas.filter((g) => g.anel.length >= 3).length >= 2 && (
-              <section className="bloco" id="bloco-geos-partes">
+              <section className="bloco" id="bloco-docs-areas">
                 <header>
-                  <h3>GEO de cada parte<Dica>um serviço completo por parte, no nome do herdeiro, com os mesmos marcos do imóvel e as divisas internas já confrontando com a parte vizinha — segue para o SIGEF e para as peças como qualquer serviço</Dica></h3>
+                  <h3>{ehDesm ? "Documentos de cada área" : "Documentos de cada parte"}<Dica>{ehDesm
+                    ? "A remanescente e cada área desmembrada viram um serviço completo próprio, no nome de quem as recebe, com os mesmos marcos do imóvel e as divisas internas confrontando com a área vizinha: memorial descritivo, memorial tabular, planta e planilha do SIGEF de cada uma — e seguem para o SIGEF e as peças como qualquer serviço."
+                    : "Cada parte vira um serviço completo próprio, no nome do herdeiro, com os mesmos marcos do imóvel e as divisas internas confrontando com a parte vizinha: memorial descritivo, memorial tabular, planta e planilha do SIGEF de cada uma — e segue para o SIGEF e as peças como qualquer serviço."}</Dica></h3>
                 </header>
-                {blocoGeoPartes(false)}
+                <DocumentosDasAreas estado={docsAreas} />
               </section>
             )}
 

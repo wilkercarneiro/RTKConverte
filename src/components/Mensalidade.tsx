@@ -1,26 +1,36 @@
 // A mensalidade do Vertces vista pela empresa (migração 0034):
 //   AguardandoPagamento — empresa nova que ainda não pagou a 1ª mensalidade: o
-//                         link para pagar e a liberação sozinha ao confirmar
+//                         link para pagar e a liberação sozinha ao confirmar.
+//                         Quem se cadastrou pelo site (0040) escolhe aqui o
+//                         período, Pix ou cartão parcelado (PagamentoCadastro)
 //   AvisoMensalidade    — faixa no Início quando a mensalidade venceu
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { conferirPagamentos, minhaCobranca } from "../lib/cobranca";
 import type { MinhaCobranca } from "../lib/cobranca";
 import { fmtPreco } from "../lib/creditos";
-import { dataBr } from "../../supabase/functions/_shared/mensagens_cobranca.ts";
+import { dataBr, nomeDaCobranca } from "../../supabase/functions/_shared/mensagens_cobranca.ts";
 import { SUPORTE_WHATSAPP } from "../lib/config";
 import { Logo } from "./Logo";
 import { FormCartao } from "./Cartao";
+import { PagamentoCadastro, pagaPeloSite } from "./PagamentoCadastro";
+
+/** "Mensalidade" · "Cobrança semestral" · "Anuidade" (o período da assinatura, 0040) */
+const NomeCobranca = (ciclo?: string | null) => { const n = nomeDaCobranca(ciclo); return n.charAt(0).toUpperCase() + n.slice(1); };
 
 export function AguardandoPagamento({ nome }: { nome: string }) {
   const [c, setC] = useState<MinhaCobranca | null | undefined>(undefined);
   const [conferindo, setConferindo] = useState(false);
   const [nota, setNota] = useState<string | null>(null);
   const [cartao, setCartao] = useState(false);
+  // a tela do autocadastro confere sozinha (e mostra "pagamento confirmado" antes de entrar)
+  const site = useRef(false);
+  const [pagoSite, setPagoSite] = useState(false);
 
   async function ler(perguntarAoAsaas: boolean) {
     if (perguntarAoAsaas) await conferirPagamentos().catch(() => null);
     const atual = await minhaCobranca();
+    site.current = pagaPeloSite(atual);
     setC(atual);
     // pago: a empresa já está ativa — recarrega e entra
     if (atual?.status === "ativo") location.reload();
@@ -29,9 +39,25 @@ export function AguardandoPagamento({ nome }: { nome: string }) {
   useEffect(() => {
     ler(false);
     // pagou em outra aba ou no celular: entra sozinho
-    const t = setInterval(() => ler(true), 15_000);
+    const t = setInterval(() => { if (!site.current) void ler(true); }, 15_000);
     return () => clearInterval(t);
   }, []);
+
+  if (c && pagaPeloSite(c)) {
+    return (
+      <div className="centro">
+        <div className="login-box mens-box mens-site" style={{ textAlign: "left" }}>
+          <Logo size={28} />
+          <h2 style={{ marginTop: 14 }}>{pagoSite ? "Tudo certo: a conta está liberada" : "Falta o pagamento para liberar o acesso"}</h2>
+          {!pagoSite && <p>A conta da <b>{c.empresa ?? nome}</b> está pronta. Pague o primeiro período e entre na hora.</p>}
+          <PagamentoCadastro cobranca={c} onConfirmado={() => setPagoSite(true)} />
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+            <button className="fantasma" onClick={() => supabase.auth.signOut()}>Sair</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   async function jaPaguei() {
     setConferindo(true); setNota(null);
@@ -81,7 +107,7 @@ export function AguardandoPagamento({ nome }: { nome: string }) {
               </div>
             ) : c?.link ? (
               <div className="mens-cobranca">
-                <div><span>Mensalidade</span><b>{c.valor !== null ? fmtPreco(Number(c.valor)) : "—"}</b>{c.vencimento && <small>{vencida ? "venceu" : "vence"} em {dataBr(c.vencimento)}</small>}</div>
+                <div><span>{NomeCobranca(c.ciclo)}</span><b>{c.valor !== null ? fmtPreco(Number(c.valor)) : "—"}</b>{c.vencimento && <small>{vencida ? "venceu" : "vence"} em {dataBr(c.vencimento)}</small>}</div>
                 <a className="botao-download principal" href={c.link} target="_blank" rel="noreferrer">Pagar agora (Pix, boleto ou cartão)</a>
               </div>
             ) : (
@@ -106,7 +132,7 @@ export function AvisoMensalidade({ cobranca }: { cobranca: MinhaCobranca | null 
   return (
     <div className={`mens-aviso${atrasada ? " atrasada" : ""}`} role="status">
       <span>
-        <b>{atrasada ? "Mensalidade vencida" : "Mensalidade em aberto"}</b>
+        <b>{NomeCobranca(cobranca.ciclo)} {atrasada ? "vencida" : "em aberto"}</b>
         {" "}{cobranca.valor !== null && fmtPreco(Number(cobranca.valor))}
         {cobranca.vencimento && ` · ${atrasada ? "venceu" : "vence"} em ${dataBr(cobranca.vencimento)}`}
       </span>

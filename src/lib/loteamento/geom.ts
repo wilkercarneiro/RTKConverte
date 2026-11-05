@@ -255,21 +255,67 @@ function paths(pols: Poligono[]): Path[] {
   return out;
 }
 
-/** PolyTree → polígonos com furos (ilhas dentro de furos viram polígonos próprios). */
+/** Um ponto dentro do anel (o centroide, ou o meio da faixa mais larga de uma varredura horizontal). */
+function pontoNoAnel(anel: Anel): Pt {
+  const c = centroide(anel);
+  if (dentroAnel(c, anel)) return c;
+  const { min, max } = caixa(anel);
+  let melhor: Pt = c, larg = -1;
+  for (let k = 1; k < 16; k++) {
+    const y = min[1] + ((max[1] - min[1]) * k) / 16;
+    const xs: number[] = [];
+    for (let i = 0; i < anel.length; i++) {
+      const a = anel[i], b = anel[(i + 1) % anel.length];
+      if ((a[1] > y) !== (b[1] > y)) xs.push(a[0] + ((y - a[1]) * (b[0] - a[0])) / (b[1] - a[1]));
+    }
+    xs.sort((p, q) => p - q);
+    for (let i = 0; i + 1 < xs.length; i += 2) if (xs[i + 1] - xs[i] > larg) { larg = xs[i + 1] - xs[i]; melhor = [(xs[i] + xs[i + 1]) / 2, y]; }
+  }
+  return melhor;
+}
+
+/**
+ * PolyTree → polígonos com furos (ilhas dentro de furos viram polígonos próprios).
+ * Com StrictlySimple o clipper às vezes erra a ÁRVORE (os anéis estão certos):
+ * põe um furo na raiz, como se fosse contorno (o anel vem no sentido horário),
+ * ou pendura o furo num "contorno" de área zero ao lado do verdadeiro — é o furo
+ * que toca outro anel num ponto só (a quadra importada que encosta na divisa
+ * ou na outra quadra pela quina). Antes o furo era somado como terra ou se
+ * perdia com o contorno vazio; agora volta a ser furo do contorno que o contém.
+ */
 function daArvore(tree: { Childs(): unknown[] }): Poligono[] {
   const out: Poligono[] = [];
+  const soltos: Anel[] = [];
   type Node = { Contour(): Path; IsHole(): boolean; Childs(): Node[] };
+  const anelValido = (f: Anel) => f.length >= 3 && Math.abs(areaAssinada(f)) > 1e-4;
+  const horario = (f: Anel) => (areaAssinada(f) > 0 ? f.reverse() : f);
   const visitar = (n: Node) => {
-    const ext = limparAnel(antiHorario(doPath(n.Contour())));
+    const bruto = doPath(n.Contour());
+    if (areaAssinada(bruto) < -1e-4) {
+      const f = limparAnel(bruto);
+      if (anelValido(f)) soltos.push(f);
+      for (const ilha of n.Childs()) visitar(ilha);
+      return;
+    }
+    const ext = limparAnel(antiHorario(bruto));
+    const valido = ext.length >= 3 && areaAssinada(ext) > 1e-4;
     const furos: Anel[] = [];
     for (const h of n.Childs()) {
       const f = limparAnel(doPath(h.Contour()));
-      if (f.length >= 3 && Math.abs(areaAssinada(f)) > 1e-4) furos.push(areaAssinada(f) > 0 ? f.reverse() : f);
+      // furo maior que o contorno (o "contorno" de área quase zero do erro do clipper) não é dele
+      if (anelValido(f)) (valido && Math.abs(areaAssinada(f)) < areaAssinada(ext) ? furos : soltos).push(horario(f));
       for (const ilha of h.Childs()) visitar(ilha);
     }
-    if (ext.length >= 3 && areaAssinada(ext) > 1e-4) out.push({ ext, furos });
+    if (valido) out.push({ ext, furos });
   };
   for (const n of tree.Childs() as Node[]) visitar(n);
+  for (const f of soltos) {
+    // o dono é o menor contorno maior que o furo que contém um ponto de dentro dele
+    const p = pontoNoAnel(f), a = Math.abs(areaAssinada(f));
+    const dono = out.filter((pg) => areaAssinada(pg.ext) > a && dentroAnel(p, pg.ext) && !pg.furos.some((x) => dentroAnel(p, x)))
+      .sort((x, y) => areaAssinada(x.ext) - areaAssinada(y.ext))[0];
+    if (dono) dono.furos.push(f);
+  }
   return out;
 }
 

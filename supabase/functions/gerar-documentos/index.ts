@@ -1,6 +1,8 @@
 // Edge Function gerar-documentos: monta o serviço a partir do banco (fonte da
 // verdade), aloca códigos de vértice (transação nos contadores do credenciado),
 // gera Memorial DOCX + Planilha ODS + Planta PDF e salva no bucket `gerados`.
+// Com `tabular: true` no corpo, também o Memorial Tabular (modelo da peça 2,
+// dados do cálculo) — o jogo de documentos de cada área de uma divisão.
 //
 // A planta daqui sai do MESMO cálculo que alimenta o memorial e a planilha — é a
 // planta da etapa anterior ao SIGEF. Depois da certificação, gerar-planta produz
@@ -23,6 +25,7 @@ import type { DadosMemorial } from "../_shared/memorial.ts";
 import { patchOdsContent } from "../_shared/ods.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { Folha } from "../_shared/planta.ts";
+import { naoEdificavelDaPlanta } from "../_shared/recuo.ts";
 import {
   anelExternoDasGlebas, bytesDeBase64, calcularGleba, glebaPorNome, servicoDaGleba, carregarLogoPlanta, dadosDasPartes, dataHojeBR, geometriaDoCalculo, glebasParaPlanta, montarDadosPlanta,
   ordensDasGlebas, verticesForaDasGlebas,
@@ -40,6 +43,7 @@ import { aplicarTimbreAutomatico, identidadeDaEmpresa, precisaTimbreAutomatico }
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 import { conferirContorno } from "../_shared/contorno.ts";
+import { ARQUIVO_TABULAR_SISTEMA, baixarModelosDasPecas, montarTabularDocx } from "../_shared/tabular_sistema.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -116,7 +120,10 @@ Deno.serve(async (req) => {
     // fornece a área e o perímetro certificados para as plantas exibirem no
     // lugar dos calculados. Sem ela, tudo sai como sempre saiu.
     // metragem: comprimento de cada lado escrito na planta (escolha do operador ao gerar)
-    const { servico_id, folha: folhaPedida, pdf_base64, metragem } = await lerJson(req, LIMITE_MB(40));
+    // tabular: true também gera o Memorial Tabular do imóvel pelo modelo da peça 2,
+    // com os dados calculados (os documentos de cada área de uma divisão pedem).
+    // Sem ele, a geração é exatamente a de sempre.
+    const { servico_id, folha: folhaPedida, pdf_base64, metragem, tabular } = await lerJson(req, LIMITE_MB(40));
     // A imagem de satélite não vem mais da tela: o servidor usa a guardada em
     // entrada/ ou busca no Mapbox pelo anel do imóvel (e de cada gleba).
     const tokenMapbox = Deno.env.get("MAPBOX_TOKEN");
@@ -502,6 +509,34 @@ Deno.serve(async (req) => {
     }
     const docxBuf = await zipDocx.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 
+    // ------------------------- MEMORIAL TABULAR (só com `tabular: true`) -------------------------
+    // Pelo modelo da peça 2 (o mesmo das peças), com a tabela do MESMO cálculo
+    // do memorial acima. Descreve um anel só: o imóvel em partes (ou em glebas
+    // sem perímetro externo) tem o tabular de cada uma nas peças técnicas. Uma
+    // falha aqui não derruba o resto: vira aviso, como a planta.
+    let tabularBuf: Uint8Array | null = null;
+    if (tabular === true) {
+      if (memorialPartes) {
+        avisosGeracao.push(`Memorial tabular não saiu: o imóvel tem ${memorialPartes.length} ${calcPartes ? "partes" : "glebas"} sem um perímetro único — o tabular de cada uma sai nas peças técnicas.`);
+      } else {
+        try {
+          const mods = await baixarModelosDasPecas(supa, esc, posse);
+          if ("falta" in mods) {
+            avisosGeracao.push(`Memorial tabular não saiu: o modelo ${mods.falta} não está no Storage${esc.compartilhados ? "" : " — envie os modelos do escritório em Configurações → Modelos"}. Os outros documentos saíram.`);
+          } else {
+            const zipTab = await montarTabularDocx(mods.bytes, { servico, rt, cred, calc: calcGeral, dataStr: dataHojeBR() }, posse);
+            // modelo neutro (empresa sem modelo próprio): o timbre da empresa, como no memorial
+            if (precisaTimbreAutomatico(esc, mods.caminhos["2"])) {
+              await aplicarTimbreAutomatico(zipTab, logo, await identidadeDaEmpresa(supa, esc.id));
+            }
+            tabularBuf = await zipTab.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+          }
+        } catch (e) {
+          avisosGeracao.push(`Memorial tabular não saiu: ${e instanceof Error ? e.message : String(e)}. Os outros documentos saíram.`);
+        }
+      }
+    }
+
     // ------------------------- ODS -------------------------
     const tplOds = await baixarModelo(supa, esc, "planta-template.ods");
     if (!tplOds.data) return json({ erro: "Template planta-template.ods não encontrado no Storage" }, 500);
@@ -601,6 +636,10 @@ Deno.serve(async (req) => {
     /** A geometria com a área/perímetro do SIGEF por cima — nunca com a forma. */
     const comNumerosSigef = <T extends { areaFmt: string; perimetroFmt: string }>(g: T, n: NumerosSigef | null | undefined): T =>
       (n ? { ...g, areaFmt: n.areaFmt, perimetroFmt: n.perimetroFmt } : g);
+    // faixa não edificável das rodovias (recuo automático, 05/11/2026): na planta
+    // geral e na A3 de cada gleba/área; o serviço reduz (com a lei municipal,
+    // revalidada aqui) ou desliga em servicos.recuo_vias
+    const naoEdificavel = naoEdificavelDaPlanta((servico as { recuo_vias?: unknown }).recuo_vias);
 
     try {
       const geometriaGeral = dp ? dp.geometria : geometriaDoCalculo(calc);
@@ -644,7 +683,7 @@ Deno.serve(async (req) => {
           }
           : undefined,
       });
-      plantaBuf = await gerarPlantaPdf({ ...dadosPlanta, metragem: metragem === true }, undefined, { editavel: true });
+      plantaBuf = await gerarPlantaPdf({ ...dadosPlanta, metragem: metragem === true, naoEdificavel }, undefined, { editavel: true });
     } catch (e) {
       avisosGeracao.push(`Memorial e planilha gerados, mas a planta falhou: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -676,6 +715,19 @@ Deno.serve(async (req) => {
       { servico_id, versao, tipo: "memorial_docx", titulo: `Memorial Descritivo (DOCX)${selo}`, path: pDocx },
       { servico_id, versao, tipo: "planilha_ods", titulo: `Planilha SIGEF (ODS)${selo}`, path: pOds },
     ];
+    // o tabular dos dados do sistema mora na MESMA versão do memorial e da planilha
+    const pTabular = `${servico_id}/v${versao}/${ARQUIVO_TABULAR_SISTEMA}`;
+    if (tabularBuf) {
+      const uT = await supa.storage.from("gerados").upload(pTabular, tabularBuf, {
+        upsert: true, contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+      if (uT.error) {
+        tabularBuf = null;
+        avisosGeracao.push(`Memorial tabular gerado, mas o envio dele falhou: ${uT.error.message}`);
+      } else {
+        docs.push({ servico_id, versao, tipo: "tabular_docx", titulo: `Memorial Tabular (DOCX · dados do sistema)${selo}`, path: pTabular });
+      }
+    }
     if (plantaBuf) {
       const u3 = await supa.storage.from("gerados").upload(pPlanta, plantaBuf, { upsert: true, contentType: "application/pdf" });
       if (u3.error) {
@@ -743,7 +795,7 @@ Deno.serve(async (req) => {
               ? { matricula: servico.conf_exibir_matricula !== false, denominacao: servico.conf_exibir_denominacao !== false, trt: servico.conf_exibir_trt !== false }
               : undefined,
           });
-          const pdfU = await gerarPlantaPdf({ ...dadosPlantaU, metragem: metragem === true }, undefined, { editavel: true });
+          const pdfU = await gerarPlantaPdf({ ...dadosPlantaU, metragem: metragem === true, naoEdificavel }, undefined, { editavel: true });
           const path = `${pastaU}/planta-A3.pdf`;
           const up = await supa.storage.from("gerados").upload(path, pdfU, { upsert: true, contentType: "application/pdf" });
           if (up.error) throw up.error;
@@ -774,6 +826,9 @@ Deno.serve(async (req) => {
     const s3 = plantaBuf
       ? await supa.storage.from("gerados").createSignedUrl(pPlanta, 3600, { download: `Planta - ${nomeBase}.pdf` })
       : null;
+    const s4 = tabularBuf
+      ? await supa.storage.from("gerados").createSignedUrl(pTabular, 3600, { download: `Memorial Tabular - ${nomeBase}.docx` })
+      : null;
     return json({
       ok: true,
       // planta A3 de cada gleba/parte (vazio sem glebas)
@@ -782,6 +837,8 @@ Deno.serve(async (req) => {
       memorial_docx: s1.data?.signedUrl,
       planilha_ods: s2.data?.signedUrl,
       planta_pdf: s3?.data?.signedUrl ?? null,
+      // só quando pedido: sem `tabular`, a resposta é a de sempre
+      ...(tabular === true ? { tabular_docx: s4?.data?.signedUrl ?? null } : {}),
       folha: folhaSaida,
       modalidade: servico.modalidade ?? "completo",
       provisorio: conferencia,

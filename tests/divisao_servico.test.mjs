@@ -221,3 +221,24 @@ test("partilha · planta com metragem: cada lado das partes sai medido, sem repe
   const textos = com.itens.filter((i) => i.k === "texto").map((i) => i.t);
   assert.ok(textos.some((t) => /^\d{1,3}(\.\d{3})*,\d{2} m$/.test(t)), "texto no formato 123,45 m");
 });
+
+test("divisão · a gleba herda o serviço da MESMA terra, não da mesma posição (achado da revisão 05/11)", async () => {
+  const { casarGlebasPorArea } = await import("../src/lib/divisao_servico.ts");
+  const ret = (x0, x1) => [[x0, 0], [x1, 0], [x1, 100], [x0, 100]];
+  // salvo: [DESM 01 (0–100), REMANESCENTE (100–1000)] com os serviços A e R
+  const antes = [
+    { id: "g1", anel: ret(0, 100), servico_parte_id: "A" },
+    { id: "g2", anel: ret(100, 1000), servico_parte_id: "R" },
+  ];
+  // "+": [D01, D02 (100–200), REM (200–1000)] — antes D02 herdava R pela posição
+  const h = casarGlebasPorArea([ret(0, 100), ret(100, 200), ret(200, 1000)], antes);
+  assert.equal(h[0]?.servico_parte_id, "A");
+  assert.equal(h[1], undefined, "a área nova não herda o serviço da remanescente");
+  assert.equal(h[2]?.servico_parte_id, "R", "a remanescente continua com o serviço dela");
+  // arrastar a divisa um pouco continua herdando
+  const d = casarGlebasPorArea([ret(0, 130), ret(130, 1000)], antes);
+  assert.deepEqual(d.map((x) => x?.servico_parte_id), ["A", "R"]);
+  // "−": [REM inteira] não herda A
+  const m = casarGlebasPorArea([ret(0, 1000)], antes);
+  assert.equal(m[0]?.servico_parte_id, "R");
+});

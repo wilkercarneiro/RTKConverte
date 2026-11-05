@@ -1,5 +1,6 @@
 // Entregas do loteamento: o que vai para o cliente (planta, memoriais, quadro,
-// KML, DXF) e o que vai para a coletora do técnico (arquivo de locação).
+// KML, DXF), os arquivos de cada lote (EntregasLotes: memorial, planta A4 e
+// locação por lote) e o que vai para a coletora do técnico (arquivo de locação).
 // Tudo sai do MESMO resultado que está na tela — os nomes de ponto da locação
 // são os mesmos da planta e dos memoriais.
 import { useEffect, useMemo, useState } from "react";
@@ -18,6 +19,8 @@ import { Dica } from "../ui";
 import type { RT, Servico } from "../../lib/types";
 import { Miniatura } from "./Assistente";
 import { EntregasInfra } from "./EntregasInfra";
+import { EntregasLotes } from "./EntregasLotes";
+import { nomeArquivo } from "../../lib/loteamento/entregas.ts";
 import { calcularInfra } from "../../lib/loteamento/infra/index.ts";
 import type { ParametrosInfra } from "../../lib/loteamento/infra/index.ts";
 import { pontosDasRedes } from "../../lib/loteamento/infra/saidas.ts";
@@ -204,6 +207,8 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalva
           </div>
         </div>
       </section>
+
+      <EntregasLotes servicoId={servico.id} res={res} base={nomeArquivo(projeto.nome)} onSalvar={onSalvar} carimbo={() => comCarimbo()} onExportou={onExportou} />
 
       <EntregasInfra projeto={projeto} res={res} onExportou={onExportou} onMudarInfra={onMudarInfra}
         pedir={async (saida, extra) => doServidor(saida, { ...extra, carimbo: await comCarimbo() })} />

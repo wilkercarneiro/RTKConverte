@@ -31,6 +31,30 @@ export async function chamarFuncao<T>(nome: string, body: unknown): Promise<T> {
   return dados as T;
 }
 
+/** Erro de uma função com o status HTTP (a tela do cadastro diferencia 409 de 429). */
+export class ErroFuncao extends Error {
+  status: number;
+  constructor(mensagem: string, status: number) {
+    super(mensagem);
+    this.status = status;
+  }
+}
+
+/**
+ * Função chamada SEM login (o autocadastro, 0040): vai só com a chave pública.
+ * Quem confere e limita é a função; aqui não há sessão para renovar.
+ */
+export async function chamarFuncaoPublica<T>(nome: string, body: unknown): Promise<T> {
+  const resp = await fetch(`${url}/functions/v1/${nome}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${anon ?? ""}`, apikey: anon ?? "", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch(() => { throw new ErroFuncao("Sem conexão com o servidor. Confira a internet e tente de novo.", 0); });
+  const dados = await resp.json().catch(() => ({} as { erro?: string }));
+  if (!resp.ok) throw new ErroFuncao((dados as { erro?: string }).erro ?? `Erro ${resp.status}`, resp.status);
+  return dados as T;
+}
+
 /**
  * Função que devolve um ARQUIVO (corpo binário, nome no cabeçalho
  * X-Nome-Arquivo) — a `entregar` do CAR e do loteamento.

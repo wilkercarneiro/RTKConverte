@@ -17,9 +17,12 @@ export const ambienteValido = (a: unknown): a is Ambiente => a === "sandbox" || 
 
 export class ErroAsaas extends Error {
   status: number;
-  constructor(mensagem: string, status: number) {
+  /** o `code` do primeiro erro ("invalid_creditCard", "invalid_value"…) */
+  codigo: string | null;
+  constructor(mensagem: string, status: number, codigo: string | null = null) {
     super(mensagem);
     this.status = status;
+    this.codigo = codigo;
   }
 }
 
@@ -28,6 +31,8 @@ export function mensagemDoAsaas(corpo: unknown, padrao: string): string {
   const erros = (corpo as { errors?: { description?: string }[] } | null)?.errors;
   return erros?.[0]?.description || padrao;
 }
+const codigoDoAsaas = (corpo: unknown): string | null =>
+  (corpo as { errors?: { code?: string }[] } | null)?.errors?.[0]?.code ?? null;
 
 export interface CobrancaAsaas {
   id: string;
@@ -42,6 +47,9 @@ export interface CobrancaAsaas {
   deleted?: boolean;
   /** pago no cartão: o Asaas pode devolver o token junto (com a tokenização liberada) */
   creditCard?: CartaoDaCobranca | null;
+  /** compra parcelada: o id do parcelamento (igual em todas as parcelas) e o número desta */
+  installment?: string | null;
+  installmentNumber?: number | null;
 }
 export interface CartaoDaCobranca { creditCardNumber?: string; creditCardBrand?: string; creditCardToken?: string | null }
 export interface AssinaturaAsaas {
@@ -56,14 +64,22 @@ export interface PixAsaas { encodedImage: string; payload: string; expirationDat
 export interface WebhookAsaas {
   id: string; name?: string; url: string; enabled: boolean; interrupted: boolean;
   penalizedRequestsCount?: number; hasAuthToken?: boolean;
+  /** os eventos que o Asaas manda para este webhook */
+  events?: string[];
 }
 
-/** Eventos que o webhook do Vertces escuta. */
+/**
+ * Eventos que o webhook do Vertces escuta. Mudou a lista: o superadmin clica em
+ * "Religar o webhook" (Configurações → Pagamentos) para o Asaas passar a mandar.
+ */
 export const EVENTOS_WEBHOOK = [
   "PAYMENT_CREATED", "PAYMENT_UPDATED", "PAYMENT_CONFIRMED", "PAYMENT_RECEIVED", "PAYMENT_OVERDUE",
   "PAYMENT_DELETED", "PAYMENT_RESTORED", "PAYMENT_REFUNDED", "PAYMENT_PARTIALLY_REFUNDED",
   "PAYMENT_REFUND_IN_PROGRESS", "PAYMENT_CHARGEBACK_REQUESTED", "PAYMENT_CHARGEBACK_DISPUTE",
   "PAYMENT_AWAITING_CHARGEBACK_REVERSAL", "PAYMENT_RECEIVED_IN_CASH_UNDONE",
+  // 0040 (autocadastro): análise de risco do cartão e captura recusada
+  "PAYMENT_AWAITING_RISK_ANALYSIS", "PAYMENT_APPROVED_BY_RISK_ANALYSIS", "PAYMENT_REPROVED_BY_RISK_ANALYSIS",
+  "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED",
 ];
 
 export function clienteAsaas(chave: string, ambiente: Ambiente, f: typeof fetch = fetch) {
@@ -84,7 +100,7 @@ export function clienteAsaas(chave: string, ambiente: Ambiente, f: typeof fetch 
     let j: unknown = null;
     try { j = texto ? JSON.parse(texto) : null; } catch { /* resposta sem JSON */ }
     if (r.status === 401) throw new ErroAsaas("O Asaas recusou a chave da API (confira a chave e o ambiente).", 401);
-    if (!r.ok) throw new ErroAsaas(mensagemDoAsaas(j, `O Asaas respondeu ${r.status}.`), r.status);
+    if (!r.ok) throw new ErroAsaas(mensagemDoAsaas(j, `O Asaas respondeu ${r.status}.`), r.status, codigoDoAsaas(j));
     return j as T;
   }
   const id = encodeURIComponent;
@@ -104,6 +120,18 @@ export function clienteAsaas(chave: string, ambiente: Ambiente, f: typeof fetch 
     /** Cobra o cartão na hora: aprovada = 200 (CONFIRMED); recusada = ErroAsaas 400. */
     cobrarNoCartao: (d: { customer: string; value: number; dueDate: string; description: string; externalReference?: string; remoteIp: string } & CartaoParaAsaas) =>
       chamar<CobrancaAsaas>("POST", "/payments", { billingType: "CREDIT_CARD", ...d }, 60_000),
+    /**
+     * Compra parcelada no cartão, cobrada na hora (autocadastro): `installmentCount`
+     * com `totalValue` (sem juros: o Asaas divide e põe a diferença na última) ou
+     * `installmentValue` (com juros, calculado por nós). Aprovada = 200 com a 1ª
+     * parcela e o id do parcelamento em `installment`; recusada = ErroAsaas 400
+     * (e nada fica no Asaas). `value` só vai se a conta exigir (ver fluxos.ts).
+     */
+    cobrarParcelado: (d: {
+      customer: string; dueDate: string; installmentCount: number; totalValue?: number; installmentValue?: number; value?: number;
+      description: string; externalReference?: string; remoteIp: string;
+    } & CartaoParaAsaas) =>
+      chamar<CobrancaAsaas>("POST", "/payments", { billingType: "CREDIT_CARD", ...d }, 60_000),
     /** Paga uma cobrança que já existe (a mensalidade em aberto) com o cartão. */
     pagarComCartao: (pagamento: string, d: CartaoParaAsaas & { remoteIp?: string }) =>
       chamar<CobrancaAsaas>("POST", `/payments/${id(pagamento)}/payWithCreditCard`, d, 60_000),
@@ -112,6 +140,8 @@ export function clienteAsaas(chave: string, ambiente: Ambiente, f: typeof fetch 
       chamar<{ creditCardToken: string; creditCardNumber?: string; creditCardBrand?: string }>("POST", "/creditCard/tokenizeCreditCard", d, 60_000),
     cobranca: (pagamento: string) => chamar<CobrancaAsaas>("GET", `/payments/${id(pagamento)}`),
     removerCobranca: (pagamento: string) => chamar<{ deleted: boolean }>("DELETE", `/payments/${id(pagamento)}`),
+    /** Cancela um parcelamento inteiro (todas as parcelas). */
+    removerParcelamento: (parcelamento: string) => chamar<{ deleted: boolean }>("DELETE", `/installments/${id(parcelamento)}`),
     pix: (pagamento: string) => chamar<PixAsaas>("GET", `/payments/${id(pagamento)}/pixQrCode`),
 
     criarAssinatura: (d: { customer: string; billingType: string; value: number; nextDueDate: string; cycle: string; description: string; externalReference?: string }) =>
