@@ -21,6 +21,7 @@ import type { Ferramenta, Saida, Selecao } from "../../lib/loteamento/acoes.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { Passos, StatusSalvamento } from "../ui";
 import { BotaoConcluir, useConclusao } from "../ConcluirServico";
+import { ExportarArea } from "../ExportarArea";
 import type { Passo } from "../ui";
 import { Assistente } from "./Assistente";
 import { Editor } from "./Editor";
@@ -419,6 +420,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
         {servico.nome_arquivo_txt && <span className="arquivo">{servico.nome_arquivo_txt}</span>}
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
         <span className="esticar" />
+        <ExportarArea servicoId={servico.id} temPerimetro={perimetro.pts.length >= 3} antes={auto.agora} />
         <BotaoConcluir servico={servico} conclusao={conclusao} pronto={servico.status === "gerado"} />
         {res && projeto.gerado && (
           <span className="lot-resumo-topo">

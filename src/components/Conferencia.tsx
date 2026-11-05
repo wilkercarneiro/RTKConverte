@@ -43,6 +43,7 @@ import { Avisos, BarraEtapas, BotaoPerigo, confirmar, Dica, ProximaAcao, Rotulo,
 import { avisarConsumo, carregarCreditos, custoDeVarios, textoSemCredito } from "../lib/creditos";
 import { consumoDaNumeracao, numeracaoDosMarcos, precisaNumerar } from "../lib/codigos_marcos";
 import { BotaoConcluir, useConclusao } from "./ConcluirServico";
+import { ExportarArea } from "./ExportarArea";
 import { AutoriaServico } from "./Auditoria";
 import { BarreiraErro } from "./BarreiraErro";
 import { MOTIVO_SEM_WEBGL, webglDisponivel } from "../lib/webgl";
@@ -1445,6 +1446,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
           <span className={`chip mod-${chave}`}>{rotuloCurto[chave]}</span>
           <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
           <span className="esticar" />
+          <ExportarArea servicoId={servico.id} temPerimetro={vertices.length >= 3} antes={emRotina ? undefined : auto.agora} />
           {(docsProntos || conclusao.concluido) && <BotaoConcluir servico={servico} conclusao={conclusao} pronto={prontoParaConcluir} />}
           {avisosTopo.length > 0 && (
             <button type="button" className={verAvisos ? "topo-selo ativo" : "topo-selo"} aria-expanded={verAvisos}
