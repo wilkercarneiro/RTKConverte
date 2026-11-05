@@ -41,6 +41,8 @@ import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 import { aplicarTimbreAutomatico, identidadeDaEmpresa, precisaTimbreAutomatico } from "../_shared/timbre_automatico.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
+import { aplicarAssinaturaRt, carregarAssinaturaRt } from "../_shared/assinatura_rt.ts";
+import { emitirComAutenticidade, metadadosPublicos } from "../_shared/autenticidade.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 import { conferirContorno } from "../_shared/contorno.ts";
 import { ARQUIVO_TABULAR_SISTEMA, baixarModelosDasPecas, montarTabularDocx } from "../_shared/tabular_sistema.ts";
@@ -457,6 +459,14 @@ Deno.serve(async (req) => {
     // como marca d'água. É pior — não tem rodapé nem logo no topo — mas é melhor
     // do que não gerar.
     const logo = await carregarLogoPlanta(supa, esc);
+    // imagem da assinatura do RT (Configurações → Responsáveis): no memorial, no
+    // tabular e na planta, quando cadastrada e ligada (_shared/assinatura_rt.ts).
+    // A prévia de conferência não vai a protocolo: sai sem ela.
+    const assinaturaRt = conferencia ? null : await carregarAssinaturaRt(supa, servico.escritorio_id, rt);
+    const nomeRt = (rt?.nome as string | undefined) ?? "";
+    // nome da empresa no registro público de autenticidade (lido uma vez)
+    let empresaPublica: Promise<string | null> | null = null;
+    const nomeDaEmpresa = () => (empresaPublica ??= identidadeDaEmpresa(supa, esc.id).then((i) => i?.nome ?? null).catch(() => null));
     const zipDocx = new JSZip();
     // O modelo é o da PEÇA 1 — o mesmo arquivo que as sete peças usam. Não há
     // "modelo do memorial da geração" e "modelo do memorial das peças": é um só,
@@ -507,6 +517,7 @@ Deno.serve(async (req) => {
     if (precisaTimbreAutomatico(esc, caminhoDoMemorial)) {
       await aplicarTimbreAutomatico(zipDocx, logo, await identidadeDaEmpresa(supa, esc.id));
     }
+    await aplicarAssinaturaRt(zipDocx, assinaturaRt, nomeRt);
     const docxBuf = await zipDocx.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 
     // ------------------------- MEMORIAL TABULAR (só com `tabular: true`) -------------------------
@@ -529,6 +540,7 @@ Deno.serve(async (req) => {
             if (precisaTimbreAutomatico(esc, mods.caminhos["2"])) {
               await aplicarTimbreAutomatico(zipTab, logo, await identidadeDaEmpresa(supa, esc.id));
             }
+            await aplicarAssinaturaRt(zipTab, assinaturaRt, nomeRt);
             tabularBuf = await zipTab.generateAsync({ type: "uint8array", compression: "DEFLATE" });
           }
         } catch (e) {
@@ -682,8 +694,20 @@ Deno.serve(async (req) => {
             trt: servico.conf_exibir_trt !== false,
           }
           : undefined,
+        // a prévia não vai a protocolo: sai sem a assinatura do RT
+        assinaturaRt,
       });
-      plantaBuf = await gerarPlantaPdf({ ...dadosPlanta, metragem: metragem === true, naoEdificavel }, undefined, { editavel: true });
+      // selo de autenticidade (QR + registro com o SHA-256 do PDF)
+      const emissao = await emitirComAutenticidade(supa, {
+        servico_id, escritorio_id: servico.escritorio_id ?? null, tipo: conferencia ? "planta_previa" : "planta_sistema",
+        metadados: metadadosPublicos({
+          tipo: conferencia ? "planta_previa" : "planta_sistema", servico, rt, empresa: await nomeDaEmpresa(),
+          areaFmt: dadosPlanta.areaFmt, perimetroFmt: dadosPlanta.perimetroFmt, folha: folha ?? (posse ? "A3" : "A1"), dataStr: dadosPlanta.dataStr,
+        }),
+      }, (selo) => gerarPlantaPdf({ ...dadosPlanta, metragem: metragem === true, naoEdificavel, ...(selo ? { autenticidade: selo } : {}) }, undefined, { editavel: true }),
+      Deno.env.get("URL_VERIFICACAO") || undefined);
+      if (emissao.aviso) avisosGeracao.push(emissao.aviso);
+      plantaBuf = emissao.bytes;
     } catch (e) {
       avisosGeracao.push(`Memorial e planilha gerados, mas a planta falhou: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -794,8 +818,18 @@ Deno.serve(async (req) => {
             exibir: conferencia
               ? { matricula: servico.conf_exibir_matricula !== false, denominacao: servico.conf_exibir_denominacao !== false, trt: servico.conf_exibir_trt !== false }
               : undefined,
+            assinaturaRt,
           });
-          const pdfU = await gerarPlantaPdf({ ...dadosPlantaU, metragem: metragem === true, naoEdificavel }, undefined, { editavel: true });
+          const emissaoU = await emitirComAutenticidade(supa, {
+            servico_id, escritorio_id: servico.escritorio_id ?? null, tipo: "planta_gleba", unidade: u.nome,
+            metadados: metadadosPublicos({
+              tipo: "planta_gleba", unidade: u.nome, servico, rt, empresa: await nomeDaEmpresa(),
+              areaFmt: geomU.areaFmt, perimetroFmt: geomU.perimetroFmt, folha: "A3", dataStr: dadosPlantaU.dataStr,
+            }),
+          }, (seloU) => gerarPlantaPdf({ ...dadosPlantaU, metragem: metragem === true, naoEdificavel, ...(seloU ? { autenticidade: seloU } : {}) }, undefined, { editavel: true }),
+          Deno.env.get("URL_VERIFICACAO") || undefined);
+          if (emissaoU.aviso && !avisosGeracao.includes(emissaoU.aviso)) avisosGeracao.push(emissaoU.aviso);
+          const pdfU = emissaoU.bytes;
           const path = `${pastaU}/planta-A3.pdf`;
           const up = await supa.storage.from("gerados").upload(path, pdfU, { upsert: true, contentType: "application/pdf" });
           if (up.error) throw up.error;

@@ -21,6 +21,8 @@ export type Rota =
   | { t: "assinar"; plano?: string; ciclo?: string }
   | { t: "termos" }
   | { t: "privacidade" }
+  // conferência pública de documento (QR da planta): #/verificar/<código>
+  | { t: "verificar"; codigo?: string }
   | { t: "cliente"; id: string }
   | { t: "servico"; id: string }
   // pedidoId: serviço do GPROL que este vai executar (#/novo/<chave>/<cliente|->/<pedido>)
@@ -34,6 +36,7 @@ export function rotaParaHash(r: Rota): string {
     case "servico": return `#/servico/${r.id}`;
     case "novo": return `#/novo/${r.chave}${r.clienteId || r.pedidoId ? `/${r.clienteId ?? "-"}` : ""}${r.pedidoId ? `/${r.pedidoId}` : ""}`;
     case "admin": return `#/admin/${r.aba}${r.id ? `/${r.id}` : ""}`;
+    case "verificar": return `#/verificar${r.codigo ? `/${r.codigo}` : ""}`;
     case "assinar": {
       const q = new URLSearchParams({ ...(r.plano ? { plano: r.plano } : {}), ...(r.ciclo ? { ciclo: r.ciclo } : {}) }).toString();
       return `#/assinar${q ? `?${q}` : ""}`;
@@ -63,6 +66,7 @@ export function hashParaRota(hash: string): Rota {
     }
     case "termos": return { t: "termos" };
     case "privacidade": return { t: "privacidade" };
+    case "verificar": return p[1] ? { t: "verificar", codigo: p[1] } : { t: "verificar" };
     case "cliente": return p[1] ? { t: "cliente", id: p[1] } : { t: "clientes" };
     case "servico": return p[1] ? { t: "servico", id: p[1] } : { t: "servicos" };
     // sem cliente na URL a chave nem aparece: um `clienteId: undefined`

@@ -577,6 +577,12 @@ export interface ContextoPlanta {
   dataStr: string;
   logo?: DadosPlanta["logo"];
   satelite?: DadosPlanta["satelite"];
+  /** Imagem da assinatura do RT (ver _shared/assinatura_rt.ts). Ausente = sem. */
+  // tipos escritos aqui (não DadosPlanta["…"]): no ar, o gerar-pecas usa este
+  // arquivo com um planta.ts de esboço, que não tem estes campos
+  assinaturaRt?: { bytes: Uint8Array; tipo: "png" } | null;
+  /** Selo de autenticidade (ver _shared/autenticidade.ts). Ausente = sem. */
+  autenticidade?: { codigo: string; url: string } | null;
   /** Folha de entrega. Ausente = regra histórica (posse → A3, resto → A1). */
   folha?: Folha;
   /** Prévia de conferência: sai sem o quadro analítico. Ver DadosPlanta.conferencia. */
@@ -643,6 +649,8 @@ export function montarDadosPlanta(ctx: ContextoPlanta): DadosPlanta {
     exibir: ctx.exibir,
     glebas: ctx.glebas?.length ? ctx.glebas : undefined,
     partes: ctx.partes?.length ? ctx.partes : undefined,
+    ...(ctx.assinaturaRt ? { assinaturaRt: ctx.assinaturaRt } : {}),
+    ...(ctx.autenticidade ? { autenticidade: ctx.autenticidade } : {}),
   };
 }
 

@@ -21,6 +21,7 @@ import { autorDaChamada, ehRecusa, escritorioDoUsuario, exigirPermissao, exigirS
 import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
+import { aplicarAssinaturaRt, carregarAssinaturaRt } from "../_shared/assinatura_rt.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 import { anelDoSigef, conferirContorno } from "../_shared/contorno.ts";
 import { escreverMonografia, marcosDosAneis, montarMonografia, normalizarCamposMonografia } from "../_shared/monografia.ts";
@@ -524,6 +525,9 @@ Deno.serve(async (req) => {
     }
     const historico: { servico_id: string; versao: number; tipo: string; titulo: string; path: string }[] = [];
     const arquivos: { titulo: string; url: string }[] = [];
+    // imagem da assinatura do RT (Configurações → Responsáveis); a prévia não
+    // vai a protocolo e sai sem ela
+    const assinaturaRt = previa ? null : await carregarAssinaturaRt(supa, servico.escritorio_id, rt);
 
     /**
      * Um JOGO de peças. `sufixo` vazio = as peças do imóvel, na pasta de sempre
@@ -538,6 +542,8 @@ Deno.serve(async (req) => {
         const zip = await JSZip.loadAsync(tplBytes[num]);
         zip.file("word/document.xml", xmls[num]!);
         if (timbre && comTimbre.has(num)) await aplicarTimbreAutomatico(zip, timbre.logo, timbre.ident);
+        // imagem da assinatura do RT sobre a linha dele (sem imagem: só tira o marcador do modelo)
+        await aplicarAssinaturaRt(zip, assinaturaRt, (rt?.nome as string | undefined) ?? "");
         const buf = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
         const tituloCompleto = rotulo ? `${titulo} · ${rotulo}` : titulo;
         const chave = sufixo ? `_${sufixo.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "")}` : "";

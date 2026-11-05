@@ -58,6 +58,8 @@ const LaboratorioCasca = lazy(() => import("./components/LaboratorioCasca").then
 const LaboratorioSistema = lazy(() => import("./components/LaboratorioSistema").then((m) => ({ default: m.LaboratorioSistema })));
 const LaboratorioConferencia = lazy(() => import("./components/LaboratorioConferencia").then((m) => ({ default: m.LaboratorioConferencia })));
 const LaboratorioCartao = lazy(() => import("./components/LaboratorioCartao").then((m) => ({ default: m.LaboratorioCartao })));
+const VerificarDocumento = lazy(() => import("./components/VerificarDocumento").then((m) => ({ default: m.VerificarDocumento })));
+const LaboratorioVerificar = lazy(() => import("./components/LaboratorioVerificar").then((m) => ({ default: m.LaboratorioVerificar })));
 const LaboratorioLeitura = lazy(() => import("./components/LaboratorioLeitura").then((m) => ({ default: m.LaboratorioLeitura })));
 const LaboratorioAssinar = lazy(() => import("./components/LaboratorioAssinar").then((m) => ({ default: m.LaboratorioAssinar })));
 // painel do superadmin: só quem administra o SaaS baixa este pedaço
@@ -202,6 +204,7 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/casca")) return <Suspense fallback={null}><LaboratorioCasca /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/sistema")) return <Suspense fallback={null}><LaboratorioSistema /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/conferencia")) return <Suspense fallback={null}><LaboratorioConferencia /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/verificar")) return <Suspense fallback={null}><LaboratorioVerificar /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/leitura")) return <Suspense fallback={null}><LaboratorioLeitura /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/assinar")) return <Suspense fallback={null}><LaboratorioAssinar /></Suspense>;
 
@@ -223,6 +226,8 @@ export default function App() {
   // Autocadastro (0040): público, com ou sem login. A própria página entra com a
   // conta que cria e leva ao pagamento; quem já está conectado vê o aviso de lá.
   if (rota.t === "assinar") return <Assinar plano={rota.plano} ciclo={rota.ciclo} />;
+  // verificação pública do QR da planta: abre com ou sem login
+  if (rota.t === "verificar") return <Suspense fallback={null}><VerificarDocumento codigo={rota.codigo} /></Suspense>;
   if (logado === null) return <div className="centro">Carregando...</div>;
   if (!logado) return <Login onOk={() => setLogado(true)} />;
   if (escritorio === null || conta === null) return <div className="centro">Carregando...</div>;

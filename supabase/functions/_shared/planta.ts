@@ -8,6 +8,7 @@ import { PDFDocument, PDFFont, StandardFonts, concatTransformationMatrix, degree
 import { partesDescritivo, textoWinAnsi } from "./texto.ts";
 import { GravadorCena, embutirCena, embutirImagem, marcarObjeto, type PaginaPlanta } from "./planta_cena.ts";
 import { classificarVia } from "./recuo.ts";
+import { gerarQr, retangulosQr } from "./qr.ts";
 
 /** "15", "7,5" — largura da faixa para rótulo e legenda. */
 const fmtMetros = (m: number) => m.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
@@ -190,6 +191,44 @@ export interface DadosPlanta {
   dataStr: string;
   logo?: { bytes: Uint8Array; tipo: "png" | "jpg" } | null;
   satelite?: { bytes: Uint8Array; tipo: "png" | "jpg" } | null;
+  /**
+   * IMAGEM da assinatura do RT (PNG transparente — não é assinatura digital),
+   * sobre a linha do RT no planimétrico. Ausente = a planta de sempre.
+   */
+  assinaturaRt?: { bytes: Uint8Array; tipo: "png" } | null;
+  /**
+   * Selo de autenticidade: QR (vetor) + código, numa faixa sob o rodapé (no
+   * A4, no canto do carimbo). A URL abre a página pública de verificação.
+   * Ausente = a planta de sempre (ver _shared/autenticidade.ts).
+   */
+  autenticidade?: { codigo: string; url: string } | null;
+}
+
+/** Faixa do selo de autenticidade na barra lateral (A1/A3), em pt da barra. */
+const AUTENT_H = 78;
+
+/**
+ * QR em vetor (retângulos pretos, uma corrida por retângulo) com o canto
+ * inferior esquerdo em (x, y) e `lado` pt, já com fundo branco e a zona de
+ * silêncio de 4 módulos da norma por fora do lado útil.
+ */
+function desenharQr(c: Ctx, url: string, x: number, y: number, lado: number) {
+  const q = gerarQr(url, "M");
+  const total = q.tamanho + 8;
+  const mod = lado / total;
+  c.page.drawRectangle({ x, y, width: lado, height: lado, color: rgb(1, 1, 1) });
+  for (const r of retangulosQr(q)) {
+    c.page.drawRectangle({
+      x: x + (r.x + 4) * mod, y: y + lado - (r.y + 4 + 1) * mod,
+      // um fio a mais: sem ele o leitor de PDF deixa frestas brancas entre módulos
+      width: r.w * mod + 0.02, height: mod + 0.02, color: PRETO,
+    });
+  }
+}
+
+/** "7K3M9QXW…" → "7K3M-9QXW-…" (para ler e digitar). */
+function codigoEmGrupos(c: string): string {
+  return c.match(/.{1,4}/g)?.join("-") ?? c;
 }
 
 // ---------------------------------------------------------------------------
@@ -1840,7 +1879,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
   // de PERÍMETRO listam uma linha por gleba, e só aí a linha cresce.
   const RODAPE_PASSO = 9;
   const linhasRodape = Math.max(2, glebas.length);
-  const hRodape = 11 + linhasRodape * RODAPE_PASSO + 5;
+  // a faixa do selo de autenticidade (QR) mora logo abaixo da linha de células
+  const hRodapeCelulas = 11 + linhasRodape * RODAPE_PASSO + 5;
+  const hRodape = hRodapeCelulas + (d.autenticidade ? AUTENT_H : 0);
 
   // ASSINATURAS E SELOS (fim do planimétrico): o RT e o(s) proprietário(s)
   // assinam sobre a linha, e embaixo de cada assinatura há uma caixa SELO DE
@@ -1848,7 +1889,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
   // como na planta de referência (pedido de 2026-10-14: antes eram caixinhas
   // com o nome dentro, sem lugar para carimbar).
   const assinantes = d.proprietarios.slice(0, 2);
-  const ASSIN_CAP = 30, ASSIN_BLOCO = 28, ASSIN_ENTRE = 20, ASSIN_ESPOLIO = 18;
+  // com a imagem da assinatura do RT o espaço acima das linhas cresce, para ela
+  // caber em tamanho legível (e os proprietários ganham o mesmo espaço)
+  const ASSIN_CAP = d.assinaturaRt ? 44 : 30, ASSIN_BLOCO = 28, ASSIN_ENTRE = 20, ASSIN_ESPOLIO = 18;
   const altAssinProp = ASSIN_CAP + assinantes.reduce((a, p, i) =>
     a + ASSIN_BLOCO + (p.isEspolio && p.inventarianteNome ? ASSIN_ESPOLIO : 0) + (i > 0 ? ASSIN_ENTRE : 0), 0);
   const ASSIN_H = Math.max(ASSIN_CAP + 44, altAssinProp) + 6;
@@ -2085,6 +2128,17 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     // RT: legenda, espaço para assinar, linha e os dados embaixo dela
     const rtCx = sbX + SB_W / 4;
     texto(c, "RESPONSÁVEL TÉCNICO", rtCx, bandTop - 9, 6.5, { bold: true, center: true, cor: CINZA });
+    if (d.assinaturaRt) {
+      // a imagem da assinatura do RT: entre a legenda e a linha, descendo um
+      // pouco sobre ela, como uma assinatura à mão
+      const img = await embutirImagem(pdf, page, d.assinaturaRt.bytes, d.assinaturaRt.tipo);
+      const topoA = bandTop - 12, baseA = bandTop - ASSIN_CAP - 4;
+      const sc = Math.min((colAssW * 0.75) / img.width, (topoA - baseA) / img.height);
+      page.drawImage(img, {
+        x: rtCx - (img.width * sc) / 2, y: baseA + (topoA - baseA - img.height * sc) / 2,
+        width: img.width * sc, height: img.height * sc,
+      });
+    }
     linha(c, rtCx - colAssW / 2, bandTop - ASSIN_CAP, rtCx + colAssW / 2, bandTop - ASSIN_CAP, 0.6);
     textoFit(c, d.rt.nome.toUpperCase(), rtCx, bandTop - ASSIN_CAP - 10, 9, colAssW, { bold: true, center: true });
     textoFit(c, `${d.rt.formacao.toUpperCase()} - ${d.rt.conselhoSigla}: ${d.rt.conselhoNumero}`, rtCx, bandTop - ASSIN_CAP - 20, 7, colAssW, { center: true });
@@ -2150,10 +2204,24 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     let ix0 = sbX;
     for (const [i, [rot, vals]] of itens.entries()) {
       const cw = SB_W * larguras[i];
-      if (i > 0) linha(c, ix0, topo - h, ix0, topo, 0.5);
+      if (i > 0) linha(c, ix0, topo - hRodapeCelulas, ix0, topo, 0.5);
       texto(c, rot, ix0 + 4, topo - 8, 6, { bold: true, cor: CINZA });
       for (const [k, val] of vals.entries()) textoFit(c, val, ix0 + 4, topo - 8 - (k + 1) * RODAPE_PASSO, 7.5, cw - 8);
       ix0 += cw;
+    }
+    // ---- selo de autenticidade: QR + código + onde conferir ----
+    if (d.autenticidade) {
+      obj(c, "autenticidade", "rodape", "Selo de autenticidade (QR)");
+      const yTopo = topo - hRodapeCelulas;
+      linha(c, sbX, yTopo, sbX + SB_W, yTopo, 0.5);
+      const lado = AUTENT_H - 8;
+      desenharQr(c, d.autenticidade.url, sbX + 4, yTopo - 4 - lado, lado);
+      const tx = sbX + lado + 14, tw = SB_W - lado - 22;
+      texto(c, "DOCUMENTO VERIFICÁVEL", tx, yTopo - 14, 7, { bold: true, cor: CINZA });
+      textoFit(c, "Aponte a câmera do celular para o código ao lado ou acesse:", tx, yTopo - 26, 7.5, tw);
+      textoFit(c, d.autenticidade.url.replace(/^https?:\/\//, "").replace(/[A-Z0-9]{20}$/, ""), tx, yTopo - 37, 7.5, tw, { bold: true });
+      textoFit(c, `Código de verificação: ${codigoEmGrupos(d.autenticidade.codigo)}`, tx, yTopo - 51, 9, tw, { bold: true });
+      textoFit(c, "A página confirma o documento e mostra o SHA-256 do arquivo original.", tx, yTopo - 63, 6.5, tw, { cor: CINZA });
     }
   }
   if (!simples && SB_K !== 1) page.pushOperators(popGraphicsState());
@@ -2176,19 +2244,32 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
       if (i === 0) obj(c, "carimbo", "carimbo", "Carimbo da empresa");
       else obj(c, "situacao", "situacao", "Planta de situação");
       const topoUtil = caixaTitulo(c, cx, faixaY, meia, FAIXA_H, titulo);
+      // selo de autenticidade: no canto direito do carimbo (a logo fica com o resto)
+      const QR_A4 = 190;
+      const reservaQr = i === 0 && d.autenticidade ? QR_A4 + 40 : 0;
+      const larguraArte = meia - reservaQr;
       if (arte) {
         const img = await embutirImagem(pdf, page, arte.bytes, arte.tipo);
         // a logo respira dentro da célula; o satélite ocupa quase tudo
         const folga = i === 0 ? 46 : 12;
-        const sc = Math.min((meia - folga * 2) / img.width, (topoUtil - faixaY - folga) / img.height);
+        const sc = Math.min((larguraArte - folga * 2) / img.width, (topoUtil - faixaY - folga) / img.height);
         page.drawImage(img, {
-          x: cx + (meia - img.width * sc) / 2,
+          x: cx + (larguraArte - img.width * sc) / 2,
           y: faixaY + (topoUtil - faixaY - img.height * sc) / 2,
           width: img.width * sc, height: img.height * sc,
         });
       } else {
-        texto(c, i === 0 ? "(envie a logo em Configurações)" : "(imagem de satélite indisponível — veja o aviso da geração)",
-          cx + meia / 2, faixaY + FAIXA_H / 2, 20, { cor: CINZA, center: true });
+        const aviso = i === 0 ? "(envie a logo em Configurações)" : "(imagem de satélite indisponível — veja o aviso da geração)";
+        if (reservaQr) textoFit(c, aviso, cx + larguraArte / 2, faixaY + FAIXA_H / 2, 20, larguraArte - 24, { cor: CINZA, center: true });
+        else texto(c, aviso, cx + meia / 2, faixaY + FAIXA_H / 2, 20, { cor: CINZA, center: true });
+      }
+      if (reservaQr && d.autenticidade) {
+        obj(c, "autenticidade", "carimbo", "Selo de autenticidade (QR)");
+        const qx = cx + meia - QR_A4 - 20, qy = faixaY + 64;
+        desenharQr(c, d.autenticidade.url, qx, qy, QR_A4);
+        texto(c, "DOCUMENTO VERIFICÁVEL", qx + QR_A4 / 2, qy - 20, 13, { bold: true, center: true, cor: CINZA });
+        textoFit(c, codigoEmGrupos(d.autenticidade.codigo), qx + QR_A4 / 2, qy - 42, 14, QR_A4 + 30, { bold: true, center: true });
+        obj(c, "carimbo", "carimbo", "Carimbo da empresa");
       }
     }
 
