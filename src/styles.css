@@ -1491,6 +1491,15 @@ button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #f
 /* ---- tela cheia (TelaCheia.tsx): a área de trabalho cobre tudo, abaixo dos
    avisos (90) e dos diálogos (100), acima do menu lateral e do suporte */
 html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
+/* os ancestrais não prendem o empilhamento da área (TelaCheia.tsx, marcarAncestrais) */
+.tela-cheia-ancestral {
+  /* sticky e fixed sempre criam contexto (o mapa do SIGEF fica numa coluna sticky) */
+  position: static !important;
+  z-index: auto !important; transform: none !important; filter: none !important;
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+  animation: none !important; will-change: auto !important; isolation: auto !important;
+  contain: none !important; perspective: none !important; opacity: 1 !important; clip-path: none !important;
+}
 .em-tela-cheia {
   position: fixed !important; inset: 0; z-index: 85;
   width: auto !important; height: auto !important; max-height: none !important; min-height: 0 !important;

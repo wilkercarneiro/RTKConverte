@@ -27,10 +27,25 @@ function sairDoNavegador(): void {
   if (document.fullscreenElement) document.exitFullscreen?.().catch(() => { /* já saiu */ });
 }
 
+/**
+ * Os ancestrais da área perdem, enquanto ela estiver em tela cheia, o que cria
+ * contexto de empilhamento (z-index, transform, filtro, animação, contain): sem
+ * isso o z-index da área vale só dentro do ancestral, e o menu lateral, a
+ * barra de gerar e cabeçalhos fixos de tabela apareciam POR CIMA do mapa
+ * (visto no mapa do SIGEF da etapa Confrontantes).
+ */
+function marcarAncestrais(el: HTMLElement | null, ligar: boolean): void {
+  for (let p = el?.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    p.classList.toggle("tela-cheia-ancestral", ligar);
+  }
+}
+
 function aplicar(el: HTMLElement | null): void {
   if (ativa === el) return;
   ativa?.classList.remove("em-tela-cheia");
+  marcarAncestrais(ativa, false);
   ativa = el;
+  marcarAncestrais(ativa, true);
   ativa?.classList.add("em-tela-cheia");
   document.documentElement.classList.toggle("com-tela-cheia", !!ativa);
   // mapas que só se medem no resize da janela (MapLibre) e os que se medem pelo
