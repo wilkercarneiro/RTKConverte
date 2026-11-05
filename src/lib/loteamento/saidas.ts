@@ -10,7 +10,7 @@
 // (medidas de terreno) volta para UTM aqui, pelo fator de escala.
 import proj4mod from "proj4";
 import { GEO_DEF, fmtAzimute, utmDef } from "../../../supabase/functions/_shared/geo.ts";
-import { caixa, centroide, dist, distSegmento, dot, esquerda, lerp, pontoDoRotulo, quinasDetalhe, sub, unit } from "./geom.ts";
+import { areaPol, caixa, centroide, dist, distSegmento, dot, esquerda, lerp, pontoDoRotulo, quinasDetalhe, sub, unit } from "./geom.ts";
 import type { Anel, Poligono, Pt } from "./geom.ts";
 import { fmt, viarioDe } from "./calculo.ts";
 import type { Lado, Lote, Perimetro, Quadra, Resultado } from "./calculo.ts";
@@ -147,6 +147,8 @@ export function pontosDeLocacao(res: Resultado, perimetro: Perimetro, op: Opcoes
 
   if (op.eixos) {
     for (const [ri, r] of res.ruas.entries()) {
+      // rua importada sem eixo (só o corpo veio no arquivo): não há estaca para locar
+      if (r.eixo.length < 2) continue;
       // só o trecho do eixo dentro da gleba
       const nomeRua = `R${String(ri + 1).padStart(2, "0")}`;
       let s = 0, est = 0;
@@ -211,6 +213,16 @@ export function nomesDosPontos(pontos: PontoLocacao[]): Map<string, string> {
   return new Map(pontos.filter((p) => p.tipo === "lote" || p.tipo === "curva").map((p) => [chave(p.p), p.nome]));
 }
 export const chavePonto = chave;
+
+/**
+ * Ponto de locação de um vértice que a locação do loteamento não tem (o canto
+ * da área pública na divisa ou na rua): mesmo formato, cota e limpeza de nome.
+ */
+export function pontoAvulso(res: Resultado, perimetro: Perimetro, p: Pt, nome: string, codigo: string): PontoLocacao {
+  const u = paraUtm(res.plano, p);
+  const perimPl = perimetro.pts.map((q) => [(q[0] - res.plano.centro[0]) / res.plano.k, (q[1] - res.plano.centro[1]) / res.plano.k] as Pt);
+  return { nome: limparNome(nome), e: u[0], n: u[1], h: cotaEstimada(p, perimPl, perimetro.altitudes), codigo: limparCodigo(codigo), p, tipo: "lote" };
+}
 
 // ---------------------------------------------------------------------------
 // Formatos de coletora
@@ -321,6 +333,12 @@ export function gerarDxf(res: Resultado, pontos: PontoLocacao[], op: { textos: b
     }
     for (const q of res.quadras) texto(q.centro, `QUADRA ${q.nome}`, 4, "TEXTO_QUADRA");
     for (const r of res.ruas) {
+      // rua importada sem eixo: o nome vai no meio do maior pedaço dela
+      if (r.eixo.length < 2) {
+        const maior = [...r.pols].sort((a, b) => areaPol(b) - areaPol(a))[0];
+        if (maior) texto(pontoDoRotulo(maior, 4), `${r.nome.toUpperCase()} (${fmt(r.largura, 2)} m)`, 2.2, "TEXTO_RUA");
+        continue;
+      }
       let mi = 0, ml = 0;
       for (let i = 0; i + 1 < r.eixo.length; i++) { const d = dist(r.eixo[i], r.eixo[i + 1]); if (d > ml) { ml = d; mi = i; } }
       const a = r.eixo[mi], b = r.eixo[mi + 1];
@@ -353,7 +371,7 @@ export function gerarKml(res: Resultado, fuso: number, nome: string): string {
   partes.push(`<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(nome)}</name>`);
   partes.push(estilo("lote", "ff2b2b2b", "66f5f0e1"), estilo("esquina", "ff2b2b2b", "66c8e6f5"), estilo("verde", "ff2e7d32", "8858c472"),
     estilo("institucional", "ff0060c0", "8866b8ef"), estilo("app", "ffc07000", "88e0b070"), estilo("lazer", "ffc0a000", "88f0d080"),
-    estilo("perimetro", "ff0000ff", "00000000"), `<Style id="eixo"><LineStyle><color>ff2020d0</color><width>2</width></LineStyle></Style>`);
+    estilo("perimetro", "ff0000ff", "00000000"), estilo("rua", "ff2020d0", "55b0b0b0"), `<Style id="eixo"><LineStyle><color>ff2020d0</color><width>2</width></LineStyle></Style>`);
   partes.push(`<Placemark><name>Perímetro da gleba</name><styleUrl>#perimetro</styleUrl>${pol(res.gleba)}</Placemark>`);
   for (const q of res.quadras) {
     partes.push(`<Folder><name>Quadra ${esc(q.nome)} (${q.lotes.length} lotes)</name>`);
@@ -365,7 +383,13 @@ export function gerarKml(res: Resultado, fuso: number, nome: string): string {
   partes.push("<Folder><name>Áreas públicas</name>");
   for (const a of res.publicas) partes.push(`<Placemark><name>${esc(a.nome)}</name><description>${fmt(a.area)} m²</description><styleUrl>#${a.tipo}</styleUrl>${pol(a.pol)}</Placemark>`);
   partes.push("</Folder><Folder><name>Ruas</name>");
-  for (const r of res.ruas) partes.push(`<Placemark><name>${esc(r.nome)}</name><description>${fmt(r.largura)} m de largura</description><styleUrl>#eixo</styleUrl><LineString><coordinates>${r.eixo.map(ll).join(" ")}</coordinates></LineString></Placemark>`);
+  for (const r of res.ruas) {
+    // rua importada sem eixo: vai o corpo dela (o KML não aceita linha sem pontos)
+    const geo = r.eixo.length >= 2 ? `<LineString><coordinates>${r.eixo.map(ll).join(" ")}</coordinates></LineString>`
+      : r.pols.length ? `<MultiGeometry>${r.pols.map(pol).join("")}</MultiGeometry>` : "";
+    if (!geo) continue;
+    partes.push(`<Placemark><name>${esc(r.nome)}</name><description>${fmt(r.largura)} m de largura</description><styleUrl>#${r.eixo.length >= 2 ? "eixo" : "rua"}</styleUrl>${geo}</Placemark>`);
+  }
   partes.push("</Folder></Document></kml>");
   return partes.join("\n");
 }
@@ -481,15 +505,9 @@ export function memorialDoLote(l: Lote, res: Resultado, nomes: Map<string, strin
   const U = (p: Pt) => paraUtm(res.plano, p);
   const coord = (p: Pt) => { const u = U(p); return `E ${fmt(u[0], 3)} m e N ${fmt(u[1], 3)} m`; };
   // começa no 1º vértice do lado de frente principal
-  const fr = ladosNominais(l).frente.sort((a, b) => b.comp - a.comp)[0] ?? l.lados[0];
-  const i0 = Math.max(0, l.lados.indexOf(fr));
-  const seq = [...l.lados.slice(i0), ...l.lados.slice(0, i0)];
-  const trechos = seq.map((x) => {
-    const az = (Math.atan2(x.b[0] - x.a[0], x.b[1] - x.a[1]) * 180) / Math.PI;
-    // frente escolhida pelo operador (servidão, área verde, lote): confronta com quem está do outro lado
-    const conf = (x.tipo === "rua" || x.tipo === "via") && !x.semRua ? `confrontando com a ${x.nome}` : `confrontando com ${x.nome}`;
-    return `deste segue ${conf}, com azimute de ${fmtAzimute((az + 360) % 360)} e distância de ${fmt(x.comp)} m, até o vértice ${nomeV(x.b)}, de coordenadas ${coord(x.b)}`;
-  });
+  const seq = ladosEmOrdemDoMemorial(l);
+  const fr = seq[0];
+  const trechos = trechosDoPerimetro(seq, nomes, nomeV, coord);
   const perim = l.lados.reduce((s, x) => s + x.comp, 0);
   const num = String(l.numero).padStart(2, "0");
   return {
@@ -503,4 +521,71 @@ export function memorialDoLote(l: Lote, res: Resultado, nomes: Map<string, strin
       `Coordenadas no sistema geodésico SIRGAS 2000, projeção UTM, fuso ${d.fuso}S. Azimutes de quadrícula; distâncias e área ${res.plano.terreno ? "no plano topográfico (medidas de terreno)" : "no plano UTM"}.`,
     ],
   };
+}
+
+/** Lados do lote na ordem do memorial: a partir do 1º vértice da frente principal. */
+export function ladosEmOrdemDoMemorial(l: Lote): Lado[] {
+  const fr = ladosNominais(l).frente.sort((a, b) => b.comp - a.comp)[0] ?? l.lados[0];
+  const i0 = Math.max(0, l.lados.indexOf(fr));
+  return [...l.lados.slice(i0), ...l.lados.slice(0, i0)];
+}
+
+/** Azimute de quadrícula de a para b (graus, 0 a 360). */
+export const azimute = (a: Pt, b: Pt) => ((Math.atan2(b[0] - a[0], b[1] - a[1]) * 180) / Math.PI + 360) % 360;
+
+/**
+ * Lados entre dois vértices com nome: os pontos de dentro de um arco de esquina
+ * não vão para a locação (só PC, meio e PT) e não têm nome, então as cordas do
+ * arco entre dois vértices com nome são UM trecho (em curva). Sem nenhum vértice
+ * com nome não há o que juntar: cada lado é um trecho.
+ */
+export function agruparTrechos(seq: Lado[], nomes: Map<string, string>): Lado[][] {
+  const temNome = (p: Pt) => nomes.has(chave(p));
+  const juntar = seq.some((x) => temNome(x.b));
+  const grupos: Lado[][] = [];
+  let atual: Lado[] = [];
+  for (const x of seq) {
+    atual.push(x);
+    if (!juntar || temNome(x.b)) { grupos.push(atual); atual = []; }
+  }
+  if (atual.length) grupos.push(atual);
+  return grupos;
+}
+
+/** Raio do trecho em curva (pelo início, o meio e o fim); null se é reto. */
+export function raioDoTrecho(g: Lado[]): number | null {
+  if (g.length < 2) return null;
+  const r = raioPor3(g[0].a, g[Math.floor(g.length / 2)].a, g[g.length - 1].b);
+  return r && r < 500 ? r : null;
+}
+
+/** "a Rua 01" / "Lote 05 da Quadra A": o confrontante de um lado, como o memorial escreve. */
+export const confrontanteDoLado = (x: Lado) => ((x.tipo === "rua" || x.tipo === "via") && !x.semRua ? `a ${x.nome}` : x.nome);
+
+/**
+ * "deste segue…" de cada trecho, na ordem: os lados entre dois vértices com
+ * nome viram UM trecho em curva (raio e desenvolvimento), em vez de "até o
+ * vértice A-?" corda a corda (os pontos de dentro do arco não têm nome).
+ */
+export function trechosDoPerimetro(seq: Lado[], nomes: Map<string, string>, nomeV: (p: Pt) => string, coord: (p: Pt) => string): string[] {
+  return agruparTrechos(seq, nomes).map((g) => {
+    const fim = g[g.length - 1].b;
+    // frente escolhida pelo operador (servidão, área verde, lote): confronta com quem está do outro lado
+    const com = [...new Set(g.map(confrontanteDoLado))].join(" e ");
+    if (g.length === 1) {
+      const x = g[0];
+      return `deste segue confrontando com ${com}, com azimute de ${fmtAzimute(azimute(x.a, x.b))} e distância de ${fmt(x.comp)} m, até o vértice ${nomeV(fim)}, de coordenadas ${coord(fim)}`;
+    }
+    const ini = g[0].a;
+    const desenv = g.reduce((s, x) => s + x.comp, 0);
+    const raio = raioDoTrecho(g);
+    const curva = raio ? `em curva de raio ${fmt(raio)} m e desenvolvimento de ${fmt(desenv)} m` : `em curva com desenvolvimento de ${fmt(desenv)} m`;
+    return `deste segue ${curva} (corda de ${fmt(dist(ini, fim))} m com azimute de ${fmtAzimute(azimute(ini, fim))}), confrontando com ${com}, até o vértice ${nomeV(fim)}, de coordenadas ${coord(fim)}`;
+  });
+}
+
+function raioPor3(a: Pt, b: Pt, c: Pt): number | null {
+  const ab = dist(a, b), bc = dist(b, c), ca = dist(c, a);
+  const area2 = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]));
+  return area2 < 1e-9 ? null : (ab * bc * ca) / (2 * area2);
 }

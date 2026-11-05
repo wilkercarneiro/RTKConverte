@@ -1,7 +1,8 @@
 // Edge Function: entregar
 //
 // Os arquivos finais do CAR (shapefiles do SICAR, KML) e do loteamento (planta,
-// memoriais, quadro, KML, DXF, locação, projetos de infraestrutura). Até a
+// memoriais, quadro, KML, DXF, locação, projetos de infraestrutura e o pacote
+// lote a lote — memorial, planta A4 e locação de cada lote). Até a
 // auditoria de 04/11/2026 eles eram montados no navegador, e o crédito era só
 // uma porta da tela: bastava trocar o desenho para gerar outro imóvel.
 //
@@ -29,6 +30,7 @@ import { arquivoDoCar, projetoCarDoBanco, SAIDAS_CAR } from "../../../src/lib/ca
 import type { SaidaCar } from "../../../src/lib/car/entregas.ts";
 import { arquivoDoLoteamento, SAIDAS_LOTEAMENTO } from "../../../src/lib/loteamento/entregas.ts";
 import type { PedidoLoteamento, SaidaLoteamento } from "../../../src/lib/loteamento/entregas.ts";
+import { conferirItens } from "../../../src/lib/loteamento/loteALote.ts";
 import { perimetroDoServico, projetoInicial } from "../../../src/lib/loteamento/perimetro.ts";
 import { calcular } from "../../../src/lib/loteamento/calculo.ts";
 import type { DadosCarimbo } from "../../../src/lib/loteamento/planta.ts";
@@ -112,7 +114,11 @@ Deno.serve(async (req) => {
     const autor = await autorDaChamada(clienteDoUsuario(req));
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    if (!(await dentroDoLimite(supa, `gerar:${autor ?? servico_id}`, 30, 300))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
+    // lote a lote tem conta própria: o loteamento de 600 lotes são 10 chamadas
+    // de 60 seguidas, e cada chamada já tem teto de lotes (loteALote.ts)
+    const loteALote = saida === "lote" || saida === "lotes";
+    const [chave, max, janela] = loteALote ? [`lotes:${autor ?? servico_id}`, 60, 600] : [`gerar:${autor ?? servico_id}`, 30, 300];
+    if (!(await dentroDoLimite(supa, chave, max, janela))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
 
     const { data: servico } = await supa.from("servicos").select().eq("id", servico_id).single();
     if (!servico) return json({ erro: "Serviço não encontrado" }, 404);
@@ -153,6 +159,13 @@ Deno.serve(async (req) => {
         op: opcoesLocacao(c.op),
         locarRedes: c.locarRedes === true,
       };
+      // lote a lote: os ids vêm da tela, mas só valem os que existem no projeto
+      // recalculado aqui (até 60 por chamada: a tela divide os pedidos maiores)
+      if (saida === "lote" || saida === "lotes") {
+        const ok = conferirItens(res, saida === "lote" ? (typeof c.id === "string" ? [c.id] : null) : c.ids);
+        if ("erro" in ok) return json({ erro: ok.erro }, 400);
+        pedido.ids = ok.itens.map((x) => x.id);
+      }
       arquivo = await arquivoDoLoteamento(pedido, projeto, res, perimetro, s, carimboDoPedido(c.carimbo as Record<string, unknown> | undefined, s));
     } else {
       return json({ erro: "Este serviço não é de CAR nem de loteamento." }, 400);

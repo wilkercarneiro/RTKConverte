@@ -28,15 +28,16 @@ export interface KmlLido {
 /** Dois pontos iguais em grau: 1e-8° ≈ 1 mm. */
 const IGUAL = 1e-8;
 
-const tirarTags = (s: string) => s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/<[^>]+>/g, "").trim();
+// (tirarTags, nomeDe e coordenadas também servem ao loteamento importado, loteamento/importar/kml.ts)
+export const tirarTags = (s: string) => s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/<[^>]+>/g, "").trim();
 
-function nomeDe(bloco: string): string | null {
+export function nomeDe(bloco: string): string | null {
   const m = /<name>([\s\S]*?)<\/name>/i.exec(bloco);
   const n = m ? tirarTags(m[1]) : "";
   return n || null;
 }
 
-function coordenadas(texto: string): LonLat[] {
+export function coordenadas(texto: string): LonLat[] {
   const out: LonLat[] = [];
   for (const tupla of tirarTags(texto).split(/\s+/)) {
     if (!tupla) continue;

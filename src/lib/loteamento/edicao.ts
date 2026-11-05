@@ -23,8 +23,12 @@ import type { LoteDesenhado, Projeto, QuadraCfg } from "./modelo.ts";
 
 const TOL = 0.02;
 
-/** O que acompanha cada contorno: destino (área pública), a frente escolhida (plano) e se o lote passa da quadra. */
-export interface Meta { destino?: LoteDesenhado["destino"]; frente?: [Pt, Pt]; livre?: boolean }
+/**
+ * O que acompanha cada contorno: destino (área pública), a frente escolhida
+ * (plano), se o lote passa da quadra e o número que ele trouxe do arquivo
+ * importado (a numeração da planta aprovada continua a mesma depois da edição).
+ */
+export interface Meta { destino?: LoteDesenhado["destino"]; frente?: [Pt, Pt]; livre?: boolean; numero?: number }
 
 export interface Edicao {
   pr: Projeto;
@@ -103,7 +107,7 @@ export function contornos(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto
       const dentro = intersecao([pg], [q.pol]).sort((x, y) => areaPol(y) - areaPol(x))[0];
       return dentro ? limparAnel(dentro.ext, 0.003) : an;
     });
-    return { pr, i: ic, aneis: normalizar(aneis), destinos: c.lotes!.map((l) => ({ destino: l.destino, frente: l.frente ? [paraPlano(pl, l.frente[0]), paraPlano(pl, l.frente[1])] as [Pt, Pt] : undefined, livre: l.livre })) };
+    return { pr, i: ic, aneis: normalizar(aneis), destinos: c.lotes!.map((l) => ({ destino: l.destino, frente: l.frente ? [paraPlano(pl, l.frente[0]), paraPlano(pl, l.frente[1])] as [Pt, Pt] : undefined, livre: l.livre, numero: l.numero })) };
   }
   // o lote que absorveu um retalho de fora da quadra (o canto que sobrou da quadra
   // vizinha) congela RECORTADO pela quadra: o retalho volta a ser retalho e o cálculo
@@ -149,6 +153,7 @@ export function gravar(pr: Projeto, res: Resultado, i: number, aneis: Pt[][], de
     const ld: LoteDesenhado = { anel: a.map((p) => paraUtm(pl, p)) };
     if (m.destino) ld.destino = m.destino;
     if (m.livre) ld.livre = true;
+    if (m.numero) ld.numero = m.numero;
     // a frente escolhida acompanha o lado: o lado do contorno perto da linha
     // dela (girado até 45°, deslocado até 30% do comprimento) e que se sobrepõe
     // a ela. Longe disso o lote não tem mais aquele lado (o pedaço de trás de
