@@ -123,8 +123,9 @@ for m in "${MIGRACOES[@]}"; do
   roda ssh_ "set -e; C=\$(docker ps --format '{{.Names}}' | grep sb_rtkconverte_db | head -1)
     docker cp /tmp/$n \$C:/tmp/$n
     docker exec \$C psql -U postgres -d postgres -1 -v ON_ERROR_STOP=1 -q -f /tmp/$n
-    docker exec \$C rm -f /tmp/$n; rm -f /tmp/$n; cp $(printf %q "$n") $BKB/ 2>/dev/null || true
-    echo 'aplicada: $n'"
+    cp /tmp/$n $BKB/$n
+    docker exec \$C rm -f /tmp/$n; rm -f /tmp/$n
+    echo 'aplicada: $n (cópia em $BKB)'"
 done
 roda ssh_ "docker service update --force --quiet sb_rtkconverte_rest >/dev/null && echo 'REST reiniciado'"
 
