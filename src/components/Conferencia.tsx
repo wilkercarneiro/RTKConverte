@@ -5,7 +5,7 @@
 // Experiência: só os campos que bloqueiam a geração ficam sempre visíveis; o
 // resto vive em seções recolhíveis com selo de preenchimento. O cartão de
 // próxima ação diz em uma frase o que falta, e o trabalho é salvo sozinho.
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
 import { baixarZip, type ArquivoZip } from "../lib/zip_download";
 import {
@@ -60,6 +60,7 @@ import { BotaoConcluir, useConclusao } from "./ConcluirServico";
 import { ExportarArea } from "./ExportarArea";
 import { AutoriaServico } from "./Auditoria";
 import { BarreiraErro } from "./BarreiraErro";
+import { gravarServicoTolerante, type MemoColunas } from "../lib/coluna_ausente";
 import { MOTIVO_SEM_WEBGL, webglDisponivel } from "../lib/webgl";
 import { MonografiaMarcos, unirMarcos, type ArquivoGerado } from "./MonografiaMarcos";
 
@@ -841,12 +842,15 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
   }
 
   // ------- persistência -------
+  const memoColunas = useRef<MemoColunas>({});
   async function salvar(): Promise<void> {
     // a conclusão só muda pelo botão "Concluir serviço": o autosave de uma aba
     // antiga não pode reabrir (nem concluir) o serviço por tabela
     const { id, status, concluido_em, concluido_por, ...campos } = servico;
     void concluido_em; void concluido_por;
-    const { error: e1 } = await supabase.from("servicos").update(campos).eq("id", id);
+    // banco sem a 0042: grava o resto e avisa uma vez (ver lib/coluna_ausente)
+    const { error: e1 } = await gravarServicoTolerante(campos, (d) => supabase.from("servicos").update(d).eq("id", id),
+      memoColunas.current, (m) => avisar("alerta", m));
     if (e1) throw e1;
     // Grava por upsert com id estável, em vez de apagar e reinserir a tabela toda.
     // O delete+insert fazia uma aba aberta antes de uma mudança de schema regravar
