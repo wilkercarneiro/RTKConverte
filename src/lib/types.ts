@@ -1,4 +1,5 @@
 import type { RecuoDoServico } from "../../supabase/functions/_shared/recuo.ts";
+import type { CamposMonografia } from "../../supabase/functions/_shared/monografia.ts";
 
 export interface Cliente {
   id: string;
@@ -147,6 +148,8 @@ export interface Servico {
   /** "Concluir serviço" (0033): quando e quem; nulo = em andamento */
   concluido_em?: string | null;
   concluido_por?: string | null;
+  /** Campos digitados para a monografia dos marcos (0042); ver _shared/monografia.ts */
+  monografia?: CamposMonografia | null;
   status: "rascunho" | "gerado";
   nome_arquivo_txt: string | null;
   fuso_utm: number | null;

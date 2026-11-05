@@ -19,6 +19,7 @@ import { BotaoConcluir, useConclusao } from "./ConcluirServico";
 import { AutoriaServico } from "./Auditoria";
 import { Icone, ICONE } from "./Icone";
 import { textoSemCredito } from "../lib/creditos";
+import { MonografiaMarcos, unirMarcos, type ArquivoGerado } from "./MonografiaMarcos";
 
 interface TrechoPdf {
   id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string; eh_via: boolean;
@@ -35,6 +36,8 @@ interface Analise {
   cabecalho: Record<string, string | null>;
   trechos: { codigo: string; confrontacao: string; segmentos: number }[];
   vertices: number;
+  /** marcos (vértices M) do perímetro, para a monografia */
+  marcos?: string[];
 }
 interface PecasGeradas {
   arquivos: { titulo: string; url: string }[];
@@ -45,6 +48,8 @@ interface PecasGeradas {
   };
   /** Memorial sem gleba desenhada, gleba sem memorial — a geração seguiu mesmo assim. */
   avisos?: string[];
+  /** marcos (vértices M) do perímetro, para a monografia */
+  marcos?: string[];
 }
 
 type Etapa = "dados" | "confrontantes" | "documentos";
@@ -90,6 +95,11 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
   // só revela os checkboxes; o que fica gravado é a marca por confrontante
   const [modoNumeracao, setModoNumeracao] = useState(false);
   const [pecas, setPecas] = useState<PecasGeradas | null>(null);
+  // monografia dos marcos: marcos lidos do PDF (análise ou geração) e o arquivo gerado
+  const [marcosPdf, setMarcosPdf] = useState<string[]>([]);
+  const [monografia, setMonografia] = useState<ArquivoGerado | null>(null);
+  const [gerandoMonografia, setGerandoMonografia] = useState(false);
+  const [erroMonografia, setErroMonografia] = useState<string | null>(null);
   const conclusao = useConclusao(servico ?? { id: "", concluido_em: null, pedido_externo_id: null }, {
     pronto: !!pecas, falta: "gerar as peças técnicas",
     onMudou: (em) => setServico((s) => (s ? { ...s, concluido_em: em } : s)),
@@ -178,6 +188,7 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
       const a = await chamarFuncao<Analise>("gerar-pecas", { pdf_base64: b64, modo: "analisar" });
       setPdfB64(b64);
       setPdfNome(file.name);
+      setMarcosPdf(a.marcos ?? []);
       const cab = a.cabecalho;
       const [muni, uf] = (cab.municipioUf ?? "-").split("-");
       // se veio da página do cliente, vincula e usa os dados dele como detentor
@@ -271,6 +282,7 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
       await salvar();
       const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64: b64 });
       setPecas(r);
+      if (r.marcos) setMarcosPdf(r.marcos);
       avisarHistoricoAtualizado(); // a versão nova entra no histórico sem recarregar
       avisar("ok", "7 peças técnicas geradas.");
       irParaCampo("pc-gerar");
@@ -278,6 +290,31 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
       setErro(e instanceof Error ? e.message : String(e));
     } finally {
       setOcupado(null);
+    }
+  }
+
+  // ---- monografia dos marcos: só ela, na versão das últimas peças ----
+  async function gerarMonografia(escolhidos: string[] | null, fileNovo?: File) {
+    if (!servico) return;
+    setGerandoMonografia(true);
+    setErroMonografia(null);
+    try {
+      let b64 = pdfB64;
+      if (fileNovo) { b64 = bufParaBase64(await fileNovo.arrayBuffer()); setPdfB64(b64); setPdfNome(fileNovo.name); }
+      if (!b64) { setErroMonografia("Envie o PDF do SIGEF: os marcos e as coordenadas saem dele."); return; }
+      await salvar();
+      const r = await chamarFuncao<PecasGeradas>("gerar-pecas", {
+        servico_id: servico.id, pdf_base64: b64, apenas: ["monografia"], ...(escolhidos ? { marcos: escolhidos } : {}),
+      });
+      if (r.marcos) setMarcosPdf(r.marcos);
+      setMonografia(r.arquivos[0] ?? null);
+      avisarHistoricoAtualizado();
+      avisar("ok", "Monografia dos marcos gerada.");
+      for (const a of r.avisos ?? []) avisar("alerta", a);
+    } catch (e) {
+      setErroMonografia(textoSemCredito(e instanceof Error ? e.message : String(e)));
+    } finally {
+      setGerandoMonografia(false);
     }
   }
 
@@ -692,6 +729,17 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
                 </div>
               )}
             </section>
+
+            <MonografiaMarcos
+              marcos={unirMarcos(marcosPdf, trechos.map((t) => t.codigo_inicio), Object.keys(servico.monografia?.marcos ?? {}))}
+              campos={servico.monografia}
+              onCampos={(c) => campo("monografia", c)}
+              onGerar={(escolhidos) => gerarMonografia(escolhidos)}
+              ocupado={gerandoMonografia || !!ocupado}
+              arquivo={monografia}
+              erro={erroMonografia}
+              semPdf={!pdfB64}
+              onEnviarPdf={(f) => gerarMonografia(null, f)} />
 
             {/* A planta é separada das peças para não parecer que o botão ao
                 lado faz a mesma coisa. A imagem de satélite do quadro Planta de
