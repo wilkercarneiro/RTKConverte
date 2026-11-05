@@ -98,6 +98,9 @@ for f in "${FUNCOES[@]}"; do
     alvo="$PACOTE/$f/$dv"
     [ -f "$alvo" ] && continue
     mkdir -p "$(dirname "$alvo")" && cp "$p" "$alvo"
+    # entra também na lista que o passo 4 copia (em 05/11 só ia ao pacote
+    # local: a gerar-planta subiu sem o timbre_automatico.ts e deu BOOT_ERROR)
+    ARQS[$f]+=$'\n'"$p"
     echo "   $f: $dv ← repo (faltava na VPS)"
   done <<< "$(node scripts/fecho-imports.mjs "$f" 2>/dev/null | grep -v '^#' || true)"
 done
