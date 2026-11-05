@@ -11,6 +11,7 @@
 import { useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { Dica } from "./ui";
+import { BotaoTelaCheia } from "./TelaCheia";
 
 export interface PontoSelecao {
   /** identidade estável (código do vértice, ordem…) — é o que vai no Set de selecionados */
@@ -115,7 +116,8 @@ export function PlantaSelecao({
   const anelBase = caminho(pontos.map((p) => [p.x, p.y]));
 
   return (
-    <div className="planta-cert">
+    <div className="planta-cert" data-tela-cheia="">
+      <BotaoTelaCheia className="planta-cert-tela-cheia" />
       <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label={ariaLabel}>
         <polygon points={anelBase} fill="rgba(14,122,79,0.05)" stroke={COR_LINHA} strokeWidth={1.5} strokeLinejoin="round" />
         {poligonos.map((pg, k) => pg.pontos.length >= 2 && (
