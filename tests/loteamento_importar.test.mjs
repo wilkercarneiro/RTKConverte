@@ -24,6 +24,7 @@ import { desenharLote, dividirLote, moverQuina, unirLotes } from "../src/lib/lot
 import { importarLoteamento, lerArquivoLoteamento, lerDxf } from "../src/lib/loteamento/importar/index.ts";
 import { classeDoNome, nomeDaQuadra, nomeDaRua, numeroDoLote } from "../src/lib/loteamento/importar/texto.ts";
 import { arcoDoBulge, limparTextoDxf } from "../src/lib/loteamento/importar/dxf.ts";
+import { encadearEixos } from "../src/lib/loteamento/importar/montar.ts";
 
 const base = () => projetoNovo("LOTEAMENTO IMPORTADO", perimetroImp.pts.length);
 const importar = (nome, bytes, b = base(), per = perimetroImp) => importarLoteamento({ nome, bytes }, b, per, 24);
@@ -62,6 +63,19 @@ test("nomes: camada, número do lote, quadra e rua sem diferenciar maiúscula ne
   assert.equal(nomeDaRua("RUA DAS FLORES (12,00 m)"), "RUA DAS FLORES");
   assert.equal(nomeDaRua("AV 01"), null, "AV sem ponto é área verde");
   assert.equal(nomeDaRua("Av. Brasil"), "Av. Brasil");
+});
+
+test("eixo desenhado em LINEs soltas vira uma polilinha por rua (o cruzamento separa)", () => {
+  const f = { geo: "linha", classe: "eixo", origem: "EIXO" };
+  const linhas = [
+    { f, pts: [[0, 0], [10, 0]] }, { f, pts: [[20, 0], [10, 0]] }, { f, pts: [[20, 0], [30, 0]] }, // uma rua em 3 pedaços (um invertido)
+    { f, pts: [[30, 0], [30, 10]] }, { f, pts: [[30, 0], [40, 0]] }, // cruzamento em (30, 0): três pedaços no nó
+  ];
+  const r = encadearEixos(linhas);
+  assert.equal(r.length, 3);
+  const longa = r.find((x) => x.pts.length === 4);
+  assert.ok(longa, JSON.stringify(r.map((x) => x.pts)));
+  assert.deepEqual([longa.pts[0], longa.pts[3]].map((p) => p[0]).sort((a, b) => a - b), [0, 30]);
 });
 
 test("DXF: polilinhas, arco do bulge, textos e MTEXT sem formatação", () => {

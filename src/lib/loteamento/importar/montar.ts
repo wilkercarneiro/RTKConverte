@@ -170,6 +170,45 @@ export function larguraTipica(pgs: Poligono[], viario: Poligono[] = pgs): number
   return Math.round(amostras[amostras.length - 1].w * 100) / 100;
 }
 
+/**
+ * Eixos desenhados em pedaços (LINEs soltas, uma por trecho) viram polilinhas:
+ * as pontas que se encontram (até 1 cm) num nó de grau 2 são emendadas. No
+ * cruzamento (3 ou mais pedaços no mesmo nó) a polilinha para — cada rua é um
+ * eixo. O nome do objeto (KML/GeoJSON) fica com a polilinha.
+ */
+export function encadearEixos<T extends { f: Feicao; pts: Pt[] }>(linhas: T[]): T[] {
+  const chave = (p: Pt) => `${Math.round(p[0] * 100)},${Math.round(p[1] * 100)}`;
+  const grau = new Map<string, number>();
+  for (const l of linhas) for (const p of [l.pts[0], l.pts[l.pts.length - 1]]) grau.set(chave(p), (grau.get(chave(p)) ?? 0) + 1);
+  const usadas = new Set<number>();
+  const out: T[] = [];
+  const pontaLivre = (k: string) => grau.get(k) !== 2;
+  const emendar = (inicio: number) => {
+    usadas.add(inicio);
+    let pts = [...linhas[inicio].pts];
+    const nome = linhas[inicio].f.nome;
+    // cresce pelas duas pontas enquanto o nó for de grau 2 e o pedaço seguinte não tiver outro nome
+    for (const lado of [1, 0] as const) {
+      for (let guarda = 0; guarda < linhas.length; guarda++) {
+        const ponta = lado ? pts[pts.length - 1] : pts[0];
+        const k = chave(ponta);
+        if (pontaLivre(k)) break;
+        const j = linhas.findIndex((l, jj) => !usadas.has(jj) && (chave(l.pts[0]) === k || chave(l.pts[l.pts.length - 1]) === k) && (!nome || !l.f.nome || l.f.nome === nome));
+        if (j < 0) break;
+        usadas.add(j);
+        let seg = linhas[j].pts;
+        if (lado) { if (chave(seg[0]) !== k) seg = [...seg].reverse(); pts = [...pts, ...seg.slice(1)]; }
+        else { if (chave(seg[seg.length - 1]) !== k) seg = [...seg].reverse(); pts = [...seg.slice(0, -1), ...pts]; }
+      }
+    }
+    out.push({ ...linhas[inicio], pts });
+  };
+  // começa pelas pontas livres (fim de rua, cruzamento); o que sobrar é anel
+  linhas.forEach((l, i) => { if (!usadas.has(i) && (pontaLivre(chave(l.pts[0])) || pontaLivre(chave(l.pts[l.pts.length - 1])))) emendar(i); });
+  linhas.forEach((_, i) => { if (!usadas.has(i)) emendar(i); });
+  return out;
+}
+
 /** Polígono → anéis UTM do corpo da rua (contorno anti-horário, furo horário). */
 function aneisUtm(pgs: Poligono[], U: (p: Pt) => Pt): Pt[][] {
   const out: Pt[][] = [];
@@ -304,12 +343,15 @@ export function montarLoteamento(d: DesenhoImportado, base: Projeto, perimetro: 
     for (const p of desconhecidos) if (pols.filter((q) => q.classe !== "contorno" && contem(p, q)).length >= 2) p.classe = "quadra";
     const quadras0 = pols.filter((p) => p.classe === "quadra");
     for (const p of desconhecidos) if (p.classe === "?" && quadras0.some((q) => contem(q, p))) p.classe = "lote";
-    // encosta (lado em comum de 50 cm ou mais) num lote — repete até parar de crescer
+    // encosta (lado em comum de 50 cm ou mais) num lote — repete até parar de crescer. Do
+    // tamanho de um lote (até 6 vezes a mediana): a área verde sem camada encostada nos lotes não vira lote
     const encosta = (a: PolArq, b: PolArq) => caixaSobrepoe(a.caixa, b.caixa, 0.05) && (perimetroPol(a.pol) + perimetroPol(b.pol) - perimetroPol(maiorPeca(uniaoFechada([a.pol, b.pol], 0.025)) ?? a.pol)) / 2 > 0.5;
+    const areasLote = pols.filter((p) => p.classe === "lote").map((p) => p.area).sort((a, b) => a - b);
+    const tetoLote = areasLote.length ? 6 * areasLote[Math.floor(areasLote.length / 2)] : Infinity;
     for (let volta = 0; volta < 50; volta++) {
       let mudou = false;
       for (const p of desconhecidos) {
-        if (p.classe !== "?") continue;
+        if (p.classe !== "?" || p.area > tetoLote) continue;
         if (pols.some((q) => q.classe === "lote" && encosta(p, q))) { p.classe = "lote"; mudou = true; }
       }
       if (!mudou) break;
@@ -568,9 +610,9 @@ export function montarLoteamento(d: DesenhoImportado, base: Projeto, perimetro: 
   // ---------------------------------------------------------------- viário = gleba − (quadras ∪ áreas ∪ remanescente desenhado)
   const ocupadoTudo = [...terras.flat(), ...areas.map((a) => a.pol), ...remanescentesArq];
   let viario = diferenca([gleba], ocupadoTudo).filter((x) => areaPol(x) > 0.01);
-  // evidência de rua no arquivo: polígonos de viário e eixos
+  // evidência de rua no arquivo: polígonos de viário e eixos (o eixo desenhado em LINEs soltas vira uma polilinha só)
   const viarioArq = pols.filter((p) => p.classe === "viario").map((p) => p.pol);
-  const eixosArq = linhas.filter((x) => x.f.classe === "eixo" || x.f.classe === "viario");
+  const eixosArq = encadearEixos(linhas.filter((x) => x.f.classe === "eixo" || x.f.classe === "viario"));
   // terra larga demais para ser rua (cabe um círculo de 20 m) e sem rua desenhada: remanescente (o arquivo não cobre a gleba toda)
   const largo = intersecao(offsetPols(offsetPols(viario, -20), 20, "redonda"), viario).filter((x) => areaPol(x) > 2000);
   const evidencia = [...viarioArq, ...eixosArq.flatMap((e) => bufferLinha(e.pts, 50, "redonda"))];
@@ -661,7 +703,8 @@ export function montarLoteamento(d: DesenhoImportado, base: Projeto, perimetro: 
     }
   }
   const ruasTmp = sementes.map((s, i) => ({ s, corpo: partes[i].length ? uniaoFechada(partes[i], 0.002) : [] })).filter((x) => somaArea(x.corpo) > 0.01);
-  // nome: o da semente ou "RUA 01"… na ordem de cima para baixo (sem repetir nome)
+  // nome: o do arquivo (a mesma rua cortada por um cruzamento pode ter dois eixos com o mesmo
+  // nome) ou "RUA 01"… na ordem de cima para baixo, sem repetir os do arquivo
   const ordemRuas = ruasTmp.map((r, i) => ({ i, c: centroide(maiorPeca(r.corpo).ext) })).sort((a, b) => (Math.abs(a.c[1] - b.c[1]) > 25 ? b.c[1] - a.c[1] : a.c[0] - b.c[0]));
   const nomesUsados = new Set(ruasTmp.map((r) => r.s.nome).filter(Boolean) as string[]);
   let nRua = 0;
@@ -669,7 +712,7 @@ export function montarLoteamento(d: DesenhoImportado, base: Projeto, perimetro: 
   for (const { i } of ordemRuas) {
     const r = ruasTmp[i];
     let nome = r.s.nome;
-    if (!nome || ruas.some((x) => x.nome === nome)) { do nome = `RUA ${pad(++nRua)}`; while (nomesUsados.has(nome)); nomesUsados.add(nome); }
+    if (!nome) { do nome = `RUA ${pad(++nRua)}`; while (nomesUsados.has(nome)); nomesUsados.add(nome); }
     const largura = larguraTipica(r.corpo, viario);
     ruas.push({ id: `imp${ruas.length + 1}`, nome, largura, eixo: (r.s.eixo ?? []).map(U), corpo: aneisUtm(r.corpo, U) });
   }

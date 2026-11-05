@@ -1,8 +1,7 @@
 // Edge Function: entregar
 //
 // Os arquivos finais do CAR (shapefiles do SICAR, KML) e do loteamento (planta,
-// memoriais, quadro, KML, DXF, locação, projetos de infraestrutura e o pacote
-// lote a lote — memorial, planta A4 e locação de cada lote). Até a
+// memoriais, quadro, KML, DXF, locação, projetos de infraestrutura). Até a
 // auditoria de 04/11/2026 eles eram montados no navegador, e o crédito era só
 // uma porta da tela: bastava trocar o desenho para gerar outro imóvel.
 //
@@ -114,11 +113,7 @@ Deno.serve(async (req) => {
     const autor = await autorDaChamada(clienteDoUsuario(req));
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    // lote a lote tem conta própria: o loteamento de 600 lotes são 10 chamadas
-    // de 60 seguidas, e cada chamada já tem teto de lotes (loteALote.ts)
-    const loteALote = saida === "lote" || saida === "lotes";
-    const [chave, max, janela] = loteALote ? [`lotes:${autor ?? servico_id}`, 60, 600] : [`gerar:${autor ?? servico_id}`, 30, 300];
-    if (!(await dentroDoLimite(supa, chave, max, janela))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
+    if (!(await dentroDoLimite(supa, `gerar:${autor ?? servico_id}`, 30, 300))) return json({ erro: MUITAS_CHAMADAS.erro }, MUITAS_CHAMADAS.status);
 
     const { data: servico } = await supa.from("servicos").select().eq("id", servico_id).single();
     if (!servico) return json({ erro: "Serviço não encontrado" }, 404);

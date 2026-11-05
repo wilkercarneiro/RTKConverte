@@ -6,6 +6,7 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
 
 1. **Início → Loteamento → Enviar TXT.** O TXT é o mesmo do levantamento do perímetro. O `parse-txt` cria o serviço com fuso, UF e vértices, e a confrontação de cada lado vem dos vértices M.
 2. **Perguntas.** Cada resposta vira parâmetro do projeto e pode ser mudada depois.
+   - **Já tem o loteamento pronto?** (cartão no topo, desde 05/11/2026). Importe o DXF, KML/KMZ ou GeoJSON do loteamento já dividido: aparece a prévia, o resumo (quadras, lotes, área dos lotes, viário, áreas públicas) e os avisos. **Usar este loteamento →** aplica e vai para a prancheta, como "Usar esta proposta". Detalhes em [Loteamento pronto importado](#loteamento-pronto-importado-05112026).
    - **Lados do terreno.** Para cada lado, diga se é divisa, estrada existente, rio (com faixa de APP) ou rodovia/ferrovia (com faixa non aedificandi). Trechos marcados como estrada no levantamento já chegam marcados.
    - **Lotes.** Escolha um perfil (Lei 6.766, popular, padrão, médio, chácaras) e ajuste as medidas em três colunas — **mínima, padrão e máxima** — para frente, profundidade e área. As faixas que o operador não digitou acompanham o padrão (frente até 2×, fundo de 60% a 160%, área até 2× o lote padrão). Diga também para onde vai a sobra da fileira e como ficam os lotes da divisa (padronizados ou em áreas iguais).
    - **Ruas.** Informe a largura e a pista, as esquinas (raio ou chanfro) e o comprimento máximo da quadra. Escolha quem traça: o sistema, ruas paralelas a um lado escolhido, ou desenho à mão.
@@ -76,6 +77,12 @@ Divide a gleba levantada em quadras, lotes, ruas e áreas públicas. Gera a plan
      - Quadro de lotes em CSV, que abre no Excel.
      - KML para o Google Earth.
      - DXF em camadas.
+   - **Lote a lote** (desde 05/11/2026): para cada lote marcado, uma pasta no zip (`QUADRA_A/LOTE_01/`) com:
+     - o memorial descritivo do lote (DOCX);
+     - a planta do lote em A4 (PDF): carimbo (empresa, RT, loteamento, quadra/lote, área, perímetro, município/UF), o lote em escala com os vizinhos em volta, norte e escala, medidas e azimutes dos lados, nomes dos vértices (os da locação), confrontantes, tabela de coordenadas (vértice, E, N, azimute, distância, confrontante) e a situação (o loteamento com o lote destacado);
+     - a locação dos vértices do lote no formato escolhido, com os mesmos nomes da locação completa.
+     - As áreas públicas (verde, lazer, institucional) saem do mesmo jeito, em `AREA_VERDE_01/` etc.; os vértices delas que a locação do loteamento não tem ganham `AV01-01`, `AI01-01`…
+     - Marque todos, por quadra ou um a um; o "↓" de cada lote baixa só ele. O servidor gera até 60 por chamada (saídas `lote` e `lotes` da função `entregar`, com os ids conferidos contra o projeto recalculado). A tela pede de 60 em 60, mostra "Gerando 120 de 300…" e junta tudo num zip só. O limite de frequência da função vale (30 chamadas em 5 min, ou seja, 1.800 lotes): se o servidor pedir uma pausa, a tela espera 30 s e continua.
    - **Para o técnico de campo:** arquivo de locação no formato da coletora.
      - CSV universal `Name,Easting,Northing,Elevation,Code`.
      - Variante com o Norte antes do Este.
@@ -274,6 +281,55 @@ Testado no vertces.com.br com um serviço de teste e, no motor, com 8 glebas (ED
 - **Perguntas do loteamento:** o marco do TXT com rótulo "estrada/" encerra a estrada. Os lados depois dele não vêm mais marcados como estrada.
 - **Fuso UTM ao criar o serviço.** Com E/N, a longitude cabe em qualquer fuso, e a Bahia atravessa o 23S e o 24S. O "mais perto do centro da UF" punha o leste baiano no 23S, a 600 km. Agora, se o arquivo cabe em mais de um fuso na UF e o fuso está no automático, a tela pergunta antes de criar e sugere o que a empresa mais usa naquela UF.
 
+### Loteamento pronto importado (05/11/2026)
+
+O loteamento já dividido no CAD, no QGIS ou no Google Earth vira o projeto daqui (`src/lib/loteamento/importar/`). Ele é gravado no MESMO modelo do loteamento gerado, por isso a prancheta, a edição, as entregas e o servidor funcionam sem caso especial.
+
+- **Leitura** (funções puras, testáveis no node):
+  - **DXF ASCII**: LWPOLYLINE e POLYLINE + VERTEX (o arco do "bulge" vira cordas de 2°), LINE, ARC, TEXT, MTEXT (sem os códigos de formatação) e os atributos de bloco (ATTRIB). Polilinha fechada é polígono. Bloco sem atributo, hachura e spline não são lidos (aviso). DXF binário e DWG são recusados com o caminho ("salve como DXF ASCII").
+  - **KML/KMZ**: cada Placemark com a pasta dele. lon/lat → UTM do fuso do serviço.
+  - **GeoJSON**: propriedades `tipo`, `lote`, `quadra`, `nome` (sem diferenciar maiúscula, acento ou separador). lon/lat, ou o UTM que o `crs` disser (EPSG 31978 a 31985); em outro fuso, é convertido.
+- **O que é cada coisa** (pela camada, sem diferenciar maiúscula nem acento):
+  - lote/lotes/LT → lote; quadra/QD → quadra;
+  - verde/AV → área verde; praça/lazer/SL → lazer; institucional/AI/equipamento → institucional; APP → APP; remanescente → área remanescente;
+  - rua/via/viário/arruamento/alinhamento → viário (polígono); eixo → eixo de rua (linha);
+  - perímetro/gleba/limite/divisa → contorno; cota, ponto, texto, carimbo, curva de nível → ignorado como polígono.
+  - Camada desconhecida: o polígono com texto "ÁREA VERDE" dentro é área verde; o do tamanho da gleba é o contorno; o que contém outros é quadra; o que está dentro de uma quadra, ou encosta (lado comum de 50 cm ou mais) num lote, é lote.
+  - No KML a pasta e o estilo mandam: o polígono dentro da pasta "Quadra A" é lote da quadra A; "A-01" e "Lote 12" dão o número.
+- **Números e nomes**:
+  - O texto dentro do lote é o número: "12", "L-12", "LOTE 12", "Q-A L-12", "QD 01 LT 12". Área ("250,00 m²") e cota ("10,00") não contam; na camada de cota ou de pontos, nada conta. O texto da camada de lote vale mais, depois o maior.
+  - O nome da quadra vem do rótulo dos lotes ("Q-A L-12", "A-01", a propriedade `quadra`) ou do texto "QUADRA A"/"QD-01" dentro dela; "A" solto só fora dos lotes. Sem nome: letra (ou número, pela escolha das Perguntas) pela posição, sem repetir.
+  - **Numeração:** número repetido na quadra perde o número. O lote sem número preenche os buracos da numeração ou segue depois do maior; sem nenhum número, a quadra é numerada no sentido escolhido a partir do noroeste. Se a numeração não é 1..n, cada lote guarda o número dele (`LoteDesenhado.numero`), e o cálculo o respeita: B-05, B-06, B-07, B-09. O lote novo da edição (a 2ª parte do dividido, o desenhado) segue depois do maior número da quadra.
+  - O nome da rua vem do texto de rua perto do eixo ("RUA DAS FLORES (12,00 m)" vira "RUA DAS FLORES"), do nome do Placemark/propriedade, ou "RUA 01", "RUA 02"…
+- **O modelo** (`importar/montar.ts`):
+  - **Quadra:** os lotes da quadra (o polígono dela no arquivo, ou os lotes que se encostam, com folga de 5 cm). A terra da quadra é a dos lotes. Se o polígono da quadra no arquivo tem um pedaço sem lote com corpo (não é fresta), ele vira área livre da quadra. Cada quadra é uma `QuadraCfg` com os lotes em `lotes` (anéis UTM, na ordem da numeração) e a âncora no maior lote.
+  - **Áreas públicas:** `AreaDesenhada`, recortadas pela gleba. O pedaço por cima de um lote fica com o lote (aviso).
+  - **Viário:** gleba − (quadras ∪ áreas públicas ∪ remanescente). Ele é repartido entre os eixos do arquivo. A rua cresce a partir do eixo, e o resto fica com a rua mais perto. Sem eixo, a reta do nome da rua faz as vezes dele; sem nenhum dos dois, cada pedaço do viário é uma rua. Cada rua guarda o corpo pronto (`Rua.corpo`, anéis UTM) e o eixo, quando o arquivo traz. A largura é medida no corpo: a mediana da travessia, de 2 em 2 m.
+  - **Remanescente:** a terra sem nada desenhado e larga demais para rua (cabe um círculo de 20 m de raio, com mais de 2.000 m², longe dos eixos e das ruas do arquivo) vira área remanescente (uma quadra sem lote). É o arquivo que cobre só parte da gleba.
+  - **Parâmetros:** frente, profundidade e área (mín., padrão = mediana, máx.) saem dos próprios lotes, com 3% de folga. Assim o lote do arquivo não sai acusado de fora da medida. A quina a mais também, e "medidas de terreno" fica desligado: as áreas são as do CAD, no plano UTM.
+  - `Projeto.importado = { arquivo, em }` acende na prancheta a faixa "Loteamento importado de X — os lotes estão como no arquivo; dá para ajustar aqui".
+- **O cálculo com o projeto importado** (`calculo.ts`):
+  - **Rua com `corpo`:** o corpo entra no lugar da faixa em volta do eixo (rua sem eixo passa no filtro). O lado do lote confronta com a rua em cujo corpo ele dá.
+  - **Quadra do arquivo:** não é partida em L nem arredondada na esquina. O arco que veio no arquivo é a curva da locação: PC, meio e PT locados; os pontos de dentro do arco, não.
+  - **Quadras encostadas:** as do arquivo que se encostam sem rua no meio saem do recorte da gleba numa peça só. Cada uma volta a ter a terra dos seus lotes, e a área livre vai para a que mais encosta nela.
+  - **Eixo vazio:** locação (sem estacas), DXF/KML (o nome vai no meio da rua; no KML vai o corpo), planta, rótulos, grafo das redes e voo do drone pulam a rua sem eixo sem quebrar.
+- **Avisos** (na prévia, antes de aplicar):
+  - lote fora da gleba (recortado; o que fica todo fora não entra);
+  - lotes sobrepostos (a parte comum fica com o primeiro);
+  - lote repetido e contorno que se cruza;
+  - perímetro do arquivo diferente da gleba (mais de 1% ou 50 m²);
+  - área pública por cima de lote;
+  - quadras encostadas, quadra sem nome ou sem lote, número repetido ou faltando;
+  - polígono não reconhecido (por camada);
+  - lote abaixo de 125 m²;
+  - arquivo sem eixo de rua (sem estacas, redes e drone).
+- **Recusa:** o desenho tem de cair sobre a gleba do serviço. No fuso vizinho (23/25), ele é convertido com aviso. Em coordenadas locais (perto de 0,0) ou longe da gleba, é recusado com o motivo (a quantos km fica e qual sistema usar).
+- **Edição e servidor:**
+  - A edição (mover quina, divisa, unir, dividir, cortar, desenhar, igualar) funciona como na quadra desenhada à mão. O número do arquivo acompanha o lote (`Meta.numero` em `edicao.ts`).
+  - O projeto importado mora no `loteamentos.projeto` (jsonb), e a função `entregar` o recalcula igual: nada sai com geometria vinda da tela.
+- **Árvore do clipper** (`geom.ts`, achado na importação): com StrictlySimple, o clipper às vezes põe um furo na raiz da árvore ou pendura o furo num "contorno" de área zero. É o furo que toca outro anel num ponto só, como a quadra que encosta na divisa pela quina. Antes, o furo virava terra (o viário importado ganhava a quadra inteira); agora ele volta para o contorno que o contém.
+- **Desempenho:** a importação roda num Web Worker (`importar.worker.ts`). O DXF de 207 lotes leva cerca de 2,5 s.
+
 ## Como funciona por dentro
 
 - **Projeto = intenção.** A tabela `loteamentos` (migração 0021) guarda só parâmetros, ruas, áreas e ajustes. Quadras e lotes **nunca** são gravados: `calcular()` (`src/lib/loteamento/calculo.ts`) refaz tudo a cada mudança, em cerca de 10 ms para 200 lotes e 130 ms para 2.000. É isso que faz o resto se ajustar quando um lote, uma rua ou um parâmetro muda.
@@ -321,4 +377,17 @@ Testado no vertces.com.br com um serviço de teste e, no motor, com 8 glebas (ED
   - verde longe da estrada e institucional no centro;
   - os casos reais do EDILSON (pontas inclinadas na C, cabeceira da D sem lote-tira).
   - quadra de três frentes: triângulo sintético (áreas exatas, sem 5 quinas, fundo dentro do máximo) e a quadra E real do IRAN (`tests/corpus-real/iran/`, fora do Git: 31 iguais, sem aviso, numeração em sequência).
+- **`tests/loteamento_importar.test.mjs`** cobre:
+  - DXF sintético (2 quadras × 4 lotes, ruas com eixo e nome, área verde, textos em vários formatos): a área de cada lote é a do arquivo (≤ 1 cm²), a numeração com salto (B-05, 06, 07, 09) e viário = gleba − lotes − áreas;
+  - o mesmo pelo KML e pelo GeoJSON (lon/lat e UTM com `crs`);
+  - quadra pelos lotes que se encostam, lote em camada desconhecida;
+  - lote fora da gleba recortado, arquivo longe da gleba e em coordenadas locais recusado;
+  - JSON do banco recalculado igual;
+  - edição no projeto importado: mover quina, unir, dividir (B-09 → B-09 e B-10), desenhar;
+  - um loteamento gerado aqui volta igual pelo DXF e pelo KML que o sistema exporta.
+- **`tests/loteamento_lote_a_lote.test.mjs`** cobre:
+  - a pasta de cada lote (memorial DOCX com o nome do lote, planta A4 que o pdf-lib abre, locação com uma linha por vértice e os nomes da locação completa), a área pública, a locação em DXF;
+  - o servidor só aceita ids do projeto recalculado (até 60);
+  - o arco da esquina descrito como curva no memorial (sem "vértice A-?");
+  - 60 lotes num pedido.
 - **`npm run test:rls`** cobre o isolamento da tabela `loteamentos` entre escritórios.
