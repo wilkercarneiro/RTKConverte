@@ -24,6 +24,8 @@ import { gerarPlantaDoItem } from "./plantaLote.ts";
 import type { FolhaItem, TrechoFolha } from "./plantaLote.ts";
 import type { DadosCarimbo } from "./planta.ts";
 import { paraUtm } from "./plano.ts";
+import { exportarArea } from "../exportar/index.ts";
+import type { Camada } from "../exportar/index.ts";
 
 /** Teto de lotes por chamada ao servidor: a tela pede de 60 em 60 e junta o zip. */
 export const MAX_ITENS_POR_PEDIDO = 60;
@@ -328,6 +330,16 @@ export async function pacoteLoteALote(
     const sufixo = `SIRGAS2000_UTM${fuso}S`;
     if (formato === "dxf") pasta.file(`LOCACAO_${item.arquivo}_${sufixo}.dxf`, dxfDoItem(m.pontos, m.folha.pol.ext.map((p) => paraUtm(res.plano, p))));
     else pasta.file(`LOCACAO_${item.arquivo}_${sufixo}.${f.ext}`, arquivoLocacao(m.pontos, formato));
+    // o lote também em KML (Google Earth) e GPX (GPS de navegação): o contorno e
+    // os vértices com o mesmo nome da locação (pedido de 05/11: todos os formatos)
+    const camadas: Camada[] = [
+      { nome: item.arquivo, cor: "#E07A1F", feicoes: [{ nome: item.arquivo, tipo: "poligono", utm: m.folha.pol.ext.map((p) => paraUtm(res.plano, p) as [number, number]) }] },
+      { nome: "VERTICES", feicoes: m.pontos.map((p) => ({ nome: p.nome, tipo: "ponto" as const, utm: [[p.e, p.n] as [number, number]], alt: [p.h] })) },
+    ];
+    for (const fmt of ["kml", "gpx"] as const) {
+      const a = await exportarArea(camadas, fmt, { fuso, nome: item.arquivo });
+      pasta.file(`${item.arquivo}.${fmt}`, a.dados);
+    }
   }
   return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 }

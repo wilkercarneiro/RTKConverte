@@ -49,10 +49,15 @@ test("pacote: uma pasta por lote com memorial (DOCX), planta A4 (PDF) e locaçã
   const zip = await JSZip.loadAsync(zipU8);
   const arquivos = Object.keys(zip.files).filter((n) => !zip.files[n].dir).sort();
   const pasta = (p) => arquivos.filter((n) => n.startsWith(`${p}/`)).map((n) => n.slice(p.length + 1));
-  assert.deepEqual(pasta("QUADRA_A/LOTE_01").sort(), ["LOCACAO_LOTE_01_QUADRA_A_SIRGAS2000_UTM24S.csv", "MEMORIAL_LOTE_01_QUADRA_A.docx", "PLANTA_LOTE_01_QUADRA_A.pdf"]);
-  assert.equal(pasta("QUADRA_B/LOTE_09").length, 3);
+  assert.deepEqual(pasta("QUADRA_A/LOTE_01").sort(), ["LOCACAO_LOTE_01_QUADRA_A_SIRGAS2000_UTM24S.csv", "LOTE_01_QUADRA_A.gpx", "LOTE_01_QUADRA_A.kml", "MEMORIAL_LOTE_01_QUADRA_A.docx", "PLANTA_LOTE_01_QUADRA_A.pdf"]);
+  // KML e GPX do lote: o contorno e os vértices com o nome da locação
+  const kml = await zip.file("QUADRA_A/LOTE_01/LOTE_01_QUADRA_A.kml").async("string");
+  assert.match(kml, /<Polygon>/);
+  const gpx = await zip.file("QUADRA_A/LOTE_01/LOTE_01_QUADRA_A.gpx").async("string");
+  assert.match(gpx, /<wpt /);
+  assert.equal(pasta("QUADRA_B/LOTE_09").length, 5);
   const pastaArea = escolhidos[2].pasta;
-  assert.equal(pasta(pastaArea).length, 3, arquivos.join(", "));
+  assert.equal(pasta(pastaArea).length, 5, arquivos.join(", "));
 
   // PDF: abre no pdf-lib, uma folha A4 em pé
   const pdf = await PDFDocument.load(await zip.file("QUADRA_A/LOTE_01/PLANTA_LOTE_01_QUADRA_A.pdf").async("uint8array"));
