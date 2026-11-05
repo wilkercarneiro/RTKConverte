@@ -125,7 +125,7 @@ function banco(svc: Svc): Banco {
       if (pagamentoId) await svc.from("pagamentos").update({ status: "CANCELADO", erro: motivo.slice(0, 300), atualizado_em: new Date().toISOString() }).eq("id", pagamentoId);
     },
     async pagamentosPendentes(escritorioId) {
-      let q = svc.from("pagamentos").select("asaas_id, status").not("asaas_id", "is", null)
+      let q = svc.from("pagamentos").select("asaas_id, status, forma").not("asaas_id", "is", null)
         .in("status", ["PENDING", "OVERDUE", "AWAITING_RISK_ANALYSIS"]).order("criado_em", { ascending: false }).limit(40);
       if (escritorioId) q = q.eq("escritorio_id", escritorioId);
       const r = await q;
@@ -207,6 +207,28 @@ function banco(svc: Svc): Banco {
     },
     async removerEmpresa(escritorioId) {
       falhou(await svc.from("escritorios").delete().eq("id", escritorioId), "empresa");
+    },
+    async cadastrosAbandonados(documento, email, horas) {
+      const antes = new Date(Date.now() - horas * 3600_000).toISOString();
+      const base = () => svc.from("escritorios").select("id").eq("origem", "site").eq("status", "aguardando_pagamento").lt("created_at", antes).limit(3);
+      const [porDoc, porEmail] = await Promise.all([base().eq("cnpj", documento), base().eq("email", email)]);
+      falhou(porDoc, "empresa");
+      falhou(porEmail, "empresa");
+      const ids = [...new Set([...(porDoc.data ?? []), ...(porEmail.data ?? [])].map((x) => (x as { id: string }).id))];
+      const out: { escritorioId: string; contas: string[] }[] = [];
+      for (const id of ids) {
+        // nunca pagou nada (nem parcela) e não tem serviço: só então dá lugar
+        const pagos = await svc.from("pagamentos").select("id").eq("escritorio_id", id).in("status", ["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]).limit(1);
+        falhou(pagos, "pagamentos");
+        if ((pagos.data ?? []).length) continue;
+        const svcs = await svc.from("servicos").select("id").eq("escritorio_id", id).limit(1);
+        falhou(svcs, "servicos");
+        if ((svcs.data ?? []).length) continue;
+        const m = await svc.from("membros_escritorio").select("user_id").eq("escritorio_id", id);
+        falhou(m, "membros");
+        out.push({ escritorioId: id, contas: (m.data ?? []).map((x) => (x as { user_id: string }).user_id) });
+      }
+      return out;
     },
   };
 }

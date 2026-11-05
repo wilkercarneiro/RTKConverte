@@ -230,3 +230,9 @@ test("loteamento gerado aqui volta igual pelo DXF e pelo KML que o sistema expor
     assert.ok(Math.abs(res.quadro.verde + res.quadro.institucional - res0.quadro.verde - res0.quadro.institucional) < 1, nome);
   }
 });
+
+test("importar: arquivo do vizinho que só encosta na gleba é recusado como fora da gleba (revisão 05/11)", async () => {
+  // o mesmo loteamento deslocado 115 m para leste: só a ponta encosta na gleba
+  const bytes = dxfSintetico({ deslocar: [115, 0] });
+  await assert.rejects(() => importar("vizinho.dxf", bytes), /não cai na gleba deste serviço/);
+});

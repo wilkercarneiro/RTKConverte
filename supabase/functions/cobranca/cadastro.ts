@@ -31,7 +31,7 @@ import type { Ciclo } from "../_shared/parcelas.ts";
 export const LIMITES_CADASTRO = (ip: string): [string, number, number][] => [
   [`cadastro:ip-hora:${ip}`, 5, 3600],
   [`cadastro:ip-dia:${ip}`, 15, 86400],
-  ["cadastro:total-dia", 200, 86400],
+  ["cadastro:total-dia", 500, 86400],
 ];
 
 const ok = (corpo: Record<string, unknown> = {}): Resposta => ({ status: 200, corpo: { ok: true, ...corpo } });
@@ -48,6 +48,41 @@ export async function tratarPublico(d: Deps, ip: string | null, b: Record<string
     // página pública: o detalhe do erro interno não sai daqui
     return falha(500, "Não foi possível concluir o cadastro agora. Tente de novo em instantes.");
   }
+}
+
+/**
+ * Documento OU e-mail já em uso: a mesma frase para os dois, para a página
+ * pública não servir de consulta de quem é cliente (qual CPF/CNPJ ou e-mail).
+ */
+export const JA_EXISTE = "Não foi possível concluir o cadastro com estes dados. Se você já tem conta no Vertces, entre com ela; se não, fale com o suporte.";
+
+/** Horas sem pagamento para um cadastro do site dar lugar a outro com o mesmo documento ou e-mail. */
+export const HORAS_ABANDONO = 24;
+
+async function liberarAbandonados(d: Deps, cfg: Record<string, string>, documento: string, email: string): Promise<void> {
+  if (!d.banco.cadastrosAbandonados) return;
+  const velhos = await d.banco.cadastrosAbandonados(documento, email, HORAS_ABANDONO).catch(() => []);
+  const asaas = asaasDe(cfg, d.fetch);
+  for (const v of velhos) {
+    try {
+      // o Pix/boleto em aberto do cadastro antigo sai do Asaas antes (não pode ser pago depois)
+      const e = await d.banco.empresa(v.escritorioId);
+      const sub = e?.cobranca?.asaas_assinatura_id;
+      if (sub && asaas) {
+        try { await asaas.removerAssinatura(sub); } catch (x) { if (!(x instanceof ErroAsaas && x.status === 404)) throw x; }
+      }
+      await d.banco.removerEmpresa(v.escritorioId);
+      for (const c of v.contas) await d.banco.removerConta(c).catch(() => {});
+      await d.banco.atividade(v.escritorioId, "empresa.cadastro_abandonado_removido", `${HORAS_ABANDONO} h sem pagamento`, null).catch(() => {});
+    } catch { /* não deu para liberar: segue e o cadastro novo cai no "já existe" */ }
+  }
+}
+
+async function avisarTetoDoDia(d: Deps, cfg: Record<string, string>): Promise<void> {
+  const zap = zapDe(cfg);
+  if (!zap || !cfg.whatsapp_avisos) return;
+  if (d.limite && !(await d.limite("cadastro:aviso-teto", 1, 86400))) return;
+  await enviarWhatsApp(zap, cfg.whatsapp_avisos, "Vertces: o cadastro pelo site chegou ao teto do dia (500). Novos cadastros estão barrados até amanhã — confira em Autocadastro se é ataque.", d.fetch);
 }
 
 const texto = (v: unknown, max: number) => String(v ?? "").trim().replace(/\s+/g, " ").slice(0, max);
@@ -77,7 +112,10 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
   // por IP e no total: depois da validação (erro de digitação não gasta a vez de ninguém)
   if (d.limite) {
     for (const [chave, max, janela] of LIMITES_CADASTRO(ip ?? "desconhecido")) {
-      if (!(await d.limite(chave, max, janela))) throw new ErroUsuario("Muitos cadastros seguidos a partir desta conexão. Tente de novo mais tarde.", 429);
+      if (await d.limite(chave, max, janela)) continue;
+      // o teto do dia (todas as conexões): pode ser ataque — o superadmin fica sabendo, uma vez por dia
+      if (chave === "cadastro:total-dia") await avisarTetoDoDia(d, cfg).catch(() => {});
+      throw new ErroUsuario("Muitos cadastros seguidos a partir desta conexão. Tente de novo mais tarde.", 429);
     }
   }
   if (!regras.ciclos[ciclo].ativo) throw new ErroUsuario(`O período ${NOME_CICLO[ciclo].toLowerCase()} não está disponível. Escolha outro.`);
@@ -86,14 +124,13 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
   if (!plano || !plano.ativo || !plano.vende_no_site || !(mensalidade > 0)) {
     throw new ErroUsuario("Este plano não está disponível para assinatura pelo site. Escolha outro.");
   }
-  const tipoDoc = f.documento.length === 11 ? "CPF" : "CNPJ";
-  if (await d.banco.documentoCadastrado(f.documento)) {
-    throw new ErroUsuario(`Já existe uma conta com este ${tipoDoc}. Entre com ela ou fale com o suporte.`, 409);
-  }
+  // cadastro antigo com este documento ou e-mail que nunca pagou: dá lugar a este
+  await liberarAbandonados(d, cfg, f.documento, f.email);
+  if (await d.banco.documentoCadastrado(f.documento)) throw new ErroUsuario(JA_EXISTE, 409);
 
   const conta = await d.banco.criarConta(f.email, f.senha, { nome: f.responsavel, termos_versao: versao });
   if ("erro" in conta) {
-    if (conta.duplicado) throw new ErroUsuario("Já existe uma conta com este e-mail. Entre com ela.", 409);
+    if (conta.duplicado) throw new ErroUsuario(JA_EXISTE, 409);
     throw new ErroUsuario(/password/i.test(conta.erro) ? "Senha recusada pelo servidor: use uma senha mais forte." : "Não foi possível criar a conta. Confira o e-mail e tente de novo.");
   }
   const valor = valorDoPeriodo(mensalidade, ciclo, regras.ciclos[ciclo].desconto);
@@ -111,9 +148,7 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
     if (escId) await d.banco.removerEmpresa(escId).catch(() => {});
     await d.banco.removerConta(conta.id).catch(() => {});
     // dois cadastros com o mesmo documento ao mesmo tempo: o índice único segura o segundo
-    if ((e as { codigo?: string }).codigo === "23505") {
-      throw new ErroUsuario(`Já existe uma conta com este ${tipoDoc}. Entre com ela ou fale com o suporte.`, 409);
-    }
+    if ((e as { codigo?: string }).codigo === "23505") throw new ErroUsuario(JA_EXISTE, 409);
     throw e;
   }
   await d.banco.atividade(escId, "empresa.cadastro_site", `${plano.nome} · ${NOME_CICLO[ciclo].toLowerCase()}`, conta.id).catch(() => {});

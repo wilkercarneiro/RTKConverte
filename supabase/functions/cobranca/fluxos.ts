@@ -101,7 +101,7 @@ export interface Banco {
   atualizarPagamento(id: string, campos: Record<string, unknown>): Promise<void>;
   pagamentoDaCompra(creditoId: string): Promise<{ id: string; asaas_id: string | null; status: string; link: string | null } | null>;
   cancelarCompra(creditoId: string, pagamentoId: string | null, motivo: string): Promise<void>;
-  pagamentosPendentes(escritorioId: string | null): Promise<{ asaas_id: string; status: string }[]>;
+  pagamentosPendentes(escritorioId: string | null): Promise<{ asaas_id: string; status: string; forma?: string | null }[]>;
   descricaoCredito(creditoId: string | null | undefined): Promise<string | null>;
   /** a compra foi da recarga automática? (a mensagem do WhatsApp muda) */
   detalheCompra(creditoId: string | null | undefined): Promise<{ automatica: boolean; valor: number | null } | null>;
@@ -125,6 +125,12 @@ export interface Banco {
   inserirConfigEmpresa(escritorioId: string, pares: Record<string, string>): Promise<void>;
   /** apaga a empresa (membros, configurações e cobrança vão junto) */
   removerEmpresa(escritorioId: string): Promise<void>;
+  /**
+   * Cadastro do site com este CPF/CNPJ ou e-mail que nunca pagou e tem mais de
+   * `horas` horas: pode dar lugar a um cadastro novo (senão quem digitou o
+   * documento ou o e-mail de outra pessoa o prenderia para sempre).
+   */
+  cadastrosAbandonados?(documento: string, email: string, horas: number): Promise<{ escritorioId: string; contas: string[] }[]>;
 }
 
 export interface CartaoSalvo {
@@ -1051,8 +1057,14 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
   if (situacao !== "sem_assinatura" && situacao !== "aguardando") {
     throw new ErroUsuario("Esta conta não está esperando o primeiro pagamento. Fale com o suporte.", 409);
   }
-  // cartão é alvo de teste de número roubado: poucas tentativas por empresa
+  // dois cliques ou duas abas ao mesmo tempo cobrariam duas vezes: um pedido
+  // por empresa a cada 15 s (o pagamento no cartão leva poucos segundos)
+  if (d.limite && !(await d.limite(`pagar-cadastro-trava:${e.id}`, 1, 15))) {
+    throw new ErroUsuario("Já há um pagamento desta conta sendo processado. Aguarde alguns segundos e veja se a conta foi liberada antes de tentar de novo.", 429);
+  }
+  // cartão é alvo de teste de número roubado: poucas tentativas por empresa e por IP
   if (d.limite && !(await d.limite(`pagar-cadastro:${e.id}`, 20, 3600))) throw new ErroUsuario(MUITAS_CHAMADAS.erro, MUITAS_CHAMADAS.status);
+  if (b.forma === "cartao" && d.limite && !(await d.limite(`pagar-cadastro-ip:${ipDe(u)}`, 10, 3600))) throw new ErroUsuario(MUITAS_CHAMADAS.erro, MUITAS_CHAMADAS.status);
 
   const regras = regrasDe(cfg);
   const ciclo = cicloDe(b.ciclo) ?? cicloDe(e.cobranca?.ciclo) ?? "MONTHLY";
@@ -1061,8 +1073,13 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
   if (!(mensalidade > 0)) throw new ErroUsuario("O plano desta conta está sem mensalidade. Fale com o suporte.", 409);
   const valor = valorDoPeriodo(mensalidade, ciclo, regras.ciclos[ciclo].desconto);
   // dois cartões aprovados cobrariam duas vezes: o que está em análise decide primeiro
-  if ((await d.banco.pagamentosPendentes(e.id)).some((p) => p.status === "AWAITING_RISK_ANALYSIS")) {
+  const pendentesAntes = await d.banco.pagamentosPendentes(e.id);
+  if (pendentesAntes.some((p) => p.status === "AWAITING_RISK_ANALYSIS")) {
     throw new ErroUsuario("O pagamento anterior no cartão está em análise pelo Asaas. Aguarde a resposta (em geral alguns minutos, no máximo 48 horas) antes de tentar de novo.", 409);
+  }
+  // compra no cartão em aberto (o Asaas não aprovou na hora e não deu para cancelar): ela decide primeiro
+  if (pendentesAntes.some((p) => p.forma === "CREDIT_CARD")) {
+    throw new ErroUsuario("Há uma compra no cartão desta conta esperando a resposta do Asaas. Aguarde alguns minutos ou fale com o suporte antes de pagar de novo.", 409);
   }
 
   if (b.forma === "pix") return await pagarCadastroPix(d, cfg, asaas, e, ciclo, valor);
@@ -1164,6 +1181,16 @@ async function pagarCadastroParcelado(d: Deps, cfg: Record<string, string>, asaa
       description: descricaoDaCompra(e.plano, ciclo, p, regras), externalReference: e.id, remoteIp: ip, ...dados,
     }, p.parcela);
   } catch (x) { throw cartaoRecusado(x); }
+  // nem pago nem em análise: não fica uma compra em aberto que o Asaas ainda
+  // poderia cobrar enquanto a pessoa paga de outro jeito — cancela e diz
+  if (!cobrancaPaga(cob.status) && cob.status !== "AWAITING_RISK_ANALYSIS") {
+    let cancelou = false;
+    try {
+      if (cob.installment) await asaas.removerParcelamento(cob.installment); else await asaas.removerCobranca(cob.id);
+      cancelou = true;
+    } catch { /* fica registrada abaixo como pendente: o pré-teste barra nova tentativa até resolver */ }
+    if (cancelou) throw new ErroUsuario("O cartão não foi aprovado na hora e a compra foi cancelada (nada foi cobrado). Confira os dados ou use outro cartão ou o Pix.", 402);
+  }
   // a 1ª parcela guarda o TOTAL, o nº de parcelas e o parcelamento (as outras chegam pelo webhook)
   await d.banco.inserirPagamento({
     escritorio_id: e.id, finalidade: "mensalidade", asaas_id: cob.id, valor: p.total, status: cob.status || "PENDING", forma: "CREDIT_CARD",

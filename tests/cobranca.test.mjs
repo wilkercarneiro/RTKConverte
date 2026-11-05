@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mesmoToken, somarDias, somarMes, tratarAcao, tratarWebhook } from "../supabase/functions/cobranca/fluxos.ts";
-import { tratarPublico } from "../supabase/functions/cobranca/cadastro.ts";
+import { JA_EXISTE, tratarPublico } from "../supabase/functions/cobranca/cadastro.ts";
 import { somarMeses } from "../supabase/functions/_shared/parcelas.ts";
 import { bandeiraDoNumero, cpfValido, lerValidade, luhnValido, problemasDoCartao } from "../supabase/functions/_shared/cartao.ts";
 import { cotar, faixasEmTexto, minimoDe, problemaDasFaixas } from "../supabase/functions/_shared/precos.ts";
@@ -91,6 +91,11 @@ function asaasFalso() {
       if (!c) return resp(404, { errors: [{ description: "não encontrada" }] });
       if (metodo === "DELETE") { c.deleted = true; return resp(200, { deleted: true }); }
       return resp(200, c);
+    }
+    if ((m = /^\/installments\/([^/?]+)$/.exec(caminho)) && metodo === "DELETE") {
+      if (s.falharCancelamento) return resp(500, {});
+      for (const c of s.cobrancas.values()) if (c.installment === m[1]) c.deleted = true;
+      return resp(200, { deleted: true });
     }
     if (caminho === "/subscriptions" && metodo === "POST") {
       if (corpo.billingType === "CREDIT_CARD" && s.recusarCartao) return recusa();
@@ -184,6 +189,10 @@ function bancoFalso(cfg = {}) {
     },
     async inserirConfigEmpresa(esc, pares) { b.configEmpresa.push({ esc, ...pares }); },
     async removerEmpresa(esc) { delete b.empresas[esc]; delete b.cobrancas[esc]; b.removidas.push(esc); },
+    abandonados: [],
+    async cadastrosAbandonados(doc, email) {
+      return b.abandonados.filter((x) => b.empresas[x.escritorioId] && (b.empresas[x.escritorioId].cnpj === doc || b.empresas[x.escritorioId].email === email));
+    },
   };
   return b;
 }
@@ -834,22 +843,22 @@ test("autocadastro: limite por IP (5 por hora, contando as tentativas) e no tota
   assert.equal((await tratarPublico(deps, "200.9.9.9", DADOS)).status, 400, "outra conexão continua podendo");
   const errado = await tratarPublico(deps, "200.1.2.3", { ...DADOS, senha: "curta" });
   assert.equal(errado.status, 400, "erro de digitação é respondido antes da trava (não gasta a vez)");
-  assert.ok(deps.limite.usos.get("cadastro:total-dia") <= 200);
+  assert.ok(deps.limite.usos.get("cadastro:total-dia") <= 500);
   const c = cenarioCadastro();
-  c.deps.limite.usos.set("cadastro:total-dia", 200);
-  assert.equal((await tratarPublico(c.deps, "200.7.7.7", DADOS)).status, 429, "200 cadastros no dia: fecha até amanhã");
+  c.deps.limite.usos.set("cadastro:total-dia", 500);
+  assert.equal((await tratarPublico(c.deps, "200.7.7.7", DADOS)).status, 429, "500 cadastros no dia: fecha até amanhã");
 });
 
 test("autocadastro: e-mail ou documento já cadastrados dão 409 com a mensagem; falha no meio desfaz tudo", async () => {
   let c = cenarioCadastro();
   let r = await tratarPublico(c.deps, "200.1.2.3", { ...DADOS, documento: "11.222.333/0001-81" });
   assert.equal(r.status, 409);
-  assert.equal(r.corpo.erro, "Já existe uma conta com este CNPJ. Entre com ela ou fale com o suporte.");
+  assert.equal(r.corpo.erro, JA_EXISTE, "a mesma frase para documento e e-mail: a página não diz quem é cliente");
   assert.equal(c.banco.contas.length, 0);
   c.banco.contas.push({ id: "user-antigo", email: "ana@geolima.test" });
   r = await tratarPublico(c.deps, "200.1.2.3", DADOS);
   assert.equal(r.status, 409);
-  assert.equal(r.corpo.erro, "Já existe uma conta com este e-mail. Entre com ela.");
+  assert.equal(r.corpo.erro, JA_EXISTE);
 
   c = cenarioCadastro();
   c.banco.falharEm = "membro";
@@ -864,7 +873,7 @@ test("autocadastro: e-mail ou documento já cadastrados dão 409 com a mensagem;
   c.banco.falharEm = "empresa-duplicada"; // dois cadastros do mesmo CPF ao mesmo tempo
   r = await tratarPublico(c.deps, "200.1.2.3", DADOS);
   assert.equal(r.status, 409);
-  assert.match(r.corpo.erro, /Já existe uma conta com este CPF/);
+  assert.equal(r.corpo.erro, JA_EXISTE);
   assert.equal(c.banco.contas.length, 0);
 });
 
@@ -1118,4 +1127,48 @@ test("painel: autocadastro_salvar confere e grava as regras; só o superadmin; e
   banco.empresas[EMPRESA.id].mensalidade = 249.9;
   await tratarAcao(deps, sa, { acao: "atualizar_assinatura", escritorio_id: EMPRESA.id });
   assert.equal(asaas.chamadas.find((c) => c.metodo === "PUT" && c.caminho.startsWith("/subscriptions/")).corpo.value, 2548.98);
+});
+
+test("pagar o cadastro: dois pedidos ao mesmo tempo — o segundo é barrado e só uma compra vai ao Asaas (revisão 05/11)", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento();
+  banco.respostaAplicar = bancoQueAtiva(banco, 12);
+  deps.limite = limiteFalso();
+  const pedido = { acao: "pagar_cadastro", forma: "cartao", ciclo: "YEARLY", parcelas: 6, cartao: CARTAO, titular: TITULAR };
+  const [a, b] = await Promise.all([tratarAcao(deps, usuario, pedido), tratarAcao(deps, usuario, pedido)]);
+  const st = [a.status, b.status].sort();
+  assert.deepEqual(st, [200, 429], JSON.stringify([a.corpo, b.corpo]));
+  assert.equal(posts(asaas, "/payments").length, 1, "uma compra só");
+});
+
+test("pagar o cadastro: parcelado que volta sem aprovação é cancelado no Asaas e nada fica gravado; sem conseguir cancelar, barra nova tentativa", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento();
+  asaas.statusCartao = "PENDING";
+  const pedido = { acao: "pagar_cadastro", forma: "cartao", ciclo: "YEARLY", parcelas: 6, cartao: CARTAO, titular: TITULAR };
+  const r = await tratarAcao(deps, usuario, pedido);
+  assert.equal(r.status, 402, JSON.stringify(r.corpo));
+  assert.match(r.corpo.erro, /cancelada \(nada foi cobrado\)/);
+  assert.ok(asaas.chamadas.some((c) => c.metodo === "DELETE" && /^\/installments\//.test(c.caminho)));
+  assert.equal(banco.pagamentos.length, 0);
+  // o Asaas não deixou cancelar: a compra fica registrada e o Pix espera por ela
+  asaas.falharCancelamento = true;
+  const r2 = await tratarAcao(deps, usuario, pedido);
+  assert.equal(r2.status, 200);
+  assert.equal(r2.corpo.pendente, true);
+  const pix = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "YEARLY" });
+  assert.equal(pix.status, 409);
+  assert.match(pix.corpo.erro, /esperando a resposta do Asaas/);
+});
+
+test("autocadastro: cadastro antigo sem pagamento com o mesmo documento dá lugar ao novo (quem digitou o CNPJ de outro não o prende)", async () => {
+  const c = cenarioCadastro();
+  // alguém cadastrou o CNPJ/e-mail da Geo Lima há dias e nunca pagou
+  c.banco.empresas["esc-velho"] = { id: "esc-velho", cnpj: "52998224725", email: "outro@x.test", status: "aguardando_pagamento", origem: "site" };
+  c.banco.cobrancas["esc-velho"] = { situacao: "aguardando", asaas_assinatura_id: null };
+  c.banco.contas.push({ id: "user-velho", email: "outro@x.test" });
+  c.banco.abandonados.push({ escritorioId: "esc-velho", contas: ["user-velho"] });
+  const r = await tratarPublico(c.deps, "200.1.2.3", DADOS);
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.ok(!c.banco.empresas["esc-velho"], "o cadastro abandonado saiu");
+  assert.ok(!c.banco.contas.some((x) => x.id === "user-velho"), "e a conta dele");
+  assert.ok(c.banco.contas.some((x) => x.email === DADOS.email.toLowerCase()), "o novo entrou");
 });

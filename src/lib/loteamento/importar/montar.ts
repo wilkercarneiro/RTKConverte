@@ -390,7 +390,9 @@ export function montarLoteamento(d: DesenhoImportado, base: Projeto, perimetro: 
     vistos.add(assinatura);
     const dentro = intersecao([p.pol], [gleba]).filter((x) => areaPol(x) > 0.05);
     const aDentro = somaArea(dentro);
-    if (aDentro < Math.min(1, 0.05 * p.area)) { foraTotal++; continue; }
+    // lote com menos da metade dentro é de fora (o arquivo de um vizinho que
+    // só encosta na gleba): não entra recortado com uma área que não é a dele
+    if (aDentro < Math.max(Math.min(1, 0.05 * p.area), 0.5 * p.area)) { foraTotal++; continue; }
     let pol = p.pol;
     if (p.area - aDentro > 0.01) { recortados++; foraArea += p.area - aDentro; pol = maiorPeca(dentro); }
     lotes.push({ pol, k, numero: p.f.numero, quadra: p.f.quadra, prio: p.f.numero !== undefined ? 3 : 0, grupo: -1 });
@@ -399,6 +401,7 @@ export function montarLoteamento(d: DesenhoImportado, base: Projeto, perimetro: 
   if (foraTotal) avisos.push(`${foraTotal} lote(s) do arquivo ficam fora da gleba do serviço e não entraram.`);
   // (o recorte de centímetro quadrado é arredondamento do CAD na divisa: recorta calado)
   if (recortados && foraArea >= 0.05) avisos.push(`${recortados} lote(s) passavam da gleba do serviço e foram recortados por ela (${fmt(foraArea)} m² no total ficaram de fora).`);
+  if (!lotes.length && foraTotal) throw new Error(`O loteamento do arquivo não cai na gleba deste serviço: os ${foraTotal} lote(s) ficam fora dela (ou só encostam na divisa). Confira se é o arquivo deste loteamento e se está em SIRGAS 2000 / UTM.`);
   if (!lotes.length) throw new Error("Não achei lotes no arquivo. Os lotes precisam ser polígonos fechados numa camada LOTE (ou dentro de uma quadra).");
   // sobreposição: o lote que vem depois no arquivo cede
   const sobrepostos: [number, number, number][] = [];
