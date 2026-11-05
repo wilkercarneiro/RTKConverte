@@ -99,3 +99,12 @@ test("textos: confrontante no padrão do INCRA, resumo e nota com a fonte", () =
   const red = recuoDaVia(classificarVia("BR-116"), { dominio: 35, naoEdificavel: 10, leiMunicipal: "Lei 77/2019" });
   assert.match(notaRecuo(red, { leiMunicipal: "Lei 77/2019" }), /informada pelo responsável técnico.*reduzida pela lei municipal Lei 77\/2019/);
 });
+
+test("loteamento: estrada do levantamento já nasce com o recuo da lei", async () => {
+  const { bordaDaEstrada } = await import("../src/lib/loteamento/perimetro.ts");
+  assert.deepEqual(bordaDaEstrada("BA 408"), { tipo: "rodovia", faixa: 15, nome: "BA 408" });
+  assert.deepEqual(bordaDaEstrada("RODOVIA BR-116"), { tipo: "rodovia", faixa: 15, nome: "RODOVIA BR-116" });
+  assert.deepEqual(bordaDaEstrada("LINHA FÉRREA"), { tipo: "ferrovia", faixa: 15, nome: "LINHA FÉRREA" });
+  assert.deepEqual(bordaDaEstrada("ESTRADA MUNICIPAL BA-001"), { tipo: "via", faixa: 0, nome: "ESTRADA MUNICIPAL BA-001" });
+  assert.deepEqual(bordaDaEstrada(""), { tipo: "via", faixa: 0, nome: "" });
+});
