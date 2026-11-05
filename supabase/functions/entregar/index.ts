@@ -15,6 +15,13 @@
 // Do cliente só vêm a escolha (qual arquivo, folha, formato) e o carimbo da
 // planta (textos, logo e a imagem de situação, que é feita no navegador).
 //
+// Saída "area" (Exportar a área, src/lib/exportar): vale para TODAS as
+// modalidades — KML, KMZ, DXF, pacote CAD (DXF + .prj do fuso), GPX, SHP,
+// GeoJSON, CSV de pontos ou TXT para a coletora (`formato`). CAR e loteamento
+// leem e conferem como as outras saídas; o GEO (completo, conferência, glebas)
+// lê `vertices` e `glebas` do banco e confere o contorno pelos anéis do
+// perímetro (os das glebas, quando há).
+//
 // Publicação: o código das telas (src/lib/...) entra num pacote só, gerado por
 // `node scripts/empacotar-entregar.mjs` (esbuild).
 import { createClient } from "@supabase/supabase-js";
@@ -32,7 +39,13 @@ import type { PedidoLoteamento, SaidaLoteamento } from "../../../src/lib/loteame
 import { perimetroDoServico, projetoInicial } from "../../../src/lib/loteamento/perimetro.ts";
 import { calcular } from "../../../src/lib/loteamento/calculo.ts";
 import type { DadosCarimbo } from "../../../src/lib/loteamento/planta.ts";
-import type { Servico, Vertice } from "../../../src/lib/types.ts";
+import type { Gleba, Servico, Vertice } from "../../../src/lib/types.ts";
+import { exportarArea } from "../../../src/lib/exportar/index.ts";
+import { ehFormatoArea, FORMATOS_AREA } from "../../../src/lib/exportar/formatos.ts";
+import type { FormatoArea } from "../../../src/lib/exportar/formatos.ts";
+import { camadasDoGeo, contornoDoGeo } from "../../../src/lib/exportar/geo.ts";
+import { camadasDoLoteamento } from "../../../src/lib/exportar/loteamento.ts";
+import { camadasDoCar, fusoDoCar } from "../../../src/lib/exportar/car.ts";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
 
@@ -104,6 +117,12 @@ Deno.serve(async (req) => {
     const { servico_id, saida } = corpo as { servico_id?: string; saida?: string };
     if (!servico_id || typeof servico_id !== "string") return json({ erro: "servico_id é obrigatório" }, 400);
     if (!saida || typeof saida !== "string") return json({ erro: "Diga qual arquivo gerar." }, 400);
+    // Exportar a área: o formato é conferido antes de qualquer leitura do banco
+    const area = saida === "area";
+    const formato = (corpo as { formato?: unknown }).formato;
+    if (area && !ehFormatoArea(formato)) {
+      return json({ erro: `Formato de exportação inválido. Use um destes: ${FORMATOS_AREA.map((f) => f.id).join(", ")}.` }, 400);
+    }
 
     const recusa = await exigirServicoDoUsuario(clienteDoUsuario(req), servico_id);
     if (recusa) return json({ erro: recusa.erro }, recusa.status);
@@ -121,16 +140,19 @@ Deno.serve(async (req) => {
     let arquivo: { dados: Uint8Array; nome: string; tipo: string };
 
     if (s.modalidade === "car") {
-      if (!(SAIDAS_CAR as string[]).includes(saida)) return json({ erro: "Arquivo de CAR desconhecido." }, 400);
+      if (!area && !(SAIDAS_CAR as string[]).includes(saida)) return json({ erro: "Arquivo de CAR desconhecido." }, 400);
       const { data: linha, error } = await supa.from("car_projetos").select("projeto").eq("servico_id", servico_id).maybeSingle();
       if (error) throw error;
       const projeto = projetoCarDoBanco((linha?.projeto ?? null) as never, s.denominacao);
       if (projeto.perimetro.length < 3) return json({ erro: "O projeto deste serviço não tem o perímetro do imóvel." }, 422);
       const contorno = await conferirContorno(supa, servico_id, [projeto.perimetro as AnelLonLat]);
       if (contorno) return json({ erro: contorno.erro }, contorno.status);
-      arquivo = await arquivoDoCar(saida as SaidaCar, projeto, { municipio: s.municipio, uf: s.uf, proprietario: s.detentor_nome });
+      arquivo = area
+        // o CAR não tem fuso: DXF e TXT saem no fuso UTM do meio do imóvel
+        ? await exportarArea(camadasDoCar(projeto), formato as FormatoArea, { fuso: fusoDoCar(projeto), nome: projeto.nome })
+        : await arquivoDoCar(saida as SaidaCar, projeto, { municipio: s.municipio, uf: s.uf, proprietario: s.detentor_nome });
     } else if (s.modalidade === "loteamento") {
-      if (!(SAIDAS_LOTEAMENTO as string[]).includes(saida)) return json({ erro: "Arquivo de loteamento desconhecido." }, 400);
+      if (!area && !(SAIDAS_LOTEAMENTO as string[]).includes(saida)) return json({ erro: "Arquivo de loteamento desconhecido." }, 400);
       const fuso = s.fuso_utm ?? 24;
       const [{ data: vertRows, error: eV }, { data: linha, error: eP }] = await Promise.all([
         supa.from("vertices").select().eq("servico_id", servico_id).order("ordem"),
@@ -140,25 +162,52 @@ Deno.serve(async (req) => {
       if (eP) throw eP;
       const perimetro = perimetroDoServico((vertRows ?? []) as Vertice[], fuso);
       if (perimetro.pts.length < 3) return json({ erro: "O serviço não tem o perímetro da gleba." }, 422);
-      if (!linha?.projeto) return json({ erro: "O projeto do loteamento ainda não foi salvo." }, 422);
+      // a área sai mesmo antes de o projeto ser gravado: é a gleba e o que o cálculo inicial der (o que a tela mostra)
+      if (!area && !linha?.projeto) return json({ erro: "O projeto do loteamento ainda não foi salvo." }, 422);
       const contorno = await conferirContorno(supa, servico_id, [anelLonLatUtm(perimetro.pts, fuso)]);
       if (contorno) return json({ erro: contorno.erro }, contorno.status);
-      const projeto = projetoInicial(linha.projeto as never, s, perimetro);
+      const projeto = projetoInicial((linha?.projeto ?? null) as never, s, perimetro);
       const res = calcular(projeto, perimetro);
-      const c = corpo as Record<string, unknown>;
-      const pedido: PedidoLoteamento = {
-        saida: saida as SaidaLoteamento,
-        folha: c.folha as PedidoLoteamento["folha"],
-        formato: c.formato as PedidoLoteamento["formato"],
-        op: opcoesLocacao(c.op),
-        locarRedes: c.locarRedes === true,
-      };
-      arquivo = await arquivoDoLoteamento(pedido, projeto, res, perimetro, s, carimboDoPedido(c.carimbo as Record<string, unknown> | undefined, s));
+      if (area) {
+        arquivo = await exportarArea(camadasDoLoteamento(res, perimetro), formato as FormatoArea, { fuso, nome: projeto.nome });
+      } else {
+        const c = corpo as Record<string, unknown>;
+        const pedido: PedidoLoteamento = {
+          saida: saida as SaidaLoteamento,
+          folha: c.folha as PedidoLoteamento["folha"],
+          formato: c.formato as PedidoLoteamento["formato"],
+          op: opcoesLocacao(c.op),
+          locarRedes: c.locarRedes === true,
+        };
+        arquivo = await arquivoDoLoteamento(pedido, projeto, res, perimetro, s, carimboDoPedido(c.carimbo as Record<string, unknown> | undefined, s));
+      }
+    } else if (area) {
+      // GEO (completo, conferência, partilha/glebas): o perímetro sai de `vertices`
+      // e `glebas` do banco, pela mesma regra da tela (as glebas mandam no desenho)
+      const fuso = s.fuso_utm ?? 24;
+      const [{ data: vertRows, error: eV }, { data: glebaRows, error: eG }] = await Promise.all([
+        supa.from("vertices").select().eq("servico_id", servico_id).order("ordem"),
+        s.tem_glebas
+          ? supa.from("glebas").select().eq("servico_id", servico_id).order("ordem")
+          : Promise.resolve({ data: [] as Gleba[], error: null }),
+      ]);
+      if (eV) throw eV;
+      if (eG) throw eG;
+      const nome = s.denominacao || s.nome_arquivo_txt?.replace(/\.[^.]+$/, "") || "Imóvel";
+      const camadas = camadasDoGeo((vertRows ?? []) as Vertice[], (glebaRows ?? []) as Gleba[], fuso, { nome });
+      // com glebas, os anéis delas (como a planta confere); sem, o perímetro
+      const aneis = contornoDoGeo(camadas);
+      if (!aneis.length) return json({ erro: "O serviço não tem o perímetro do imóvel: são precisos ao menos 3 vértices com coordenada." }, 422);
+      // 1 crédito = 1 imóvel (0039): o desenho tem de ser o imóvel da primeira geração
+      const contorno = await conferirContorno(supa, servico_id, aneis);
+      if (contorno) return json({ erro: contorno.erro }, contorno.status);
+      arquivo = await exportarArea(camadas, formato as FormatoArea, { fuso, nome });
     } else {
       return json({ erro: "Este serviço não é de CAR nem de loteamento." }, 400);
     }
 
-    return new Response(arquivo.dados, {
+    // `Uint8Array<ArrayBuffer>`: o tipo do Response (lib do Deno) não aceita o Uint8Array genérico
+    return new Response(arquivo.dados as Uint8Array<ArrayBuffer>, {
       status: 200,
       headers: { ...CORS, "Content-Type": arquivo.tipo, "X-Nome-Arquivo": encodeURIComponent(arquivo.nome) },
     });
