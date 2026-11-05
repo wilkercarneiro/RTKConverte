@@ -38,7 +38,7 @@ PSQL=(psql -X -q -h localhost -p "$PORTA" -U postgres -d postgres -v ON_ERROR_ST
 for f in supabase/migrations/*.sql; do
   case "$(basename "$f")" in
     0018_*|0019_*|0030_*|0032_*) continue ;;  # PostGIS (parcelas do SIGEF) — no fim, se houver PostGIS
-    0020_escritorios.sql|0024_saas.sql|0025_equipe.sql|0026_auditoria.sql|0027_creditos.sql|0028_*|0029_*|0033_*|0034_*|0035_*|0036_*|0037_*) continue ;;  # aplicadas abaixo, entre as etapas
+    0020_escritorios.sql|0024_saas.sql|0025_equipe.sql|0026_auditoria.sql|0027_creditos.sql|0028_*|0029_*|0033_*|0034_*|0035_*|0036_*|0037_*|0038_*|0039_*|0042_*) continue ;;  # aplicadas abaixo, entre as etapas
     # usa servicos.tipo, que só nasce na 0005: em produção foi aplicada depois
     0002_confrontacao_no_vertice.sql) continue ;;
   esac
@@ -114,6 +114,12 @@ echo "migração aplicada: supabase/migrations/0037_cartao_recarga_automatica.sq
 PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f tests/rls/cartao_recarga.sql 2>&1 >/dev/null | sed -E "s/^psql:[^ ]+ (NOTICE|NOTA): +//"
 echo "testes do cartão e da compra automática (aviso, dono, reserva, teto, recusa, token fora do navegador): todos passaram"
 
+# 0042 (monografia dos marcos): coluna em servicos; o teste usa escritórios e equipe
+"${PSQL[@]}" -f supabase/migrations/0042_monografia.sql >/dev/null
+echo "migração aplicada: supabase/migrations/0042_monografia.sql"
+PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f tests/rls/monografia.sql 2>&1 >/dev/null | sed -E "s/^psql:[^ ]+ (NOTICE|NOTA): +//"
+echo "testes da monografia dos marcos (só objeto, isolada por empresa): todos passaram"
+
 # Parcelas do SIGEF (0018/0019 → 0030): precisam do PostGIS. Sem a extensão no
 # Postgres local (ou no CI), o teste fica de fora e o script avisa.
 if [ "$("${PSQL[@]}" -tAc "select count(*) from pg_available_extensions where name = 'postgis'")" = "1" ]; then
@@ -133,3 +139,13 @@ if [ "$("${PSQL[@]}" -tAc "select count(*) from pg_available_extensions where na
 else
   echo "PostGIS ausente: testes das parcelas do SIGEF (0018/0019/0030) pulados"
 fi
+
+# 0038/0039 (auditoria de segurança, contorno assinado) usam origem_id, as
+# permissões e os créditos: no laço geral a 0038 quebrava logo no começo
+# ("column origem_id does not exist") e nenhum teste acima chegava a rodar.
+# Ficam por último. PENDENTE: a 0038 ainda recusa linhas de documentos_gerados
+# que os testes anteriores deixam fora do padrão documentos_path_do_servico.
+"${PSQL[@]}" -f supabase/migrations/0038_auditoria_seguranca.sql >/dev/null
+echo "migração aplicada: supabase/migrations/0038_auditoria_seguranca.sql"
+"${PSQL[@]}" -f supabase/migrations/0039_contorno_assinado.sql >/dev/null
+echo "migração aplicada: supabase/migrations/0039_contorno_assinado.sql"

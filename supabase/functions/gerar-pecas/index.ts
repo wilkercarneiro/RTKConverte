@@ -23,6 +23,7 @@ import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 import { anelDoSigef, conferirContorno } from "../_shared/contorno.ts";
+import { escreverMonografia, marcosDosAneis, montarMonografia, normalizarCamposMonografia } from "../_shared/monografia.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -94,7 +95,9 @@ Deno.serve(async (req) => {
     // Tabular: conferência é o que se faz ANTES de mandar ao SIGEF, então exigir
     // o PDF ali seria exigir o resultado do passo que ainda não aconteceu.
     // `apenas` restringe quais peças saem (a conferência pede só a "2").
-    const { servico_id, pdf_base64, modo, origem, apenas } = await lerJson(req, LIMITE_MB(40));
+    // `apenas: ["monografia"]` gera só a monografia dos marcos; `marcos` são os
+    // códigos escolhidos na tela (ausente/vazio = todos os marcos do perímetro).
+    const { servico_id, pdf_base64, modo, origem, apenas, marcos } = await lerJson(req, LIMITE_MB(40));
     const doCalculo = origem === "calculo";
     if (!pdf_base64 && !doCalculo) return json({ erro: "pdf_base64 é obrigatório" }, 400);
 
@@ -140,6 +143,8 @@ Deno.serve(async (req) => {
           }))
           : undefined,
         areaTotalHa: blocosAnalise.length > 1 ? fmtBR(areaTotalHa(blocosAnalise), 4) : undefined,
+        // os marcos (vértices M) do perímetro: a tela lista para a monografia
+        marcos: marcosDosAneis(blocosAnalise.map((b) => b.linhas)),
       });
     }
 
@@ -458,7 +463,11 @@ Deno.serve(async (req) => {
     const filtro: string[] | null = Array.isArray(apenas) && apenas.length ? apenas.map(String) : null;
     const TODAS = posse ? PECAS_POSSE : PECAS_MATRICULA;
     const PECAS = TODAS.filter(([num]) => !filtro || filtro.includes(num));
-    if (PECAS.length === 0) return json({ erro: `Nenhuma peça corresponde a: ${filtro?.join(", ")}` }, 422);
+    // Monografia dos marcos: peça montada no código (não há modelo próprio dela)
+    // sobre o modelo do Memorial Descritivo da empresa. Sai só quando pedida.
+    const pedeMonografia = !!filtro?.includes("monografia");
+    const soMonografia = pedeMonografia && PECAS.length === 0;
+    if (PECAS.length === 0 && !pedeMonografia) return json({ erro: `Nenhuma peça corresponde a: ${filtro?.join(", ")}` }, 422);
     const pasta = posse ? "pecas-posse" : "pecas";
     // Os BYTES do template, não o JSZip: escrever document.xml MUTA o zip, e um
     // serviço de glebas emite vários jogos do mesmo modelo. Reaproveitar o
@@ -498,9 +507,16 @@ Deno.serve(async (req) => {
     // sua com o título cru da peça ("2 - Memorial Tabular"). Caminho e tipo
     // são próprios — nunca sobrescreve a peça 2 de um jogo do SIGEF — e gerar
     // de novo SUBSTITUI o da mesma versão (ver a limpeza antes do histórico).
-    const previa = doCalculo && filtro !== null;
+    const previa = doCalculo && filtro !== null && !soMonografia;
     let versao = vAtual + 1;
-    if (previa) {
+    if (soMonografia) {
+      // só a monografia: entra na versão das últimas peças (ou na última
+      // versão), sem abrir uma versão só dela; gerar de novo substitui
+      const { data: vPecas } = await supa.from("documentos_gerados").select("versao")
+        .eq("servico_id", servico_id).like("tipo", "peca\\_%")
+        .order("versao", { ascending: false }).limit(1);
+      versao = (vPecas?.[0]?.versao as number | undefined) ?? Math.max(vAtual, 1);
+    } else if (previa) {
       const { data: vDocs } = await supa.from("documentos_gerados").select("versao")
         .eq("servico_id", servico_id).in("tipo", ["memorial_docx", "planilha_ods"])
         .order("versao", { ascending: false }).limit(1);
@@ -580,7 +596,60 @@ Deno.serve(async (req) => {
       }, `/glebas/${u.numeroGleba ?? "s"}-${seguro}`, u.nome, PECAS_DA_GLEBA);
     }
 
-    await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
+    // 3) a monografia dos marcos: um DOCX, uma página por marco (vértice M),
+    //    no modelo do Memorial Descritivo da empresa (timbre dela)
+    const todosMarcos = marcosDosAneis((blocos.length ? blocos : [sigef]).map((b) => b.linhas));
+    let monografiaResumo: { marcos: number; naoEncontrados?: string[] } | undefined;
+    if (pedeMonografia) {
+      const mono = montarMonografia({
+        aneis: (blocos.length ? blocos : [sigef]).map((b) => b.linhas),
+        vertices: (vertices ?? []).map((v) => ({ codigo: v.codigo, tipo: v.tipo, sigma_pos: v.sigma_pos, sigma_h: v.sigma_h, metodo: v.metodo })),
+        fuso: servico.fuso_utm ?? null,
+        escolhidos: Array.isArray(marcos) ? marcos.map(String) : null,
+        campos: normalizarCamposMonografia(servico.monografia),
+        imovel: {
+          denominacao: servico.denominacao ?? "", detentor: servico.detentor_nome ?? "",
+          municipio: servico.municipio ?? "", uf: servico.uf ?? "",
+          matricula: dados.matricula, cns: dados.cns, sncr: dados.sncrFmt,
+        },
+        rt: {
+          nome: dados.rt.nome, formacao: dados.rt.formacao,
+          conselhoSigla: dados.rt.conselhoSigla, conselhoNumero: dados.rt.conselhoNumero, cpf: dados.rt.cpf,
+        },
+        codigoCredenciado: dados.codigoCredenciado, trt: dados.trt, dataStr: dados.dataStr,
+        proj: (lon, lat, fuso) => proj4(GEO_DEF, utmDef(fuso), [lon, lat]),
+      });
+      if (!mono.fichas.length) {
+        const msg = todosMarcos.length
+          ? "Nenhum dos marcos escolhidos está no perímetro: escolha de novo na lista."
+          : "O perímetro não tem marcos (vértices M): não há monografia a gerar.";
+        if (soMonografia) return json({ erro: msg }, 422);
+        avisos.push(msg);
+      } else {
+        const zip = await JSZip.loadAsync(tplBytes["1"]);
+        await escreverMonografia(zip, mono);
+        if (timbre && comTimbre.has("1")) await aplicarTimbreAutomatico(zip, timbre.logo, timbre.ident);
+        const buf = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+        const path = `${servico_id}/v${versao}/pecas/monografia-marcos.docx`;
+        const up = await supa.storage.from("gerados").upload(path, buf, {
+          upsert: true, contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        });
+        if (up.error) throw up.error;
+        const n = mono.fichas.length;
+        const titulo = `Monografia dos marcos (${n} ${n === 1 ? "marco" : "marcos"})`;
+        historico.push({ servico_id, versao, tipo: "peca_monografia", titulo, path });
+        const s = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `Monografia dos marcos - ${nomeBase}.docx` });
+        arquivos.push({ titulo, url: s.data?.signedUrl ?? "" });
+        if (mono.naoEncontrados.length) avisos.push(`Marcos que não estão no perímetro e ficaram de fora: ${mono.naoEncontrados.join(", ")}.`);
+        monografiaResumo = { marcos: n, naoEncontrados: mono.naoEncontrados.length ? mono.naoEncontrados : undefined };
+      }
+    }
+
+    if (!soMonografia) await supa.from("servicos").update({ status: "gerado" }).eq("id", servico_id);
+    // Monografia de novo na mesma versão: substitui a linha anterior.
+    if (soMonografia && historico.length) {
+      await supa.from("documentos_gerados").delete().eq("servico_id", servico_id).eq("versao", versao).eq("tipo", "peca_monografia");
+    }
     // A prévia substitui a da mesma versão (o arquivo já foi sobrescrito acima):
     // sem isto, gerar o tabular duas vezes deixava duas linhas para um arquivo.
     if (previa && historico.length) {
@@ -604,6 +673,9 @@ Deno.serve(async (req) => {
           ? unidades.map((u) => ({ nome: u.nome, areaHa: u.areaHa, perimetro: u.perimetro, vertices: u.sigef.linhas.length }))
           : undefined,
       },
+      // marcos do perímetro (a tela lista para escolher na monografia)
+      marcos: todosMarcos,
+      monografia: monografiaResumo,
       // Aviso não é erro: as peças saíram. Mas um memorial que não casou com a
       // gleba desenhada precisa chegar ao operador antes do cartório.
       avisos: avisos.length ? avisos : undefined,

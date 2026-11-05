@@ -46,6 +46,7 @@ import { BotaoConcluir, useConclusao } from "./ConcluirServico";
 import { AutoriaServico } from "./Auditoria";
 import { BarreiraErro } from "./BarreiraErro";
 import { MOTIVO_SEM_WEBGL, webglDisponivel } from "../lib/webgl";
+import { MonografiaMarcos, unirMarcos, type ArquivoGerado } from "./MonografiaMarcos";
 
 /** Etapas do serviço: uma por vez, como abas dentro do cabeçalho. */
 type Etapa = "dados" | "confrontantes" | "glebas" | "documentos";
@@ -143,6 +144,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [pecas, setPecas] = useState<PecasGeradas | null>(null);
   const [gerandoPecas, setGerandoPecas] = useState(false);
   const [erroPecas, setErroPecas] = useState<string | null>(null);
+  // monografia dos marcos (mais uma peça, gerada à parte)
+  const [monografia, setMonografia] = useState<ArquivoGerado | null>(null);
+  const [gerandoMonografia, setGerandoMonografia] = useState(false);
+  const [erroMonografia, setErroMonografia] = useState<string | null>(null);
   const [plantaUrl, setPlantaUrl] = useState<string | null>(null);
   const [gerandoPlanta, setGerandoPlanta] = useState(false);
   // Folha da planta (A1/A3): escolha do operador antes de gerar. Sem escolha vale
@@ -1174,6 +1179,29 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
       setErroPecas(e instanceof Error ? e.message : String(e));
     } finally {
       setGerandoPecas(false);
+    }
+  }
+
+  // ------- monografia dos marcos: do PDF do SIGEF (ou do cálculo, sem ele) -------
+  async function gerarMonografia(escolhidos: string[] | null) {
+    setGerandoMonografia(true);
+    setErroMonografia(null);
+    try {
+      const pdf = await garantirSigef();
+      await salvar();
+      const r = await chamarFuncao<PecasGeradas>("gerar-pecas", {
+        servico_id: servico.id, apenas: ["monografia"],
+        ...(pdf ? { pdf_base64: pdf } : { origem: "calculo" }),
+        ...(escolhidos ? { marcos: escolhidos } : {}),
+      });
+      setMonografia(r.arquivos[0] ?? null);
+      depoisDeGerar({ entrada: false });
+      avisar("ok", "Monografia dos marcos gerada.");
+      for (const a of r.avisos ?? []) avisar("alerta", a);
+    } catch (e) {
+      setErroMonografia(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGerandoMonografia(false);
     }
   }
 
@@ -2564,6 +2592,18 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   </div>
                 )}
               </section>
+            )}
+
+            {/* ---- Monografia dos marcos ---- */}
+            {!ehConferencia && docsProntos && temSigef && (
+              <MonografiaMarcos
+                marcos={unirMarcos(vertices.filter((v) => v.tipo === "M").map((v) => v.codigo))}
+                campos={servico.monografia}
+                onCampos={(c) => campo("monografia", c)}
+                onGerar={gerarMonografia}
+                ocupado={gerandoMonografia || gerandoPecas}
+                arquivo={monografia}
+                erro={erroMonografia} />
             )}
 
             {/* ---- Histórico de documentos ---- */}
