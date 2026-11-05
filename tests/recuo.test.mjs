@@ -7,7 +7,19 @@
 // domínio inteira sai da terra útil; e a largura do padrão pede confirmação.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classificarVia, confrontanteDaVia, notaRecuo, recuoDaVia, resumoRecuo } from "../src/lib/recuo.ts";
+import { classificarVia, confrontanteDaVia, naoEdificavelDaPlanta, notaRecuo, recuoDaVia, resumoRecuo } from "../src/lib/recuo.ts";
+
+test("naoEdificavelDaPlanta: padrão ligado, redução só com lei (revalidada) e desligável", () => {
+  assert.deepEqual(naoEdificavelDaPlanta(null), { padrao: 15, porVia: {} });
+  assert.equal(naoEdificavelDaPlanta({ planta: false }), undefined);
+  const r = naoEdificavelDaPlanta({ vias: {
+    "BA-120": { naoEdificavel: 8, leiMunicipal: "Lei 9/2020" },
+    "BR-116": { naoEdificavel: 5 },            // sem lei: volta a 15
+    "estadual": { naoEdificavel: 2, leiMunicipal: "Lei 1" }, // abaixo de 5: fica 5
+    "lixo": { naoEdificavel: 3 },
+  } });
+  assert.deepEqual(r, { padrao: 15, porVia: { "BA-120": 8, "BR-116": 15, estadual: 5 } });
+});
 
 test("classificarVia: federal, estadual, municipal e ferrovia pelo nome do confrontante", () => {
   assert.deepEqual(classificarVia("RODOVIA BR-116"), { tipo: "federal", sigla: "BR-116", uf: null });

@@ -14,6 +14,7 @@ import type { ServicoInput } from "../_shared/servico.ts";
 import type { Proj4 } from "../_shared/geo.ts";
 import { gerarPlantaPdf } from "../_shared/planta.ts";
 import type { Folha, GlebaPlanta, ParteDaPlanta, TrechoPlanta, VerticePlanta } from "../_shared/planta.ts";
+import { naoEdificavelDaPlanta } from "../_shared/recuo.ts";
 import { montarTrechosDoSigef, reconciliarVerticesBancoComSigef, trechosPlantaDoSigef } from "../_shared/reconciliacao.ts";
 import type { VerticeReconciliado } from "../_shared/reconciliacao.ts";
 import {
@@ -315,7 +316,11 @@ Deno.serve(async (req) => {
       partes: partesPlanta,
     });
 
-    const pdfBytes = await gerarPlantaPdf({ ...dados, metragem: metragem === true }, undefined, { editavel: true });
+    // faixa não edificável das rodovias (recuo automático, 05/11/2026): sai por
+    // padrão nos trechos de BR/estadual/ferrovia; o serviço pode reduzir (com a
+    // lei municipal) ou desligar em servicos.recuo_vias
+    const naoEdificavel = naoEdificavelDaPlanta((servico as { recuo_vias?: unknown }).recuo_vias);
+    const pdfBytes = await gerarPlantaPdf({ ...dados, metragem: metragem === true, naoEdificavel }, undefined, { editavel: true });
 
     // O PDF saiu: agora o serviço pode assumir o perímetro do SIGEF.
     if (persistirReconciliados.length > 0) {

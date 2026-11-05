@@ -1516,6 +1516,27 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .lt-mapa.em-tela-cheia .lt-mapa-area { flex: 1 1 auto; min-height: 0; display: flex; }
 .lt-mapa.em-tela-cheia .lt-mapa-area > svg { width: 100%; height: 100%; }
 
+/* ---- Rodovias e recuo legal (RecuoRodovias.tsx) */
+.recuo-lista { display: flex; flex-direction: column; gap: 10px; }
+.recuo-via { border: 1px solid var(--borda); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; background: var(--card); }
+.recuo-cabeca { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.recuo-cabeca .esticar { flex: 1; }
+.recuo-cabeca button { height: 30px; padding: 0 12px; font-size: 12.5px; }
+.recuo-selo { font: 700 12px var(--mono); padding: 3px 8px; border-radius: 6px; background: #EEF1EF; color: var(--texto); white-space: nowrap; }
+.recuo-selo.federal { background: #FDE8E8; color: #9B1C1C; }
+.recuo-selo.estadual { background: #FFF4DB; color: #8A5A00; }
+.recuo-selo.ferrovia { background: #EDE9FE; color: #5B21B6; }
+.recuo-nome { font-size: 13.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recuo-ok { font-size: 12.5px; font-weight: 600; color: var(--floresta); }
+.recuo-resumo { margin: 0; font-size: 13px; color: var(--texto-2); }
+.recuo-campos label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.recuo-eixo { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; }
+.recuo-eixo input { width: 16px; height: 16px; margin: 0; }
+.recuo-aviso { margin: 0; font-size: 12.5px; color: var(--alerta-escuro); }
+.recuo-alerta { margin: 0; font-size: 13px; color: var(--perigo); background: var(--perigo-claro); padding: 8px 10px; border-radius: 8px; }
+.recuo-dnit .sub { margin: 0; font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.recuo-dnit button.link { background: none; border: 0; padding: 0; height: auto; color: var(--primaria-escura); text-decoration: underline; font-size: 12.5px; cursor: pointer; }
+
 /* ---- o botão, em cada mapa */
 .botao-tela-cheia { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .botao-tela-cheia.ativa { background: var(--primaria-clara) !important; color: var(--floresta); border-color: var(--primaria); }

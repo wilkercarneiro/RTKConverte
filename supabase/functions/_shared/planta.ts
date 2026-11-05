@@ -7,6 +7,10 @@
 import { PDFDocument, PDFFont, StandardFonts, concatTransformationMatrix, degrees, popGraphicsState, pushGraphicsState, rgb } from "pdf-lib";
 import { partesDescritivo, textoWinAnsi } from "./texto.ts";
 import { GravadorCena, embutirCena, embutirImagem, marcarObjeto, type PaginaPlanta } from "./planta_cena.ts";
+import { classificarVia } from "./recuo.ts";
+
+/** "15", "7,5" — largura da faixa para rótulo e legenda. */
+const fmtMetros = (m: number) => m.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
 
 // ---------------------------------------------------------------------------
 // dados de entrada
@@ -159,6 +163,16 @@ export interface DadosPlanta {
    * (de cada gleba, quando há glebas). Opcional na hora de gerar; ausente = não sai.
    */
   metragem?: boolean;
+  /**
+   * Faixa NÃO EDIFICÁVEL ao longo de rodovia federal/estadual e de ferrovia
+   * (Lei 6.766/1979, art. 4º, III e III-A; regras em recuo.ts): linha tracejada
+   * a N metros da divisa, para DENTRO do imóvel, em cada trecho de estrada cujo
+   * confrontante é BR/estadual/ferrovia. Informativa — não muda área nem
+   * perímetro (em imóvel rural a aplicação é controversa). `porVia` troca o
+   * padrão por sigla ("BR-116") ou tipo ("estadual"): é a redução por lei
+   * municipal. Ausente = não sai (a planta fica como era).
+   */
+  naoEdificavel?: { padrao: number; porVia?: Record<string, number> };
   matricula: string;
   cns: string;
   sncr: string;
@@ -207,6 +221,9 @@ const VERMELHO = rgb(0.85, 0.05, 0.05);
 /** Estrada: uma linha vermelha por cima da azul da divisa, mais fina para a azul aparecer nas bordas. */
 const LARG_ESTRADA = 2.2;
 const VERDE = rgb(0.05, 0.65, 0.15);
+/** Faixa não edificável: tracejada laranja, para não se confundir com divisa nem estrada. */
+const LARANJA_NE = rgb(0.9, 0.45, 0.05);
+const TRACO_NE = [7, 4];
 const PRETO = rgb(0, 0, 0);
 const CINZA = rgb(0.45, 0.45, 0.45);
 
@@ -942,6 +959,8 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
   // quantos não couberam centrados e tiveram de deslizar pela divisa
   let deslocados = 0;
   const vias: Seg[] = [];
+  /** larguras da faixa não edificável desenhadas (para a legenda dizer quanto) */
+  const largurasNe = new Set<number>();
 
   // Unidade PROPORCIONAL ao desenho. Todo afastamento de rótulo é medido nela, e
   // não em pontos fixos: assim a mesma regra vale para um imóvel de 6 ha e um de
@@ -999,6 +1018,65 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
         obj(c, `estrada:${ai}:${t.inicioIdx}`, "estrada", `Estrada — ${linhasDescritivo(t.descritivo)[0] ?? ""}`);
         linha(c, seg.x1, seg.y1, seg.x2, seg.y2, LARG_ESTRADA, VERMELHO);
         vias.push(seg);
+      }
+    }
+
+    // ------------------- faixa não edificável (opcional) -------------------
+    // Lados SEGUIDOS da mesma via viram uma linha só: cada lado é deslocado para
+    // dentro e as paralelas se encontram no cruzamento (sem dente na dobra). As
+    // pontas vão até a divisa vizinha, para a linha ir de lado a lado do imóvel.
+    if (d.naoEdificavel) {
+      const pv = d.naoEdificavel.porVia ?? {};
+      const larguras = Array.from({ length: nv }, (_, i) => {
+        const t = trechoDoIdx(i);
+        if (!t.isEstrada || t.isRio || t.interno) return 0;
+        const via = classificarVia(t.descritivo);
+        if (!via || via.tipo === "municipal") return 0;
+        const w = (via.sigla ? pv[via.sigla] : undefined) ?? pv[via.tipo] ?? (via.tipo === "ferrovia" ? 15 : d.naoEdificavel!.padrao);
+        return Number.isFinite(w) && w > 0 ? w : 0;
+      });
+      const P = (i: number): Pt => ({ x: X(vs[(i + nv) % nv].e), y: Y(vs[(i + nv) % nv].n) });
+      // reta deslocada para dentro do lado i (a normal da aresta aponta para fora)
+      const desl = (i: number, off: number): [Pt, Pt] => {
+        const n = normalAresta(i), a = P(i), b = P(i + 1);
+        return [{ x: a.x - n.x * off, y: a.y - n.y * off }, { x: b.x - n.x * off, y: b.y - n.y * off }];
+      };
+      const cruza = (a1: Pt, a2: Pt, b1: Pt, b2: Pt): Pt | null => {
+        const d1x = a2.x - a1.x, d1y = a2.y - a1.y, d2x = b2.x - b1.x, d2y = b2.y - b1.y;
+        const den = d1x * d2y - d1y * d2x;
+        if (Math.abs(den) < 1e-9 * Math.hypot(d1x, d1y) * Math.hypot(d2x, d2y)) return null;
+        const s = ((b1.x - a1.x) * d2y - (b1.y - a1.y) * d2x) / den;
+        return { x: a1.x + d1x * s, y: a1.y + d1y * s };
+      };
+      // começo de cada cadeia: lado com faixa cujo anterior não tem a mesma
+      const inicios = larguras.map((w, i) => (w > 0 && larguras[(i - 1 + nv) % nv] !== w ? i : -1)).filter((i) => i >= 0);
+      for (const ini of inicios) {
+        const w = larguras[ini];
+        const off = w / mPorPt;
+        let fim = ini;
+        while (larguras[(fim + 1) % nv] === w && (fim + 1) % nv !== ini) fim = (fim + 1) % nv;
+        const lados: number[] = [];
+        for (let k = ini; ; k = (k + 1) % nv) { lados.push(k); if (k === fim) break; }
+        const paralelas = lados.map((k) => desl(k, off));
+        const pts: Pt[] = [];
+        // ponta inicial: a paralela do 1º lado até a divisa anterior (se for perto)
+        const antes = cruza(paralelas[0][0], paralelas[0][1], P(ini - 1), P(ini));
+        pts.push(antes && Math.hypot(antes.x - paralelas[0][0].x, antes.y - paralelas[0][0].y) < 4 * off ? antes : paralelas[0][0]);
+        for (let j = 0; j + 1 < paralelas.length; j++) {
+          const q = cruza(paralelas[j][0], paralelas[j][1], paralelas[j + 1][0], paralelas[j + 1][1]);
+          pts.push(q && Math.hypot(q.x - paralelas[j][1].x, q.y - paralelas[j][1].y) < 4 * off ? q : paralelas[j][1]);
+        }
+        const ult = paralelas[paralelas.length - 1];
+        const depois = cruza(ult[0], ult[1], P(fim + 1), P(fim + 2));
+        pts.push(depois && Math.hypot(depois.x - ult[1].x, depois.y - ult[1].y) < 4 * off ? depois : ult[1]);
+        const nome = linhasDescritivo(trechoDoIdx(ini).descritivo)[0] ?? "";
+        obj(c, `nao-edificavel:${ai}:${ini}`, "restricao", `Faixa não edificável (${fmtMetros(w)} m) — ${nome}`);
+        for (let j = 0; j + 1 < pts.length; j++) {
+          const seg = { x1: pts[j].x, y1: pts[j].y, x2: pts[j + 1].x, y2: pts[j + 1].y };
+          linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 1.6, LARANJA_NE, TRACO_NE);
+          obstaculos.push(seg);
+        }
+        largurasNe.add(w);
       }
     }
   }
@@ -1088,9 +1166,15 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
   // Gleba NÃO ganha entrada na legenda: ela sai como POLIGONAL DO TERRENO,
   // que já está listada. Foi assim que a planta de referência resolveu, e é
   // coerente — a gleba é o imóvel dividido, não um traço de outro tipo.
+  // a faixa não edificável só entra quando foi desenhada (mesma regra do rio)
+  const temNe = largurasNe.size > 0;
+  const rotuloNe = largurasNe.size === 1
+    ? `FAIXA NÃO EDIFICÁVEL ${fmtMetros([...largurasNe][0])} m (LEI 6.766/79)`
+    : "FAIXA NÃO EDIFICÁVEL (LEI 6.766/79)";
   const itensLegenda: [ReturnType<typeof rgb>, string][] = [
     [VERMELHO, "ESTRADA"],
     ...(temRio ? [[AZUL_RIO, "RIO / CURSO D'ÁGUA"] as [ReturnType<typeof rgb>, string]] : []),
+    ...(temNe ? [[LARANJA_NE, rotuloNe] as [ReturnType<typeof rgb>, string]] : []),
     [AZUL, "POLIGONAL DO TERRENO"], [VERDE, "DIVISÕES DAS CONFRONTAÇÕES"], [CINZA, "MALHA DE COORDENADA"],
   ];
   // a abreviatura só se explica se ela aparecer em algum lugar da folha
@@ -1100,13 +1184,15 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     if (cor === VERMELHO) {
       linha(c, x, y, x + comp, y, 3.4, AZUL);
       linha(c, x, y, x + comp, y, LARG_ESTRADA, VERMELHO);
+    } else if (cor === LARANJA_NE) {
+      linha(c, x, y, x + comp, y, 1.6, LARANJA_NE, TRACO_NE);
     } else {
       linha(c, x, y, x + comp, y, 3.4, cor);
     }
   };
   const legendaRet: Ret = {
     x1: dArea.x + 6, y1: dArea.y + 2,
-    x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124 + (temRio ? 20 : 0),
+    x2: dArea.x + 6 + 300, y2: dArea.y + 2 + 124 + (temRio ? 20 : 0) + (temNe ? 20 : 0),
   };
   // Só no arranjo simples (A4) a legenda fica no desenho: no A1/A3 ela mora no
   // PLANIMÉTRICO da barra lateral, como na planta de referência (2026-10-14),
