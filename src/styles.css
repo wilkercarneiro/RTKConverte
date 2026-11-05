@@ -1621,6 +1621,10 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .verif-selo.ok .verif-icone { background: var(--primaria); color: #fff; }
 .verif-selo.nao { background: var(--perigo-claro); }
 .verif-selo.nao .verif-icone { background: var(--perigo); color: #fff; }
+/* prévia de conferência: alerta, nunca o verde de "autêntico" */
+.verif-selo.previa { background: var(--alerta-claro); border-left: 4px solid var(--alerta); }
+.verif-selo.previa .verif-icone { background: var(--alerta); color: #fff; }
+.verif-selo.previa h1 { color: var(--alerta-escuro); }
 .verif-selo h1 { margin: 0; font-size: 20px; font-family: var(--fonte-titulo); color: var(--texto); }
 .verif-selo p { margin: 2px 0 0; color: var(--texto-2); font-size: 14px; }
 .verif-aviso { margin: 0 22px 4px; padding: 10px 12px; border-radius: 8px; background: var(--alerta-claro); color: var(--alerta-escuro); font-size: 14px; }

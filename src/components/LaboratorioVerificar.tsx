@@ -3,6 +3,7 @@
 //   #/lab/verificar          documento autêntico
 //   #/lab/verificar/antigo   autêntico, mas com emissão mais nova
 //   #/lab/verificar/nao      código não encontrado
+//   #/lab/verificar/previa   prévia de conferência (alerta, não "autêntico")
 //   #/lab/verificar/rts      Configurações → Responsáveis (o teste intercepta o banco)
 import { VerificarDocumento } from "./VerificarDocumento";
 import type { RegistroVerificado } from "./VerificarDocumento";
@@ -31,7 +32,9 @@ export function LaboratorioVerificar() {
   if (caso === "rts") {
     return <div className="pagina" style={{ maxWidth: 1100, margin: "0 auto" }}><CadastroRTs escritorioId="e0000000-0000-0000-0000-0000000000e1" /></div>;
   }
-  const r = caso === "antigo" ? { ...EXEMPLO, versao_mais_nova_em: "2026-11-06T09:10:00-03:00" } : EXEMPLO;
+  const r = caso === "antigo" ? { ...EXEMPLO, versao_mais_nova_em: "2026-11-06T09:10:00-03:00" }
+    : caso === "previa" ? { ...EXEMPLO, tipo: "planta_previa", titulo: "Planta do imóvel (prévia de conferência)" }
+      : EXEMPLO;
   return <VerificarDocumento codigo={caso === "nao" ? "AAAABBBBCCCCDDDDEEEE" : r.codigo}
     consultar={async (c) => (c === r.codigo ? r : null)} />;
 }
