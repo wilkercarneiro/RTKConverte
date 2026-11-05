@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { inflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 import JSZip from "jszip";
 import proj4 from "proj4";
 import { extractText, getDocumentProxy } from "unpdf";
@@ -162,12 +162,94 @@ test("DOCX: uma página por marco, no modelo da empresa, com croqui e timbre", a
   assert.equal((doc.match(/<w:tbl>/g) ?? []).length, (doc.match(/<\/w:tbl>/g) ?? []).length);
 });
 
+// PNG RGB de verdade, desenhado à mão: faixa azul com uma barra branca no
+// meio — inconfundível com o croqui (fundo branco, perímetro verde)
+const CRC = new Uint32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+const crc32 = (b) => { let c = 0xffffffff; for (const x of b) c = CRC[(c ^ x) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+function bloco(tipo, dados) {
+  const t = Buffer.from(tipo, "ascii");
+  const len = Buffer.alloc(4); len.writeUInt32BE(dados.length);
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([t, dados])));
+  return Buffer.concat([len, t, dados, crc]);
+}
+function pngLogo(w = 240, h = 90) {
+  const linhas = [];
+  for (let y = 0; y < h; y++) {
+    const l = Buffer.alloc(1 + w * 3);
+    for (let x = 0; x < w; x++) {
+      const branco = y > h * 0.4 && y < h * 0.6 && x > w * 0.1 && x < w * 0.9;
+      l.set(branco ? [255, 255, 255] : [20, 70, 170], 1 + x * 3);
+    }
+    linhas.push(l);
+  }
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return new Uint8Array(Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), bloco("IHDR", ihdr),
+    bloco("IDAT", deflateSync(Buffer.concat(linhas))), bloco("IEND", Buffer.alloc(0))]));
+}
+
+test("modelo próprio com logo no cabeçalho: a logo fica intacta e o croqui sai à parte", async () => {
+  const m = montarMonografia(entrada());
+  const zip = await JSZip.loadAsync(readFileSync(new URL("./fixtures/modelos-padrao/pecas/1-memorial-descritivo.docx", import.meta.url)));
+  // modelo "da empresa" armado para colidir: a logo do cabeçalho usa o MESMO
+  // nome de mídia e o MESMO rId que o croqui usaria por padrão, e o documento
+  // também tem uma relação com esse rId
+  const logo = pngLogo();
+  const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  zip.file("word/media/monografia-croqui-1.png", logo);
+  zip.file("word/header-logo.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="${R}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing><wp:inline><wp:extent cx="1800000" cy="675000"/><wp:docPr id="1" name="Logo"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="Logo"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdMonoCroqui1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1800000" cy="675000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:hdr>`);
+  const relsHdr = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdMonoCroqui1" Type="${R}/image" Target="media/monografia-croqui-1.png"/></Relationships>`;
+  zip.file("word/_rels/header-logo.xml.rels", relsHdr);
+  let rels = await zip.file("word/_rels/document.xml.rels").async("string");
+  rels = rels.replace("</Relationships>", `<Relationship Id="rIdHdrLogo" Type="${R}/header" Target="header-logo.xml"/><Relationship Id="rIdMonoCroqui2" Type="${R}/image" Target="media/monografia-croqui-1.png"/></Relationships>`);
+  zip.file("word/_rels/document.xml.rels", rels);
+  let doc = await zip.file("word/document.xml").async("string");
+  // o cabeçalho padrão da seção passa a ser o da logo (troca o que o modelo tinha)
+  doc = /<w:headerReference w:type="default" r:id="[^"]+"\/>/.test(doc)
+    ? doc.replace(/<w:headerReference w:type="default" r:id="[^"]+"\/>/g, `<w:headerReference w:type="default" r:id="rIdHdrLogo"/>`)
+    : doc.replace(/(<w:sectPr\b[^>]*>)(?![\s\S]*<w:sectPr\b)/, `$1<w:headerReference w:type="default" r:id="rIdHdrLogo"/>`);
+  if (!/xmlns:r="/.test(doc.slice(0, 3000))) doc = doc.replace(/<w:document\b/, `<w:document xmlns:r="${R}"`);
+  zip.file("word/document.xml", doc);
+  let ct = await zip.file("[Content_Types].xml").async("string");
+  if (!/Extension="png"/.test(ct)) ct = ct.replace("</Types>", `<Default Extension="png" ContentType="image/png"/></Types>`);
+  ct = ct.replace("</Types>", `<Override PartName="/word/header-logo.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>`);
+  zip.file("[Content_Types].xml", ct);
+
+  await escreverMonografia(zip, m);
+  const buf = await zip.generateAsync({ type: "uint8array" });
+  writeFileSync(new URL("monografia-modelo-proprio.docx", OUT), buf);
+  const z2 = await JSZip.loadAsync(buf);
+  // a logo do cabeçalho: mesmos bytes, mesma relação
+  assert.deepEqual(new Uint8Array(await z2.file("word/media/monografia-croqui-1.png").async("uint8array")), logo, "logo do cabeçalho intacta");
+  assert.equal(await z2.file("word/_rels/header-logo.xml.rels").async("string"), relsHdr, "relações do cabeçalho intactas");
+  const rels2 = await z2.file("word/_rels/document.xml.rels").async("string");
+  assert.match(rels2, /Id="rIdHdrLogo"/);
+  assert.match(rels2, /Id="rIdMonoCroqui2"[^>]*Target="media\/monografia-croqui-1.png"/, "relação do modelo não removida");
+  const doc2 = await z2.file("word/document.xml").async("string");
+  assert.match(doc2, /<w:headerReference w:type="default" r:id="rIdHdrLogo"\/>/, "a seção do modelo segue apontando o cabeçalho com logo");
+  const embeds = [...doc2.matchAll(/r:embed="([^"]+)"/g)].map((x) => x[1]);
+  assert.equal(embeds.length, m.fichas.length);
+  assert.equal(new Set(embeds).size, embeds.length, "um rId por croqui");
+  const alvos = new Set();
+  for (const rid of embeds) {
+    assert.ok(rid !== "rIdMonoCroqui1" && rid !== "rIdMonoCroqui2" && rid !== "rIdHdrLogo", `rId novo: ${rid}`);
+    const ocorrencias = rels2.match(new RegExp(`Id="${rid}"`, "g")) ?? [];
+    assert.equal(ocorrencias.length, 1, `rId ${rid} único nas relações`);
+    const alvo = new RegExp(`Id="${rid}"[^>]*Target="([^"]+)"`).exec(rels2)[1];
+    assert.notEqual(alvo, "media/monografia-croqui-1.png", "croqui não usa o arquivo da logo");
+    const png = await z2.file(`word/${alvo}`).async("uint8array");
+    assert.notDeepEqual(new Uint8Array(png), logo, "croqui é outra imagem");
+    alvos.add(alvo);
+  }
+  assert.equal(alvos.size, m.fichas.length, "um arquivo por croqui");
+});
+
 test("DOCX com logo no timbre (exemplo para conferir no LibreOffice)", async () => {
   const m = montarMonografia(entrada());
   const zip = await JSZip.loadAsync(readFileSync(new URL("./fixtures/modelos-padrao/pecas/1-memorial-descritivo.docx", import.meta.url)));
   await escreverMonografia(zip, m);
-  // logo de mentira, mas PNG de verdade: o próprio croqui do primeiro marco
-  const logo = { bytes: await croquiPng(m.fichas[0].anel, 0, [], 240), tipo: "png" };
+  // logo de mentira, mas PNG de verdade e inconfundível com o croqui
+  const logo = { bytes: pngLogo(), tipo: "png" };
   await aplicarTimbreAutomatico(zip, logo, { nome: "EMPRESA TESTE LTDA", cnpj: "12345678000190", telefone: "(75) 99999-0000", email: "contato@empresa.com.br" });
   const buf = await zip.generateAsync({ type: "uint8array" });
   writeFileSync(new URL("monografia-com-logo.docx", OUT), buf);
