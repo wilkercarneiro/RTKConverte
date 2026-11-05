@@ -2,6 +2,9 @@
 // Implementa só o que as funções usam: auth.getUser, rpc, from().select/
 // insert/update com eq/or/gte/not/order/limit/single/maybeSingle/count, e
 // storage upload/download. Tudo o que é gravado fica em globalThis.__banco.
+// Cada rpc chamada fica em `__banco.chamadasRpc` (nome e argumentos), e a
+// resposta pode ser uma função dos argumentos — para o teste conferir o que a
+// função mandou ao banco (ex.: o contorno do imóvel) e responder conforme.
 import { randomUUID } from "node:crypto";
 
 export function bancoNovo() {
@@ -55,16 +58,29 @@ class Consulta {
 export function createClient() {
   return {
     auth: { getUser: async () => ({ data: { user: banco().usuario ? { id: banco().usuario } : null }, error: banco().usuario ? null : { message: "sem sessão" } }) },
-    rpc: async (nome) => (nome in banco().rpc ? { data: banco().rpc[nome], error: null } : { data: null, error: { message: `rpc ${nome} inexistente` } }),
+    rpc: async (nome, args) => {
+      (banco().chamadasRpc ??= []).push({ nome, args: structuredClone(args ?? null) });
+      if (!(nome in banco().rpc)) return { data: null, error: { message: `rpc ${nome} inexistente` } };
+      const v = banco().rpc[nome];
+      return { data: typeof v === "function" ? v(args) : v, error: null };
+    },
     from: (t) => new Consulta(t),
     storage: {
       from: (bucket) => ({
-        upload: async (caminho, blob) => { banco().storage[`${bucket}/${caminho}`] = new Uint8Array(await blob.arrayBuffer()); return { data: { path: caminho }, error: null }; },
+        // as funções sobem Blob (parse-txt) e bytes crus (gerar-documentos)
+        upload: async (caminho, blob) => {
+          banco().storage[`${bucket}/${caminho}`] = blob instanceof Uint8Array ? new Uint8Array(blob) : new Uint8Array(await blob.arrayBuffer());
+          return { data: { path: caminho }, error: null };
+        },
         download: async (caminho) => {
           const b = banco().storage[`${bucket}/${caminho}`];
           return b ? { data: new Blob([b]), error: null } : { data: null, error: { message: "Object not found" } };
         },
         list: async () => ({ data: [], error: null }),
+        // URL "assinada" que aponta o objeto guardado (o teste lê o arquivo por ela)
+        createSignedUrl: async (caminho) => (banco().storage[`${bucket}/${caminho}`]
+          ? { data: { signedUrl: `http://falso/${bucket}/${caminho}` }, error: null }
+          : { data: null, error: { message: "Object not found" } }),
       }),
     },
   };

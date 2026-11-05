@@ -14,7 +14,7 @@ import type { AcessoEmpresa, AtividadeEmpresa, ContornoServico, CreditosEmpresa 
 import { rotuloAtividade } from "../../lib/equipe";
 import { recursoDe } from "../../lib/recursos";
 import {
-  cnpjValido, emailValido, formatarCnpj, formatarTelefone, problemaDaSenha, telefoneValido,
+  documentoValido, emailValido, formatarDocumento, formatarTelefone, problemaDaSenha, telefoneValido,
 } from "../../../supabase/functions/_shared/cnpj.ts";
 import type { DadosAdmin } from "./PainelAdmin";
 import { CreditosEmpresa } from "./CreditosEmpresa";
@@ -138,7 +138,7 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
 
 function Cadastro({ e, d, cred, irPlano, onSalvo }: { e: Empresa; d: DadosAdmin; cred: DadosCreditos | null; irPlano: () => void; onSalvo: (t: string) => void }) {
   const [f, setF] = useState({
-    nome: e.nome, cnpj: formatarCnpj(e.cnpj ?? ""), responsavel: e.responsavel ?? "", telefone: formatarTelefone(e.telefone ?? ""),
+    nome: e.nome, cnpj: formatarDocumento(e.cnpj ?? ""), responsavel: e.responsavel ?? "", telefone: formatarTelefone(e.telefone ?? ""),
     email: e.email ?? "", observacoes: e.observacoes ?? "",
   });
   const [erro, setErro] = useState<string | null>(null);
@@ -147,7 +147,8 @@ function Cadastro({ e, d, cred, irPlano, onSalvo }: { e: Empresa; d: DadosAdmin;
   async function salvar(ev: React.FormEvent) {
     ev.preventDefault();
     setErro(null);
-    if (f.cnpj && !cnpjValido(f.cnpj)) { setErro("CNPJ inválido."); return; }
+    // a empresa do autocadastro pode ter CPF (pessoa física, 0040)
+    if (f.cnpj && !documentoValido(f.cnpj)) { setErro("CNPJ (ou CPF) inválido."); return; }
     if (f.telefone && !telefoneValido(f.telefone)) { setErro("Telefone inválido."); return; }
     if (f.email && !emailValido(f.email)) { setErro("E-mail inválido."); return; }
     setSalvando(true);
@@ -174,7 +175,7 @@ function Cadastro({ e, d, cred, irPlano, onSalvo }: { e: Empresa; d: DadosAdmin;
       </div>
       <div className="sa-campos">
         <label>Nome da empresa<input value={f.nome} onChange={(x) => setF({ ...f, nome: x.target.value })} required /></label>
-        <label>CNPJ<input className="mono" value={f.cnpj} onChange={(x) => setF({ ...f, cnpj: formatarCnpj(x.target.value) })} /></label>
+        <label>CNPJ ou CPF<input className="mono" value={f.cnpj} onChange={(x) => setF({ ...f, cnpj: formatarDocumento(x.target.value) })} /></label>
         <label>Responsável<input value={f.responsavel} onChange={(x) => setF({ ...f, responsavel: x.target.value })} /></label>
         <label>Telefone / WhatsApp<input value={f.telefone} onChange={(x) => setF({ ...f, telefone: formatarTelefone(x.target.value) })} /></label>
         <label className="largo"><Rotulo dica="só contato; o login de cada pessoa fica em Usuários">E-mail da empresa</Rotulo><input type="email" value={f.email} onChange={(x) => setF({ ...f, email: x.target.value })} /></label>

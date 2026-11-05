@@ -10,7 +10,7 @@
 import {
   antiHorario, areaAssinada, areaPol, areaPolAteCorte, dentroAnel, bufferLinha, caixa, centroide, circulo, cross, dentroPol,
   diferenca, dist, distSegmento, dot, esquerda, faixaReferencial, intersecao, lerp, limparAnel, mult, offsetPols, soma, sub,
-  giroEm, intersecaoRetas, quinas, quinasAviso, quinasDe, quinasDetalhe, uniao, uniaoFechada, unit, verdeValida,
+  giroEm, intersecaoRetas, perimetro as perimetroAnel, quinas, quinasAviso, quinasDe, quinasDetalhe, uniao, uniaoFechada, unit, verdeValida,
 } from "./geom.ts";
 import type { Anel, Poligono, Pt } from "./geom.ts";
 import { criarPlano, paraPlano } from "./plano.ts";
@@ -195,6 +195,7 @@ export interface RuaCalc {
   id: string;
   nome: string;
   largura: number;
+  /** eixo no plano — vazio na rua importada sem eixo (quem usa o eixo pula essa rua) */
   eixo: Pt[];
   /** pedaço da rua dentro da gleba */
   pols: Poligono[];
@@ -202,6 +203,8 @@ export interface RuaCalc {
   corpo: Poligono[];
   area: number;
   comprimento: number;
+  /** o corpo veio pronto (loteamento importado, `Rua.corpo`): o lado do lote confronta com a rua em cujo corpo ele dá */
+  corpoFixo?: boolean;
 }
 
 export interface Problema {
@@ -305,6 +308,8 @@ interface Contexto {
   marcas?: Pt[];
   /** lados de acesso da quadra que está sendo dividida (o operador os escolheu como frente) */
   acessosQuadra?: [Pt, Pt][];
+  /** corpo das ruas que vieram prontas (loteamento importado): o vizinho de um lado é a rua em que o ponto cai */
+  ruasFixas?: Indice;
 }
 
 /**
@@ -363,7 +368,10 @@ function classificar(ctx: Contexto, a: Pt, b: Pt, lotes: Indice | null, proprio?
     const q = ctx.pecas.achar(p, proprio);
     if (q) return { tipo: "lote", ref: q.ref, nome: q.nome };
   }
-  // dentro da gleba e fora de tudo: é rua (inclusive o canto cortado da esquina)
+  // dentro da gleba e fora de tudo: é rua (inclusive o canto cortado da esquina).
+  // Rua de corpo pronto (loteamento importado, às vezes sem eixo): a do corpo em que o ponto cai
+  const fixa = ctx.ruasFixas?.achar(p);
+  if (fixa) return { tipo: "rua", ref: fixa.ref, nome: fixa.nome };
   let rua: RuaCalc | null = null, dm = Infinity;
   for (const r of ctx.ruas) {
     for (let i = 0; i + 1 < r.eixo.length; i++) {
@@ -2390,15 +2398,18 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     });
   }
 
-  // --- ruas
-  const ruas: RuaCalc[] = projeto.ruas.filter((r) => r.eixo.length >= 2).map((r) => {
-    const eixo = r.eixo.map(P);
-    let corpo = bufferLinha(eixo, r.largura, "reta");
-    if (r.balao && r.balao > r.largura / 2) corpo = uniao(corpo, [circulo(eixo[eixo.length - 1], r.balao)]);
+  // --- ruas (a importada traz o corpo pronto e pode não ter eixo: o corpo manda)
+  const ruas: RuaCalc[] = projeto.ruas.filter((r) => r.eixo.length >= 2 || (r.corpo?.length ?? 0) > 0).map((r) => {
+    const eixo = r.eixo.length >= 2 ? r.eixo.map(P) : [];
+    const fixo = r.corpo?.length ? poligonosDosAneis(r.corpo.map((a) => a.map(P))) : [];
+    let corpo = fixo.length ? fixo : bufferLinha(eixo, r.largura, "reta");
+    if (!fixo.length && r.balao && r.balao > r.largura / 2 && eixo.length) corpo = uniao(corpo, [circulo(eixo[eixo.length - 1], r.balao)]);
     const pols = intersecao([gleba], corpo);
     let comp = 0;
     for (let i = 0; i + 1 < eixo.length; i++) comp += dist(eixo[i], eixo[i + 1]);
-    return { id: r.id, nome: r.nome, largura: r.largura, eixo, pols, area: 0, comprimento: comp, corpo };
+    // sem eixo, a extensão sai do corpo: área ÷ largura
+    if (!eixo.length && r.largura > 0) comp = pols.reduce((s, x) => s + areaPol(x), 0) / r.largura;
+    return { id: r.id, nome: r.nome, largura: r.largura, eixo, pols, area: 0, comprimento: comp, corpo, ...(fixo.length ? { corpoFixo: true } : {}) };
   });
   // as quadras saem da gleba menos o corpo INTEIRO das ruas: subtrair a rua já
   // recortada pela gleba deixa uma fresta de décimo de milímetro na divisa que
@@ -2429,6 +2440,10 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     juntar: !op.rapido && !op.busca && !op.manterSobras,
     marcas: (projeto.sobrasPublicas ?? []).map((m) => P(m.ponto)),
   };
+  if (ruas.some((r) => r.corpoFixo)) {
+    ctx.ruasFixas = new Indice();
+    for (const r of ruas) if (r.corpoFixo) for (const pg of r.pols) ctx.ruasFixas.add(item(pg, "rua", r.id, r.nome));
+  }
 
   // divisão de cada quadra guardada: na edição só a quadra mexida é refeita
   const cacheQ = cacheDaDivisao(projeto, perimetro, op);
@@ -2444,7 +2459,15 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
   const tmp: QuadraTmp[] = [];
   // pedaço menor que um lote mínimo não é quadra (não cabe lote nele)
   const minQuadra = Math.max(p.areaMin, 40);
-  const pecasQuadra = pedacos.flatMap((pp) => partirEmL(ctx, pp));
+  // loteamento importado: a quadra do arquivo é a quadra — não se parte em L — e
+  // as quadras do arquivo que se encostam sem rua no meio, que o recorte devolve
+  // numa peça só, voltam a ser cada uma a terra dos seus lotes
+  const desenhadas = projeto.importado ? cfgs.filter((x) => Array.isArray(x.c.lotes)) : [];
+  const pecasQuadra = pedacos.flatMap((pp) => {
+    const donos = desenhadas.length ? desenhadas.filter((x) => dentroPol(x.pt, pp)) : [];
+    if (!donos.length) return partirEmL(ctx, pp);
+    return donos.length > 1 ? separarQuadrasEncostadas(pp, donos, P) : [pp];
+  });
   ctx.pecas = new Indice();
   pecasQuadra.forEach((pp, i) => ctx.pecas!.add(item(pp, "lote", `peca${i}`, "lote vizinho")));
   for (const bruto of pecasQuadra) {
@@ -2506,7 +2529,9 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       });
       continue;
     }
-    const { pol: polArred, curvas } = tratarEsquinas(ctx, q.pol, p);
+    // quadra do loteamento importado: a esquina já vem no arquivo (o arco dela vira a curva da locação)
+    const doArquivo = !!projeto.importado && Array.isArray(q.cfg?.lotes);
+    const { pol: polArred, curvas } = doArquivo ? { pol: q.pol, curvas: curvasDoContorno(q.pol.ext) } : tratarEsquinas(ctx, q.pol, p);
     // depois de arredondar as esquinas, pedaço menor que um lote não é quadra:
     // na beira da estrada vira passeio; no resto, retalho
     if (areaPol(polArred) < p.areaMin) {
@@ -2638,6 +2663,17 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     };
     let num = 0;
     let nAreaLotes = 0;
+    // número do arquivo importado (`LoteDesenhado.numero`): o primeiro de cada número
+    // fica com ele; o lote sem número (o novo, a 2ª parte do dividido) segue depois
+    // do maior número da quadra, sem repetir
+    const doDesenho = (x: (typeof seq)[number]): number | undefined => {
+      const n = manual ? q.cfg?.lotes?.[x.l.indice]?.numero : undefined;
+      return typeof n === "number" && Number.isInteger(n) && n > 0 && n < 1e5 ? n : undefined;
+    };
+    const reservados = new Set<number>();
+    if (manual) for (const x of seq) { const n = x.dest ? undefined : doDesenho(x); if (n !== undefined) reservados.add(n); }
+    if (reservados.size) num = Math.max(...reservados);
+    const tomados = new Set<number>();
     for (const x of seq) {
       if (x.dest) {
         nAreaLotes++;
@@ -2652,14 +2688,16 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
         fixos.add(item(x.l.pol, "area", vizinha?.id ?? id, vizinha?.nome ?? `${ROTULO_AREA[x.dest]} ${contaArea[x.dest]}`));
         continue;
       }
-      num++;
+      let n = doDesenho(x);
+      if (n === undefined || tomados.has(n)) { do num++; while (reservados.has(num) || tomados.has(num)); n = num; }
+      tomados.add(n);
       const lote: Lote = {
-        ...x.l, id: `${nome}-${String(num).padStart(2, "0")}`, quadra: nome, numero: num, lados: [], frente: 0, profundidade: 0,
+        ...x.l, id: `${nome}-${String(n).padStart(2, "0")}`, quadra: nome, numero: n, lados: [], frente: 0, profundidade: 0,
         esquina: false, rua: "", problemas: [], naDivisa: false,
       };
       quadra.lotes.push(lote);
       lotes.push(lote);
-      lotesIdx.add(item(lote.pol, "lote", lote.id, `Lote ${String(num).padStart(2, "0")} da Quadra ${nome}`));
+      lotesIdx.add(item(lote.pol, "lote", lote.id, `Lote ${String(n).padStart(2, "0")} da Quadra ${nome}`));
     }
     void nAreaLotes;
     // quadra desenhada que ficou sem lote não vai para a planta nem para as
@@ -2875,6 +2913,109 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
   return { plano, gleba, ladosGleba, ruas, quadras, quadrasVazias, lotes, areas, faixasRestricao, publicas, sobras, canteiros, quadro, problemas, ms, desarmonicos };
 }
 
+// ---------------------------------------------------------------------------
+// Loteamento importado (importar/): viário pronto e quadras do arquivo
+// ---------------------------------------------------------------------------
+
+/** Anéis do corpo da rua (anti-horário = contorno, horário = furo) → polígonos. */
+function poligonosDosAneis(aneis: Pt[][]): Poligono[] {
+  const exts: Pt[][] = [], furos: Pt[][] = [];
+  for (const a of aneis) {
+    if (a.length < 3) continue;
+    const s = areaAssinada(a);
+    if (Math.abs(s) < 1e-6) continue;
+    (s > 0 ? exts : furos).push(a);
+  }
+  if (!exts.length) return [];
+  const pols: Poligono[] = exts.map((ext) => ({ ext, furos: [] }));
+  for (const f of furos) {
+    // o furo é do menor contorno que o contém (ilha dentro de furo dentro de contorno)
+    const c = centroide(f);
+    const donos = pols.filter((pg) => dentroAnel(c, pg.ext) || dentroAnel(f[0], pg.ext)).sort((a, b) => areaAssinada(a.ext) - areaAssinada(b.ext));
+    if (donos.length) donos[0].furos.push(f);
+  }
+  return uniao(pols);
+}
+
+/**
+ * Quadras do arquivo que se encostam (sem rua no meio) saem do recorte da gleba
+ * como UMA peça. Cada config desenhada fica com a terra dos seus lotes (frestas
+ * de até 5 cm fechadas); o resto da peça (área livre) vai para a quadra sem
+ * lote cuja âncora está nele ou, senão, para a que mais encosta nele.
+ */
+function separarQuadrasEncostadas(peca: Poligono, donos: { c: QuadraCfg; pt: Pt }[], P: (q: Pt) => Pt): Poligono[] {
+  const usadas: Poligono[] = [];
+  const lotesDe = donos.map((d) => (d.c.lotes ?? []).filter((l) => l.anel.length >= 3).map((l): Poligono => ({ ext: antiHorario(l.anel.map(P)), furos: [] })));
+  const terras = donos.map((_, k) => {
+    const lotes = lotesDe[k];
+    if (!lotes.length) return [] as Poligono[];
+    // o fechamento das frestas não avança sobre o lote da quadra encostada (o canto
+    // dela no recorte da outra) e não apara a ponta aguda de um lote desta: os lotes entram inteiros
+    const outros = lotesDe.flatMap((ls, j) => (j === k ? [] : ls));
+    const fechado = uniaoFechada(lotes, 0.025);
+    let t = intersecao(uniao([...(outros.length ? diferenca(fechado, outros) : fechado), ...lotes]), [peca]);
+    // lote de uma quadra por cima do de outra: a terra fica com a primeira
+    if (usadas.length) t = diferenca(t, usadas);
+    t = t.filter((x) => areaPol(x) > 0.01);
+    usadas.push(...t);
+    return t;
+  });
+  const per = (pgs: Poligono[]) => pgs.reduce((s, pg) => s + perimetroAnel(pg.ext) + pg.furos.reduce((s2, f) => s2 + perimetroAnel(f), 0), 0);
+  for (const r of usadas.length ? diferenca([peca], usadas).filter((x) => areaPol(x) > 0.01) : [peca]) {
+    let k = donos.findIndex((d, j) => !terras[j].length && dentroPol(d.pt, r));
+    if (k < 0) {
+      let mc = 0.01;
+      terras.forEach((t, j) => {
+        if (!t.length) return;
+        const c = (per(t) + per([r]) - per(uniaoFechada([...t, r]))) / 2;
+        if (c > mc) { mc = c; k = j; }
+      });
+    }
+    terras[k >= 0 ? k : 0].push(r);
+  }
+  return terras.flatMap((t) => (t.length ? uniaoFechada(t) : []));
+}
+
+/**
+ * Arcos e chanfros do contorno da quadra importada (a esquina já vem curva no
+ * arquivo): PC, meio e PT vão para a locação; os pontos de dentro do arco, não.
+ */
+export function curvasDoContorno(anel: Anel): CurvaEsquina[] {
+  const n = anel.length;
+  const out: CurvaEsquina[] = [];
+  for (const q of quinasDetalhe(anel)) {
+    if (!q.arco || Math.abs(q.giro) < 20) continue;
+    const pts: Pt[] = [];
+    for (let k = q.i0, g = 0; g <= n; k = (k + 1) % n, g++) { pts.push(anel[k]); if (k === q.i1) break; }
+    if (pts.length < 2) continue;
+    let desenvolvimento = 0;
+    for (let i = 0; i + 1 < pts.length; i++) desenvolvimento += dist(pts[i], pts[i + 1]);
+    const pc = pts[0], pt = pts[pts.length - 1];
+    if (pts.length === 2) { out.push({ pc, pt, meio: null, centro: null, raio: 0, desenvolvimento, intermediarios: [] }); continue; }
+    // o meio é o vértice mais perto da metade do desenvolvimento
+    let acc = 0, im = 1, dm = Infinity;
+    for (let i = 1; i + 1 < pts.length; i++) {
+      acc += dist(pts[i - 1], pts[i]);
+      const d = Math.abs(acc - desenvolvimento / 2);
+      if (d < dm) { dm = d; im = i; }
+    }
+    const meio = pts[im];
+    const cc = circuncentro(pc, meio, pt);
+    out.push({
+      pc, pt, meio, centro: cc, raio: cc ? dist(cc, pc) : q.raio, desenvolvimento,
+      intermediarios: pts.slice(1, -1).filter((_, i) => i + 1 !== im),
+    });
+  }
+  return out;
+}
+
+function circuncentro(a: Pt, b: Pt, c: Pt): Pt | null {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  if (Math.abs(d) < 1e-9) return null;
+  const a2 = a[0] * a[0] + a[1] * a[1], b2 = b[0] * b[0] + b[1] * b[1], c2 = c[0] * c[0] + c[1] * c[1];
+  return [(a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d, (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d];
+}
+
 const cacheViario = new WeakMap<Resultado, Poligono[]>();
 /**
  * Polígonos do sistema viário (gleba − quadras − áreas − sobras). É uma
@@ -2923,7 +3064,9 @@ function consolidar(areas: AreaPublica[]): AreaConsolidada[] {
  * acesso: o loteamento fica com um pedaço ilhado. Só confere quando o operador
  * marcou ao menos uma via existente no perímetro.
  */
-function problemasDeAcesso(ruas: RuaCalc[], lados: Resultado["ladosGleba"]): Problema[] {
+function problemasDeAcesso(todas: RuaCalc[], lados: Resultado["ladosGleba"]): Problema[] {
+  // a rua importada sem eixo é como veio no arquivo: não há ponta nem traçado para conferir
+  const ruas = todas.filter((r) => r.eixo.length >= 2);
   const vias = lados.filter((l) => ehAcesso(l.tipo));
   const out: Problema[] = [];
   // rua que encosta no perímetro fora de uma estrada existente leva para a

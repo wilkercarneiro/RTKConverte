@@ -47,19 +47,23 @@ export const rotuloCartao = (c: Pick<CartaoPublico, "bandeira" | "final">): stri
 
 // ================================================================== o formulário
 
-export function FormCartao({ contato, botao, onSalvo, rodape, carteirasVenda }: {
+export function FormCartao({ contato, botao, onSalvo, enviar: enviarCartao, rodape, carteirasVenda }: {
   contato?: MinhaCobranca["contato"];
   /** texto do botão de enviar */
   botao: string;
-  onSalvo: (r: ResultadoCartao, recarga: boolean) => void | Promise<void>;
+  onSalvo?: (r: ResultadoCartao, recarga: boolean) => void | Promise<void>;
+  /** no lugar de "cadastrar o cartão": o pagamento do autocadastro (erro lançado = mensagem na tela) */
+  enviar?: (cartao: CartaoDigitado, titular: TitularDigitado) => Promise<void>;
   /** à esquerda do botão (ex.: "Agora não") */
   rodape?: React.ReactNode;
   /** carteiras à venda: oferece ligar a compra automática junto */
   carteirasVenda?: Carteira[];
 }) {
   const [c, setC] = useState<CartaoDigitado>({ numero: "", nome: "", validade: "", cvv: "" });
+  // conta de pessoa física (autocadastro com CPF): o cartão costuma ser dela
+  const cpfDaConta = soDigitos(contato?.cnpj ?? "").length === 11 ? formatarDoc(contato!.cnpj!, "PF") : "";
   const [t, setT] = useState<TitularDigitado>({
-    nome: contato?.responsavel ?? "", cpf_cnpj: "", email: contato?.email ?? "",
+    nome: contato?.responsavel ?? "", cpf_cnpj: cpfDaConta, email: contato?.email ?? "",
     telefone: contato?.telefone ? formatarTelefone(contato.telefone) : "", cep: "", numero_endereco: "",
   });
   const [tocado, setTocado] = useState<Record<string, boolean>>({});
@@ -78,10 +82,13 @@ export function FormCartao({ contato, botao, onSalvo, rodape, carteirasVenda }: 
     if (!valido) return;
     setEnviando(true); setErro(null);
     try {
-      const r = await salvarCartao(c, t);
-      await onSalvo(r, recarga && !!carteirasVenda?.length);
+      if (enviarCartao) await enviarCartao(c, t);
+      else await onSalvo?.(await salvarCartao(c, t), recarga && !!carteirasVenda?.length);
     } catch (x) {
       setErro(x instanceof Error ? x.message : String(x));
+      // recusado: o resto do que foi digitado fica; o código de segurança se digita de novo
+      setC((atual) => ({ ...atual, cvv: "" }));
+      setTocado((atual) => ({ ...atual, cvv: false }));
     } finally {
       setEnviando(false);
     }

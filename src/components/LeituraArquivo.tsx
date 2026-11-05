@@ -21,6 +21,7 @@ import { APOIO_PADRAO, camposVazios, PAPEIS } from "../../supabase/functions/_sh
 import type { Papel } from "../../supabase/functions/_shared/leitor/receita.ts";
 import { dividirDelimitado, dividirEspacos } from "../../supabase/functions/_shared/leitor/executor.ts";
 import { cruzamentos } from "../../supabase/functions/_shared/leitor/ordem.ts";
+import { BotaoTelaCheia } from "./TelaCheia";
 import { VERSAO_TODAS } from "../../supabase/functions/_shared/leitor/versoes.ts";
 import { desenharEsboco, fmtArea, fmtM, medirEsboco } from "../lib/esboco";
 import type { Esboco, PontoEsboco } from "../lib/esboco";
@@ -434,7 +435,8 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
       <div className="lt-grade">
         <div className="lt-esquerda">
           {/* ---- desenho + ajustes de pontos ---- */}
-          <section className="lt-mapa" aria-label="Conferência e ajuste dos pontos">
+          <section className="lt-mapa" aria-label="Conferência e ajuste dos pontos" data-tela-cheia="">
+            <BotaoTelaCheia className="lt-tela-cheia" />
             <BarraAjustes
               modo={modo} sel={sel} situacao={sel ? situacao(sel) : null} podeAjustar={podeAjustar}
               ordemPerimetro={sel && leitura ? leitura.anel.findIndex((p) => p.idx === sel.idx) : -1} totalPerimetro={leitura?.anel.length ?? 0}

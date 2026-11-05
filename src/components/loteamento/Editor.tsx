@@ -23,6 +23,7 @@ import { alternarAcesso } from "../../lib/loteamento/acoes.ts";
 import type { Rede, ResultadoInfra } from "../../lib/loteamento/infra/index.ts";
 import { DefsRedes, RedesGeo, RedesSimbolos } from "./Redes";
 import { pontoNoElemento } from "../../lib/zoom";
+import { BotaoTelaCheia } from "../TelaCheia";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
 
@@ -161,6 +162,20 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     setTam({ w: el.clientWidth, h: el.clientHeight });
     return () => ro.disconnect();
   }, []);
+  // entrou ou saiu da tela cheia: a mesma vista, na proporção do tamanho novo
+  // (sem isto o desenho ficava do mesmo tamanho no meio de uma área enorme)
+  // A troca chega em dois tempos (a área cobre a página; depois o navegador entra
+  // em tela cheia e a janela cresce): cada passo, dentro de 1,2 s, reescala.
+  const reescalarAte = useRef(0);
+  const marcarReescala = useCallback(() => { reescalarAte.current = Date.now() + 1200; }, []);
+  const tamAntes = useRef(tam);
+  useEffect(() => {
+    const a = tamAntes.current;
+    tamAntes.current = tam;
+    if (Date.now() > reescalarAte.current || !v || a.w < 50 || a.h < 50) return;
+    const f = Math.min(tam.w / a.w, tam.h / a.h);
+    if (Number.isFinite(f) && f > 0 && Math.abs(f - 1) > 0.01) setV((x) => (x ? { ...x, s: x.s * f } : x));
+  }, [tam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const enquadrar = useCallback((pts: Pt[], margem = 0.08) => {
     const { min, max } = caixa(pts);
@@ -1065,6 +1080,7 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
         <button onClick={() => setV({ ...vv, s: vv.s * 1.4 })} title="Aproximar">+</button>
         <button onClick={() => setV({ ...vv, s: vv.s / 1.4 })} title="Afastar">−</button>
         <button onClick={() => enquadrar(res.gleba.ext)} title="Enquadrar tudo (F)">⤢</button>
+        <BotaoTelaCheia onAlternar={marcarReescala} />
       </div>
     </div>
   );

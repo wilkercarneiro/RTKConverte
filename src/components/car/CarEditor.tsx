@@ -17,6 +17,7 @@ import type { ProjetoCar, ResultadoCar } from "../../lib/car/motor.ts";
 import { fmtNum } from "../../lib/car/motor.ts";
 import type { LonLat } from "../../lib/car/kml.ts";
 import { pontoNoElemento } from "../../lib/zoom";
+import { BotaoTelaCheia } from "../TelaCheia";
 
 export type FerramentaCar = "mover" | "lado" | "reserva" | "vegetacao" | "rio";
 export type SelecaoCar = { tipo: "reserva"; i: number } | { tipo: "vegetacao"; i: number } | { tipo: "rio"; id: string } | null;
@@ -90,6 +91,18 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
   }, [tam, res.imovel]);
   useEffect(() => { if (!v && tam.w > 50) enquadrar(); }, [tam, v, enquadrar]);
   useEffect(() => { setDesenho([]); }, [ferramenta]);
+  // tela cheia: a mesma vista, na proporção do tamanho novo (a troca chega em
+  // dois tempos — a área cobre a página, depois a janela cresce)
+  const reescalarAte = useRef(0);
+  const marcarReescala = useCallback(() => { reescalarAte.current = Date.now() + 1200; }, []);
+  const tamAntes = useRef(tam);
+  useEffect(() => {
+    const a = tamAntes.current;
+    tamAntes.current = tam;
+    if (Date.now() > reescalarAte.current || !v || a.w < 50 || a.h < 50) return;
+    const f = Math.min(tam.w / a.w, tam.h / a.h);
+    if (Number.isFinite(f) && f > 0 && Math.abs(f - 1) > 0.01) setV((x) => (x ? { ...x, s: x.s * f } : x));
+  }, [tam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const vv = v ?? { cx: 0, cy: 0, s: 1 };
   const W = tam.w, H = tam.h;
@@ -415,6 +428,7 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
         {ferramenta === "mover" && (sel ? "Arraste os vértices · duplo clique na linha insere vértice, no vértice apaga" : "Clique na reserva, na vegetação ou num rio para editar · arraste para mover o mapa · roda do mouse aproxima")}
       </div>
       <button className="car-enquadrar" title="Enquadrar o imóvel" onPointerDown={(e) => e.stopPropagation()} onClick={enquadrar}>⤢</button>
+      <BotaoTelaCheia className="car-tela-cheia" onAlternar={marcarReescala} />
     </div>
   );
 }

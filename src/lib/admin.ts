@@ -29,6 +29,8 @@ export interface Plano {
   preco_mensal?: number | null;
   /** false: recurso novo do catálogo nasce bloqueado neste plano */
   libera_recursos_novos?: boolean;
+  /** aparece no autocadastro, o link de cadastro com pagamento (0040) */
+  vende_no_site?: boolean;
 }
 export interface RecursoBanco {
   chave: string; nome: string; grupo: string; descricao: string | null;
@@ -111,6 +113,7 @@ export async function salvarPlano(p: Partial<Plano> & { nome: string }): Promise
     ...(p.limite_usuarios !== undefined ? { limite_usuarios: p.limite_usuarios || null } : {}),
     ...(p.preco_mensal !== undefined ? { preco_mensal: p.preco_mensal ?? null } : {}),
     ...(p.libera_recursos_novos !== undefined ? { libera_recursos_novos: p.libera_recursos_novos } : {}),
+    ...(p.vende_no_site !== undefined ? { vende_no_site: p.vende_no_site } : {}),
   };
   const r = p.id
     ? await supabase.from("planos").update(linha).eq("id", p.id).select().single()
@@ -198,9 +201,12 @@ export async function adicionarCreditos(id: string, tipo: string, quantidade: nu
 }
 
 export interface PagamentoEmpresa {
-  id: string; finalidade: "mensalidade" | "creditos"; asaas_id: string | null; valor: number; status: string;
+  /** parcela = a 2ª em diante de uma compra parcelada no cartão (0040) */
+  id: string; finalidade: "mensalidade" | "creditos" | "parcela"; asaas_id: string | null; valor: number; status: string;
   forma: string | null; link: string | null; vencimento: string | null; pago_em: string | null; criado_em: string;
   erro: string | null; descricao: string | null;
+  /** 0040: compra do período parcelada (na 1ª parcela: quantas; nas outras: qual) e o período */
+  parcelas?: number | null; parcela?: number | null; ciclo?: string | null;
 }
 export interface CobrancaEmpresa {
   mensalidade: number | null;
@@ -209,6 +215,8 @@ export interface CobrancaEmpresa {
     asaas_cliente_id: string | null; asaas_assinatura_id: string | null; valor: number | null; situacao: SituacaoCobranca;
     link_pagamento: string | null; proximo_vencimento: string | null; ultimo_pagamento_em: string | null;
     whatsapp_em: string | null; whatsapp_erro: string | null;
+    /** 0040: período da assinatura (valor = o do período) */
+    ciclo?: string | null;
   } | null;
   /** 0037: o cartão (sem o token) e a compra automática */
   cartao?: CartaoPublico | null;

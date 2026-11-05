@@ -9,6 +9,7 @@
 // não responder, vale a cópia da base local — e a tela diz isso.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MapaInterativo } from "./MapaInterativo";
+import { BotaoTelaCheia } from "./TelaCheia";
 import { Dica } from "./ui";
 import type { PontoMapa } from "./MapaInterativo";
 import { coberturaSigef, consultarSigef, fmtArea, sincronizarSigef } from "../lib/sigef";
@@ -127,7 +128,8 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
     : "Parcelas certificadas ao redor (SIGEF)";
 
   return (
-    <div className="mapa-cert">
+    <div className="mapa-cert" data-tela-cheia="">
+      <BotaoTelaCheia className="mapa-cert-tela-cheia" />
       <MapaInterativo aneis={aneis ?? []} pontos={pontos} parcelas={resultado?.parcelas.features} sobreposicoes={sobre}
         destaques={destaques} foco={foco} altura={altura} semMapa={semMapa} />
       <div className={`sobreposicao-painel ${classe}`}>

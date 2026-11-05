@@ -1,7 +1,7 @@
 // Peças pequenas do painel do superadmin: ícones, formatação, KPI, status.
 import type { ReactNode } from "react";
 import type { Empresa, Plano, StatusEmpresa } from "../../lib/admin";
-import { formatarCnpj, formatarTelefone } from "../../../supabase/functions/_shared/cnpj.ts";
+import { formatarCnpj, formatarCpf, formatarTelefone, soDigitos } from "../../../supabase/functions/_shared/cnpj.ts";
 
 export const ICO = {
   visao: "M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z",
@@ -76,7 +76,8 @@ export function PlanoTag({ planoId, planos }: { planoId: string | null; planos: 
   return <span className="sa-plano"><i style={{ background: p.cor }} />{p.nome}</span>;
 }
 
-export const fmtCnpj = (c: string | null) => (c ? formatarCnpj(c) : "—");
+// a empresa do autocadastro pode ter CPF (pessoa física) no lugar do CNPJ
+export const fmtCnpj = (c: string | null) => (!c ? "—" : soDigitos(c).length === 11 ? formatarCpf(c) : formatarCnpj(c));
 export const fmtTel = (t: string | null) => (t ? formatarTelefone(t) : "—");
 export const fmtData = (d: string | null) => (d ? new Date(d).toLocaleDateString("pt-BR") : "—");
 export const fmtNum = (n: number) => n.toLocaleString("pt-BR");

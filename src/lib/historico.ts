@@ -84,6 +84,15 @@ export function nomeDaGlebaNoTitulo(titulo: string): string {
   return titulo.replace(/^\s*Planta\s+A3\s*·\s*/, "").replace(/\s*·\s*PRÉVIA\s*$/, "").trim();
 }
 
+/**
+ * Tipo e título do Memorial Tabular que a gerar-documentos emite com
+ * `tabular: true` (os documentos de cada área da divisão). Não é o da prévia
+ * da conferência (memorial_tabular, de gerar-pecas): é do mesmo modelo da peça
+ * 2, com os dados calculados, na versão do memorial e da planilha.
+ */
+export const TIPO_TABULAR_SISTEMA = "tabular_docx";
+export const TITULO_TABULAR_SISTEMA = "Memorial Tabular (DOCX · dados do sistema)";
+
 export interface UltimaGeracao {
   /** gerar-documentos: memorial, planilha, planta do sistema e a A3 de cada gleba */
   documentos: {
@@ -91,6 +100,8 @@ export interface UltimaGeracao {
     memorial: DocHistorico | null;
     planilha: DocHistorico | null;
     planta: DocHistorico | null;
+    /** Memorial Tabular dos dados do sistema (só quando pedido com `tabular: true`) */
+    tabular: DocHistorico | null;
     glebas: DocHistorico[];
   } | null;
   /** gerar-planta: a planta desenhada do PDF do SIGEF */
@@ -119,6 +130,7 @@ export function ultimaGeracao(docs: readonly DocHistorico[]): UltimaGeracao {
       memorial: linhas.find((d) => d.tipo === "memorial_docx") ?? null,
       planilha: linhas.find((d) => d.tipo === "planilha_ods") ?? null,
       planta: linhas.find((d) => d.tipo === "planta_pdf_sistema") ?? null,
+      tabular: linhas.find((d) => d.tipo === TIPO_TABULAR_SISTEMA) ?? null,
       // a pasta de cada gleba é numerada pela ordem (glebas/1-…, glebas/2-…)
       glebas: linhas.filter((d) => d.tipo === "gleba_planta_pdf")
         .sort((a, b) => a.path.localeCompare(b.path, "pt-BR", { numeric: true })),

@@ -16,8 +16,9 @@ export type Rota =
   | { t: "config" }
   | { t: "equipe" }
   | { t: "ajuda" }
-  // públicas (abrem sem login)
-  | { t: "cadastro" }
+  // públicas (abrem sem login). #/assinar?plano=<id>&ciclo=anual: o autocadastro
+  // (0040) com o plano e o período já escolhidos; #/cadastro (o link antigo) cai nela
+  | { t: "assinar"; plano?: string; ciclo?: string }
   | { t: "termos" }
   | { t: "privacidade" }
   | { t: "cliente"; id: string }
@@ -33,12 +34,18 @@ export function rotaParaHash(r: Rota): string {
     case "servico": return `#/servico/${r.id}`;
     case "novo": return `#/novo/${r.chave}${r.clienteId || r.pedidoId ? `/${r.clienteId ?? "-"}` : ""}${r.pedidoId ? `/${r.pedidoId}` : ""}`;
     case "admin": return `#/admin/${r.aba}${r.id ? `/${r.id}` : ""}`;
+    case "assinar": {
+      const q = new URLSearchParams({ ...(r.plano ? { plano: r.plano } : {}), ...(r.ciclo ? { ciclo: r.ciclo } : {}) }).toString();
+      return `#/assinar${q ? `?${q}` : ""}`;
+    }
     default: return `#/${r.t}`;
   }
 }
 
 export function hashParaRota(hash: string): Rota {
-  const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  // a consulta (?plano=…) só existe no link de cadastro; o resto do caminho não a usa
+  const [caminho, consulta = ""] = hash.replace(/^#\/?/, "").split("?");
+  const p = caminho.split("/").filter(Boolean);
   switch (p[0]) {
     case "clientes": return { t: "clientes" };
     case "servicos": return { t: "servicos" };
@@ -47,7 +54,13 @@ export function hashParaRota(hash: string): Rota {
     // o guia da marca mora no painel do superadmin (links antigos caem lá)
     case "marca": return { t: "admin", aba: "marca" };
     case "ajuda": return { t: "ajuda" };
-    case "cadastro": return { t: "cadastro" };
+    case "cadastro":
+    case "assinar": {
+      const q = new URLSearchParams(consulta);
+      const plano = q.get("plano")?.trim();
+      const ciclo = q.get("ciclo")?.trim();
+      return { t: "assinar", ...(plano ? { plano } : {}), ...(ciclo ? { ciclo } : {}) };
+    }
     case "termos": return { t: "termos" };
     case "privacidade": return { t: "privacidade" };
     case "cliente": return p[1] ? { t: "cliente", id: p[1] } : { t: "clientes" };

@@ -2,19 +2,28 @@
 //   ?semwebgl   simula o navegador sem WebGL (aceleração gráfica desligada)
 //   ?glebas     serviço com glebas (carregadas do "banco" depois do 1º desenho)
 //   ?quebrar    o mapa lança um erro qualquer ao desenhar (barreira do mapa)
-//   ?completo   serviço completo (planilha oficial; com &codigos os vértices já numerados)
 //   ?pecas      a tela de peças (serviço do PDF do SIGEF): abrir não grava nada
 //   ?divisao    serviço completo em partilha (etapa Divisão); +&salva: a divisão já salva em 2 partes;
-//               +&codigos: marcos já com código definitivo (o GEO de cada parte pode ser gerado,
-//               com 37 + 2 créditos gerais de exemplo)
+//               +&codigos: marcos já com código definitivo (os documentos de cada parte podem ser
+//               gerados, com 37 + 2 créditos gerais de exemplo)
+//   ?completo   serviço completo sem glebas: em Dados, "Dividir em partes iguais | Desmembrar uma área"
+//   ?desmembramento  o mesmo, em desmembramento (etapa Desmembramento): uma área desmembrada e a
+//               remanescente; +&salva e +&codigos como acima; +&geradas: a área desmembrada já tem
+//               o serviço dela e os quatro documentos (a lista da etapa Documentos e o ZIP)
 // Dados fictícios, sem banco: troca `from`/`rpc`/`storage`/`auth` do cliente do
 // Supabase por respostas fixas e GUARDA toda escrita em window.__labEscritas —
 // abrir o serviço e trocar de etapa não pode gravar nada.
 import { useState } from "react";
 import maplibregl from "maplibre-gl";
+import proj4 from "proj4";
 import { supabase } from "../lib/supabase";
 import { definirPermissoes } from "../lib/permissoes";
 import { definirRecursos } from "../lib/recursos";
+import { sugerirDivisoes } from "../lib/divisao";
+import { aplicarDivisao, entradaDoServico, publicadorUtm } from "../lib/divisao_servico";
+import { aneisDosLotes, anelBruto, limparAvisos, perimetroDaDivisao, projetoDaDivisao, resultadoDosLotes } from "../lib/divisao_prancheta";
+import { calcular } from "../lib/loteamento/calculo";
+import { areaDoPerimetroM2, inicioDoDesmembramento, percentuais } from "../lib/desmembramento";
 import type { Gleba, Servico, Vertice } from "../lib/types";
 import type { Rota } from "../lib/rota";
 import { AppShell } from "./AppShell";
@@ -53,24 +62,64 @@ const VERTICES: Vertice[] = PONTOS.map(([num, e, n, h, lat, lon], ordem) => ({
   ...(q.has("codigos") ? { codigo: `XXXX-${MS.has(ordem) ? "M" : "P"}-${String(ordem + 1).padStart(4, "0")}` } : {}),
 }) as Vertice);
 
-const DIVISAO = q.has("divisao");
+const DESMEMBRAMENTO = q.has("desmembramento");
+const DIVISAO = q.has("divisao") || DESMEMBRAMENTO;
 const COM_GLEBAS = q.has("glebas") || DIVISAO;
+// ?completo: serviço completo comum — em Dados, o convite "Dividir em partes iguais | Desmembrar uma área"
+const COMPLETO = q.has("completo") || DIVISAO;
+const SALVA = DIVISAO && q.has("salva");
+
+/**
+ * Desmembramento já salvo, pelo MESMO caminho da prancheta: o motor corta uma
+ * área com 10% do imóvel (arredondada), a prancheta calcula, e salvar grava os
+ * marcos novos da divisa no perímetro e as duas áreas como glebas — a
+ * desmembrada no nome de MARIA DE TAL, a remanescente com o proprietário. O
+ * rascunho da prancheta vai junto (como o serviço real guarda ao salvar).
+ * Com &geradas, a área desmembrada já tem o serviço dela (lab-area-1).
+ */
+function desmembramentoSalvo() {
+  const pub = publicadorUtm(24, (f, t, c) => proj4(f, t, c));
+  const ini = inicioDoDesmembramento(areaDoPerimetroM2(VERTICES, pub) / 10000);
+  const fr = percentuais(ini.areasHa);
+  const ent = entradaDoServico(VERTICES, fr, false, pub);
+  const r = sugerirDivisoes(ent)[0];
+  const projeto = projetoDaDivisao(ent, r.partes.map((p) => anelBruto(ent, p)), "FAZENDA LABORATÓRIO");
+  const rd = resultadoDosLotes(ent, aneisDosLotes(limparAvisos(calcular(projeto, perimetroDaDivisao(ent)), true)), fr, r.azimute);
+  const ap = aplicarDivisao(VERTICES, rd, [
+    { nome: "ÁREA DESMEMBRADA 01", herdeiro: "MARIA DE TAL", cpf: "000.000.000-01", denominacao: "" },
+    { nome: "ÁREA REMANESCENTE", herdeiro: "", cpf: "", denominacao: "" },
+  ], fr, SID);
+  return {
+    divisao: { azimute: r.azimute, inverter: false, iguais: false, projeto },
+    vertices: ap.vertices.map((v, i) => (q.has("codigos") && !v.codigo ? { ...v, id: v.id ?? `d${i}`, codigo: `XXXX-M-${String(900 + i).padStart(4, "0")}` } : v)),
+    glebas: ap.glebas.map((g, i) => ({ ...g, id: `a${i + 1}`, ...(i === 0 && q.has("geradas") ? { servico_parte_id: "lab-area-1" } : {}) })),
+  };
+}
+const DESM_SALVO = SALVA && DESMEMBRAMENTO ? desmembramentoSalvo() : null;
+const VERTICES_LAB = DESM_SALVO?.vertices ?? VERTICES;
+
 const SERVICO = {
-  id: SID, tipo: "geo", modalidade: DIVISAO || q.has("completo") ? "completo" : "conferencia", status: "gerado", tem_glebas: COM_GLEBAS,
-  ...(DIVISAO ? { divisao: { iguais: true } } : {}),
+  id: SID, tipo: "geo", modalidade: COMPLETO ? "completo" : "conferencia", status: "gerado", tem_glebas: COM_GLEBAS,
+  ...(DESMEMBRAMENTO ? { divisao: { tipo: "desmembramento", iguais: false, remanescente: 1, aplicado: { tipo: "desmembramento", remanescente: 1 }, ...(DESM_SALVO?.divisao ?? {}) } } : DIVISAO ? { divisao: { iguais: true } } : {}),
   nome_arquivo_txt: "LABORATORIO.txt", fuso_utm: 24, credenciado_id: "c1", rt_id: "rt1",
   denominacao: "FAZENDA LABORATÓRIO", detentor_nome: "FULANO DE TAL", detentor_cpf: "000.000.000-00",
   municipio: "ARACI", uf: "BA", trt: "BR0000000000", created_at: new Date(Date.now() - 864e5).toISOString(),
 } as unknown as Servico;
 
 // partilha já salva: duas partes pelos vértices 0 e 7 (a divisa liga os dois)
-const SALVA = DIVISAO && q.has("salva");
-if (SALVA) for (const o of [0, 7]) VERTICES[o] = { ...VERTICES[o], rotulo_txt: "DIVISÃO", tipo: "M" } as Vertice;
+if (SALVA && !DESMEMBRAMENTO) for (const o of [0, 7]) VERTICES[o] = { ...VERTICES[o], rotulo_txt: "DIVISÃO", tipo: "M" } as Vertice;
 const anelDe = (ordens: number[]) => ordens.map((o) => [VERTICES[o].e!, VERTICES[o].n!] as [number, number]);
 const PARTES_SALVAS = [
   { id: "p1", servico_id: SID, ordem: 0, nome: "PARTE 1", anel: anelDe([0, 1, 2, 3, 4, 5, 6, 7]), confrontante_interno: null, detentor_nome: "MARIA DE TAL", detentor_cpf: "000.000.000-01" },
   { id: "p2", servico_id: SID, ordem: 1, nome: "PARTE 2", anel: anelDe([7, 8, 9, 10, 11, 12, 13, 0]), confrontante_interno: null, detentor_nome: "JOÃO DE TAL", detentor_cpf: "000.000.000-02" },
 ] as unknown as Gleba[];
+
+// &geradas: os quatro documentos da última geração do serviço da área desmembrada
+const DOCS_AREA = DESMEMBRAMENTO && q.has("geradas")
+  ? ([["memorial_docx", "Memorial Descritivo (DOCX)", "memorial.docx"], ["planilha_ods", "Planilha SIGEF (ODS)", "planilha.ods"],
+    ["planta_pdf_sistema", "Planta A1 (PDF · dados do sistema)", "planta-sistema.pdf"], ["tabular_docx", "Memorial Tabular (DOCX · dados do sistema)", "memorial-tabular.docx"]] as const)
+    .map(([tipo, titulo, arq], i) => ({ id: `dg${i}`, servico_id: "lab-area-1", versao: 2, tipo, titulo, path: `lab-area-1/v2/${arq}`, created_at: new Date().toISOString() }))
+  : [];
 const CREDITOS_LAB = {
   periodo: { inicio: "2026-11-01", renova_em: "2026-12-01", dia: 1 },
   carteiras: [{ chave: "geral", nome: "Créditos gerais", descricao: null, servicos: null, por_mes: 50, usado: 13, extra: 2, precos: [] }],
@@ -92,19 +141,29 @@ const TABELAS: Record<string, unknown[]> = {
   trechos_confrontantes: TRECHOS_PECAS,
   credenciados: [{ id: "c1", nome: "CREDENCIADO EXEMPLO", prefixo_vertice: "XXXX", contador_m: 1, contador_p: 1, contador_v: 1 }],
   responsaveis_tecnicos: [{ id: "rt1", nome: "TECNICO EXEMPLO", formacao: "Técnico em Agrimensura", conselho_sigla: "CREA", conselho_numero: "12345-D", identidade: "00.000.000-00 SSP/BA", cpf: "000.000.000-00", trt: "BR0000000000" }],
-  glebas: SALVA ? PARTES_SALVAS : COM_GLEBAS && !DIVISAO ? GLEBAS : [],
+  glebas: DESM_SALVO ? DESM_SALVO.glebas : SALVA ? PARTES_SALVAS : COM_GLEBAS && !DIVISAO ? GLEBAS : [],
+  documentos_gerados: DOCS_AREA,
 };
 
 /** O que a tela mandou gravar (insert/update/upsert/delete). */
 const ESCRITAS: { tabela: string; op: string }[] = [];
 (window as unknown as { __labEscritas: typeof ESCRITAS }).__labEscritas = ESCRITAS;
 
+let servicosCriados = 0;
 function consulta(t: string) {
-  const linhas = TABELAS[t] ?? [];
+  let linhas = TABELAS[t] ?? [];
   const c: Record<string, unknown> = {};
   for (const m of ["select", "order", "in", "limit", "neq", "gte", "eq", "not", "or", "is", "lt", "lte", "ilike"]) c[m] = () => c;
-  for (const m of ["insert", "update", "upsert", "delete"]) c[m] = () => { ESCRITAS.push({ tabela: t, op: m }); return c; };
-  c.single = c.maybeSingle = () => Promise.resolve({ data: linhas[0] ?? null, error: null });
+  // documentos_gerados por serviço: a tela do imóvel e a lista das áreas leem a mesma tabela
+  if (t === "documentos_gerados") {
+    const doServico = (l: unknown) => (l as { servico_id: string }).servico_id;
+    c.eq = (col: string, v: unknown) => { if (col === "servico_id") linhas = linhas.filter((l) => doServico(l) === v); return c; };
+    c.in = (col: string, vs: unknown[]) => { if (col === "servico_id") linhas = linhas.filter((l) => vs.includes(doServico(l))); return c; };
+  }
+  let inseriu = false;
+  for (const m of ["insert", "update", "upsert", "delete"]) c[m] = () => { ESCRITAS.push({ tabela: t, op: m }); if (m === "insert") inseriu = true; return c; };
+  // o serviço de uma área nasce com id próprio (lab-area-2, -3…)
+  c.single = c.maybeSingle = () => Promise.resolve({ data: t === "servicos" && inseriu ? { ...(linhas[0] as object), id: `lab-area-${++servicosCriados + 1}` } : linhas[0] ?? null, error: null });
   // as glebas chegam "do banco" um pouco depois do primeiro desenho, como na produção
   const atraso = t === "glebas" ? 400 : t === "trechos_confrontantes" ? 2500 : 30;
   c.then = (ok: (v: unknown) => unknown, falha?: (e: unknown) => unknown) =>
@@ -132,13 +191,15 @@ function instalar() {
   // alocar_contadores: a reserva de números do credenciado (o GEO da parte numera os marcos sem gerar)
   s.rpc = (nome: string) => {
     if (nome === "alocar_contadores") { ESCRITAS.push({ tabela: "credenciados", op: "alocar_contadores" }); return Promise.resolve({ data: [{ base_m: 101, base_p: 501, base_v: 1 }], error: null }); }
-    return Promise.resolve({ data: nome === "meus_creditos" && DIVISAO ? CREDITOS_LAB : [], error: null });
+    return Promise.resolve({ data: nome === "meus_creditos" && COMPLETO ? CREDITOS_LAB : [], error: null });
   };
   s.from = (t: string) => consulta(t);
   const storage = supabase.storage as unknown as Record<string, unknown>;
+  // os documentos dos serviços de área do laboratório "existem": URL de dados (o ZIP funciona)
+  const urlDoLab = (path: string) => `data:application/octet-stream;base64,${btoa(`laboratorio ${path}`)}`;
   storage.from = () => ({
     list: () => Promise.resolve({ data: [], error: null }),
-    createSignedUrl: () => Promise.resolve({ data: null, error: null }),
+    createSignedUrl: (path: string) => Promise.resolve({ data: path.startsWith("lab-area-") ? { signedUrl: urlDoLab(path) } : null, error: null }),
     upload: () => { ESCRITAS.push({ tabela: "storage", op: "upload" }); return Promise.resolve({ data: {}, error: null }); },
     download: () => Promise.resolve({ data: null, error: { message: "lab" } }),
     remove: () => Promise.resolve({ data: {}, error: null }),
@@ -149,6 +210,17 @@ function instalar() {
   const fetchReal = window.fetch.bind(window);
   window.fetch = async (entrada: RequestInfo | URL, init?: RequestInit) => {
     const u = String(entrada instanceof Request ? entrada.url : entrada);
+    // gerar-documentos de um serviço de área: os quatro documentos (o tabular junto)
+    if (u.includes("/functions/v1/gerar-documentos") && COMPLETO) {
+      const corpo = JSON.parse(String(init?.body ?? "{}")) as { servico_id?: string; tabular?: boolean };
+      if (corpo.tabular && corpo.servico_id?.startsWith("lab-area-")) {
+        const p = (arq: string) => urlDoLab(`${corpo.servico_id}/v1/${arq}`);
+        return new Response(JSON.stringify({
+          ok: true, memorial_docx: p("memorial.docx"), planilha_ods: p("planilha.ods"), planta_pdf: p("planta-sistema.pdf"), tabular_docx: p("memorial-tabular.docx"),
+          avisos: ["Planta do imóvel: MAPBOX_TOKEN não configurado no servidor — a planta saiu sem imagem de satélite."],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+    }
     if (u.includes("/functions/v1/") || u.includes("/rest/v1/")) {
       return new Response(JSON.stringify({ ok: true, parcelas: { type: "FeatureCollection", features: [] }, sobreposicoes: [], encostos: [], avisos: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
@@ -171,7 +243,7 @@ export function LaboratorioConferencia() {
   }
   return (
     <AppShell rota={rota} ir={() => forcar((n) => n + 1)} usuario={{ nome: "Laboratório", papel: "Dono" }} escritorioId={undefined}>
-      <Conferencia key={SID} inicial={{ servico: SERVICO, vertices: VERTICES, trechos: [], preview: {
+      <Conferencia key={SID} inicial={{ servico: SERVICO, vertices: VERTICES_LAB, trechos: [], preview: {
         fuso: 24, epsg: 31984, candidatos: [24], fusoAmbiguo: false, foraDaUf: false, areaHa: 0, perimetroM: 0, qtdM: 0, qtdP: 0, qtdV: 0,
       } }} onVoltar={() => undefined} />
     </AppShell>

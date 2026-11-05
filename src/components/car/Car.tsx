@@ -19,6 +19,7 @@ import type { CamadaCar } from "../../lib/car/saidas.ts";
 import { carregarProjetoCar, marcarCarExportado, salvarProjetoCar } from "../../lib/car/persistencia.ts";
 import { Dica, GiroMapa, StatusSalvamento } from "../ui";
 import { BotaoConcluir, useConclusao } from "../ConcluirServico";
+import { ExportarArea } from "../ExportarArea";
 import { CarEditor, COR } from "./CarEditor";
 import type { FerramentaCar, SelecaoCar } from "./CarEditor";
 import "./car.css";
@@ -255,6 +256,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
         {servico.nome_arquivo_txt && <span className="arquivo">{servico.nome_arquivo_txt}</span>}
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
         <span className="esticar" />
+        <ExportarArea servicoId={servico.id} temPerimetro={projeto.perimetro.length >= 3} antes={auto.agora} />
         <BotaoConcluir servico={servico} conclusao={conclusao} pronto={servico.status === "gerado"} />
         <span className="car-resumo-topo">
           <b>{fmtHa(a.imovel)}</b> · reserva <b className={res.reservaOk ? "" : "car-falta"}>{fmtPct(res.pctReserva)}</b>

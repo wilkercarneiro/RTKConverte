@@ -1,0 +1,71 @@
+/* Desmembramento e documentos de cada área (DivisaoEditor, DocumentosDasAreas).
+   Fora do styles.css de propósito: é uma frente própria, com classes dm-*. */
+
+/* seletor do tipo da divisão, no topo do editor: partes iguais | desmembramento */
+.dm-tipo { display: inline-flex; align-items: center; gap: 0; margin-left: auto; }
+.dm-tipo > button { height: 32px; padding: 0 12px; font-size: 13px; font-weight: 600; border-radius: 0; border: 1px solid var(--borda); background: var(--card); color: var(--texto-2); }
+.dm-tipo > button:first-child { border-radius: 8px 0 0 8px; }
+.dm-tipo > button:nth-child(2) { border-radius: 0 8px 8px 0; border-left: 0; }
+.dm-tipo > button.ativo { background: var(--primaria-clara); color: var(--floresta); border-color: var(--primaria); }
+.dm-tipo > button.ativo + button.ativo, .dm-tipo > button.ativo:nth-child(2) { border-left: 1px solid var(--primaria); }
+.dm-tipo > button:disabled { cursor: default; opacity: 0.75; }
+.dm-tipo > button.ativo:disabled { opacity: 1; }
+.dm-tipo > .dica { margin-left: 6px; }
+
+/* papel da área (no corpo da sanfona): Desmembrar | Remanescente */
+.dm-papel { display: flex; align-items: center; gap: 0; }
+.dm-papel > button { flex: 1 1 0; height: 30px; padding: 0 8px; font-size: 12.5px; font-weight: 600; border-radius: 0; border: 1px solid var(--borda); background: var(--card); color: var(--texto-2); }
+.dm-papel > button:first-child { border-radius: 8px 0 0 8px; }
+.dm-papel > button:nth-child(2) { border-radius: 0 8px 8px 0; border-left: 0; }
+.dm-papel > button.ativo { background: var(--primaria-clara); color: var(--floresta); border-color: var(--primaria); }
+.dm-papel > button:nth-child(2).ativo { border-left: 1px solid var(--primaria); }
+.dm-papel > .dica { margin-left: 6px; flex: none; }
+
+/* selo do papel: na sanfona e na lista de documentos */
+.dm-chip { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em; vertical-align: 1px; white-space: nowrap; }
+.dm-chip.desmembrada { background: #FDF0E4; color: #9A4A0B; }
+.dm-chip.remanescente { background: var(--primaria-clara); color: var(--floresta); }
+.dm-chip.parte { background: #EAF0FB; color: #1E40AF; }
+
+/* "Destacar a área pela": frente | fundo | lateral esquerda | lateral direita (2 × 2) */
+.dm-lados { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.dm-lados-rotulo { grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--texto-2); }
+.dm-lados > button { height: 30px; padding: 0 6px; font-size: 12px; font-weight: 600; border-radius: 8px; border: 1px solid var(--borda); background: var(--card); color: var(--texto-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dm-lados > button:hover:not(:disabled) { border-color: var(--primaria); color: var(--floresta); }
+.dm-lados > button.ativo { background: var(--primaria-clara); color: var(--floresta); border-color: var(--primaria); }
+.dv-item-corpo .acoes-linha button.ativo { background: var(--primaria-clara); color: var(--floresta); border-color: var(--primaria); }
+
+/* área (ha) digitável da área desmembrada: campo e "Aplicar" na mesma linha */
+.dm-area { display: flex; align-items: flex-end; gap: 6px; margin: 0; }
+.dm-area > label { flex: 1 1 auto; display: grid; gap: 4px; font-size: 12px; font-weight: 600; color: var(--texto-2); min-width: 0; }
+.dm-area > label input { height: 32px; font-size: 13px; width: 100%; box-sizing: border-box; }
+.dm-area > button { height: 32px; padding: 0 10px; font-size: 12.5px; flex: none; }
+
+/* ---------------- documentos de cada área ---------------- */
+.dm-docs { display: flex; flex-direction: column; gap: 10px; }
+.dm-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dm-linha { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: center; padding: 10px 12px; border: 1px solid var(--borda); border-radius: 10px; background: var(--card); }
+.dm-linha.pronta { border-color: var(--primaria); }
+.dm-linha > label { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; font-weight: 400; }
+.dm-linha > label input { width: 16px; height: 16px; flex: none; margin: 0; }
+.dm-nome { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.dm-nome b { font-size: 13.5px; color: var(--texto); }
+.dm-nome small { font-size: 11.5px; color: var(--texto-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dm-lado { display: flex; align-items: center; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.dm-ha { font-size: 12.5px; color: var(--texto-2); white-space: nowrap; }
+.dm-estado { font-size: 12px; color: var(--texto-3); white-space: nowrap; }
+.dm-estado.pronto { color: var(--floresta); font-weight: 600; }
+.dm-abrir { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.dm-arquivos { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; margin: 0; }
+.dm-arquivos .botao-download { font-size: 12.5px; padding: 6px 10px; }
+.dm-pe { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+.dm-pe .sub { margin: 0; font-size: 12.5px; }
+.dm-progresso { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--floresta); }
+.dm-avisos { margin: 0; padding: 8px 12px 8px 26px; border-radius: 10px; background: var(--alerta-claro); color: var(--alerta-escuro); font-size: 12.5px; display: grid; gap: 4px; }
+
+/* atalho compacto no painel da prancheta */
+.dm-docs.compacto .dm-linha { grid-template-columns: minmax(0, 1fr) auto; padding: 7px 10px; }
+.dm-docs.compacto .dm-ha, .dm-docs.compacto .dm-abrir { display: none; }
+.dm-docs.compacto .dm-pe { flex-direction: column; align-items: stretch; }
+.dm-docs.compacto .dm-pe > button { width: 100%; }
+.dm-docs.compacto .dm-pe .sub { font-size: 11.5px; text-align: center; }

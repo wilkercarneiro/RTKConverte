@@ -118,6 +118,8 @@ export function montarGrafo(res: Resultado, terreno: GradeTerreno | null | undef
   const gleba = offsetPols([res.gleba], 0.6)[0] ?? res.gleba;
   const pecas: Peca[] = [];
   for (const r of res.ruas) {
+    // rua importada sem eixo: a rede não tem por onde passar nela (fica de fora do grafo)
+    if (r.eixo.length < 2) continue;
     for (const l of recortarLinha(r.eixo, gleba)) {
       if (comprimento(l) > 1) pecas.push({ linha: l, tipo: "rua", rua: r.id, nome: r.nome, largura: r.largura, cortes: [] });
     }

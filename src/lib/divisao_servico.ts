@@ -214,8 +214,15 @@ export function aplicarDivisao(
   });
   const verticesNovos = saida.map((v, i) => ({ ...v, ordem: i }));
 
-  const glebas: Gleba[] = r.partes.map((p, k) => {
-    const antes = glebasAntes[k];
+  // vértice existente vai com o E/N do levantamento (o motor mede no plano
+  // arredondado, mas a gleba casa com o vértice pelo dado bruto, como sempre)
+  const aneis = r.partes.map((p) => p.anel.map((q) => (q.vertice !== undefined
+    ? [Number(geo[q.vertice].e), Number(geo[q.vertice].n)]
+    : [q.e, q.n]) as [number, number]));
+  const herda = casarGlebasPorArea(aneis, glebasAntes);
+
+  const glebas: Gleba[] = r.partes.map((_, k) => {
+    const antes = herda[k];
     const info = partes[k];
     const nome = (info?.nome ?? "").trim() || `PARTE ${k + 1}`;
     return {
@@ -223,11 +230,7 @@ export function aplicarDivisao(
       servico_id: servicoId,
       ordem: k,
       nome,
-      // vértice existente vai com o E/N do levantamento (o motor mede no plano
-      // arredondado, mas a gleba casa com o vértice pelo dado bruto, como sempre)
-      anel: p.anel.map((q) => (q.vertice !== undefined
-        ? [Number(geo[q.vertice].e), Number(geo[q.vertice].n)]
-        : [q.e, q.n]) as [number, number]),
+      anel: aneis[k],
       confrontante_interno: null,
       denominacao: info?.denominacao.trim() || null,
       detentor_nome: info?.herdeiro.trim() || null,
@@ -237,6 +240,82 @@ export function aplicarDivisao(
     };
   });
   return { vertices: verticesNovos, glebas };
+}
+
+// ---------------------------------------------------------------------------
+// casamento das glebas novas com as já salvas — pela TERRA, não pela posição
+// ---------------------------------------------------------------------------
+// Antes a gleba k herdava id e servico_parte_id da gleba k salva. Acrescentar
+// uma área (que entra antes da remanescente), retirar, unir, dividir ou trocar
+// o tipo mudava a posição: a área nova herdava o serviço da remanescente (que
+// recebia o cabeçalho e o desenho de outra terra e cobrava crédito de novo).
+// Agora a herança só vale quando é a mesma terra: a parte comum cobre pelo
+// menos metade da gleba antiga E da nova (arrastar a divisa continua herdando;
+// uma área nova tirada da remanescente não herda o serviço dela).
+
+type Anel = [number, number][];
+
+function areaAnel(a: Anel): number {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) {
+    const [x1, y1] = a[i], [x2, y2] = a[(i + 1) % a.length];
+    s += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(s) / 2;
+}
+
+function dentroAnel(x: number, y: number, a: Anel): boolean {
+  let d = false;
+  for (let i = 0, j = a.length - 1; i < a.length; j = i++) {
+    const [xi, yi] = a[i], [xj, yj] = a[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) d = !d;
+  }
+  return d;
+}
+
+/** Área comum aproximada (amostragem em grade de ~60×60 dentro de `a`). */
+function areaComum(a: Anel, b: Anel): number {
+  const xs = a.map((p) => p[0]), ys = a.map((p) => p[1]);
+  const bx = b.map((p) => p[0]), by = b.map((p) => p[1]);
+  const x0 = Math.max(Math.min(...xs), Math.min(...bx)), x1 = Math.min(Math.max(...xs), Math.max(...bx));
+  const y0 = Math.max(Math.min(...ys), Math.min(...by)), y1 = Math.min(Math.max(...ys), Math.max(...by));
+  if (!(x1 > x0 && y1 > y0)) return 0;
+  const N = 60, dx = (x1 - x0) / N, dy = (y1 - y0) / N;
+  let n = 0;
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < N; j++) {
+      const x = x0 + (i + 0.5) * dx, y = y0 + (j + 0.5) * dy;
+      if (dentroAnel(x, y, a) && dentroAnel(x, y, b)) n++;
+    }
+  }
+  return n * dx * dy;
+}
+
+/**
+ * Para cada anel novo, a gleba salva que é a mesma terra (ou undefined). Cada
+ * gleba salva serve a no máximo uma nova; vence a maior parte comum.
+ */
+export function casarGlebasPorArea(novos: Anel[], antes: Gleba[]): (Gleba | undefined)[] {
+  const out: (Gleba | undefined)[] = novos.map(() => undefined);
+  const pares: { k: number; j: number; comum: number }[] = [];
+  const areasNovas = novos.map(areaAnel);
+  antes.forEach((g, j) => {
+    const anel = (g.anel ?? []) as Anel;
+    if (anel.length < 3) return;
+    const aAntes = areaAnel(anel);
+    novos.forEach((n, k) => {
+      const comum = areaComum(n, anel);
+      if (comum >= 0.5 * areasNovas[k] && comum >= 0.5 * aAntes) pares.push({ k, j, comum });
+    });
+  });
+  pares.sort((p, q) => q.comum - p.comum);
+  const usadas = new Set<number>();
+  for (const p of pares) {
+    if (out[p.k] || usadas.has(p.j)) continue;
+    out[p.k] = antes[p.j];
+    usadas.add(p.j);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

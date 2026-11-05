@@ -341,6 +341,8 @@ export function cruzamentos(ruas: RuaCalc[]): No[] {
   const junto = (a: number, b: number, p: Pt) => nos.some((n) => ((n.a === a && n.b === b) || (n.a === b && n.b === a)) && dist(n.p, p) < 8);
   for (let a = 0; a < ruas.length; a++) for (let b = a + 1; b < ruas.length; b++) {
     const A = ruas[a].eixo, B = ruas[b].eixo;
+    // rua importada sem eixo (só o corpo veio no arquivo): o drone não passa por ela
+    if (A.length < 2 || B.length < 2) continue;
     // X: segmento com segmento
     let accA = 0;
     for (let i = 0; i + 1 < A.length; i++) {

@@ -7,6 +7,7 @@ import type { Servico, Vertice } from "../types";
 import type { Pt } from "./geom.ts";
 import type { Perimetro } from "./calculo.ts";
 import { normalizarProjeto } from "./modelo.ts";
+import { classificarVia, recuoDaVia } from "../../../supabase/functions/_shared/recuo.ts";
 import type { Borda, Projeto } from "./modelo.ts";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
@@ -64,13 +65,28 @@ export function perimetroDoServico(vertices: Vertice[], fuso: number): Perimetro
   return { pts, altitudes, confrontantes, nomes, vias };
 }
 
-/** Projeto do banco (ou novo), já com as estradas do levantamento marcadas como via existente. */
+/**
+ * Borda de um lado com estrada, já com o recuo da lei (recuo automático,
+ * 05/11/2026; regras em supabase/functions/_shared/recuo.ts): rodovia federal
+ * ou estadual vira "rodovia" com a faixa não edificável de 15 m (Lei 6.766/1979,
+ * art. 4º, III — obrigatória no loteamento), ferrovia idem (art. 4º, III-A), e
+ * estrada municipal continua "via existente", sem faixa (vale a lei do
+ * município, que o operador põe à mão).
+ */
+export function bordaDaEstrada(nome: string): Borda {
+  const via = classificarVia(nome);
+  if (via && (via.tipo === "federal" || via.tipo === "estadual")) return { tipo: "rodovia", faixa: recuoDaVia(via).naoEdificavel, nome };
+  if (via?.tipo === "ferrovia") return { tipo: "ferrovia", faixa: recuoDaVia(via).naoEdificavel, nome };
+  return { tipo: "via", faixa: 0, nome };
+}
+
+/** Projeto do banco (ou novo), já com as estradas do levantamento marcadas — e com o recuo legal das rodovias. */
 export function projetoInicial(salvo: Partial<Projeto> | null, servico: Servico, perimetro: Perimetro & { vias: boolean[] }): Projeto {
   const nome = servico.denominacao || servico.nome_arquivo_txt?.replace(/\.txt$/i, "") || "Loteamento";
   const p = normalizarProjeto(salvo, nome, perimetro.pts.length);
   if (!salvo) {
     p.bordas = perimetro.pts.map((_, i): Borda => (perimetro.vias[i]
-      ? { tipo: "via", faixa: 0, nome: perimetro.confrontantes[i] ?? "" }
+      ? bordaDaEstrada(perimetro.confrontantes[i] ?? "")
       : { tipo: "divisa", faixa: 0 }));
   }
   return p;

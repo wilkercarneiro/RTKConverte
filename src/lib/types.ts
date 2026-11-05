@@ -1,3 +1,5 @@
+import type { RecuoDoServico } from "../../supabase/functions/_shared/recuo.ts";
+
 export interface Cliente {
   id: string;
   created_at?: string;
@@ -97,6 +99,24 @@ export interface ParametrosDivisao {
   iguais?: boolean;
   /** rascunho da prancheta (projeto de loteamento com as partes como lotes desenhados) */
   projeto?: unknown;
+  /**
+   * O que a divisão é. Partilha (herança): partes iguais ou na fração de cada
+   * herdeiro. Desmembramento: uma ou mais áreas saem do imóvel, cada uma com a
+   * área digitada, e o resto fica como ÁREA REMANESCENTE do proprietário.
+   * Ausente = partilha (é o que toda divisão gravada antes disto é).
+   */
+  tipo?: "partilha" | "desmembramento";
+  /**
+   * Desmembramento: a posição (na ordem das partes/glebas salvas) da área
+   * remanescente. null = sem remanescente (todas as áreas saem do imóvel).
+   */
+  remanescente?: number | null;
+  /**
+   * O tipo e a remanescente da divisão SALVA (gravados ao salvar as glebas).
+   * `tipo`/`remanescente` acima são o rascunho da prancheta e mudam antes de
+   * salvar; os documentos de cada área leem só este. Ausente = partilha.
+   */
+  aplicado?: { tipo: "partilha" | "desmembramento"; remanescente: number | null };
 }
 
 export interface Servico {
@@ -161,11 +181,13 @@ export interface Servico {
   // obsoleto: as faixas de domínio saem dos trechos da planta (uma declaração
   // por via). A coluna continua no banco só por causa dos serviços antigos.
   via_dominio: string | null;
+  /** Recuo legal das rodovias conferido pelo operador (0041; regras em _shared/recuo.ts). Nulo = padrão. */
+  recuo_vias?: RecuoDoServico | null;
   is_espolio?: boolean | null;
   inventariante_nome?: string | null;
   inventariante_cpf?: string | null;
   inventariante_rg?: string | null;
-  /** Divisão em partes iguais (partilha): presente = serviço nasceu para dividir. */
+  /** Divisão do imóvel (partilha ou desmembramento): presente = serviço nasceu para dividir. */
   divisao?: ParametrosDivisao | null;
 }
 

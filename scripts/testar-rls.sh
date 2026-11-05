@@ -39,6 +39,9 @@ for f in supabase/migrations/*.sql; do
   case "$(basename "$f")" in
     0018_*|0019_*|0030_*|0032_*) continue ;;  # PostGIS (parcelas do SIGEF) — no fim, se houver PostGIS
     0020_escritorios.sql|0024_saas.sql|0025_equipe.sql|0026_auditoria.sql|0027_creditos.sql|0028_*|0029_*|0033_*|0034_*|0035_*|0036_*|0037_*) continue ;;  # aplicadas abaixo, entre as etapas
+    # 0038+ usam a origem_id (0027) e as carteiras (0034): também entram abaixo, em ordem
+    # (sem isto o script parava na 0038 desde 04/11/2026)
+    0038_*|0039_*|0040_*|0041_*) continue ;;
     # usa servicos.tipo, que só nasce na 0005: em produção foi aplicada depois
     0002_confrontacao_no_vertice.sql) continue ;;
   esac
@@ -130,6 +133,27 @@ if [ "$("${PSQL[@]}" -tAc "select count(*) from pg_available_extensions where na
   echo "migração aplicada: supabase/migrations/0032_sigef_sincronizar_trava.sql"
   PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f tests/rls/sigef_trava.sql 2>&1 >/dev/null | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
   echo "testes da trava contra apagar a cópia oficial em massa: todos passaram"
+  # 0038 (auditoria de segurança) reescreve o sigef_consultar e 0039 (contorno
+  # assinado) usa ST_*: as duas precisam do PostGIS. Os dados de teste antigos
+  # (escritorios.sql grava o path "x") não seguem a regra nova da 0038
+  # (documento só na pasta do serviço): ajeitados antes.
+  "${PSQL[@]}" -c "update documentos_gerados set path = servico_id::text || '/' || path where servico_id is not null and path is not null and path not like servico_id::text || '/%'" >/dev/null
+  "${PSQL[@]}" -f supabase/migrations/0038_auditoria_seguranca.sql >/dev/null
+  echo "migração aplicada: supabase/migrations/0038_auditoria_seguranca.sql"
+  "${PSQL[@]}" -f supabase/migrations/0039_contorno_assinado.sql >/dev/null
+  echo "migração aplicada: supabase/migrations/0039_contorno_assinado.sql"
 else
-  echo "PostGIS ausente: testes das parcelas do SIGEF (0018/0019/0030) pulados"
+  echo "PostGIS ausente: testes das parcelas do SIGEF (0018/0019/0030) e as migrações 0038/0039 pulados"
 fi
+
+# 0040 em diante (não dependem do PostGIS), com os testes delas
+for f in supabase/migrations/0040_*.sql supabase/migrations/0041_*.sql; do
+  [ -f "$f" ] || continue
+  "${PSQL[@]}" -f "$f" >/dev/null
+  echo "migração aplicada: $f"
+done
+for t in tests/rls/autocadastro.sql tests/rls/recuo_vias.sql; do
+  [ -f "$t" ] || continue
+  PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f "$t" 2>&1 >/dev/null | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
+  echo "testes de $t: todos passaram"
+done
