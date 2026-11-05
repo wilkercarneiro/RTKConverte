@@ -2,6 +2,7 @@
 //   ?semwebgl   simula o navegador sem WebGL (aceleração gráfica desligada)
 //   ?glebas     serviço com glebas (carregadas do "banco" depois do 1º desenho)
 //   ?quebrar    o mapa lança um erro qualquer ao desenhar (barreira do mapa)
+//   ?restricoes=pascoal|guaranta|livre  o desenho num lugar real: o cartão "Restrições do imóvel" consulta as bases de verdade
 //   ?pecas      a tela de peças (serviço do PDF do SIGEF): abrir não grava nada
 //   ?divisao    serviço completo em partilha (etapa Divisão); +&salva: a divisão já salva em 2 partes;
 //               +&codigos: marcos já com código definitivo (os documentos de cada parte podem ser
@@ -17,6 +18,7 @@ import { useState } from "react";
 import maplibregl from "maplibre-gl";
 import proj4 from "proj4";
 import { supabase } from "../lib/supabase";
+import { GEO_DEF, utmDef } from "../../supabase/functions/_shared/geo.ts";
 import { definirPermissoes } from "../lib/permissoes";
 import { definirRecursos } from "../lib/recursos";
 import { sugerirDivisoes } from "../lib/divisao";
@@ -50,13 +52,27 @@ const PONTOS: [number, number, number, number, string, string][] = [
   [283, 493063.551, 8736919.429, 294.28, "11 25 33,492 S", "39 3 48,917 W"],
   [298, 493018.175, 8736708.246, 303.943, "11 25 40,367 S", "39 3 50,416 W"],
 ];
+// ?restricoes=pascoal|guaranta|livre: o mesmo desenho levado a um lugar real, para o
+// cartão "Restrições do imóvel" consultar as bases públicas de verdade
+const LUGARES: Record<string, { ll: [number, number]; fuso: number; municipio: string; uf: string }> = {
+  pascoal: { ll: [-39.345, -16.905], fuso: 24, municipio: "PORTO SEGURO", uf: "BA" }, // TI Barra Velha do Monte Pascoal + PARNA
+  guaranta: { ll: [-54.92, -9.96], fuso: 21, municipio: "GUARANTÃ DO NORTE", uf: "MT" }, // PA Braço Sul + embargo IBAMA
+  livre: { ll: [-38.86, -12.33], fuso: 24, municipio: "FEIRA DE SANTANA", uf: "BA" },
+};
+const LUGAR = LUGARES[q.get("restricoes") ?? ""] ?? null;
+const DESLOC: [number, number] = (() => {
+  if (!LUGAR) return [0, 0];
+  const [e, n] = proj4(GEO_DEF, utmDef(LUGAR.fuso), LUGAR.ll);
+  return [e - PONTOS.reduce((s, p) => s + p[1], 0) / PONTOS.length, n - PONTOS.reduce((s, p) => s + p[2], 0) / PONTOS.length];
+})();
 const MS = new Map<number, string>([[0, "(MATR.1.000/CNS.00.000-0) FAZENDA EXEMPLO\\ FULANO DE TAL\\ CPF:000.000.000-00"], [5, "ESTRADA VICINAL"], [9, "(POSSE) SÍTIO MODELO\\ BELTRANA DE TAL\\ CPF:111.111.111-11"]]);
 
 const VERTICES: Vertice[] = PONTOS.map(([num, e, n, h, lat, lon], ordem) => ({
   id: `v${ordem}`, servico_id: SID, ordem, num_txt: num, rotulo_txt: MS.has(ordem) ? "M" : null,
-  e, n, h, sigma_pos: 0.004, sigma_h: 0.008,
+  e: e + DESLOC[0], n: n + DESLOC[1], h, sigma_pos: 0.004, sigma_h: 0.008,
   tipo: MS.has(ordem) ? "M" : "P", codigo: null, codigo_provisorio: false, metodo: "PG6", inserido_manual: false,
-  lat_gms: lat, lon_gms: lon,
+  // levado a outro lugar, o GMS antigo não vale: o sistema calcula pelo E/N (como marco novo)
+  lat_gms: LUGAR ? "" : lat, lon_gms: LUGAR ? "" : lon,
   descritivo: MS.get(ordem) ?? null, tipo_limite: MS.has(ordem) ? (ordem === 5 ? "LA3" : "LA1") : null,
   eh_via: ordem === 5, cns: null, matricula: null, apelido_txt: null, numerado: false, exibir_planta: true,
   ...(q.has("codigos") ? { codigo: `XXXX-${MS.has(ordem) ? "M" : "P"}-${String(ordem + 1).padStart(4, "0")}` } : {}),
@@ -101,9 +117,9 @@ const VERTICES_LAB = DESM_SALVO?.vertices ?? VERTICES;
 const SERVICO = {
   id: SID, tipo: "geo", modalidade: COMPLETO ? "completo" : "conferencia", status: "gerado", tem_glebas: COM_GLEBAS,
   ...(DESMEMBRAMENTO ? { divisao: { tipo: "desmembramento", iguais: false, remanescente: 1, aplicado: { tipo: "desmembramento", remanescente: 1 }, ...(DESM_SALVO?.divisao ?? {}) } } : DIVISAO ? { divisao: { iguais: true } } : {}),
-  nome_arquivo_txt: "LABORATORIO.txt", fuso_utm: 24, credenciado_id: "c1", rt_id: "rt1",
+  nome_arquivo_txt: "LABORATORIO.txt", fuso_utm: LUGAR?.fuso ?? 24, credenciado_id: "c1", rt_id: "rt1",
   denominacao: "FAZENDA LABORATÓRIO", detentor_nome: "FULANO DE TAL", detentor_cpf: "000.000.000-00",
-  municipio: "ARACI", uf: "BA", trt: "BR0000000000", created_at: new Date(Date.now() - 864e5).toISOString(),
+  municipio: LUGAR?.municipio ?? "ARACI", uf: LUGAR?.uf ?? "BA", trt: "BR0000000000", created_at: new Date(Date.now() - 864e5).toISOString(),
 } as unknown as Servico;
 
 // partilha já salva: duas partes pelos vértices 0 e 7 (a divisa liga os dois)

@@ -1639,3 +1639,61 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .verif-rodape { padding: 12px 22px 18px; font-size: 12.5px; color: var(--texto-3); border-top: 1px solid var(--linha); }
 .verif-busca { display: flex; gap: 8px; padding: 18px 22px; flex-wrap: wrap; }
 .verif-busca input { flex: 1 1 220px; font-family: var(--mono); text-transform: uppercase; }
+
+/* ---- Restrições do imóvel (RestricoesImovel.tsx): TI, UC, assentamento, quilombola,
+   embargos, fronteira, militar e arqueológico pelas bases públicas */
+.restricoes > header { align-items: center; margin-bottom: 14px; }
+.restricoes > header .desc { color: var(--texto-2); font-size: 13.5px; font-weight: 600; }
+.restricoes.sobrepoe > header .desc { color: var(--perigo); }
+.restricoes.encosta > header .desc { color: var(--alerta-escuro); }
+.restricoes.livre > header .desc { color: var(--floresta); }
+.restricoes > header .esticar { flex: 1; }
+.restricoes > header button { height: 32px; padding: 0 12px; font-size: 13px; }
+.restricoes.sobrepoe { border-color: #F3B4B4; }
+.restricoes-carregando { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--texto-2); }
+.restricoes-lista { display: flex; flex-direction: column; gap: 10px; }
+.restricao-fonte { border: 1px solid var(--borda); border-radius: 12px; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; background: var(--card); }
+.restricao-fonte.sobrepoe { border-color: #F3B4B4; background: #FFFAFA; }
+.restricao-fonte.encosta { border-color: #F1D9A8; background: #FFFDF7; }
+.restricao-cabeca { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+.restricao-cabeca .sub { font-size: 12.5px; }
+.restricao-cor { display: inline-block; width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.restricao-selo { font: 700 11px var(--mono); text-transform: uppercase; padding: 2px 7px; border-radius: 5px; color: #fff; background: var(--texto-3); white-space: nowrap; }
+.restricao-selo.sobrepoe { background: var(--perigo); }
+.restricao-selo.encosta { background: var(--alerta); }
+.restricao-selo.livre { background: var(--floresta); }
+.restricao-texto { margin: 0; font-size: 13px; color: var(--texto-2); }
+.restricao-itens { margin: 0; padding: 0 0 0 4px; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.restricao-itens li { font-size: 13.5px; display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 3px solid var(--borda); }
+.restricao-itens li.sobrepoe { border-left-color: var(--perigo); }
+.restricao-itens li.encosta { border-left-color: var(--alerta); }
+.restricao-itens small { color: var(--texto-3); font-size: 12px; }
+.restricoes-livres { font-size: 13px; color: var(--texto-2); }
+.restricoes-livres ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 12px; }
+.restricoes-livres li { display: flex; align-items: center; gap: 6px; }
+.restricoes-livres button.link, .previa-restricoes button.link { background: none; border: 0; padding: 0; height: auto; color: var(--primaria-escura); font-size: 13px; cursor: pointer; text-decoration: underline; }
+.restricoes-rodape { margin: 12px 0 0; font-size: 12px; }
+/* legenda das camadas no mapa interativo */
+.legenda-restricoes { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 12px; font-size: 12.5px; background: var(--card); border: 1px solid var(--borda); border-top: 0; }
+.legenda-restricoes span { display: inline-flex; align-items: center; gap: 6px; }
+.legenda-restricoes i { width: 14px; height: 10px; border-radius: 2px; opacity: .75; }
+.legenda-restricoes .sub { margin-left: auto; font-size: 11.5px; }
+/* prévia grátis no Novo serviço (LeituraArquivo) */
+.previa-restricoes h4 { display: flex; align-items: center; gap: 8px; }
+.previa-gratis { font: 700 10.5px var(--mono); text-transform: uppercase; color: var(--floresta); background: var(--primaria-clara); padding: 2px 7px; border-radius: 5px; }
+.previa-resumo { margin: 0; font-size: 13.5px; font-weight: 600; }
+.previa-resumo.tem { color: var(--perigo); }
+.previa-resumo.nao { color: var(--floresta); }
+.previa-chips { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 3px 16px; font-size: 12.5px; }
+.previa-chips li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 2px 0; border-bottom: 1px dashed var(--borda); }
+.previa-chips li i { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.previa-chips li.tem b { color: var(--perigo); }
+.previa-chips li.nao b { color: var(--floresta); font-weight: 500; }
+.previa-chips li.nulo b { color: var(--texto-3); font-weight: 500; }
+/* no painel estreito do CAR */
+.restricoes.compacto > header { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin-bottom: 10px; }
+.restricoes.compacto > header h3 { margin: 0; }
+.restricoes.compacto > header .desc { order: 5; flex-basis: 100%; font-size: 12.5px; }
+.restricoes.compacto > header button { height: 28px; padding: 0 10px; font-size: 12px; }
+.restricoes.compacto .restricao-fonte { padding: 8px 10px; }
+.restricoes.compacto .restricoes-livres ul { grid-template-columns: 1fr; }

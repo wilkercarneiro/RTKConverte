@@ -100,12 +100,24 @@ export function lonLatDoVertice(v: Vertice, fuso: number): LonLat | null {
   return null;
 }
 
+/**
+ * lon/lat como o MOTOR DE ÁREA do sistema lê o vértice (calcularVertices, em
+ * calcularPreviewLocal): o GMS gravado primeiro, E/N só quando falta o GMS. É o
+ * que a análise de restrições usa, para a área do imóvel sair igual à do serviço.
+ */
+export function lonLatComoNaArea(v: Vertice, fuso: number): LonLat | null {
+  try {
+    if (v.lat_gms?.trim() && v.lon_gms?.trim()) return [gmsToDeg(parseGmsPlanilha(v.lon_gms)), gmsToDeg(parseGmsPlanilha(v.lat_gms))];
+  } catch { /* GMS inválido: cai no E/N */ }
+  return lonLatDoVertice(v, fuso);
+}
+
 /** Anéis lon/lat do imóvel: um por lista de ordens (partes/glebas) ou um só com todos. */
-export function aneisLonLat(vertices: Vertice[], fuso: number, ordens?: number[][] | null): LonLat[][] {
+export function aneisLonLat(vertices: Vertice[], fuso: number, ordens?: number[][] | null, ler: (v: Vertice, fuso: number) => LonLat | null = lonLatDoVertice): LonLat[][] {
   const porOrdem = new Map(vertices.map((v) => [v.ordem, v]));
   const listas = ordens && ordens.length ? ordens : [[...vertices].sort((a, b) => a.ordem - b.ordem).map((v) => v.ordem)];
   return listas
-    .map((os) => os.map((o) => porOrdem.get(o)).filter((v): v is Vertice => Boolean(v)).map((v) => lonLatDoVertice(v, fuso)).filter((p): p is LonLat => p !== null))
+    .map((os) => os.map((o) => porOrdem.get(o)).filter((v): v is Vertice => Boolean(v)).map((v) => ler(v, fuso)).filter((p): p is LonLat => p !== null))
     .filter((a) => a.length >= 3);
 }
 
