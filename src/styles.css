@@ -1445,3 +1445,45 @@ button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #f
 .dv-geo-partes { border-top: 1px solid var(--linha); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .dv-geo-partes > header { display: flex; align-items: center; gap: 6px; }
 .dv-geo-partes > header b { font-size: 14px; color: var(--texto); }
+
+/* ---- Prévia da planilha SIGEF + ferramentas de vértices (VerticesFerramentas.tsx) ---- */
+.eq-gaveta.larga { width: min(1180px, 100vw); }
+.sigef-resumo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sigef-resumo .selo { font-size: 12.5px; font-weight: 700; border-radius: 999px; padding: 4px 12px; }
+.sigef-resumo .selo.erro { margin: 0; color: var(--perigo); background: var(--perigo-claro); }
+.sigef-resumo .selo.alerta { color: var(--alerta-escuro); background: var(--alerta-claro); }
+.sigef-resumo .selo.ok { margin: 0; color: var(--floresta); background: var(--primaria-clara); }
+.nota-alerta { color: var(--alerta-escuro); background: var(--alerta-claro); border-radius: 9px; padding: 8px 12px; font-size: 13px; }
+.sigef-avisos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sigef-aviso { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: start; border-radius: 10px; padding: 9px 12px; font-size: 13px; background: #F4F6F5; }
+.sigef-aviso p { margin: 0; color: var(--texto); }
+.sigef-aviso .nivel { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding-top: 2px; }
+.sigef-aviso.erro { background: var(--perigo-claro); }
+.sigef-aviso.erro .nivel { color: var(--perigo); }
+.sigef-aviso.alerta { background: var(--alerta-claro); }
+.sigef-aviso.alerta .nivel { color: var(--alerta-escuro); }
+.sigef-aviso.info .nivel { color: var(--texto-2); }
+.sigef-pontos { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.sigef-pontos > * { font-size: 11.5px; height: auto; padding: 2px 8px; border-radius: 6px; background: #fff; border: 1px solid var(--borda); }
+.sigef-pontos button { cursor: pointer; }
+.sigef-tabela { max-height: 52vh; }
+.sigef-tabela td, .sigef-tabela th { white-space: nowrap; padding: 6px 10px !important; }
+.sigef-tabela td.confrontante { white-space: normal; min-width: 240px; max-width: 360px; font-size: 12px; }
+.sigef-tabela td.previsto { font-style: italic; color: var(--texto-2); }
+.tabela-vertices tr.n-erro td { background: var(--perigo-claro); }
+.tabela-vertices tr.n-alerta td { background: var(--alerta-claro); }
+.tabela-vertices tr.sel td { box-shadow: inset 0 0 0 9999px rgb(30 120 80 / 10%); }
+.abas-mini { display: flex; gap: 6px; flex-wrap: wrap; }
+.abas-mini button { height: 30px; font-size: 12.5px; border-radius: 8px; }
+.abas-mini button.ativo { background: var(--primaria-clara); border-color: var(--primaria); color: var(--floresta); font-weight: 600; }
+.ferramenta-vertices { display: flex; flex-direction: column; gap: 12px; border: 1px dashed var(--borda-forte); border-radius: var(--raio); padding: 14px; background: #F8FAF9; margin: 0; }
+.ferramenta-vertices legend { font-size: 12.5px; font-weight: 600; color: var(--texto-2); padding: 0 6px; }
+.ferramenta-vertices .grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.ferramenta-vertices .grade label { display: grid; gap: 4px; font-size: 12.5px; }
+.ferramenta-vertices .grade label small { font-weight: 400; color: var(--texto-2); }
+.ferramenta-vertices .grade input, .ferramenta-vertices .grade select { width: 100%; min-width: 0; }
+.renomear-previa { max-height: 260px; }
+.selo-mini { margin-left: 6px; font: 600 10px var(--fonte); text-transform: uppercase; letter-spacing: .04em; color: var(--alerta-escuro); background: var(--alerta-claro); border-radius: 5px; padding: 1px 5px; }
+.link-previa + .link-previa { margin-left: 4px; }
+@media (max-width: 640px) { .sigef-aviso { grid-template-columns: 1fr; gap: 2px; } }
+.sigef-tabela th { text-transform: none !important; letter-spacing: 0 !important; }

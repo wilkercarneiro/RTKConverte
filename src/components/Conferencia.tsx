@@ -42,6 +42,14 @@ import { temPermissao } from "../lib/permissoes";
 import { Avisos, BarraEtapas, BotaoPerigo, confirmar, Dica, ProximaAcao, Rotulo, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 import { avisarConsumo, carregarCreditos, custoDeVarios, textoSemCredito } from "../lib/creditos";
 import { consumoDaNumeracao, numeracaoDosMarcos, precisaNumerar } from "../lib/codigos_marcos";
+import { previaDaPlanilha } from "../lib/planilha_sigef";
+import { conferirPlanilha, contarNiveis } from "../lib/consistencia_sigef";
+import { aplicarRenomeacao, desfazerRenomeacao, ehCodigoOficial, inserirNoLado } from "../lib/edicao_vertices";
+import type { MudancaNome } from "../lib/edicao_vertices";
+import { InserirPontoNoLado, ListaAvisosSigef, PreviaPlanilhaSigef, RenomearVertices } from "./VerticesFerramentas";
+import type { PedidoInsercaoTela } from "./VerticesFerramentas";
+import proj4 from "proj4";
+import { GEO_DEF, codigoVertice, gmsToDeg, parseGmsPlanilha, utmDef } from "../../supabase/functions/_shared/geo.ts";
 import { BotaoConcluir, useConclusao } from "./ConcluirServico";
 import { AutoriaServico } from "./Auditoria";
 import { BarreiraErro } from "./BarreiraErro";
@@ -178,6 +186,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // abre os inputs do trecho (chave: ordem do vértice inicial).
   const [camposAbertos, setCamposAbertos] = useState<Set<number>>(() => new Set());
   const [mostrarInserirV, setMostrarInserirV] = useState(false);
+  // ferramentas da tabela de vértices e prévia da planilha (VerticesFerramentas.tsx)
+  const [ferramentaV, setFerramentaV] = useState<"renomear" | "inserir" | null>(null);
+  const [previaSigefAberta, setPreviaSigefAberta] = useState(false);
+  // desfazer da edição em lote: o estado dos vértices antes de cada operação
+  const [pilhaDesfazer, setPilhaDesfazer] = useState<{ rotulo: string; vertices: Vertice[]; mudancas?: MudancaNome[] }[]>([]);
   // Vértices marcados para reordenar em bloco (chave = id do vértice, que não
   // muda quando a ordem muda). `ultimoClicado` é a âncora do Shift+clique.
   const [selVert, setSelVert] = useState<Set<string>>(() => new Set());
@@ -546,6 +559,18 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     ),
     [servico.fuso_utm, vertices, trechosOrdenados, credenciado, ehConferencia, aneisPrevia],
   );
+  // Prévia da planilha do SIGEF: as linhas que a geração grava, pelas mesmas
+  // funções do servidor (lib/planilha_sigef.ts), e os avisos de consistência.
+  const previaSigef = useMemo(
+    () => previaDaPlanilha({ servico, vertices, glebas, credenciado }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [servico.fuso_utm, servico.modalidade, servico.tem_glebas, servico.denominacao_parcela, servico.parcela_numero, servico.denominacao, vertices, glebas, credenciado],
+  );
+  const avisosSigef = useMemo(
+    () => conferirPlanilha(previaSigef.abas, { estilo: previaSigef.estilo, prefixo: credenciado?.prefixo_vertice ?? null }),
+    [previaSigef, credenciado?.prefixo_vertice],
+  );
+  const niveisSigef = contarNiveis(avisosSigef);
   // faixas de domínio: saem da própria planta (trecho marcado como via ou rótulo
   // do confrontante), uma declaração por via — sem campo para digitar
   const viasDetectadas = useMemo(() => viasDaPlanta(trechosOrdenados), [trechosOrdenados]);
@@ -675,6 +700,105 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
 
   function removerV(ordem: number) {
     setVertices((vs) => vs.filter((v) => v.ordem !== ordem).map((v) => (v.ordem > ordem ? { ...v, ordem: v.ordem - 1 } : v)));
+  }
+
+  // ------- edição em lote (lib/edicao_vertices.ts) -------
+  /** E/N de um vértice que só tem lat/lon (V digitado), no fuso do serviço. */
+  function utmDoVertice(v: Vertice): [number, number] | null {
+    if (!servico.fuso_utm || !v.lat_gms?.trim() || !v.lon_gms?.trim()) return null;
+    try {
+      const lon = gmsToDeg(parseGmsPlanilha(v.lon_gms)), lat = gmsToDeg(parseGmsPlanilha(v.lat_gms));
+      return proj4(GEO_DEF, utmDef(servico.fuso_utm), [lon, lat]) as [number, number];
+    } catch { return null; }
+  }
+  function ladoDoVertice(ordem: number): number | null {
+    const lista = [...vertices].sort((a, b) => a.ordem - b.ordem);
+    const i = lista.findIndex((v) => v.ordem === ordem);
+    if (i < 0) return null;
+    const en = (v: Vertice) => (v.e !== null && v.n !== null ? [Number(v.e), Number(v.n)] as [number, number] : utmDoVertice(v));
+    const a = en(lista[i]), b = en(lista[(i + 1) % lista.length]);
+    return a && b ? Math.hypot(b[0] - a[0], b[1] - a[1]) : null;
+  }
+  function guardarParaDesfazer(rotulo: string, mudancas?: MudancaNome[]) {
+    setPilhaDesfazer((p) => [...p.slice(-9), { rotulo, vertices, mudancas }]);
+  }
+  function desfazerEdicao() {
+    const ultimo = pilhaDesfazer[pilhaDesfazer.length - 1];
+    if (!ultimo) return;
+    setPilhaDesfazer((p) => p.slice(0, -1));
+    // renomear: volta só os códigos (o resto da tabela pode ter mudado depois)
+    setVertices(ultimo.mudancas ? (vs) => desfazerRenomeacao(vs, ultimo.mudancas!) : ultimo.vertices);
+    setCamposAbertos(new Set());
+    avisar("ok", `Desfeito: ${ultimo.rotulo}.`);
+  }
+  async function aplicarNomes(mudancas: MudancaNome[], comOficiais: boolean) {
+    const mudam = mudancas.filter((m) => m.antes !== m.depois);
+    if (comOficiais) {
+      const oficiais = mudam.filter((m) => m.oficial);
+      const ok = await confirmar({
+        titulo: `Trocar ${oficiais.length} código(s) oficial(is)?`,
+        texto: (
+          <>
+            <p>Estes vértices já têm código do credenciado — se a planilha já foi ao SIGEF, o código novo não bate com o que foi certificado.</p>
+            <p className="mono sub">{oficiais.slice(0, 8).map((m) => `${m.antes} → ${m.depois}`).join(" · ")}{oficiais.length > 8 ? " …" : ""}</p>
+            <p>Dá para desfazer logo em seguida, no botão <b>desfazer</b> da tabela.</p>
+          </>
+        ),
+        confirmar: "Trocar os códigos",
+        cancelar: "Voltar",
+        perigo: true,
+      });
+      if (!ok) return;
+    }
+    guardarParaDesfazer(`renomear ${mudam.length} vértice(s)`, mudancas);
+    setVertices((vs) => aplicarRenomeacao(vs, mudancas));
+    setFerramentaV(null);
+    avisar("ok", `${mudam.length} vértice(s) renomeado(s). Confira na prévia da planilha.`);
+  }
+  async function inserirPonto(p: PedidoInsercaoTela) {
+    setErro(null);
+    try {
+      // ensaio sem código: valida o lado e a distância antes de reservar número
+      const ensaio = inserirNoLado(vertices, { ordem: p.ordem, posicao: p.posicao, tipo: p.tipo ?? undefined, servicoId: servico.id, utmDe: utmDoVertice });
+      let codigo = p.codigo.trim() || null;
+      if (codigo && vertices.some((v) => v.codigo === codigo)) { setErro(`O código ${codigo} já está em outro vértice.`); return; }
+      const oficiais = !ehConferencia && vertices.length > 0 && vertices.every((v) => ehCodigoOficial(v));
+      if (p.reservar) {
+        if (!servico.credenciado_id) { setErro("Escolha o credenciado em Dados para reservar o número."); return; }
+        const t = ensaio.novo.tipo;
+        const { data: base, error: eA } = await supabase.rpc("alocar_contadores", { p_credenciado: servico.credenciado_id, dm: t === "M" ? 1 : 0, dp: t === "P" ? 1 : 0, dv: t === "V" ? 1 : 0 });
+        if (eA) throw eA;
+        const b = (Array.isArray(base) ? base[0] : base) as { base_m: number; base_p: number; base_v: number } | null;
+        if (!b || b.base_m == null) throw new Error("Não foi possível reservar o número do credenciado. Confira o credenciado em Dados.");
+        const prefixo = credenciado?.prefixo_vertice;
+        if (!prefixo) throw new Error("Credenciado sem prefixo de vértice.");
+        codigo = codigoVertice(prefixo, t, t === "M" ? b.base_m : t === "P" ? b.base_p : b.base_v);
+      } else if (!codigo && oficiais) {
+        const ok = await confirmar({
+          titulo: "Inserir o ponto sem código?",
+          texto: <p>Todos os outros vértices já têm código oficial. Com um ponto sem código, a próxima geração <b>renumera o imóvel inteiro</b> pelo contador do credenciado. Para não mexer nos outros, marque “reservar agora o próximo número”.</p>,
+          confirmar: "Inserir sem código",
+          cancelar: "Voltar",
+        });
+        if (!ok) return;
+      }
+      const r = inserirNoLado(vertices, { ordem: p.ordem, posicao: p.posicao, tipo: p.tipo ?? undefined, codigo, servicoId: servico.id, utmDe: utmDoVertice, id: ensaio.novo.id });
+      guardarParaDesfazer(`inserir ponto ${codigo ?? ""}`.trim());
+      setVertices(r.vertices);
+      setCamposAbertos(new Set());
+      setFerramentaV(null);
+      avisar("ok", `Ponto ${r.novo.tipo}${codigo ? ` ${codigo}` : ""} inserido a ${r.distanciaM.toFixed(3).replace(".", ",")} m do vértice, no lado de ${r.ladoM.toFixed(3).replace(".", ",")} m.${p.reservar ? " O número foi reservado no credenciado (desfazer não devolve o número)." : ""}`);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+    }
+  }
+  /** Da prévia da planilha para a linha da tabela de vértices. */
+  function irAoVertice(ordem: number) {
+    const v = vertices.find((x) => x.ordem === ordem);
+    if (!v) return;
+    setPreviaSigefAberta(false);
+    setExpandidos((s) => new Set(s).add(chaveV(v)));
+    requestAnimationFrame(() => document.getElementById(`linha-vertice-${ordem}`)?.scrollIntoView({ block: "center", behavior: "smooth" }));
   }
 
   // ------- persistência -------
@@ -1204,6 +1328,23 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
       setErro(`Para gerar, resolva:\n• ${pendencias.map((p) => p.msg).join("\n• ")}`);
       irParaCampo(pendencias[0].alvo, true);
       return;
+    }
+    // A planilha com erro de consistência não é barrada à força (o operador
+    // pode saber o que faz), mas não sai sem ele ver o que o SIGEF vai recusar.
+    const errosSigef = avisosSigef.filter((a) => a.nivel === "erro");
+    if (errosSigef.length) {
+      const ok = await confirmar({
+        titulo: `A planilha do SIGEF tem ${errosSigef.length} erro(s)`,
+        texto: (
+          <>
+            <p>O SIGEF deve recusar a planilha como está. Corrija antes de gerar, ou gere assim mesmo se tiver certeza.</p>
+            <ListaAvisosSigef avisos={errosSigef} max={5} />
+          </>
+        ),
+        confirmar: "Gerar mesmo assim",
+        cancelar: "Ver a prévia",
+      });
+      if (!ok) { setPreviaSigefAberta(true); return; }
     }
     setOcupado(true);
     setErro(null);
@@ -1802,10 +1943,32 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   {METODOS_POSICIONAMENTO.map((m) => <option key={m}>{m}</option>)}
                 </select>
               </label>
+              <button className={ferramentaV === "renomear" ? "principal" : ""} onClick={() => setFerramentaV((f) => (f === "renomear" ? null : "renomear"))}
+                title="Trocar o código de vários vértices por um padrão (prefixo + número)">Renomear em lote</button>
+              <button className={ferramentaV === "inserir" ? "principal" : ""} onClick={() => setFerramentaV((f) => (f === "inserir" ? null : "inserir"))}
+                title="Criar um ponto entre dois vértices seguidos">+ Ponto num lado</button>
               <button className={mostrarInserirV ? "principal" : ""} onClick={() => setMostrarInserirV((v) => !v)}>
                 + Vértice pré-existente
               </button>
+              {pilhaDesfazer.length > 0 && (
+                <button className="fantasma" onClick={desfazerEdicao} title={`Desfazer: ${pilhaDesfazer[pilhaDesfazer.length - 1].rotulo}`}>↶ desfazer</button>
+              )}
+              <button className="link-previa" onClick={() => setPreviaSigefAberta(true)} title="Ver a tabela como vai para a planilha do SIGEF, com os avisos de consistência">
+                prévia da planilha SIGEF{niveisSigef.erros ? ` · ${niveisSigef.erros} erro(s)` : niveisSigef.alertas ? ` · ${niveisSigef.alertas} alerta(s)` : ""}
+              </button>
             </div>
+
+            {ferramentaV === "renomear" && (
+              <RenomearVertices vertices={vertices} selecionado={selVert} ordemDoAnel={previaSigef.ordemDoAnel} conferencia={ehConferencia}
+                prefixoCredenciado={credenciado?.prefixo_vertice ?? null}
+                contadores={credenciado ? { M: credenciado.contador_m, P: credenciado.contador_p, V: credenciado.contador_v } : null}
+                onAplicar={aplicarNomes} onFechar={() => setFerramentaV(null)} />
+            )}
+            {ferramentaV === "inserir" && (
+              <InserirPontoNoLado vertices={vertices} nomePonto={nomePonto} conferencia={ehConferencia}
+                comCodigosOficiais={!ehConferencia && vertices.length > 0 && vertices.every((v) => ehCodigoOficial(v))}
+                ladoM={ladoDoVertice} onInserir={inserirPonto} onFechar={() => setFerramentaV(null)} />
+            )}
 
             {mostrarInserirV && (
               <fieldset className="inserir-v painel" style={{ margin: 0 }}>
@@ -1881,7 +2044,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     const alternarDetalhe = () => setExpandidos((s) => { const n = new Set(s); if (n.has(chaveV(v))) n.delete(chaveV(v)); else n.add(chaveV(v)); return n; });
                     return (
                       <Fragment key={chaveV(v)}>
-                        <tr className={`${ehInicial ? "inicial" : ""} ${marcado ? "sel" : ""}`}>
+                        <tr id={`linha-vertice-${v.ordem}`} className={`${ehInicial ? "inicial" : ""} ${marcado ? "sel" : ""}`}>
                           <td onClick={(e) => alternarSelecaoV(idx, e.shiftKey)}>
                             <input type="checkbox" checked={marcado} aria-label={`Selecionar ${nomePonto(v)}`}
                               onClick={(e) => { e.stopPropagation(); alternarSelecaoV(idx, e.shiftKey); }} onChange={() => { /* onClick decide */ }} />
@@ -2359,6 +2522,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   <a className="botao-download" href={gerado.planilha_ods} target="_blank" rel="noreferrer">
                     <span className="ext">ODS</span> Planilha SIGEF
                   </a>
+                  <button type="button" className="botao-download" onClick={() => setPreviaSigefAberta(true)} title="Conferir a tabela da planilha e os avisos de consistência">
+                    <span className="ext">✓</span> Prévia da planilha SIGEF
+                  </button>
                   {gerado.planta_pdf && (
                     <>
                       <a className="botao-download" href={gerado.planta_pdf} target="_blank" rel="noreferrer">
@@ -2597,6 +2763,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               {previaAberta ? "ocultar prévia" : "prévia do memorial"}
             </button>
           )}
+          <button className="link-previa" onClick={() => setPreviaSigefAberta(true)} title="A tabela como vai para a planilha do SIGEF, com os avisos de consistência">
+            prévia da planilha SIGEF{niveisSigef.erros ? ` · ${niveisSigef.erros} erro(s)` : ""}
+          </button>
           <span className="acoes">
             {!ehConferencia && (
               <select value={folhaEfetiva} title="Folha da planta que sai junto com o memorial e a planilha" aria-label="Folha da planta"
@@ -2628,6 +2797,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
           </span>
         </div>
       </footer>
+      {previaSigefAberta && (
+        <PreviaPlanilhaSigef previa={previaSigef} avisos={avisosSigef} onFechar={() => setPreviaSigefAberta(false)} onIrVertice={irAoVertice} />
+      )}
     </div>
   );
 }

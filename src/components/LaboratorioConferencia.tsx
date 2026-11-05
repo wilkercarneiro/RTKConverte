@@ -2,6 +2,7 @@
 //   ?semwebgl   simula o navegador sem WebGL (aceleração gráfica desligada)
 //   ?glebas     serviço com glebas (carregadas do "banco" depois do 1º desenho)
 //   ?quebrar    o mapa lança um erro qualquer ao desenhar (barreira do mapa)
+//   ?completo   serviço completo (planilha oficial; com &codigos os vértices já numerados)
 //   ?pecas      a tela de peças (serviço do PDF do SIGEF): abrir não grava nada
 //   ?divisao    serviço completo em partilha (etapa Divisão); +&salva: a divisão já salva em 2 partes;
 //               +&codigos: marcos já com código definitivo (o GEO de cada parte pode ser gerado,
@@ -55,7 +56,7 @@ const VERTICES: Vertice[] = PONTOS.map(([num, e, n, h, lat, lon], ordem) => ({
 const DIVISAO = q.has("divisao");
 const COM_GLEBAS = q.has("glebas") || DIVISAO;
 const SERVICO = {
-  id: SID, tipo: "geo", modalidade: DIVISAO ? "completo" : "conferencia", status: "gerado", tem_glebas: COM_GLEBAS,
+  id: SID, tipo: "geo", modalidade: DIVISAO || q.has("completo") ? "completo" : "conferencia", status: "gerado", tem_glebas: COM_GLEBAS,
   ...(DIVISAO ? { divisao: { iguais: true } } : {}),
   nome_arquivo_txt: "LABORATORIO.txt", fuso_utm: 24, credenciado_id: "c1", rt_id: "rt1",
   denominacao: "FAZENDA LABORATÓRIO", detentor_nome: "FULANO DE TAL", detentor_cpf: "000.000.000-00",

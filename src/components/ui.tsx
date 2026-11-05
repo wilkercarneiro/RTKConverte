@@ -630,8 +630,10 @@ export function BotaoPerigo({ titulo, confirmacao, onConfirmar, children, classN
 }
 
 /** Painel lateral (equipe, histórico do serviço). Esc ou clique fora fecha. */
-export function Gaveta({ titulo, olho, onFechar, children, rodape }: {
+export function Gaveta({ titulo, olho, onFechar, children, rodape, larga }: {
   titulo: string; olho: string; onFechar: () => void; children: React.ReactNode; rodape?: React.ReactNode;
+  /** para tabela larga (prévia da planilha) */
+  larga?: boolean;
 }) {
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onFechar(); };
@@ -641,7 +643,7 @@ export function Gaveta({ titulo, olho, onFechar, children, rodape }: {
   return (
     <>
       <div className="eq-veu" onClick={onFechar} />
-      <aside className="eq-gaveta" role="dialog" aria-modal="true" aria-label={titulo}>
+      <aside className={`eq-gaveta${larga ? " larga" : ""}`} role="dialog" aria-modal="true" aria-label={titulo}>
         <header>
           <div><span className="eq-olho">{olho}</span><h2>{titulo}</h2></div>
           <button className="fantasma eq-x" onClick={onFechar} aria-label="Fechar">✕</button>
