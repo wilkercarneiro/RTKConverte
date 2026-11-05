@@ -1,12 +1,10 @@
 // Chaves de publicação lidas do ambiente (Vercel → Settings → Environment
 // Variables; local: .env). Nenhuma é segredo: vão para o navegador.
-
-/**
- * Cadastro self-service ligado? Só ligue DEPOIS de aplicar a migração de
- * escritórios (docs/multiescritorio): antes dela, toda conta nova enxerga os
- * dados de todos. Padrão: desligado.
- */
-export const CADASTRO_ABERTO = import.meta.env.VITE_CADASTRO_ABERTO === "true";
+//
+// O cadastro self-service (VITE_CADASTRO_ABERTO + auth.signUp) saiu em
+// 05/11/2026: o signup do Auth está desligado desde a auditoria de 04/11 e quem
+// cria a conta agora é o autocadastro com pagamento (#/assinar, migração 0040),
+// aberto e fechado pelo superadmin em Configurações → Autocadastro.
 
 /** Canal oficial de suporte exibido em "Ajuda" (vazio = não mostra). */
 export const SUPORTE_EMAIL = (import.meta.env.VITE_SUPORTE_EMAIL as string | undefined)?.trim() ?? "";

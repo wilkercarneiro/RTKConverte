@@ -134,7 +134,7 @@ export function PainelAdmin({ aba, id, ir, email, temEscritorio }: {
       case "recursos": pagina = <RecursosAdmin d={ctx} />; break;
       case "tutoriais": pagina = <TutoriaisAdmin />; break;
       case "contatos": pagina = <Contatos d={ctx} />; break;
-      case "config": pagina = <ConfigAdmin />; break;
+      case "config": pagina = <ConfigAdmin d={ctx} />; break;
       case "formatos": pagina = <FormatosAdmin />; break;
       case "marca": pagina = <Marca />; break;
       default: pagina = <VisaoGeral d={ctx} />;

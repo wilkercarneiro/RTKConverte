@@ -4,7 +4,10 @@
 //
 // Nada daqui grava o número: a função manda ao Asaas e guarda só bandeira,
 // final e validade (e o token, quando o Asaas libera a tokenização).
-import { cnpjValido, emailValido, soDigitos, telefoneValido } from "./cnpj.ts";
+import { cnpjValido, cpfValido, emailValido, soDigitos, telefoneValido } from "./cnpj.ts";
+
+// o CPF mora em cnpj.ts desde o autocadastro (0040); continua saindo daqui também
+export { cpfValido };
 
 export interface CartaoDigitado {
   numero: string; nome: string;
@@ -33,18 +36,6 @@ export function luhnValido(numero: string): boolean {
     soma += n;
   }
   return soma % 10 === 0;
-}
-
-export function cpfValido(entrada: string): boolean {
-  const d = soDigitos(entrada);
-  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
-  const dv = (n: number) => {
-    let s = 0;
-    for (let i = 0; i < n; i++) s += Number(d[i]) * (n + 1 - i);
-    const r = (s * 10) % 11;
-    return r === 10 ? 0 : r;
-  };
-  return dv(9) === Number(d[9]) && dv(10) === Number(d[10]);
 }
 
 const cpfOuCnpj = (s: string) => (soDigitos(s).length === 11 ? cpfValido(s) : cnpjValido(s));

@@ -7,6 +7,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mesmoToken, somarDias, somarMes, tratarAcao, tratarWebhook } from "../supabase/functions/cobranca/fluxos.ts";
+import { tratarPublico } from "../supabase/functions/cobranca/cadastro.ts";
+import { somarMeses } from "../supabase/functions/_shared/parcelas.ts";
 import { bandeiraDoNumero, cpfValido, lerValidade, luhnValido, problemasDoCartao } from "../supabase/functions/_shared/cartao.ts";
 import { cotar, faixasEmTexto, minimoDe, problemaDasFaixas } from "../supabase/functions/_shared/precos.ts";
 import { dataBr, mensagemAcessoLiberado, mensagemCobranca, textoCreditos } from "../supabase/functions/_shared/mensagens_cobranca.ts";
@@ -17,8 +19,8 @@ import { BASE_ASAAS, mensagemDoAsaas } from "../supabase/functions/_shared/asaas
 
 function asaasFalso() {
   const s = {
-    chamadas: [], clientes: [], cobrancas: new Map(), assinaturas: new Map(), webhooks: [],
-    chaveValida: "$aact_boa", falharCobranca: null, seq: 0,
+    chamadas: [], clientes: [], cobrancas: new Map(), assinaturas: new Map(), webhooks: [], parcelamentos: [],
+    chaveValida: "$aact_boa", falharCobranca: null, seq: 0, statusCartao: null, exigirValue: false,
     // cartão: tokenização bloqueada (403, como a conta real até o Asaas liberar) e recusa da operadora
     tokenizacaoBloqueada: false, recusarCartao: null, tokens: [],
   };
@@ -51,6 +53,23 @@ function asaasFalso() {
     }
     if (caminho === "/payments" && metodo === "POST") {
       if (s.falharCobranca) return resp(400, { errors: [{ code: "invalid", description: s.falharCobranca }] });
+      if (corpo.installmentCount) {
+        // compra parcelada no cartão (autocadastro): a conta pode exigir `value` (incerteza da pesquisa)
+        if (s.exigirValue && corpo.value === undefined) return resp(400, { errors: [{ code: "invalid_value", description: "O campo value deve ser informado." }] });
+        if (s.recusarCartao) return recusa();
+        const inst = `inst_${++s.seq}`;
+        const n = corpo.installmentCount;
+        const parcela = corpo.installmentValue ?? Math.round((corpo.totalValue / n) * 100) / 100;
+        s.parcelamentos.push({ id: inst, corpo });
+        let primeira;
+        for (let k = 1; k <= n; k++) {
+          const c = { id: id("pay"), status: s.statusCartao ?? "CONFIRMED", installment: inst, installmentNumber: k, value: parcela,
+            dueDate: k === 1 ? corpo.dueDate : `parcela-${k}`, billingType: "CREDIT_CARD", invoiceUrl: `https://sandbox.asaas.com/i/${s.seq}` };
+          s.cobrancas.set(c.id, c);
+          primeira ??= c;
+        }
+        return resp(200, primeira);
+      }
       if (corpo.billingType === "CREDIT_CARD") {
         if (s.recusarCartao) return recusa();
         const c = { id: id("pay"), status: "CONFIRMED", invoiceUrl: `https://sandbox.asaas.com/i/${s.seq}`, ...corpo };
@@ -63,7 +82,7 @@ function asaasFalso() {
     if ((m = /^\/payments\/([^/]+)\/payWithCreditCard$/.exec(caminho))) {
       if (s.recusarCartao) return recusa();
       const c = s.cobrancas.get(m[1]);
-      Object.assign(c, { status: "CONFIRMED", billingType: "CREDIT_CARD", pagoCom: corpo });
+      Object.assign(c, { status: s.statusCartao ?? "CONFIRMED", billingType: "CREDIT_CARD", pagoCom: corpo });
       return resp(200, c);
     }
     if ((m = /^\/payments\/([^/]+)\/pixQrCode$/.exec(caminho))) return resp(200, { encodedImage: "iVBOR", payload: "000201pix", expirationDate: "2026-11-01 23:59:59" });
@@ -125,7 +144,7 @@ function bancoFalso(cfg = {}) {
     async atualizarPagamento(id, campos) { Object.assign(b.pagamentos.find((x) => x.id === id), campos); },
     async pagamentoDaCompra(creditoId) { return b.pagamentos.find((x) => x.credito_id === creditoId) ?? null; },
     async cancelarCompra(creditoId, pagamentoId, motivo) { b.cancelados.push({ creditoId, pagamentoId, motivo }); },
-    async pagamentosPendentes() { return b.pagamentos.filter((x) => x.asaas_id && ["PENDING", "OVERDUE"].includes(x.status)); },
+    async pagamentosPendentes() { return b.pagamentos.filter((x) => x.asaas_id && ["PENDING", "OVERDUE", "AWAITING_RISK_ANALYSIS"].includes(x.status)); },
     async descricaoCredito() { return "10 créditos de car"; },
     cartoes: {}, recargas: [], reserva: { pode: false, motivo: "desligada" }, atividades: [],
     async detalheCompra(id) { return b.pagamentos.find((x) => x.credito_id === id) ? { automatica: !!b.pagamentos.find((x) => x.credito_id === id).automatica, valor: 50 } : null; },
@@ -142,6 +161,29 @@ function bancoFalso(cfg = {}) {
       return r;
     },
     async atividade(esc, acao, alvo, user) { b.atividades.push({ esc, acao, alvo, user }); },
+    // ---- autocadastro (0040): o Auth e as tabelas que a service_role escreve
+    planos: {}, contas: [], membros: [], configEmpresa: [], removidas: [], falharEm: null,
+    async planoParaVenda(id) { return b.planos[id] ?? null; },
+    async documentoCadastrado(doc) { return Object.values(b.empresas).some((e) => e.cnpj === doc); },
+    async criarConta(email, senha, meta) {
+      if (b.contas.some((c) => c.email === email)) return { erro: "A user with this email address has already been registered", duplicado: true };
+      const c = { id: `user-${b.contas.length + 1}`, email, senha, meta };
+      b.contas.push(c);
+      return { id: c.id };
+    },
+    async removerConta(id) { b.contas = b.contas.filter((c) => c.id !== id); },
+    async inserirEmpresa(campos) {
+      if (b.falharEm === "empresa-duplicada") throw Object.assign(new Error("empresa: duplicate key"), { codigo: "23505" });
+      const id = `esc-site-${Object.keys(b.empresas).length + 1}`;
+      b.empresas[id] = { id, ...campos, mensalidade: null, creditos: [], login: campos.email };
+      return id;
+    },
+    async inserirMembro(esc, user, nome) {
+      if (b.falharEm === "membro") throw new Error("membro: falhou");
+      b.membros.push({ esc, user, nome, papel: "dono" });
+    },
+    async inserirConfigEmpresa(esc, pares) { b.configEmpresa.push({ esc, ...pares }); },
+    async removerEmpresa(esc) { delete b.empresas[esc]; delete b.cobrancas[esc]; b.removidas.push(esc); },
   };
   return b;
 }
@@ -692,4 +734,388 @@ test("painel: mostra se a conta do Asaas guarda cartões (tokenização)", async
   const antes = asaas.chamadas.length;
   await tratarAcao(deps, SA, { acao: "config_status" });
   assert.ok(!asaas.chamadas.slice(antes).some((c) => c.caminho.includes("tokenize")), "liberada uma vez, não pergunta mais");
+});
+
+// ------------------------------------------------------------------ autocadastro (0040)
+
+const PLANO = { id: "1f0c8a2e-1111-4a1b-9c3d-0123456789ab", nome: "Autônomo", preco_mensal: 299.9, ativo: true, vende_no_site: true };
+const ABERTO = { ...ASAAS_OK, cadastro_aberto: "true" };
+const DADOS = {
+  acao: "cadastro_criar", empresa: "Geo  Lima ", documento: "529.982.247-25", responsavel: "Ana Lima", email: "Ana@GeoLima.test",
+  telefone: "(71) 98888-7777", senha: "Senha1234", plano_id: PLANO.id, ciclo: "anual", aceite_termos: true,
+  versao_termos: "2026-10-08-minuta", site: "",
+};
+/** a trava de frequência da função (dentroDoLimite), contando de verdade */
+function limiteFalso() {
+  const usos = new Map();
+  const f = async (chave, max) => { const n = (usos.get(chave) ?? 0) + 1; usos.set(chave, n); return n <= max; };
+  f.usos = usos;
+  return f;
+}
+function cenarioCadastro(cfg = ABERTO) {
+  const c = cenario({ cfg });
+  c.banco.planos[PLANO.id] = { ...PLANO };
+  c.deps.limite = limiteFalso();
+  return c;
+}
+
+test("autocadastro: conta confirmada, empresa do site esperando o pagamento, dona, configurações e o período", async () => {
+  const { asaas, banco, deps } = cenarioCadastro({ ...ABERTO, ...ZAP, whatsapp_avisos: "71977776666" });
+  const r = await tratarPublico(deps, "200.1.2.3", DADOS);
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.deepEqual(banco.contas.map((c) => [c.email, c.senha]), [["ana@geolima.test", "Senha1234"]], "e-mail em minúsculas, a senha que a pessoa escolheu");
+  assert.deepEqual(banco.contas[0].meta, { nome: "Ana Lima", termos_versao: "2026-10-08-minuta" }, "o aceite dos termos vai como no cadastro antigo (gatilho grava em aceites_termos)");
+  const e = banco.empresas[r.corpo.escritorio_id];
+  assert.deepEqual({ nome: e.nome, cnpj: e.cnpj, tel: e.telefone, status: e.status, origem: e.origem, plano: e.plano_id },
+    { nome: "Geo Lima", cnpj: "52998224725", tel: "71988887777", status: "aguardando_pagamento", origem: "site", plano: PLANO.id });
+  assert.deepEqual(banco.membros, [{ esc: e.id, user: banco.contas[0].id, nome: "Ana Lima", papel: "dono" }]);
+  assert.deepEqual(banco.configEmpresa, [{ esc: e.id, razao_social: "Geo Lima", cnpj: "52998224725" }]);
+  assert.deepEqual(banco.cobrancas[e.id], { situacao: "sem_assinatura", ciclo: "YEARLY", valor: 3598.8 }, "anual = 12 × R$ 299,90, calculado no servidor");
+  assert.equal(r.corpo.login, "ana@geolima.test");
+  assert.equal(banco.atividades.at(-1).acao, "empresa.cadastro_site");
+  const zaps = asaas.chamadas.filter((c) => c.whatsapp);
+  assert.equal(zaps.length, 2, "a pessoa e o superadmin");
+  assert.match(zaps.find((z) => z.corpo.number === "5571988887777").corpo.text, /Falta só o pagamento.*Pix ou no cartão em até 12x/s);
+  assert.match(zaps.find((z) => z.corpo.number === "5571977776666").corpo.text, /Novo cadastro pelo site.*Geo Lima \(529\.982\.247-25\)/s);
+  assert.ok(!JSON.stringify(banco.cobrancas).includes("Senha1234"), "a senha não vai para tabela nenhuma");
+});
+
+test("autocadastro: tudo é conferido no servidor (dados, plano, período, cadastro fechado, robô)", async () => {
+  const casos = [
+    [{ documento: "529.982.247-26" }, 400, /CPF ou CNPJ inválido/],
+    [{ senha: "12345678" }, 400, /letras e números/],
+    [{ aceite_termos: false }, 400, /aceite os Termos/],
+    [{ email: "ana@" }, 400, /E-mail inválido/],
+    [{ telefone: "9999" }, 400, /WhatsApp com DDD/],
+    [{ empresa: "x" }, 400, /nome da empresa/],
+    [{ ciclo: "bimestral" }, 400, /período/],
+    [{ versao_termos: "<script>" }, 400, /termos/],
+    [{ plano_id: "nao-e-uuid" }, 400, /plano/],
+    [{ site: "https://spam.test" }, 400, /Recarregue a página/],
+  ];
+  for (const [mudar, status, erro] of casos) {
+    const { banco, deps } = cenarioCadastro();
+    const r = await tratarPublico(deps, "200.1.2.3", { ...DADOS, ...mudar });
+    assert.equal(r.status, status, JSON.stringify(mudar));
+    assert.match(r.corpo.erro, erro, JSON.stringify(mudar));
+    assert.equal(banco.contas.length, 0, "nada é criado");
+  }
+  // plano fora do autocadastro, inativo ou sem mensalidade
+  for (const plano of [{ vende_no_site: false }, { ativo: false }, { preco_mensal: 0 }]) {
+    const { banco, deps } = cenarioCadastro();
+    Object.assign(banco.planos[PLANO.id], plano);
+    const r = await tratarPublico(deps, "200.1.2.3", DADOS);
+    assert.equal(r.status, 400, JSON.stringify(plano));
+    assert.match(r.corpo.erro, /não está disponível para assinatura pelo site/);
+  }
+  // período desligado pelo superadmin
+  let c = cenarioCadastro({ ...ABERTO, ciclos: JSON.stringify({ YEARLY: { ativo: false } }) });
+  let r = await tratarPublico(c.deps, "200.1.2.3", DADOS);
+  assert.equal(r.status, 400);
+  assert.match(r.corpo.erro, /anual não está disponível/);
+  // cadastro fechado, ou aberto mas sem o Asaas (não haveria como pagar)
+  for (const cfg of [ASAAS_OK, { cadastro_aberto: "true" }]) {
+    c = cenarioCadastro(cfg);
+    r = await tratarPublico(c.deps, "200.1.2.3", DADOS);
+    assert.equal(r.status, 403);
+    assert.match(r.corpo.erro, /fechado/);
+  }
+  r = await tratarPublico(cenarioCadastro().deps, "200.1.2.3", { acao: "outra" });
+  assert.equal(r.status, 400);
+});
+
+test("autocadastro: limite por IP (5 por hora, contando as tentativas) e no total do dia", async () => {
+  const { banco, deps } = cenarioCadastro();
+  delete banco.planos[PLANO.id]; // toda tentativa passa da trava e falha depois: conta do mesmo jeito
+  for (let i = 0; i < 5; i++) assert.equal((await tratarPublico(deps, "200.1.2.3", DADOS)).status, 400);
+  const r = await tratarPublico(deps, "200.1.2.3", DADOS);
+  assert.equal(r.status, 429);
+  assert.match(r.corpo.erro, /Muitos cadastros seguidos/);
+  assert.equal((await tratarPublico(deps, "200.9.9.9", DADOS)).status, 400, "outra conexão continua podendo");
+  const errado = await tratarPublico(deps, "200.1.2.3", { ...DADOS, senha: "curta" });
+  assert.equal(errado.status, 400, "erro de digitação é respondido antes da trava (não gasta a vez)");
+  assert.ok(deps.limite.usos.get("cadastro:total-dia") <= 200);
+  const c = cenarioCadastro();
+  c.deps.limite.usos.set("cadastro:total-dia", 200);
+  assert.equal((await tratarPublico(c.deps, "200.7.7.7", DADOS)).status, 429, "200 cadastros no dia: fecha até amanhã");
+});
+
+test("autocadastro: e-mail ou documento já cadastrados dão 409 com a mensagem; falha no meio desfaz tudo", async () => {
+  let c = cenarioCadastro();
+  let r = await tratarPublico(c.deps, "200.1.2.3", { ...DADOS, documento: "11.222.333/0001-81" });
+  assert.equal(r.status, 409);
+  assert.equal(r.corpo.erro, "Já existe uma conta com este CNPJ. Entre com ela ou fale com o suporte.");
+  assert.equal(c.banco.contas.length, 0);
+  c.banco.contas.push({ id: "user-antigo", email: "ana@geolima.test" });
+  r = await tratarPublico(c.deps, "200.1.2.3", DADOS);
+  assert.equal(r.status, 409);
+  assert.equal(r.corpo.erro, "Já existe uma conta com este e-mail. Entre com ela.");
+
+  c = cenarioCadastro();
+  c.banco.falharEm = "membro";
+  r = await tratarPublico(c.deps, "200.1.2.3", DADOS);
+  assert.equal(r.status, 500);
+  assert.doesNotMatch(r.corpo.erro, /membro/, "a página pública não vê o erro interno");
+  assert.equal(c.banco.contas.length, 0, "a conta criada sai");
+  assert.equal(c.banco.removidas.length, 1, "e a empresa também");
+  assert.ok(!Object.values(c.banco.empresas).some((e) => e.origem === "site"));
+
+  c = cenarioCadastro();
+  c.banco.falharEm = "empresa-duplicada"; // dois cadastros do mesmo CPF ao mesmo tempo
+  r = await tratarPublico(c.deps, "200.1.2.3", DADOS);
+  assert.equal(r.status, 409);
+  assert.match(r.corpo.erro, /Já existe uma conta com este CPF/);
+  assert.equal(c.banco.contas.length, 0);
+});
+
+// a empresa que acabou de se cadastrar pelo site (anual, ainda sem cobrança)
+const SITE = {
+  id: "esc-site", nome: "Geo Lima", cnpj: "52998224725", email: "ana@geolima.test", telefone: "71988887777", responsavel: "Ana Lima",
+  status: "aguardando_pagamento", plano: "Autônomo", mensalidade: 299.9, login: "ana@geolima.test", origem: "site",
+  creditos: [{ nome: "Créditos gerais", por_mes: 6 }],
+};
+function cenarioPagamento(cfg = ABERTO, ciclo = "YEARLY", valor = 3598.8) {
+  const c = cenario({ cfg });
+  c.banco.empresas[SITE.id] = { ...SITE };
+  c.banco.cobrancas[SITE.id] = { situacao: "sem_assinatura", ciclo, valor };
+  c.usuario.escritorioId = SITE.id;
+  return c;
+}
+const posts = (asaas, caminho) => asaas.chamadas.filter((c) => c.metodo === "POST" && c.caminho === caminho);
+/** o que o banco faz ao aplicar (aplicar_pagamento_asaas, testado em tests/rls/autocadastro.sql) */
+function bancoQueAtiva(banco, meses) {
+  return (evento, p) => {
+    if (p.status === "AWAITING_RISK_ANALYSIS") return { acao: "em_analise", escritorio_id: SITE.id };
+    const cob = banco.cobrancas[SITE.id];
+    const primeiraVez = banco.empresas[SITE.id].status === "aguardando_pagamento";
+    banco.empresas[SITE.id].status = "ativo";
+    cob.situacao = "em_dia";
+    cob.proximo_vencimento = somarMeses(p.dueDate, meses);
+    return primeiraVez
+      ? { acao: "ativou", escritorio_id: SITE.id, ...(p.installment && !cob.asaas_assinatura_id ? { criar_assinatura: true, ciclo: cob.ciclo, proximo_vencimento: cob.proximo_vencimento } : {}) }
+      : { acao: "renovou", escritorio_id: SITE.id };
+  };
+}
+
+test("pagar o cadastro no Pix: assinatura do período vencendo hoje, QR e copia e cola; de novo reaproveita; outro período troca", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento({ ...ABERTO, ciclos: JSON.stringify({ YEARLY: { ativo: true, desconto: 10 } }) }, "YEARLY", 3238.92);
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "YEARLY", valor: 1 });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const sub = posts(asaas, "/subscriptions")[0].corpo;
+  assert.deepEqual({ b: sub.billingType, c: sub.cycle, v: sub.value, d: sub.nextDueDate }, { b: "UNDEFINED", c: "YEARLY", v: 3238.92, d: "2026-10-30" },
+    "anual com 10% de desconto, vencendo hoje — o valor que o navegador mandou é ignorado");
+  assert.match(sub.description, /plano Autônomo \(anual\)/);
+  assert.equal(asaas.clientes[0].cpfCnpj, "52998224725", "o Asaas aceita o CPF");
+  assert.equal(r.corpo.pix.payload, "000201pix");
+  assert.equal(r.corpo.valor, 3238.92);
+  assert.deepEqual({ s: banco.cobrancas[SITE.id].situacao, c: banco.cobrancas[SITE.id].ciclo, l: !!banco.cobrancas[SITE.id].link_pagamento },
+    { s: "aguardando", c: "YEARLY", l: true });
+  assert.deepEqual({ f: banco.pagamentos[0].finalidade, c: banco.pagamentos[0].ciclo, v: banco.pagamentos[0].valor },
+    { f: "mensalidade", c: "YEARLY", v: 3238.92 });
+  assert.equal(banco.empresas[SITE.id].dia_renovacao, 30, "os créditos renovam no dia do pagamento");
+
+  // voltou à tela: o mesmo Pix, sem outra assinatura
+  const r2 = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "anual" });
+  assert.equal(r2.status, 200);
+  assert.equal(posts(asaas, "/subscriptions").length, 1);
+  assert.equal(r2.corpo.link, r.corpo.link);
+  // trocou para o mensal: a assinatura anual sai, nasce a mensal
+  const antiga = banco.cobrancas[SITE.id].asaas_assinatura_id;
+  const r3 = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "MONTHLY" });
+  assert.equal(r3.status, 200, JSON.stringify(r3.corpo));
+  assert.ok(asaas.chamadas.some((c) => c.metodo === "DELETE" && c.caminho === `/subscriptions/${antiga}`));
+  assert.deepEqual({ c: posts(asaas, "/subscriptions")[1].corpo.cycle, v: posts(asaas, "/subscriptions")[1].corpo.value }, { c: "MONTHLY", v: 299.9 });
+  assert.equal(banco.cobrancas[SITE.id].ciclo, "MONTHLY");
+});
+
+test("pagar o cadastro no cartão 1x: assinatura no cartão no período escolhido, a 1ª paga agora e libera", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento();
+  banco.respostaAplicar = bancoQueAtiva(banco, 12);
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "cartao", ciclo: "YEARLY", parcelas: 1, cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.ativou, true);
+  const sub = posts(asaas, "/subscriptions")[0].corpo;
+  assert.deepEqual({ b: sub.billingType, c: sub.cycle, v: sub.value, d: sub.nextDueDate }, { b: "CREDIT_CARD", c: "YEARLY", v: 3598.8, d: "2026-10-31" },
+    "vence amanhã (o Asaas não cobra sozinho) e o sistema paga a 1ª agora");
+  assert.equal(asaas.chamadas.filter((c) => /payWithCreditCard$/.test(c.caminho)).length, 1, "uma cobrança só");
+  assert.equal(posts(asaas, "/payments").length, 0, "nada de compra parcelada no 1x");
+  assert.equal(banco.cartoes[SITE.id].final, "1111", "o cartão fica salvo, como no Cadastrar cartão");
+});
+
+test("pagar o cadastro em 6x sem juros: totalValue sem value, o total gravado; aprovado, ativa e cria a assinatura do período seguinte", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento(ABERTO, "SEMIANNUALLY", 1799.4);
+  banco.respostaAplicar = bancoQueAtiva(banco, 6);
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "cartao", ciclo: "SEMIANNUALLY", parcelas: 6, cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const compra = posts(asaas, "/payments");
+  assert.equal(compra.length, 1, "uma compra só");
+  const c = compra[0].corpo;
+  assert.deepEqual({ b: c.billingType, n: c.installmentCount, t: c.totalValue, iv: c.installmentValue, v: c.value, ip: c.remoteIp, d: c.dueDate },
+    { b: "CREDIT_CARD", n: 6, t: 1799.4, iv: undefined, v: undefined, ip: "200.10.20.30", d: "2026-10-30" });
+  assert.equal(c.creditCard.number, "4111111111111111");
+  assert.equal(c.creditCardHolderInfo.cpfCnpj, "52998224725");
+  assert.match(c.description, /6x de R\$\s299,90 sem juros/);
+  const pag = banco.pagamentos[0];
+  assert.deepEqual({ v: pag.valor, n: pag.parcelas, i: pag.asaas_parcelamento, c: pag.ciclo, f: pag.forma },
+    { v: 1799.4, n: 6, i: asaas.parcelamentos[0].id, c: "SEMIANNUALLY", f: "CREDIT_CARD" }, "a 1ª parcela guarda o TOTAL e o parcelamento");
+  assert.deepEqual({ a: r.corpo.ativou, n: r.corpo.parcelas, p: r.corpo.parcela, v: r.corpo.valor }, { a: true, n: 6, p: 299.9, v: 1799.4 });
+  const sub = posts(asaas, "/subscriptions");
+  assert.equal(sub.length, 1, "a assinatura dos semestres seguintes");
+  assert.deepEqual({ b: sub[0].corpo.billingType, c: sub[0].corpo.cycle, v: sub[0].corpo.value, d: sub[0].corpo.nextDueDate },
+    { b: "UNDEFINED", c: "SEMIANNUALLY", v: 1799.4, d: "2027-04-30" }, "começa quando o semestre pago acaba: sem cobrança em dobro");
+  assert.equal(banco.cobrancas[SITE.id].asaas_assinatura_id, r.corpo.assinatura);
+  assert.equal(asaas.chamadas.filter((x) => /payWithCreditCard$/.test(x.caminho)).length, 0);
+  const tudo = JSON.stringify(banco);
+  assert.ok(!tudo.includes("4111111111111111") && !tudo.includes("\"123\""), "número e CVV não ficam gravados");
+});
+
+test("pagar o cadastro em 12x: installmentValue pela Tabela Price; a parcela e o total voltam para a tela", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento();
+  banco.respostaAplicar = bancoQueAtiva(banco, 12);
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "cartao", ciclo: "YEARLY", parcelas: 12, cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const c = posts(asaas, "/payments")[0].corpo;
+  assert.deepEqual({ n: c.installmentCount, iv: c.installmentValue, t: c.totalValue, v: c.value }, { n: 12, iv: 361.33, t: undefined, v: undefined });
+  assert.match(c.description, /12x de R\$\s361,33 \(total R\$\s4\.335,96; juros de 2,99% a\.m\.\)/, "o total e os juros estão na fatura");
+  assert.deepEqual({ p: r.corpo.parcela, v: r.corpo.valor, n: r.corpo.parcelas }, { p: 361.33, v: 4335.96, n: 12 });
+  assert.equal(banco.pagamentos[0].valor, 4335.96);
+  assert.equal(banco.cobrancas[SITE.id].valor, 3598.8, "a assinatura dos anos seguintes é o valor do ano, sem os juros");
+  assert.deepEqual({ c: posts(asaas, "/subscriptions")[0].corpo.cycle, v: posts(asaas, "/subscriptions")[0].corpo.value, d: posts(asaas, "/subscriptions")[0].corpo.nextDueDate },
+    { c: "YEARLY", v: 3598.8, d: "2027-10-30" });
+});
+
+test("pagar o cadastro: em análise de risco devolve 'em análise' e espera; outra tentativa é barrada; aprovada pelo webhook, ativa e cria a assinatura", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento({ ...ABERTO, asaas_webhook_token: "x".repeat(48) });
+  banco.respostaAplicar = bancoQueAtiva(banco, 12);
+  asaas.statusCartao = "AWAITING_RISK_ANALYSIS";
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "cartao", ciclo: "YEARLY", parcelas: 8, cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.em_analise, true);
+  assert.equal(r.corpo.ativou, undefined);
+  assert.equal(banco.empresas[SITE.id].status, "aguardando_pagamento");
+  assert.equal(posts(asaas, "/subscriptions").length, 0, "nada de assinatura antes da aprovação");
+  const outra = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "YEARLY" });
+  assert.equal(outra.status, 409, "dois cartões aprovados cobrariam duas vezes");
+  assert.match(outra.corpo.erro, /em análise/);
+  // o Asaas aprova
+  const pag = banco.pagamentos[0];
+  const w = await tratarWebhook(deps, "x".repeat(48), JSON.stringify({ id: "evt_ok", event: "PAYMENT_APPROVED_BY_RISK_ANALYSIS",
+    payment: { id: pag.asaas_id, status: "CONFIRMED", value: 0, dueDate: "2026-10-30", installment: pag.asaas_parcelamento } }));
+  assert.equal(w.corpo.acao, "ativou");
+  assert.equal(banco.empresas[SITE.id].status, "ativo");
+  assert.equal(posts(asaas, "/subscriptions")[0].corpo.nextDueDate, "2027-10-30", "a assinatura nasce na aprovação");
+  assert.match(banco.eventos.at(-1).resultado, /assinatura sub_\d+ criada/);
+});
+
+test("pagar o cadastro: cartão recusado devolve a mensagem do Asaas e nada fica gravado; conta que exige value repete uma vez", async () => {
+  let c = cenarioPagamento();
+  c.asaas.recusarCartao = "Transação não autorizada. Verifique os dados do cartão de crédito e tente novamente.";
+  let r = await tratarAcao(c.deps, c.usuario, { acao: "pagar_cadastro", forma: "cartao", ciclo: "YEARLY", parcelas: 3, cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 400);
+  assert.equal(r.corpo.erro, "O cartão não foi aceito: Transação não autorizada. Verifique os dados do cartão de crédito e tente novamente.");
+  assert.equal(c.banco.pagamentos.length, 0);
+  assert.equal(c.banco.cobrancas[SITE.id].situacao, "sem_assinatura");
+  assert.equal(posts(c.asaas, "/payments").length, 1, "recusa do cartão não repete");
+
+  c = cenarioPagamento();
+  c.asaas.exigirValue = true;
+  c.banco.respostaAplicar = bancoQueAtiva(c.banco, 12);
+  r = await tratarAcao(c.deps, c.usuario, { acao: "pagar_cadastro", forma: "cartao", ciclo: "YEARLY", parcelas: 4, cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const tentativas = posts(c.asaas, "/payments").map((x) => x.corpo.value);
+  assert.deepEqual(tentativas, [undefined, 899.7], "sem value; a conta pediu; de novo com value = a parcela");
+  assert.equal(c.banco.cfg.asaas_parcelado_value, "enviar", "lembra para as próximas");
+  r = await tratarAcao(c.deps, { ...c.usuario }, { acao: "pagar_cadastro", forma: "cartao", ciclo: "YEARLY", parcelas: 4, cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.corpo.ja_ativa, true, "já paga: não cobra de novo");
+});
+
+test("pagar o cadastro: as regras valem no servidor (parcelas, período, dono, empresa do painel, Pix já pago)", async () => {
+  const c = cenarioPagamento(ABERTO, "SEMIANNUALLY", 1799.4);
+  const pagar = (b, u = c.usuario) => tratarAcao(c.deps, u, { acao: "pagar_cadastro", forma: "cartao", cartao: CARTAO, titular: TITULAR, ...b });
+  let r = await pagar({ ciclo: "SEMIANNUALLY", parcelas: 7 });
+  assert.equal(r.status, 400);
+  assert.match(r.corpo.erro, /de 1 a 6 parcela/);
+  r = await pagar({ ciclo: "MONTHLY", parcelas: 2 });
+  assert.match(r.corpo.erro, /de 1 a 1 parcela/, "mensal só à vista");
+  r = await pagar({ ciclo: "YEARLY", parcelas: 1, cartao: { ...CARTAO, numero: "4111 1111 1111 1112" } });
+  assert.match(r.corpo.erro, /Número do cartão inválido/);
+  r = await pagar({ ciclo: "YEARLY", parcelas: 1 }, { ...c.usuario, souDono: false });
+  assert.equal(r.status, 403);
+  assert.equal(c.asaas.chamadas.filter((x) => !x.whatsapp).length, 0, "nada disso chega ao Asaas");
+  c.banco.cfg.ciclos = JSON.stringify({ YEARLY: { ativo: false } });
+  r = await pagar({ ciclo: "YEARLY", parcelas: 1 });
+  assert.match(r.corpo.erro, /anual não está disponível/);
+  c.banco.empresas[SITE.id].origem = "painel";
+  r = await pagar({ ciclo: "SEMIANNUALLY", parcelas: 1 });
+  assert.equal(r.status, 409, "empresa do painel paga pelo link que o Vertces mandou");
+  c.banco.empresas[SITE.id].origem = "site";
+
+  // gerou o Pix, pagou e voltou para pagar no cartão: vale o Pix, o cartão não é cobrado
+  c.banco.respostaAplicar = bancoQueAtiva(c.banco, 6);
+  await tratarAcao(c.deps, c.usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "SEMIANNUALLY" });
+  for (const cob of c.asaas.cobrancas.values()) cob.status = "RECEIVED";
+  r = await pagar({ ciclo: "SEMIANNUALLY", parcelas: 6 });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.ja_pago, true);
+  assert.equal(r.corpo.ativou, true);
+  assert.equal(posts(c.asaas, "/payments").length, 0, "o cartão não foi cobrado");
+});
+
+test("webhook: parcela 2..N vai ao banco com o parcelamento; estorno de parcela avisa o superadmin e não a empresa", async () => {
+  const { asaas, banco, deps } = cenario({ cfg: { ...ASAAS_OK, ...ZAP, asaas_webhook_token: "x".repeat(48), whatsapp_avisos: "71977776666" } });
+  banco.respostaAplicar = (ev) => ({ acao: ev === "PAYMENT_CHARGEBACK_REQUESTED" ? "estorno_parcela" : "parcela", escritorio_id: EMPRESA.id });
+  const r = await tratarWebhook(deps, "x".repeat(48), JSON.stringify({ id: "evt_p2", event: "PAYMENT_CONFIRMED",
+    payment: { id: "pay_p2", status: "CONFIRMED", value: 300, installment: "inst_9", installmentNumber: 2 } }));
+  assert.equal(r.corpo.acao, "parcela");
+  assert.equal(banco.aplicados[0].pagamento.installment, "inst_9", "o banco casa pelo parcelamento (tests/rls/autocadastro.sql)");
+  assert.equal(asaas.chamadas.filter((c) => c.whatsapp).length, 0, "parcela paga não avisa ninguém");
+  await tratarWebhook(deps, "x".repeat(48), JSON.stringify({ id: "evt_cb", event: "PAYMENT_CHARGEBACK_REQUESTED",
+    payment: { id: "pay_p2", status: "CHARGEBACK_REQUESTED", installment: "inst_9", installmentNumber: 2 } }));
+  const zap = asaas.chamadas.filter((c) => c.whatsapp);
+  assert.equal(zap.length, 1);
+  assert.equal(zap[0].corpo.number, "5571977776666", "só o superadmin");
+  assert.match(zap[0].corpo.text, /Pagante Topografia: a parcela 2 \(cobrança pay_p2\) ficou "CHARGEBACK_REQUESTED"/);
+});
+
+test("webhook: reprovado na análise avisa quem espera para entrar; os eventos novos estão no webhook", async () => {
+  const { asaas, banco, deps } = cenario({ cfg: { ...ASAAS_OK, ...ZAP, asaas_webhook_token: "x".repeat(48) } });
+  banco.respostaAplicar = { acao: "recusado", escritorio_id: EMPRESA.id };
+  await tratarWebhook(deps, "x".repeat(48), JSON.stringify({ id: "evt_r", event: "PAYMENT_REPROVED_BY_RISK_ANALYSIS", payment: { id: "pay_r", status: "AWAITING_RISK_ANALYSIS" } }));
+  assert.match(asaas.chamadas.find((c) => c.whatsapp).corpo.text, /não foi aprovado na análise do Asaas.*Pix ou com outro cartão/s);
+  const sa = { id: "sa", email: "w@v.test", superadmin: true, escritorioId: null };
+  await tratarAcao(deps, sa, { acao: "config_salvar", asaas_chave: "$aact_boa", url_webhook: "https://x.test/f?origem=asaas" });
+  const eventos = asaas.webhooks[0].events;
+  for (const ev of ["PAYMENT_AWAITING_RISK_ANALYSIS", "PAYMENT_APPROVED_BY_RISK_ANALYSIS", "PAYMENT_REPROVED_BY_RISK_ANALYSIS", "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED"]) {
+    assert.ok(eventos.includes(ev), ev);
+  }
+});
+
+test("painel: autocadastro_salvar confere e grava as regras; só o superadmin; empresa anual cobrada e atualizada pelo período", async () => {
+  const { asaas, banco, deps, usuario } = cenario({ cfg: ASAAS_OK });
+  const sa = { id: "sa", email: "w@v.test", superadmin: true, escritorioId: null };
+  assert.equal((await tratarAcao(deps, usuario, { acao: "autocadastro_salvar", cadastro_aberto: true })).status, 403);
+  let r = await tratarAcao(deps, sa, { acao: "autocadastro_salvar", parcelas_max: 13 });
+  assert.equal(r.status, 400);
+  r = await tratarAcao(deps, sa, { acao: "autocadastro_salvar", cadastro_aberto: true, parcelas_sem_juros: 4, parcelas_max: 10, juros_mes: "1,99",
+    ciclos: { MONTHLY: { ativo: true }, SEMIANNUALLY: { ativo: false, desconto: 0 }, YEARLY: { ativo: true, desconto: 15 } }, whatsapp_avisos: "(71) 97777-6666" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.deepEqual({ a: banco.cfg.cadastro_aberto, s: banco.cfg.parcelas_sem_juros, m: banco.cfg.parcelas_max, j: banco.cfg.juros_mes, w: banco.cfg.whatsapp_avisos },
+    { a: "true", s: "4", m: "10", j: "1.99", w: "71977776666" });
+  assert.equal(JSON.parse(banco.cfg.ciclos).YEARLY.desconto, 15);
+  r = await tratarAcao(deps, sa, { acao: "config_status" });
+  assert.equal(r.corpo.autocadastro.ciclos.SEMIANNUALLY.ativo, false);
+  assert.equal(r.corpo.autocadastro.whatsapp_avisos, "71977776666");
+  r = await tratarAcao(deps, sa, { acao: "autocadastro_salvar", whatsapp_avisos: "" });
+  assert.equal(banco.cfg.whatsapp_avisos, undefined, "vazio apaga");
+
+  // empresa anual (15% de desconto agora): a cobrança do painel e a atualização usam o valor do ano
+  banco.cobrancas[EMPRESA.id] = { situacao: "sem_assinatura", ciclo: "YEARLY" };
+  r = await tratarAcao(deps, sa, { acao: "cobrar_empresa", escritorio_id: EMPRESA.id, enviar_whatsapp: false });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const sub = posts(asaas, "/subscriptions")[0].corpo;
+  assert.deepEqual({ c: sub.cycle, v: sub.value }, { c: "YEARLY", v: 2038.98 }, "12 × 199,90 − 15%");
+  assert.match(r.corpo.mensagem, /Segue a anuidade do Vertces \(plano Profissional\) da Pagante Topografia: R\$\s2\.038,98/);
+  banco.empresas[EMPRESA.id].mensalidade = 249.9;
+  await tratarAcao(deps, sa, { acao: "atualizar_assinatura", escritorio_id: EMPRESA.id });
+  assert.equal(asaas.chamadas.find((c) => c.metodo === "PUT" && c.caminho.startsWith("/subscriptions/")).corpo.value, 2548.98);
 });

@@ -1,0 +1,107 @@
+/* Autocadastro (Assinar.tsx) e o pagamento do 1º período (PagamentoCadastro.tsx).
+   Arquivo próprio: o styles.css é de outra frente. Altura da tela = var(--vh)
+   (a raiz tem zoom .8 em tela grande). */
+
+.as-pagina { min-height: var(--vh); background: var(--bg); display: flex; flex-direction: column; align-items: center; padding: 0 16px 40px; }
+.as-topo { width: min(880px, 100%); display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 0; font-size: 14px; color: var(--texto-2); }
+.as-marca { display: flex; align-items: center; gap: 8px; color: var(--floresta); text-decoration: none; }
+.as-marca b { font-family: var(--fonte-titulo); font-size: 20px; }
+.as-caixa { width: min(880px, 100%); background: var(--card); border: 1px solid var(--borda); border-radius: 20px; padding: clamp(20px, 4vw, 40px); box-shadow: var(--sombra-alta); }
+.as-caixa h1 { font-family: var(--fonte-titulo); font-size: clamp(24px, 3.4vw, 32px); line-height: 1.15; margin: 0 0 6px; color: var(--texto); }
+.as-sub { margin: 0 0 22px; color: var(--texto-2); line-height: 1.5; }
+.as-carregando { display: flex; align-items: center; gap: 10px; }
+.as-rodape { margin-top: 18px; font-size: 12.5px; color: var(--texto-3); text-align: center; }
+
+/* os três passos */
+.as-passos { list-style: none; display: flex; gap: 8px; margin: 0 0 26px; padding: 0; counter-reset: passo; }
+.as-passos li { flex: 1; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--bg); color: var(--texto-3); font-size: 14px; font-weight: 600; min-width: 0; }
+.as-passos li span { width: 26px; height: 26px; flex: none; border-radius: 50%; display: grid; place-items: center; background: #fff; border: 1px solid var(--borda); font-size: 13px; }
+.as-passos li.atual { background: var(--primaria-clara); color: var(--primaria-escura); }
+.as-passos li.atual span { background: var(--primaria); border-color: var(--primaria); color: #fff; }
+.as-passos li.feito { color: var(--primaria-escura); }
+.as-passos li.feito span { background: var(--primaria-clara); border-color: #bfe0cd; color: var(--primaria-escura); }
+
+/* passo 1 */
+.as-caixa form { display: grid; gap: 18px; }
+.as-caixa .erro-campo, .mens-site .erro-campo { color: var(--perigo); font-size: 12.5px; font-weight: 500; line-height: 1.35; }
+.as-caixa .grade input { height: 44px; border-radius: 10px; font-size: 15px; }
+.as-isca { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.as-aceite { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; line-height: 1.45; color: var(--texto-2); cursor: pointer; }
+.as-aceite input { margin-top: 3px; width: auto; height: auto; }
+.as-botoes { display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.as-botoes .fantasma { margin-right: auto; }
+.as-botoes button, .as-botoes .botao-download { height: 46px; padding: 0 22px; border-radius: 10px; font-size: 15px; }
+
+/* os cartões de escolha são <button> (teclado e leitor de tela): sem a altura fixa dos botões */
+.as-periodo, .as-plano, .as-forma { height: auto; font-size: 14px; line-height: 1.35; }
+
+/* passo 2: período e planos */
+/* um período por coluna, sempre na mesma linha (no celular, 3 colunas estreitas em vez de 2 + 1) */
+.as-periodos { display: grid; grid-template-columns: repeat(var(--periodos, 3), minmax(0, 1fr)); gap: 10px; margin: 0 0 16px; }
+.as-periodo { position: relative; display: grid; gap: 2px; text-align: left; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--borda); background: #fff; cursor: pointer; }
+.as-periodo b { font-size: 15px; color: var(--texto); }
+.as-periodo span { font-size: 12.5px; color: var(--texto-2); font-weight: 400; }
+.as-periodo em { position: absolute; top: 10px; right: 10px; font-style: normal; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--primaria-clara); color: var(--primaria-escura); }
+.as-periodo.sel { border-color: var(--primaria); box-shadow: 0 0 0 2px var(--primaria-clara); }
+.as-planos { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.as-plano { display: grid; align-content: start; gap: 6px; text-align: left; padding: 16px 16px 14px; border-radius: 14px; border: 1px solid var(--borda); border-top: 4px solid var(--primaria); background: #fff; cursor: pointer; font-weight: 400; color: var(--texto); }
+.as-plano.sel { border-color: var(--primaria); box-shadow: 0 0 0 3px var(--primaria-clara); background: #fbfdfc; }
+.as-plano-nome { font-family: var(--fonte-titulo); font-size: 19px; font-weight: 700; }
+.as-plano-desc { color: var(--texto-2); line-height: 1.4; }
+.as-plano-preco { font-size: 13px; color: var(--texto-2); }
+.as-plano-preco b { font-family: var(--fonte-titulo); font-size: 24px; color: var(--floresta); }
+.as-plano-periodo { color: var(--primaria-escura); font-weight: 600; }
+.as-plano ul { list-style: none; margin: 4px 0 0; padding: 8px 0 0; border-top: 1px solid var(--linha); display: grid; gap: 4px; font-size: 13px; color: var(--texto-2); line-height: 1.4; }
+.as-total { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 16px 0; padding: 14px 16px; border-radius: 14px; background: #F4F7F5; }
+.as-total > span { font-size: 14px; color: var(--texto-2); display: inline-flex; align-items: center; gap: 4px; }
+.as-total > b { font-family: var(--fonte-titulo); font-size: 26px; color: var(--floresta); }
+.as-total > small { flex-basis: 100%; font-size: 12.5px; color: var(--texto-3); }
+
+/* passo 3: pagamento */
+.as-pagamento { display: grid; gap: 14px; text-align: left; }
+.as-pagamento .as-periodos, .as-pagamento .as-total { margin: 0; }
+.as-formas { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.as-forma { display: grid; gap: 2px; text-align: left; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--borda); background: #fff; cursor: pointer; }
+.as-forma b { font-size: 15px; color: var(--texto); }
+.as-forma small { color: var(--texto-2); font-weight: 400; }
+.as-forma.sel { border-color: var(--primaria); box-shadow: 0 0 0 2px var(--primaria-clara); background: #fbfdfc; }
+.as-acao { display: flex; justify-content: flex-end; }
+.as-acao .principal { height: 46px; padding: 0 22px; border-radius: 10px; font-size: 15px; }
+.as-pix { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; padding: 16px; border: 1px solid #bfe0cd; border-radius: 14px; background: #fbfdfc; }
+.as-pix img { width: 220px; height: 220px; max-width: 100%; border-radius: 10px; background: #fff; border: 1px solid var(--linha); }
+.as-pix-lado { flex: 1; min-width: 240px; display: grid; gap: 12px; }
+.as-pix-lado > b { font-family: var(--fonte-titulo); font-size: 20px; color: var(--floresta); }
+.as-copia { display: grid; gap: 6px; font-size: 13px; color: var(--texto-2); }
+.as-copia-linha { display: flex; gap: 8px; }
+.as-copia-linha input { flex: 1; min-width: 0; height: 40px; font-size: 12.5px; }
+.as-esperando { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--texto-2); }
+.as-pix-acoes { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.as-pix-acoes .link { padding: 0; font-size: 13.5px; }
+.as-cartao { display: grid; gap: 14px; }
+.as-parcelas { display: grid; gap: 6px; max-width: 420px; }
+.as-parcelas > span { display: flex; align-items: center; gap: 4px; font-weight: 600; font-size: 13px; color: var(--texto-2); }
+.as-parcelas select { height: 44px; border-radius: 10px; font-size: 15px; }
+.as-resultado { display: grid; justify-items: center; gap: 10px; text-align: center; padding: 28px 20px; border-radius: 16px; }
+.as-resultado.ok { background: var(--primaria-clara); }
+.as-resultado.analise { background: var(--alerta-claro); }
+.as-resultado h3 { margin: 0; font-family: var(--fonte-titulo); font-size: 22px; color: var(--texto); }
+.as-resultado p { margin: 0; max-width: 52ch; color: var(--texto-2); line-height: 1.5; }
+.as-resultado button { height: 46px; padding: 0 24px; border-radius: 10px; font-size: 15px; }
+.as-selo-ok { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; background: var(--primaria); color: #fff; font-size: 26px; font-weight: 700; }
+
+/* "Falta o pagamento" da empresa do site: a caixa cresce para caber o pagamento */
+.login-box.mens-box.mens-site { width: 760px; max-width: calc(100vw - 32px); }
+
+@media (max-width: 640px) {
+  .as-passos li { padding: 8px; font-size: 12.5px; gap: 6px; }
+  .as-passos li span { width: 22px; height: 22px; font-size: 12px; }
+  /* no celular, só o passo atual tem o nome; os outros ficam com o número */
+  .as-passos li:not(.atual) { flex: 0 0 auto; font-size: 0; gap: 0; }
+  .as-periodos { gap: 6px; }
+  .as-periodo { padding: 10px 8px; }
+  .as-periodo em { position: static; justify-self: start; margin-top: 2px; }
+  .as-formas { grid-template-columns: 1fr; }
+  .as-botoes { flex-direction: column-reverse; align-items: stretch; }
+  .as-botoes .fantasma { margin-right: 0; }
+  .as-pix { justify-content: center; }
+}
