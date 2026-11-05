@@ -68,13 +68,16 @@ export const SERVICOS: DefinicaoServico[] = [
   },
   {
     chave: "divisao",
-    titulo: "Divisão em partes iguais",
+    // Um cartão para as duas divisões: a partilha (partes iguais) e o
+    // desmembramento (uma área sai do imóvel). A chave continua `divisao` — ela
+    // amarra crédito e recursos no banco; o tipo se escolhe na etapa Divisão.
+    titulo: "Divisão e desmembramento",
     icone: "M3 3h18v18H3zM9 3l-2 18M16 3l-2 18",
-    resumo: "Partilha ou herança: o motor divide o imóvel em partes de mesma área (ou na fração de cada herdeiro), com divisas retas e frente para a estrada.",
-    requisitos: ["TXT do levantamento", "documentos do proprietário", "nome e CPF de cada herdeiro"],
-    entrega: ["GEO do imóvel inteiro com todas as partes", "Planta de cada parte", "Um GEO completo por herdeiro"],
+    resumo: "Partilha, herança ou venda de parte: divide em partes iguais ou desmembra uma área, com os documentos da remanescente e de cada área.",
+    requisitos: ["TXT do levantamento", "documentos do proprietário", "nome e CPF de cada herdeiro ou adquirente"],
+    entrega: ["GEO do imóvel inteiro com todas as áreas", "Planta de cada área", "Documentos de cada área (memorial, tabular, planta, planilha)"],
     cta: "Enviar TXT",
-    // partilha: o serviço nasce com `servicos.divisao` (o motor de divisão em partes iguais)
+    // o serviço nasce com `servicos.divisao` (partilha; vira desmembramento na etapa Divisão)
     campos: { tipo: "geo", modalidade: "completo", tem_glebas: true, divisao: true },
     principal: true,
   },
