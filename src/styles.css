@@ -1520,6 +1520,7 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 
 /* ---- Rodovias e recuo legal (RecuoRodovias.tsx) */
 .recuo-lista { display: flex; flex-direction: column; gap: 10px; }
+.recuo-vias > header .recuo-planta { margin-left: auto; }
 .recuo-via { border: 1px solid var(--borda); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; background: var(--card); }
 .recuo-cabeca { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .recuo-cabeca .esticar { flex: 1; }

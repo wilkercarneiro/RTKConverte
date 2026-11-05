@@ -30,6 +30,7 @@ import type { ResultadoParse } from "./Upload";
 import { CORES, MapaSVG } from "./MapaSVG";
 import type { FundoSatelite } from "./MapaSVG";
 import { PainelSigef } from "./PainelSigef";
+import { RecuoRodovias } from "./RecuoRodovias";
 import type { PontoMapa } from "./MapaInterativo";
 import { aneisLonLat, lonLatDoVertice } from "../lib/sigef";
 import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
@@ -1782,6 +1783,15 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   }}>+ adicionar transição</button>
                 </div>
               </div>
+            {/* ------- Rodovias e recuo legal (recuo automático, 05/11/2026): o padrão
+                da lei com a fonte, a largura conferida e, nas BRs, o DNIT ------- */}
+            <RecuoRodovias
+              rotulos={trechosOrdenados.filter((t) => t.eh_via && !ehRioPorLimite(t.tipo_limite)).map((t) => t.descritivo || t.apelido_txt)}
+              aneisLonLat={aneisSigef} uf={servico.uf}
+              ajustes={servico.recuo_vias?.vias ?? {}}
+              onAjustes={(vias) => setServico((s) => ({ ...s, recuo_vias: { ...(s.recuo_vias ?? {}), vias } }))}
+              planta={servico.recuo_vias?.planta !== false}
+              onPlanta={(v) => setServico((s) => ({ ...s, recuo_vias: { ...(s.recuo_vias ?? {}), planta: v } }))} />
             {/* ------- Vértices: na mesma etapa, porque a ORDEM deles é o que define os
                 trechos e o mapa acima; reordenar aqui atualiza tudo ao mesmo tempo. ------- */}
             <div className="etapa-cabeca" id="bloco-vertices">

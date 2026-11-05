@@ -1031,8 +1031,10 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
         const t = trechoDoIdx(i);
         if (!t.isEstrada || t.isRio || t.interno) return 0;
         const via = classificarVia(t.descritivo);
-        if (!via || via.tipo === "municipal") return 0;
-        const w = (via.sigla ? pv[via.sigla] : undefined) ?? pv[via.tipo] ?? (via.tipo === "ferrovia" ? 15 : d.naoEdificavel!.padrao);
+        if (!via) return 0;
+        // estrada municipal só ganha a faixa que a lei do município der (informada no serviço)
+        const padrao = via.tipo === "municipal" ? 0 : via.tipo === "ferrovia" ? 15 : d.naoEdificavel!.padrao;
+        const w = (via.sigla ? pv[via.sigla] : undefined) ?? pv[via.tipo] ?? padrao;
         return Number.isFinite(w) && w > 0 ? w : 0;
       });
       const P = (i: number): Pt => ({ x: X(vs[(i + nv) % nv].e), y: Y(vs[(i + nv) % nv].n) });

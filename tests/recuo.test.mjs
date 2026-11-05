@@ -108,3 +108,7 @@ test("loteamento: estrada do levantamento já nasce com o recuo da lei", async (
   assert.deepEqual(bordaDaEstrada("ESTRADA MUNICIPAL BA-001"), { tipo: "via", faixa: 0, nome: "ESTRADA MUNICIPAL BA-001" });
   assert.deepEqual(bordaDaEstrada(""), { tipo: "via", faixa: 0, nome: "" });
 });
+
+test("naoEdificavelDaPlanta: estrada municipal com a lei do município entra pela chave do tipo", () => {
+  assert.deepEqual(naoEdificavelDaPlanta({ vias: { municipal: { naoEdificavel: 6, leiMunicipal: "Lei 5/2019" } } }), { padrao: 15, porVia: { municipal: 6 } });
+});

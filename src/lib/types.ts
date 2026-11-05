@@ -1,3 +1,5 @@
+import type { RecuoDoServico } from "../../supabase/functions/_shared/recuo.ts";
+
 export interface Cliente {
   id: string;
   created_at?: string;
@@ -161,6 +163,8 @@ export interface Servico {
   // obsoleto: as faixas de domínio saem dos trechos da planta (uma declaração
   // por via). A coluna continua no banco só por causa dos serviços antigos.
   via_dominio: string | null;
+  /** Recuo legal das rodovias conferido pelo operador (0041; regras em _shared/recuo.ts). Nulo = padrão. */
+  recuo_vias?: RecuoDoServico | null;
   is_espolio?: boolean | null;
   inventariante_nome?: string | null;
   inventariante_cpf?: string | null;

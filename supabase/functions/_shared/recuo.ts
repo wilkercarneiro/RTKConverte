@@ -239,7 +239,8 @@ export function naoEdificavelDaPlanta(salvo: unknown): { padrao: number; porVia:
   const porVia: Record<string, number> = {};
   for (const [chave, aj] of Object.entries(r.vias ?? {})) {
     if (!aj || typeof aj !== "object" || aj.naoEdificavel === undefined || aj.naoEdificavel === null) continue;
-    const via = classificarVia(chave) ?? (chave === "estadual" || chave === "federal" ? { tipo: chave as TipoVia, sigla: null, uf: null } : null);
+    const via = classificarVia(chave)
+      ?? ((["estadual", "federal", "municipal", "ferrovia"] as string[]).includes(chave) ? { tipo: chave as TipoVia, sigla: null, uf: null } : null);
     if (!via) continue;
     porVia[chave] = recuoDaVia(via, aj).naoEdificavel;
   }

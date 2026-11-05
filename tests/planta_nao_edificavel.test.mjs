@@ -103,3 +103,10 @@ test("redução por lei municipal (porVia) muda a largura da legenda; via munici
   const b2 = await gerarPlantaPdf({ ...soCorredor, naoEdificavel: { padrao: 15 } }, { obstaculos: [], rotulos: [], sobrepostos: 0, deslocados: 0 });
   assert.equal(await tracosNe(b2), 0);
 });
+
+test("estrada municipal só ganha faixa quando o serviço informa (lei do município)", async () => {
+  const soCorredor = { ...base, trechos: trechos.map((t) => (t.descritivo === "BA 408" ? { ...t, isEstrada: false } : t)) };
+  const b = await gerarPlantaPdf({ ...soCorredor, naoEdificavel: { padrao: 15, porVia: { municipal: 6 } } }, { obstaculos: [], rotulos: [], sobrepostos: 0, deslocados: 0 });
+  assert.ok((await tracosNe(b)) >= 2);
+  assert.match(await textoDa(b), /FAIXA NÃO EDIFICÁVEL 6 m/);
+});

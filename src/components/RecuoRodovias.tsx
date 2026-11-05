@@ -37,7 +37,7 @@ const lerNum = (s: string): number | null => {
   return s.trim() && Number.isFinite(v) && v >= 0 ? v : null;
 };
 
-export function RecuoRodovias({ rotulos, aneisLonLat, uf, ajustes, onAjustes, rural = true, eixo = false }: {
+export function RecuoRodovias({ rotulos, aneisLonLat, uf, ajustes, onAjustes, rural = true, eixo = false, planta, onPlanta }: {
   /** descritivos/nomes dos confrontantes do perímetro */
   rotulos: (string | null | undefined)[];
   /** o imóvel em lon/lat (para o DNIT); vazio = sem consulta */
@@ -49,6 +49,9 @@ export function RecuoRodovias({ rotulos, aneisLonLat, uf, ajustes, onAjustes, ru
   rural?: boolean;
   /** mostra "a divisa passa no eixo" (loteamento: a faixa sai da gleba) */
   eixo?: boolean;
+  /** a faixa não edificável sai na planta (ausente = a chave não aparece) */
+  planta?: boolean;
+  onPlanta?: (v: boolean) => void;
 }) {
   const vias = useMemo(() => viasDosConfrontantes(rotulos), [rotulos.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
   const temBr = vias.some((v) => v.via.tipo === "federal");
@@ -82,6 +85,12 @@ export function RecuoRodovias({ rotulos, aneisLonLat, uf, ajustes, onAjustes, ru
           {rural && " Em imóvel rural ela é informativa: aparece na planta, sem mudar área nem perímetro."}
         </Dica></h3>
         <span className="desc">{vias.length === 1 ? "1 via no perímetro" : `${vias.length} vias no perímetro`}</span>
+        {onPlanta && vias.some((v) => v.via.tipo !== "municipal") && (
+          <label className="recuo-eixo recuo-planta">
+            <input type="checkbox" checked={planta !== false} onChange={(e) => onPlanta(e.target.checked)} />
+            Faixa não edificável na planta
+          </label>
+        )}
       </header>
       <div className="recuo-lista">
         {vias.map(({ chave, rotulo, via }) => {
@@ -118,9 +127,9 @@ export function RecuoRodovias({ rotulos, aneisLonLat, uf, ajustes, onAjustes, ru
                     defaultValue={aj.naoEdificavel ?? ""} key={`n${aj.naoEdificavel ?? ""}`}
                     onBlur={(e) => mudar(chave, { naoEdificavel: lerNum(e.target.value) })} />
                 </label>
-                <label><span>Lei municipal (para reduzir)</span>
+                <label><span>{via.tipo === "municipal" ? "Lei municipal da estrada" : "Lei municipal (para reduzir)"}</span>
                   <input placeholder="ex.: Lei 1.234/2020" defaultValue={aj.leiMunicipal ?? ""} key={`l${aj.leiMunicipal ?? ""}`}
-                    disabled={!reg.reduzivel}
+                    disabled={!reg.reduzivel && via.tipo !== "municipal"}
                     onBlur={(e) => mudar(chave, { leiMunicipal: e.target.value.trim() || null })} />
                 </label>
               </div>
