@@ -246,3 +246,27 @@ for (const folha of ["A1", "A3", "A4"]) {
     assert.equal(doc.getPageCount(), 1);
   });
 }
+
+// ------------------------------------------------------------------ planta editada
+for (const folha of ["A1", "A4"]) {
+  test(`planta ${folha} refeita pelo editor: sai sem QR e sem código, com o aviso no lugar`, async () => {
+    const { lerCena, cenaParaPdf, OBJ_AUTENTICIDADE } = await import("../supabase/functions/_shared/planta_cena.ts");
+    const codigo = gerarCodigoVerificacao();
+    const selo = { codigo, url: urlVerificacao(codigo) };
+    const com = await gerarPlantaPdf({ ...dadosBase, folha, autenticidade: selo }, undefined, { editavel: true });
+    const cena = await lerCena(com);
+    assert.ok(cena.itens.some((i) => i.obj === OBJ_AUTENTICIDADE && i.k === "ret"), "a cena traz o selo");
+    const refeito = await cenaParaPdf(cena);
+    const t = await conteudo(refeito);
+    assert.ok(!t.includes(hexDe(codigoAgrupado(codigo))), "o código não pode sobreviver à edição");
+    assert.ok(!t.includes(hexDe("DOCUMENTO VERIFIC")));
+    assert.ok(t.includes(hexDe("sem selo de autenticidade")), "o aviso entra no lugar");
+    const corridas = retangulosQr(gerarQr(selo.url, "M")).length;
+    const semSelo = await conteudo(await cenaParaPdf({ ...cena, itens: cena.itens.filter((i) => i.obj !== OBJ_AUTENTICIDADE) }));
+    assert.ok(contar(t, /\nh\nf\n/g) - contar(semSelo, /\nh\nf\n/g) < corridas / 2, "nenhum retângulo do QR");
+    assert.ok(contar(await conteudo(com), /\nh\nf\n/g) - contar(semSelo, /\nh\nf\n/g) >= corridas, "(o original tinha o QR)");
+    // a cena embutida no refeito também já não tem o selo (editar de novo não o traz de volta)
+    const cena2 = await lerCena(refeito);
+    assert.ok(cena2.itens.filter((i) => i.obj === OBJ_AUTENTICIDADE).every((i) => i.k === "texto" && !i.t.includes(codigoAgrupado(codigo))));
+  });
+}
