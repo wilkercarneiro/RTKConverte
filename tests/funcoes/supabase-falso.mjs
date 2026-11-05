@@ -59,12 +59,20 @@ export function createClient() {
     from: (t) => new Consulta(t),
     storage: {
       from: (bucket) => ({
-        upload: async (caminho, blob) => { banco().storage[`${bucket}/${caminho}`] = new Uint8Array(await blob.arrayBuffer()); return { data: { path: caminho }, error: null }; },
+        // as funções sobem Blob (parse-txt) e bytes crus (gerar-documentos)
+        upload: async (caminho, blob) => {
+          banco().storage[`${bucket}/${caminho}`] = blob instanceof Uint8Array ? new Uint8Array(blob) : new Uint8Array(await blob.arrayBuffer());
+          return { data: { path: caminho }, error: null };
+        },
         download: async (caminho) => {
           const b = banco().storage[`${bucket}/${caminho}`];
           return b ? { data: new Blob([b]), error: null } : { data: null, error: { message: "Object not found" } };
         },
         list: async () => ({ data: [], error: null }),
+        // URL "assinada" que aponta o objeto guardado (o teste lê o arquivo por ela)
+        createSignedUrl: async (caminho) => (banco().storage[`${bucket}/${caminho}`]
+          ? { data: { signedUrl: `http://falso/${bucket}/${caminho}` }, error: null }
+          : { data: null, error: { message: "Object not found" } }),
       }),
     },
   };
