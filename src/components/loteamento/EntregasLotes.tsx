@@ -28,6 +28,7 @@ interface Props {
 
 const MUITAS = /Muitas solicitações/i;
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const plural = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`;
 
 export function EntregasLotes({ servicoId, res, base, onSalvar, carimbo, onExportou }: Props) {
   const itens = useMemo(() => itensLoteALote(res), [res]);
@@ -125,7 +126,7 @@ export function EntregasLotes({ servicoId, res, base, onSalvar, carimbo, onExpor
           os mesmos nomes de ponto da locação completa. As áreas públicas (verde, institucional) saem do mesmo jeito.
           Loteamento grande é gerado em partes de {MAX_ITENS_POR_PEDIDO} e chega num zip só.
         </Dica></h3>
-        <span className="desc">{itens.filter((x) => x.tipo === "lote").length} lotes · {itens.filter((x) => x.tipo === "area").length} áreas públicas</span>
+        <span className="desc">{plural(itens.filter((x) => x.tipo === "lote").length, "lote", "lotes")} · {plural(itens.filter((x) => x.tipo === "area").length, "área pública", "áreas públicas")}</span>
       </header>
       <div className="lot-lotes-topo">
         <button type="button" disabled={ocupado} onClick={() => setMarcados(todos ? new Set() : new Set(itens.map((x) => x.id)))}>
