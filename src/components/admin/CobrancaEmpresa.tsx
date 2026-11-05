@@ -12,14 +12,24 @@ import {
 } from "../../lib/cobranca";
 import type { ResultadoCobranca } from "../../lib/cobranca";
 import { fmtPreco } from "../../lib/creditos";
-import { dataBr } from "../../../supabase/functions/_shared/mensagens_cobranca.ts";
+import { dataBr, nomeDaCobranca } from "../../../supabase/functions/_shared/mensagens_cobranca.ts";
 import { soDigitos } from "../../../supabase/functions/_shared/cnpj.ts";
+import { cicloDe, NOME_CICLO } from "../../../supabase/functions/_shared/parcelas.ts";
+import type { PagamentoEmpresa } from "../../lib/admin";
 import type { DadosAdmin } from "./PainelAdmin";
 import { confirmar, Dica } from "../ui";
 import { Carregando, copiar, fmtData } from "./comum";
 
 const CLASSE: Record<string, string> = { sem_assinatura: "neutro", aguardando: "suspenso", em_dia: "ativo", atrasada: "cancelado", cancelada: "neutro" };
 const PAGO = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
+
+/** "Mensalidade" · "Anuidade · 12x no cartão" · "Parcela 3" · a descrição da compra de créditos */
+function oQue(p: PagamentoEmpresa): string {
+  if (p.finalidade === "parcela") return `Parcela ${p.parcela ?? ""}`.trim();
+  if (p.finalidade !== "mensalidade") return p.descricao ?? "Créditos";
+  const nome = nomeDaCobranca(p.ciclo);
+  return `${nome.charAt(0).toUpperCase()}${nome.slice(1)}${(p.parcelas ?? 1) > 1 ? ` · ${p.parcelas}x no cartão` : ""}`;
+}
 
 export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; onMudou: (texto: string) => Promise<void> }) {
   const [c, setC] = useState<Dados | null>(null);
@@ -46,7 +56,9 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
 
   const a = c.assinatura;
   const viva = !!a?.asaas_assinatura_id && a.situacao !== "cancelada";
-  const valorDiferente = viva && a!.valor !== null && c.mensalidade !== null && Number(a!.valor) !== Number(c.mensalidade);
+  // semestral/anual (autocadastro): o Asaas cobra o período, não a mensalidade
+  const ciclo = cicloDe(a?.ciclo) ?? "MONTHLY";
+  const valorDiferente = ciclo === "MONTHLY" && viva && a!.valor !== null && c.mensalidade !== null && Number(a!.valor) !== Number(c.mensalidade);
   const semMensalidade = !(Number(c.mensalidade ?? 0) > 0);
 
   const gerar = () => agir("gerar", async () => {
@@ -69,6 +81,7 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
         </header>
         <div className="sa-cobranca">
           <div><span>Mensalidade que vale</span><b>{c.mensalidade === null ? "não definida" : fmtPreco(Number(c.mensalidade))}</b></div>
+          {ciclo !== "MONTHLY" && <div><span>Período</span><b>{NOME_CICLO[ciclo]}</b>{a?.valor != null && <small className="sub">{fmtPreco(Number(a.valor))} por período</small>}</div>}
           {viva && <div><span>Valor no Asaas</span><b>{a!.valor === null ? "—" : fmtPreco(Number(a!.valor))}</b></div>}
           {a?.proximo_vencimento && <div><span>{a.situacao === "em_dia" ? "Próximo vencimento" : "Vencimento"}</span><b>{dataBr(a.proximo_vencimento)}</b></div>}
           {a?.ultimo_pagamento_em && <div><span>Último pagamento</span><b>{fmtData(a.ultimo_pagamento_em)}</b></div>}
@@ -141,7 +154,7 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
                 {c.pagamentos.map((p) => (
                   <tr key={p.id}>
                     <td style={{ whiteSpace: "nowrap" }}>{fmtData(p.criado_em)}</td>
-                    <td>{p.finalidade === "mensalidade" ? "Mensalidade" : p.descricao ?? "Créditos"}{p.erro && <div className="sub" style={{ fontSize: 12 }}>{p.erro}</div>}</td>
+                    <td>{oQue(p)}{p.erro && <div className="sub" style={{ fontSize: 12 }}>{p.erro}</div>}</td>
                     <td>{fmtPreco(Number(p.valor))}{p.forma && <div className="sub" style={{ fontSize: 12 }}>{FORMA[p.forma] ?? p.forma}</div>}</td>
                     <td>{p.vencimento ? dataBr(p.vencimento) : "—"}</td>
                     <td><span className={`sa-pill ${PAGO.has(p.status) ? "ativo" : p.status === "OVERDUE" ? "cancelado" : p.status === "PENDING" ? "suspenso" : "neutro"}`}>{rotuloPagamento(p.status)}</span>

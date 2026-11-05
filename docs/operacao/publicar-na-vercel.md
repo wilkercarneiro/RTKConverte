@@ -11,7 +11,6 @@ O repositório já está pronto: `vercel.json` (framework Vite, `npm run build`,
    |---|---|---|
    | `VITE_SUPABASE_URL` | `https://utxqkbgfgpbczqjtieyu.supabase.co` | sim |
    | `VITE_SUPABASE_ANON_KEY` | chave **anon/publishable** (Supabase → Project Settings → API). Nunca a service_role | sim |
-   | `VITE_CADASTRO_ABERTO` | `false` até aplicar a migração de escritórios (docs/multiescritorio) | não |
    | `VITE_SUPORTE_EMAIL` / `VITE_SUPORTE_WHATSAPP` / `VITE_SUPORTE_PRAZO` | canal de suporte exibido em Ajuda | não |
    | `VITE_SENTRY_DSN` | DSN do Sentry (docs/operacao/backup-e-monitoramento.md) | não |
 

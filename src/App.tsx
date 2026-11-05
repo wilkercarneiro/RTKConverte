@@ -15,13 +15,12 @@ import { Car } from "./components/car/Car";
 import { CarNovo } from "./components/car/CarNovo";
 import { Configuracoes } from "./components/Configuracoes";
 import { ClientePage } from "./components/ClientePage";
-import { Cadastro } from "./components/Cadastro";
+import { Assinar } from "./components/Assinar";
 import { Ajuda } from "./components/Ajuda";
 import { PaginaDocumento } from "./components/Documento";
 import { Logo } from "./components/Logo";
 import termos from "../docs/legal/termos-de-uso.md?raw";
 import privacidade from "../docs/legal/politica-de-privacidade.md?raw";
-import { CADASTRO_ABERTO } from "./lib/config";
 import { carregarEscritorio } from "./lib/escritorio";
 import type { EstadoEscritorio } from "./lib/escritorio";
 import { definicaoDe } from "./lib/modalidades";
@@ -60,6 +59,7 @@ const LaboratorioSistema = lazy(() => import("./components/LaboratorioSistema").
 const LaboratorioConferencia = lazy(() => import("./components/LaboratorioConferencia").then((m) => ({ default: m.LaboratorioConferencia })));
 const LaboratorioCartao = lazy(() => import("./components/LaboratorioCartao").then((m) => ({ default: m.LaboratorioCartao })));
 const LaboratorioLeitura = lazy(() => import("./components/LaboratorioLeitura").then((m) => ({ default: m.LaboratorioLeitura })));
+const LaboratorioAssinar = lazy(() => import("./components/LaboratorioAssinar").then((m) => ({ default: m.LaboratorioAssinar })));
 // painel do superadmin: só quem administra o SaaS baixa este pedaço
 const PainelAdmin = lazy(() => import("./components/admin/PainelAdmin").then((m) => ({ default: m.PainelAdmin })));
 
@@ -203,6 +203,7 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/sistema")) return <Suspense fallback={null}><LaboratorioSistema /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/conferencia")) return <Suspense fallback={null}><LaboratorioConferencia /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/leitura")) return <Suspense fallback={null}><LaboratorioLeitura /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/assinar")) return <Suspense fallback={null}><LaboratorioAssinar /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vertces", href: "#/" }} />;
@@ -219,11 +220,11 @@ export default function App() {
       </div>
     );
   }
+  // Autocadastro (0040): público, com ou sem login. A própria página entra com a
+  // conta que cria e leva ao pagamento; quem já está conectado vê o aviso de lá.
+  if (rota.t === "assinar") return <Assinar plano={rota.plano} ciclo={rota.ciclo} />;
   if (logado === null) return <div className="centro">Carregando...</div>;
-  if (!logado) {
-    if (rota.t === "cadastro" && CADASTRO_ABERTO) return <Cadastro />;
-    return <Login onOk={() => setLogado(true)} cadastroAberto={CADASTRO_ABERTO} />;
-  }
+  if (!logado) return <Login onOk={() => setLogado(true)} />;
   if (escritorio === null || conta === null) return <div className="centro">Carregando...</div>;
   if (conta.trocarSenha) {
     return <TrocarSenhaObrigatoria email={usuario} onOk={() => setConta({ ...conta, trocarSenha: false })} />;
