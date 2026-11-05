@@ -28,6 +28,7 @@ import { contarPreenchidos, inferirUf, useAutosave, useAvisos } from "../lib/ux"
 import type { Cliente, Credenciado, RT, Servico, Trecho, Vertice } from "../lib/types";
 import type { ResultadoParse } from "./Upload";
 import { CORES, MapaSVG } from "./MapaSVG";
+import { PainelRelevo } from "./relevo/PainelRelevo";
 import type { FundoSatelite } from "./MapaSVG";
 import { PainelSigef } from "./PainelSigef";
 import type { PontoMapa } from "./MapaInterativo";
@@ -366,7 +367,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // Sem WebGL o mapa interativo não abre: começa no esquema em vez de num mapa
   // que só daria o aviso (antes, a tela inteira ficava em branco).
   const mapaInterativoOk = temRecurso("sigef.mapa") && webglDisponivel();
-  const [fundoMapa, setFundoMapa] = useState<"mapa" | "satelite" | "esquema">(mapaInterativoOk ? "mapa" : "esquema");
+  const [fundoMapa, setFundoMapa] = useState<"mapa" | "satelite" | "esquema" | "relevo">(mapaInterativoOk ? "mapa" : "esquema");
   async function carregarMapaSat() {
     const dl = await supabase.storage.from("gerados").download(`${inicial.servico.id}/entrada/mapa.json`);
     if (dl.error || !dl.data) { setMapaSat(null); return; }
@@ -1960,6 +1961,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     Satélite
                   </button>
                   <button type="button" className={fundoMapa === "esquema" ? "ativo" : ""} onClick={() => setFundoMapa("esquema")}>Esquema</button>
+                  <button type="button" className={fundoMapa === "relevo" ? "ativo" : ""} onClick={() => setFundoMapa("relevo")}
+                    title="Curvas de nível do imóvel (cotas dos marcos + modelo digital de elevação no miolo), exportação DXF/KML e o terreno em 3D">Relevo</button>
                   {!mapaSat && buscandoSat && <span className="sub">buscando satélite…</span>}
                   {mapaSat && (
                     <button type="button" className="discreto" disabled={buscandoSat} onClick={() => buscarSatelite({ mapa: true })}
@@ -1969,7 +1972,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 {/* a barreira segura qualquer falha do mapa AQUI: confrontantes e
                     vértices, ao lado, continuam na tela */}
                 <BarreiraErro onde="o mapa" compacta chave={`${fundoMapa}|${servico.id}`}>
-                  {fundoMapa === "mapa" && mapaInterativoOk ? (
+                  {fundoMapa === "relevo" ? (
+                    <PainelRelevo vertices={vertices} aneis={aneisMapa} fuso={fusoSigef}
+                      nome={servico.denominacao ?? ""} />
+                  ) : fundoMapa === "mapa" && mapaInterativoOk ? (
                     <PainelSigef modo="sobreposicao" aneis={aneisSigef} pontos={pontosSigef} uf={servico.uf} altura={440}
                       semMapa={'use "Satélite" ou "Esquema", logo acima'} />
                   ) : (
