@@ -14,7 +14,7 @@ import { gerarPlantaPdf } from "../supabase/functions/_shared/planta.ts";
 import { gerarQr, retangulosQr, capacidadeBytes, penalidade } from "../supabase/functions/_shared/qr.ts";
 import {
   ALFABETO_CODIGO, codigoAgrupado, codigoValido, emitirComAutenticidade, gerarCodigoVerificacao, metadadosPublicos,
-  normalizarCodigo, sha256Hex, urlVerificacao, TIPOS_DOCUMENTO,
+  normalizarCodigo, publicarEmissao, sha256Hex, urlVerificacao, TIPOS_DOCUMENTO,
 } from "../supabase/functions/_shared/autenticidade.ts";
 import { pngAssinatura } from "./fixtures/png_assinatura.mjs";
 
@@ -146,19 +146,37 @@ const RESERVA = {
   metadados: metadadosPublicos({ tipo: "planta_sigef", servico: { denominacao: "F" }, rt: null, areaFmt: "1", perimetroFmt: "2", dataStr: "d" }),
 };
 
-test("emissão: reserva o código, gera com o selo e confirma com o SHA-256 dos bytes finais", async () => {
+test("emissão: reserva o código, gera com o selo e confirma com o SHA-256 só depois do upload", async () => {
   const db = bancoFalso();
   let seloRecebido = null;
   const e = await emitirComAutenticidade(db, RESERVA, async (selo) => { seloRecebido = selo; return new TextEncoder().encode(`pdf ${selo.codigo}`); });
   assert.ok(codigoValido(e.codigo));
   assert.equal(seloRecebido.url, urlVerificacao(e.codigo));
   const linha = db.linhas.get(e.codigo);
+  assert.equal(linha.hash_sha256, null, "antes do upload o registro não tem hash (não aparece como autêntico)");
+  let subiu = null;
+  const aviso = await publicarEmissao(db, e, async (b) => { assert.equal(linha.hash_sha256, null, "confirma DEPOIS de subir"); subiu = b; });
+  assert.equal(aviso, undefined);
+  assert.equal(subiu, e.bytes);
   assert.equal(linha.hash_sha256, e.hash);
   assert.equal(e.hash, createHash("sha256").update(`pdf ${e.codigo}`).digest("hex"));
   assert.equal(e.aviso, undefined);
   // repetir a geração = código novo
   const e2 = await emitirComAutenticidade(db, RESERVA, async () => new Uint8Array([1]));
   assert.notEqual(e2.codigo, e.codigo);
+});
+
+test("emissão: upload que falha apaga a reserva e o erro sobe", async () => {
+  const db = bancoFalso();
+  const e = await emitirComAutenticidade(db, RESERVA, async () => new Uint8Array([3]));
+  assert.ok(db.linhas.has(e.codigo));
+  await assert.rejects(publicarEmissao(db, e, async () => { throw new Error("storage fora"); }), /storage fora/);
+  assert.equal(db.linhas.size, 0, "nenhum registro sobra para um PDF que não foi entregue");
+  // sem código (banco sem a migração): só sobe
+  const sem = await emitirComAutenticidade(bancoFalso({ semTabela: true }), RESERVA, async () => new Uint8Array([4]));
+  let n = 0;
+  assert.equal(await publicarEmissao(db, sem, async () => { n++; }), undefined);
+  assert.equal(n, 1);
 });
 
 test("emissão: geração que falha descarta a reserva; banco sem a migração gera sem selo, avisado", async () => {

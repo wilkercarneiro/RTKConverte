@@ -30,7 +30,7 @@ import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { escritorioDoServico } from "../_shared/modelos.ts";
 import { identidadeDaEmpresa } from "../_shared/timbre_automatico.ts";
 import { carregarAssinaturaRt } from "../_shared/assinatura_rt.ts";
-import { emitirComAutenticidade, metadadosPublicos } from "../_shared/autenticidade.ts";
+import { emitirComAutenticidade, metadadosPublicos, publicarEmissao } from "../_shared/autenticidade.ts";
 import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
 import type { ClienteVertices } from "../_shared/vertices_db.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
@@ -351,8 +351,13 @@ Deno.serve(async (req) => {
       .eq("servico_id", servico_id).order("versao", { ascending: false }).limit(1);
     const versao = ((vmax?.[0]?.versao as number | undefined) ?? 0) + 1;
     const path = `${servico_id}/v${versao}/planta.pdf`;
-    const up = await supa.storage.from("gerados").upload(path, pdfBytes, { upsert: true, contentType: "application/pdf" });
-    if (up.error) throw up.error;
+    // o registro de autenticidade só é confirmado (hash) depois do upload; se o
+    // upload falhar, a reserva do código é apagada
+    const avisoSelo = await publicarEmissao(supa, emissao, async (b) => {
+      const up = await supa.storage.from("gerados").upload(path, b, { upsert: true, contentType: "application/pdf" });
+      if (up.error) throw up.error;
+    });
+    if (avisoSelo) avisos.push(avisoSelo);
     // "SIGEF" no título/nome do arquivo: esta é a planta oficial, para não se
     // confundir com a que sai junto do memorial (gerar-documentos, tipo planta_pdf_sistema)
     await gravarHistoricoDocumentos(supa as unknown as ClienteHistorico, [{ servico_id, versao, tipo: "planta_pdf", titulo: `Planta ${folhaSaida} (PDF · SIGEF)`, path }], autor);

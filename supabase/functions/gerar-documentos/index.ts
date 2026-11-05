@@ -42,7 +42,7 @@ import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 import { aplicarTimbreAutomatico, identidadeDaEmpresa, precisaTimbreAutomatico } from "../_shared/timbre_automatico.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
 import { aplicarAssinaturaRt, carregarAssinaturaRt } from "../_shared/assinatura_rt.ts";
-import { emitirComAutenticidade, metadadosPublicos } from "../_shared/autenticidade.ts";
+import { emitirComAutenticidade, metadadosPublicos, publicarEmissao, type Emissao } from "../_shared/autenticidade.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 import { conferirContorno } from "../_shared/contorno.ts";
 import { ARQUIVO_TABULAR_SISTEMA, baixarModelosDasPecas, montarTabularDocx } from "../_shared/tabular_sistema.ts";
@@ -581,6 +581,8 @@ Deno.serve(async (req) => {
     // desenhada com a geometria que acabou de gerar o memorial e a planilha.
     // Uma falha aqui não derruba o DOCX/ODS: vira aviso e os dois seguem.
     let plantaBuf: Uint8Array | null = null;
+    // a emissão da planta (selo): confirmada só depois do upload
+    let emissaoPlanta: Emissao | null = null;
     // a imagem do imóvel também serve de reserva para a A3 de gleba sem a sua
     let satImovelImg: ImagemSatelite | null = null;
 
@@ -708,6 +710,7 @@ Deno.serve(async (req) => {
       Deno.env.get("URL_VERIFICACAO") || undefined);
       if (emissao.aviso) avisosGeracao.push(emissao.aviso);
       plantaBuf = emissao.bytes;
+      emissaoPlanta = emissao;
     } catch (e) {
       avisosGeracao.push(`Memorial e planilha gerados, mas a planta falhou: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -752,16 +755,21 @@ Deno.serve(async (req) => {
         docs.push({ servico_id, versao, tipo: "tabular_docx", titulo: `Memorial Tabular (DOCX · dados do sistema)${selo}`, path: pTabular });
       }
     }
-    if (plantaBuf) {
-      const u3 = await supa.storage.from("gerados").upload(pPlanta, plantaBuf, { upsert: true, contentType: "application/pdf" });
-      if (u3.error) {
-        plantaBuf = null;
-        avisosGeracao.push(`Memorial e planilha gerados, mas o envio da planta falhou: ${u3.error.message}`);
-      } else {
+    if (plantaBuf && emissaoPlanta) {
+      // hash confirmado só depois do upload; upload que falha apaga a reserva
+      try {
+        const avisoSelo = await publicarEmissao(supa, emissaoPlanta, async (b) => {
+          const u3 = await supa.storage.from("gerados").upload(pPlanta, b, { upsert: true, contentType: "application/pdf" });
+          if (u3.error) throw u3.error;
+        });
+        if (avisoSelo) avisosGeracao.push(avisoSelo);
         docs.push({
           servico_id, versao, tipo: "planta_pdf_sistema",
           titulo: `Planta ${folhaSaida} (PDF · dados do sistema)${selo}`, path: pPlanta,
         });
+      } catch (e) {
+        plantaBuf = null;
+        avisosGeracao.push(`Memorial e planilha gerados, mas o envio da planta falhou: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     // ------------------------- por gleba / por parte -------------------------
@@ -829,10 +837,12 @@ Deno.serve(async (req) => {
           }, (seloU) => gerarPlantaPdf({ ...dadosPlantaU, metragem: metragem === true, naoEdificavel, ...(seloU ? { autenticidade: seloU } : {}) }, undefined, { editavel: true }),
           Deno.env.get("URL_VERIFICACAO") || undefined);
           if (emissaoU.aviso && !avisosGeracao.includes(emissaoU.aviso)) avisosGeracao.push(emissaoU.aviso);
-          const pdfU = emissaoU.bytes;
           const path = `${pastaU}/planta-A3.pdf`;
-          const up = await supa.storage.from("gerados").upload(path, pdfU, { upsert: true, contentType: "application/pdf" });
-          if (up.error) throw up.error;
+          const avisoSeloU = await publicarEmissao(supa, emissaoU, async (b) => {
+            const up = await supa.storage.from("gerados").upload(path, b, { upsert: true, contentType: "application/pdf" });
+            if (up.error) throw up.error;
+          });
+          if (avisoSeloU && !avisosGeracao.includes(avisoSeloU)) avisosGeracao.push(avisoSeloU);
           docs.push({ servico_id, versao, tipo: "gleba_planta_pdf", titulo: `Planta A3 · ${u.nome}${selo}`, path });
           const sg = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `Planta A3 - ${nomeBaseDe(servico)} - ${u.nome}.pdf` });
           saida.planta_pdf = sg.data?.signedUrl ?? null;
