@@ -1445,3 +1445,74 @@ button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #f
 .dv-geo-partes { border-top: 1px solid var(--linha); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .dv-geo-partes > header { display: flex; align-items: center; gap: 6px; }
 .dv-geo-partes > header b { font-size: 14px; color: var(--texto); }
+
+/* ================================================================ telas de trabalho: mapa sem achatar + tela cheia
+   Pedido do Wilker (05/11/2026): "a tela não tem rolagem, porém os mapas ficaram
+   achatados na altura" — num notebook (1536 × 730) o mapa da Divisão ficava com
+   ~300 px entre cabeçalho, etapas, linha de comando e duas barras embaixo.
+   1) o que cerca o mapa encolhe: cabeçalho e etapas mais baixos, a linha de
+      comando numa linha só (sugestões ao lado do campo, não embaixo);
+   2) o mapa tem altura mínima: janela baixa demais faz a PÁGINA rolar, nunca
+      espreme o mapa;
+   3) .em-tela-cheia (TelaCheia.tsx): a área de trabalho cobre a tela toda. */
+@media (min-width: 901px) {
+  /* cabeçalho e etapas mais baixos nas telas de trabalho */
+  .app.casca .tela-cheia > .topo { padding-top: 12px; }
+  .app.casca .tela-cheia > .topo:has(+ .etapas-barra) { padding-bottom: 8px; }
+  .app.casca .tela-cheia > .topo .titulo { font-size: 19px; }
+  .app.casca .tela-cheia > .topo.topo-limpo { gap: 6px; }
+  .app.casca .tela-cheia > .etapas-barra { padding-top: 6px; padding-bottom: 6px; }
+  .app.casca .tela-cheia > .etapas-barra .etapas-barra-nav button { height: 32px; }
+  .app.casca .lot-pagina.tela-cheia > .topo { padding-top: 10px; gap: 4px 14px; }
+  .app.casca .lot-pagina.tela-cheia > .topo .stepper { margin-top: 0; }
+  /* janela baixa: rola a página, o mapa fica do tamanho mínimo */
+  .tela-cheia { overflow-x: hidden; overflow-y: auto; }
+  /* contain: size — a altura da prancheta vem do espaço que sobra, não do
+     conteúdo do painel (senão a lista de partes/lotes empurra a barra de salvar
+     para baixo da barra fixa de gerar) */
+  .tela-cheia > .lot-area-trabalho { flex: 1 1 0; contain: size; min-height: 560px; }
+  .tela-cheia > .car-area-trabalho { flex: 1 1 0; contain: size; min-height: 520px; }
+  /* Divisão: menos borda em volta e a prancheta nunca abaixo de 560 px; o corpo
+     não encolhe abaixo do conteúdo (a página rola, a barra de salvar não some) */
+  .conf-divisao > .conferencia-corpo { flex: 1 0 auto; padding-top: 8px; padding-bottom: 2px; }
+  .conf-divisao #bloco-divisao { min-height: auto; padding: 10px 14px; gap: 8px; }
+  .conf-divisao #bloco-divisao > header h3 { font-size: 15px; margin: 0; }
+  .conf-divisao .dv-prancheta { flex: 1 1 0; contain: size; min-height: 560px; }
+  .conf-divisao #bloco-divisao > .dv-barra { padding-top: 6px; }
+}
+@media (min-width: 1100px) {
+  /* linha de comando numa linha só: o campo e, ao lado, as sugestões ou o recado */
+  .lot-area-trabalho .lot-comando { flex-direction: row; align-items: center; gap: 10px; padding: 8px 12px; }
+  .lot-area-trabalho .lot-cmd-linha { flex: 1 1 440px; min-width: 300px; }
+  .lot-area-trabalho .lot-cmd-sugestoes { flex: 1 1 0; min-width: 0; height: 36px; }
+  .lot-area-trabalho .lot-cmd-msg { max-height: 36px; line-height: 1.3; }
+}
+
+/* ---- tela cheia (TelaCheia.tsx): a área de trabalho cobre tudo, abaixo dos
+   avisos (90) e dos diálogos (100), acima do menu lateral e do suporte */
+html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
+.em-tela-cheia {
+  position: fixed !important; inset: 0; z-index: 85;
+  width: auto !important; height: auto !important; max-height: none !important; min-height: 0 !important;
+  margin: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+  background: var(--card);
+}
+.lot-area-trabalho.em-tela-cheia, .car-area-trabalho.em-tela-cheia { grid-template-rows: minmax(0, 1fr) auto; }
+.mapa-cert.em-tela-cheia { display: flex; flex-direction: column; }
+.mapa-cert.em-tela-cheia > .mapa-interativo { flex: 1 1 auto; height: auto !important; min-height: 0; border-radius: 0; }
+.mapa-cert.em-tela-cheia > .sobreposicao-painel { flex: none; max-height: 34%; overflow-y: auto; border-radius: 0; margin: 0; }
+.ct-editor.em-tela-cheia { display: flex; flex-direction: column; }
+.ct-editor.em-tela-cheia > .ct-svg { flex: 1 1 auto; height: auto; min-height: 0; }
+.lt-mapa.em-tela-cheia { display: flex; flex-direction: column; padding: 12px 16px; overflow: auto; }
+.lt-mapa.em-tela-cheia .lt-mapa-area { flex: 1 1 auto; min-height: 0; display: flex; }
+.lt-mapa.em-tela-cheia .lt-mapa-area > svg { width: 100%; height: 100%; }
+
+/* ---- o botão, em cada mapa */
+.botao-tela-cheia { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.botao-tela-cheia.ativa { background: var(--primaria-clara) !important; color: var(--floresta); border-color: var(--primaria); }
+.lot-zoom .botao-tela-cheia { width: 32px; height: 32px; padding: 0; background: rgb(255 255 255 / 95%); }
+.car-tela-cheia { position: absolute; right: 12px; top: 56px; width: 36px; height: 36px; padding: 0; border-radius: 10px; background: var(--card); }
+.mapa-cert { position: relative; }
+.mapa-cert-tela-cheia { position: absolute; left: 10px; top: 10px; z-index: 3; width: 32px; height: 32px; padding: 0; border-radius: 6px; background: #fff; box-shadow: 0 0 0 2px rgb(0 0 0 / 10%); }
+.lt-mapa { position: relative; }
+.lt-tela-cheia { position: absolute; right: 14px; bottom: 46px; z-index: 3; width: 34px; height: 34px; padding: 0; border-radius: 8px; background: rgb(255 255 255 / 95%); }
