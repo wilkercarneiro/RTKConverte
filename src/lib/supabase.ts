@@ -24,6 +24,31 @@ export function aoChamarFuncao(f: Ouvinte): () => void {
 }
 
 export async function chamarFuncao<T>(nome: string, body: unknown): Promise<T> {
+  const resp = await postarFuncao(nome, body);
+  const dados = await resp.json();
+  if (!resp.ok) throw new Error(dados.erro ?? `Erro ${resp.status}`);
+  for (const f of ouvintes) { try { f(nome); } catch { /* ouvinte nunca quebra a chamada */ } }
+  return dados as T;
+}
+
+/**
+ * Função que devolve um ARQUIVO (corpo binário, nome no cabeçalho
+ * X-Nome-Arquivo) — a `entregar` do CAR e do loteamento.
+ */
+export async function arquivoDaFuncao(nome: string, body: unknown): Promise<{ blob: Blob; nome: string }> {
+  const resp = await postarFuncao(nome, body);
+  if (!resp.ok) {
+    const dados = await resp.json().catch(() => ({} as { erro?: string }));
+    throw new Error(dados.erro ?? `Erro ${resp.status}`);
+  }
+  const blob = await resp.blob();
+  let arq = "arquivo";
+  try { arq = decodeURIComponent(resp.headers.get("x-nome-arquivo") ?? arq); } catch { /* nome cru */ }
+  for (const f of ouvintes) { try { f(nome); } catch { /* ouvinte nunca quebra a chamada */ } }
+  return { blob, nome: arq };
+}
+
+async function postarFuncao(nome: string, body: unknown): Promise<Response> {
   const enviar = (token: string) => fetch(`${url}/functions/v1/${nome}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, apikey: anon ?? "", "Content-Type": "application/json" },
@@ -60,8 +85,5 @@ export async function chamarFuncao<T>(nome: string, body: unknown): Promise<T> {
       throw new Error(SESSAO_EXPIRADA);
     }
   }
-  const dados = await resp.json();
-  if (!resp.ok) throw new Error(dados.erro ?? `Erro ${resp.status}`);
-  for (const f of ouvintes) { try { f(nome); } catch { /* ouvinte nunca quebra a chamada */ } }
-  return dados as T;
+  return resp;
 }

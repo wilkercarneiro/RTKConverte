@@ -124,12 +124,3 @@ ${rios}
 </Document></kml>
 `;
 }
-
-export function baixar(conteudo: Blob | string, nome: string, tipo = "application/octet-stream"): void {
-  const blob = typeof conteudo === "string" ? new Blob([conteudo], { type: tipo }) : conteudo;
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = nome;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-}

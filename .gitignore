@@ -17,3 +17,6 @@ docs/prototipos/linha-central/demo/linha-central.html
 
 # modelos da Poly Haven para assar as árvores da maquete (centenas de MB)
 scripts/maquete-arvores/.modelos/
+
+# pacotes gerados para publicar (scripts/empacotar-entregar.mjs)
+/build/

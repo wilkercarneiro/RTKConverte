@@ -8,18 +8,12 @@ import { carregarEscritorio, pastaDoEscritorio } from "../../lib/escritorio";
 import { fmt } from "../../lib/loteamento/calculo.ts";
 import type { Perimetro, Resultado } from "../../lib/loteamento/calculo.ts";
 import type { Projeto } from "../../lib/loteamento/modelo.ts";
-import {
-  FORMATOS, LOCACAO_PADRAO, arquivoLocacao, gerarDxf, gerarKml, memorialDoLote, nomesDosPontos, pontosDeLocacao,
-  quadroDeLotesCsv,
-} from "../../lib/loteamento/saidas.ts";
+import { FORMATOS, LOCACAO_PADRAO, arquivoLocacao, pontosDeLocacao } from "../../lib/loteamento/saidas.ts";
 import type { FormatoLocacao, OpcoesLocacao } from "../../lib/loteamento/saidas.ts";
-import { escalaPara, gerarPlantaPdf } from "../../lib/loteamento/planta.ts";
+import { escalaPara } from "../../lib/loteamento/planta.ts";
 import type { DadosCarimbo, Folha } from "../../lib/loteamento/planta.ts";
-import { gerarDocx } from "../../lib/loteamento/docx.ts";
 import { imagemSituacao } from "../../lib/loteamento/situacao.ts";
-import type { SecaoDocx } from "../../lib/loteamento/docx.ts";
-import { fmtAzimute } from "../../../supabase/functions/_shared/geo.ts";
-import { dist } from "../../lib/loteamento/geom.ts";
+import { baixarEntrega, carimboParaEnvio } from "../../lib/entregas";
 import { Dica } from "../ui";
 import type { RT, Servico } from "../../lib/types";
 import { Miniatura } from "./Assistente";
@@ -34,21 +28,13 @@ interface Props {
   res: Resultado;
   perimetro: Perimetro;
   onExportou: () => void;
+  /** grava o projeto antes de pedir o arquivo: o servidor gera a partir do banco */
+  onSalvar: () => Promise<void>;
   /** abre a maquete 3D */
   onAbrir3D?: () => void;
   /** muda os parâmetros dos projetos de infraestrutura */
   onMudarInfra?: (p: Partial<ParametrosInfra>) => void;
 }
-
-function baixar(dados: BlobPart, nome: string, tipo: string) {
-  const url = URL.createObjectURL(new Blob([dados], { type: tipo }));
-  const a = document.createElement("a");
-  a.href = url; a.download = nome;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-}
-
-const nomeArquivo = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").toUpperCase() || "LOTEAMENTO";
 
 async function carregarCarimbo(s: Servico): Promise<DadosCarimbo> {
   try { return await lerCarimbo(s); } catch {
@@ -87,7 +73,7 @@ async function lerCarimbo(s: Servico): Promise<DadosCarimbo> {
   };
 }
 
-export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir3D, onMudarInfra }: Props) {
+export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalvar, onAbrir3D, onMudarInfra }: Props) {
   const [folha, setFolha] = useState<Folha>("A1");
   const [formato, setFormato] = useState<FormatoLocacao>("csv-nome-e-n");
   const [op, setOp] = useState<OpcoesLocacao>(LOCACAO_PADRAO);
@@ -100,13 +86,12 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
   const fuso = servico.fuso_utm ?? 24;
   // PVs, postes, hidrantes e o reservatório também vão para a coletora, se pedido
   const [locarRedes, setLocarRedes] = useState(false);
+  // só para a contagem e a amostra na tela: o arquivo sai do servidor
   const pontos = useMemo(() => {
     const base0 = pontosDeLocacao(res, perimetro, op);
     if (!locarRedes) return base0;
     try { return [...base0, ...pontosDasRedes(res, calcularInfra(res, projeto))]; } catch { return base0; }
   }, [res, perimetro, op, locarRedes, projeto]);
-  const nomes = useMemo(() => nomesDosPontos(pontosDeLocacao(res, perimetro, LOCACAO_PADRAO)), [res, perimetro]);
-  const base = nomeArquivo(projeto.nome);
   const erros = res.problemas.filter((p) => p.nivel === "erro").length;
   const den = escalaPara(res, folha);
 
@@ -124,102 +109,21 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
     }
   }
 
-  const planta = () => fazer("planta", async () => {
+  /** Grava o projeto e pede o arquivo ao servidor (que gera a partir do banco). */
+  async function doServidor(saida: string, extra: Record<string, unknown> = {}) {
+    await onSalvar();
+    await baixarEntrega({ servico_id: servico.id, saida, ...extra });
+  }
+  const comCarimbo = async (situacao = false) => {
     const c = carimbo ?? await carregarCarimbo(servico);
     // planta de situação: satélite com o loteamento por cima (sem rede, sai sem)
-    const situacao = await imagemSituacao(res, fuso);
-    const bytes = await gerarPlantaPdf(res, projeto, perimetro, { ...c, situacao }, folha);
-    baixar(bytes as unknown as BlobPart, `PLANTA_LOTEAMENTO_${base}_${folha}.pdf`, "application/pdf");
-  });
+    return carimboParaEnvio(situacao ? { ...c, situacao: await imagemSituacao(res, fuso) } : c);
+  };
 
-  const locacao = () => fazer("locacao", () => {
-    const f = FORMATOS.find((x) => x.id === formato)!;
-    const sufixo = `SIRGAS2000_UTM${fuso}S`;
-    if (formato === "dxf") baixar(gerarDxf(res, pontos), `LOCACAO_${base}_${sufixo}.dxf`, "application/dxf");
-    else baixar(arquivoLocacao(pontos, formato), `LOCACAO_${base}_${sufixo}.${f.ext}`, "text/plain;charset=utf-8");
-  });
-
-  const memoriais = () => fazer("memoriais", async () => {
-    const dados = { loteamento: projeto.nome, municipio: servico.municipio ?? "", uf: servico.uf ?? "", proprietario: servico.detentor_nome ?? "", fuso };
-    const secoes: SecaoDocx[] = [];
-    for (const q of res.quadras) for (const l of [...q.lotes].sort((a, b) => a.numero - b.numero)) {
-      const m = memorialDoLote(l, res, nomes, dados);
-      secoes.push({ titulo: "MEMORIAL DESCRITIVO", subtitulo: m.titulo, paragrafos: m.paragrafos, quebraAntes: secoes.length > 0 });
-    }
-    const blob = await gerarDocx(secoes, `${projeto.nome} — memoriais descritivos dos lotes`);
-    baixar(blob, `MEMORIAIS_DOS_LOTES_${base}.docx`, blob.type);
-  });
-
-  const memorialGeral = () => fazer("memorial", async () => {
-    const q = res.quadro;
-    const pct = (v: number) => `${fmt((100 * v) / q.gleba)}%`;
-    const p = projeto.params;
-    const perimetroM = res.ladosGleba.reduce((s, l) => s + dist(l.a, l.b), 0);
-    const c = carimbo ?? await carregarCarimbo(servico);
-    const secoes: SecaoDocx[] = [
-      {
-        titulo: "MEMORIAL DESCRITIVO DO LOTEAMENTO",
-        subtitulo: projeto.nome.toUpperCase(),
-        paragrafos: [
-          `1. IDENTIFICAÇÃO. Loteamento ${projeto.nome}, implantado em gleba${servico.denominacao ? ` denominada ${servico.denominacao}` : ""}${servico.matricula ? `, objeto da matrícula nº ${servico.matricula}` : ""}${servico.municipio ? `, no município de ${servico.municipio}${servico.uf ? `/${servico.uf}` : ""}` : ""}${servico.detentor_nome ? `, de propriedade de ${servico.detentor_nome}${servico.detentor_cpf ? ` (CPF/CNPJ ${servico.detentor_cpf})` : ""}` : ""}, com área total de ${fmt(q.gleba)} m² (${fmt(q.gleba / 1e4, 4)} ha) e perímetro de ${fmt(perimetroM)} m.`,
-          `2. DESCRIÇÃO SUCINTA. O loteamento é composto de ${res.quadras.length} quadras e ${q.lotes.qtd} lotes, com lote padrão de ${fmt(p.frente)} m de frente por ${fmt(p.profundidade)} m de profundidade (${fmt(p.frente * p.profundidade)} m²), sistema viário com ${res.ruas.length} vias e ${res.publicas.length} áreas públicas, conforme o quadro de áreas abaixo.`,
-        ],
-        tabela: [
-          ["Especificação", "Área (m²)", "%"],
-          [`Lotes (${q.lotes.qtd})`, fmt(q.lotes.area), pct(q.lotes.area)],
-          ["Sistema viário", fmt(q.viario), pct(q.viario)],
-          ["Áreas verdes", fmt(q.verde + q.lazer), pct(q.verde + q.lazer)],
-          ["Área institucional", fmt(q.institucional), pct(q.institucional)],
-          ...(q.app > 0 ? [["APP / faixa non aedificandi", fmt(q.app), pct(q.app)]] : []),
-          ...(q.sobras > 0 ? [["Remanescente", fmt(q.sobras), pct(q.sobras)]] : []),
-          ["Total da gleba", fmt(q.gleba), "100,00%"],
-        ],
-      },
-      {
-        titulo: "3. CONDIÇÕES URBANÍSTICAS E RESTRIÇÕES",
-        paragrafos: [
-          `Lotes entre ${fmt(p.areaMin)} e ${fmt(p.areaMax)} m², com frente de ${fmt(p.frenteMin)} a ${fmt(p.frenteMax)} m e profundidade de ${fmt(p.profundidadeMin)} a ${fmt(p.profundidadeMax)} m (mínimos conforme a Lei Federal 6.766/79, art. 4º, II, observada a legislação municipal).`,
-          `Vias com largura total de ${fmt(p.ruaLargura)} m, sendo ${fmt(p.ruaPista)} m de pista de rolamento e ${fmt(Math.max(0, (p.ruaLargura - p.ruaPista) / 2))} m de passeio de cada lado. ${p.esquina === "raio" ? `Esquinas concordadas em curva de raio ${fmt(p.esquinaValor)} m no alinhamento predial.` : p.esquina === "chanfro" ? `Esquinas chanfradas em ${fmt(p.esquinaValor)} m em cada alinhamento.` : ""}`,
-          `Quadras com comprimento máximo de ${fmt(p.quadraCompMax, 0)} m.`,
-          ...(q.app > 0 ? ["As faixas de preservação permanente e non aedificandi indicadas na planta não integram os lotes."] : []),
-        ],
-      },
-      {
-        titulo: "4. QUADRAS",
-        paragrafos: [],
-        tabela: [["Quadra", "Lotes", "Numeração", "Área dos lotes (m²)"], ...res.quadras.map((qq) => [qq.nome, String(qq.lotes.length), qq.lotes.length ? `01 a ${String(qq.lotes.length).padStart(2, "0")}` : "—", fmt(qq.lotes.reduce((s, l) => s + l.area, 0))])],
-      },
-      {
-        titulo: "5. SISTEMA VIÁRIO",
-        paragrafos: [],
-        tabela: [["Via", "Largura (m)", "Extensão (m)", "Área (m²)"], ...res.ruas.map((r) => [r.nome, fmt(r.largura), fmt(r.comprimento, 1), fmt(r.area)])],
-      },
-      {
-        titulo: "6. ÁREAS PÚBLICAS",
-        paragrafos: ["Passam a integrar o domínio do Município, desde a data de registro do loteamento, as vias, as áreas verdes e as áreas destinadas a equipamentos comunitários abaixo (Lei 6.766/79, art. 22)."],
-        tabela: [["Área", "m²", "% da gleba"], ...res.publicas.map((a) => [a.nome, fmt(a.area), pct(a.area)])],
-      },
-      {
-        titulo: "7. PERÍMETRO DA GLEBA",
-        paragrafos: res.ladosGleba.map((l, i) => {
-          const az = (Math.atan2(l.b[0] - l.a[0], l.b[1] - l.a[1]) * 180) / Math.PI;
-          const conf = l.tipo === "via" ? (l.nome || "estrada existente") : (perimetro.confrontantes[i] ?? "—");
-          const de = perimetro.nomes?.[i] ?? `P${i + 1}`, ate = perimetro.nomes?.[(i + 1) % res.ladosGleba.length] ?? `P${((i + 1) % res.ladosGleba.length) + 1}`;
-          return `Do vértice ${de} ao ${ate}: azimute ${fmtAzimute((az + 360) % 360)}, ${fmt(dist(l.a, l.b))} m, confrontando com ${conf}.`;
-        }),
-      },
-      {
-        titulo: "8. RESPONSABILIDADE TÉCNICA",
-        paragrafos: [
-          `${c.rt || "Responsável técnico"}${c.rtRegistro ? ` — ${c.rtRegistro}` : ""}${c.trt ? ` — ART/TRT ${c.trt}` : ""}.`,
-          `Coordenadas no SGR SIRGAS 2000, projeção UTM fuso ${fuso}S; ${res.plano.terreno ? `distâncias e áreas no plano topográfico (fator de escala combinado k = ${res.plano.k.toFixed(8)})` : "distâncias e áreas no plano UTM"}.`,
-          `${servico.municipio || ""}${servico.uf ? `/${servico.uf}` : ""}, ${new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}.`,
-        ],
-      },
-    ];
-    const blob = await gerarDocx(secoes, `${projeto.nome} — memorial descritivo do loteamento`);
-    baixar(blob, `MEMORIAL_DO_LOTEAMENTO_${base}.docx`, blob.type);
-  });
+  const planta = () => fazer("planta", async () => doServidor("planta", { folha, carimbo: await comCarimbo(true) }));
+  const locacao = () => fazer("locacao", () => doServidor("locacao", { formato, op, locarRedes }));
+  const memoriais = () => fazer("memoriais", () => doServidor("memoriais"));
+  const memorialGeral = () => fazer("memorial", async () => doServidor("memorial", { carimbo: await comCarimbo() }));
 
   const formatoAtual = FORMATOS.find((f) => f.id === formato)!;
   const amostra = formato === "dxf" ? "" : arquivoLocacao(pontos.slice(0, 6), formato);
@@ -287,22 +191,22 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onAbrir
             </div>
             <div className="lot-item">
               <div><b>Quadro de lotes (planilha)<Dica>Medidas e áreas de todos os lotes{projeto.params.precoM2 > 0 ? ", com o preço de cada um" : ""} — abre no Excel.</Dica></b></div>
-              <button disabled={!!ocupado} onClick={() => fazer("quadro", () => baixar(quadroDeLotesCsv(res, projeto), `QUADRO_DE_LOTES_${base}.csv`, "text/csv;charset=utf-8"))}>Baixar</button>
+              <button disabled={!!ocupado} onClick={() => fazer("quadro", () => doServidor("quadro"))}>Baixar</button>
             </div>
             <div className="lot-item">
               <div><b>Google Earth (KML)<Dica>O cliente abre no celular e vê os lotes sobre a imagem de satélite.</Dica></b></div>
-              <button disabled={!!ocupado} onClick={() => fazer("kml", () => baixar(gerarKml(res, fuso, projeto.nome), `${base}.kml`, "application/vnd.google-earth.kml+xml"))}>Baixar</button>
+              <button disabled={!!ocupado} onClick={() => fazer("kml", () => doServidor("kml"))}>Baixar</button>
             </div>
             <div className="lot-item">
               <div><b>Projeto em CAD (DXF)<Dica>Camadas separadas (perímetro, quadras, lotes, eixos, áreas, textos e cotas) em coordenadas UTM.</Dica></b></div>
-              <button disabled={!!ocupado} onClick={() => fazer("dxf", () => baixar(gerarDxf(res, pontos), `PROJETO_${base}.dxf`, "application/dxf"))}>Baixar</button>
+              <button disabled={!!ocupado} onClick={() => fazer("dxf", () => doServidor("dxf", { op, locarRedes }))}>Baixar</button>
             </div>
           </div>
         </div>
       </section>
 
-      <EntregasInfra servico={servico} projeto={projeto} res={res} base={base} onExportou={onExportou} onMudarInfra={onMudarInfra}
-        obterCarimbo={async () => carimbo ?? await carregarCarimbo(servico)} />
+      <EntregasInfra projeto={projeto} res={res} onExportou={onExportou} onMudarInfra={onMudarInfra}
+        pedir={async (saida, extra) => doServidor(saida, { ...extra, carimbo: await comCarimbo() })} />
 
       <section className="bloco lot-entrega-campo">
         <header><h3>Para o técnico de campo (coletora GNSS)<Dica>Pontos em UTM SIRGAS 2000 fuso {fuso}S, com o mesmo nome da planta e dos memoriais.</Dica></h3></header>

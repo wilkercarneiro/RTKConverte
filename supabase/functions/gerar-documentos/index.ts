@@ -39,6 +39,7 @@ import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 import { aplicarTimbreAutomatico, identidadeDaEmpresa, precisaTimbreAutomatico } from "../_shared/timbre_automatico.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
+import { conferirContorno } from "../_shared/contorno.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -271,6 +272,13 @@ Deno.serve(async (req) => {
     // área, perímetro e códigos de todas saem de `calcPartes`
     const calc = calcPartes ? calcPartes.partes[0].calc : montarServico(input, proj4);
     const ringTodos = calcPartes ? calcPartes.partes.flatMap((pt) => pt.calc.ring) : calc.ring;
+
+    // 1 crédito = 1 imóvel (0039): antes de gravar códigos ou gerar, o desenho
+    // tem de ser o mesmo imóvel da primeira geração deste serviço
+    const aneisLonLat = (calcPartes ? calcPartes.partes.map((pt) => pt.calc.ring) : [calc.ring])
+      .map((r) => r.map((v): [number, number] => [v.lonDeg, v.latDeg]));
+    const contornoRecusado = await conferirContorno(supa, servico_id, aneisLonLat);
+    if (contornoRecusado) return json({ erro: contornoRecusado.erro }, contornoRecusado.status);
     let areaHaTotal = calcPartes ? calcPartes.areaHa : calc.areaHa;
     let perimetroMTotal = calcPartes ? calcPartes.perimetroM : calc.perimetroM;
 

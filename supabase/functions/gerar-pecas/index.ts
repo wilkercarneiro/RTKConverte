@@ -22,6 +22,7 @@ import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { baixarModelo, escritorioDoServico } from "../_shared/modelos.ts";
 import { mensagemDeErro } from "../_shared/vertices_db.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
+import { anelDoSigef, conferirContorno } from "../_shared/contorno.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -228,6 +229,12 @@ Deno.serve(async (req) => {
       blocos = parseSigefBlocos(text as string);
       sigef = blocos[0];
     }
+
+    // 1 crédito = 1 imóvel (0039): o desenho (do cálculo ou do PDF) tem de ser
+    // o mesmo imóvel da primeira geração deste serviço
+    const contornoRecusado = await conferirContorno(supa, servico_id,
+      (blocos.length ? blocos : sigef ? [sigef] : []).map((b) => anelDoSigef(b.linhas)));
+    if (contornoRecusado) return json({ erro: contornoRecusado.erro }, contornoRecusado.status);
 
     // ---------------- trechos: código do vértice inicial → descritivo ----------------
     // serviço 'pecas': o trecho guarda o código direto (codigo_inicio);

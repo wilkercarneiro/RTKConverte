@@ -30,6 +30,7 @@ import { escritorioDoServico } from "../_shared/modelos.ts";
 import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
 import type { ClienteVertices } from "../_shared/vertices_db.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
+import { conferirContorno } from "../_shared/contorno.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -289,6 +290,11 @@ Deno.serve(async (req) => {
         }
       }
     }
+
+    // 1 crédito = 1 imóvel (0039): o desenho tem de ser o mesmo imóvel da
+    // primeira geração deste serviço (antes de gravar os reconciliados)
+    const contornoRecusado = await conferirContorno(supa, servico_id, aneisSat ?? [anelSat]);
+    if (contornoRecusado) return json({ erro: contornoRecusado.erro }, contornoRecusado.status);
 
     const posse = servico.tipo_imovel === "posse";
     const folhaSaida: Folha = folha === "A1" || folha === "A3" ? folha : (posse ? "A3" : "A1");

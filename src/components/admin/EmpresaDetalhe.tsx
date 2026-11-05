@@ -7,10 +7,10 @@
 //   Usuários, Uso, Histórico
 import { useCallback, useEffect, useState } from "react";
 import {
-  acessosDaEmpresa, adicionarUsuario, atividadesDaEmpresa, atualizarEmpresa, creditosDaEmpresa, lerSenhaPadrao, mensagemDeAcesso,
+  acessosDaEmpresa, adicionarUsuario, atividadesDaEmpresa, atualizarEmpresa, contornosDaEmpresa, creditosDaEmpresa, lerSenhaPadrao, liberarContorno, mensagemDeAcesso,
   redefinirSenha, removerUsuario, usoModalidades, usuariosDaEmpresa,
 } from "../../lib/admin";
-import type { AcessoEmpresa, AtividadeEmpresa, CreditosEmpresa as DadosCreditos, Empresa, StatusEmpresa, UsuarioEmpresa } from "../../lib/admin";
+import type { AcessoEmpresa, AtividadeEmpresa, ContornoServico, CreditosEmpresa as DadosCreditos, Empresa, StatusEmpresa, UsuarioEmpresa } from "../../lib/admin";
 import { rotuloAtividade } from "../../lib/equipe";
 import { recursoDe } from "../../lib/recursos";
 import {
@@ -311,7 +311,55 @@ function Uso({ e }: { e: Empresa }) {
         )}
       </section>
       <AcessosRecentes e={e} />
+      <ImoveisAssinados e={e} />
     </>
+  );
+}
+
+/**
+ * Imóvel de cada serviço (0039): a 1ª geração grava o contorno e as seguintes
+ * precisam ser o mesmo imóvel. Quando o cliente refaz o levantamento do mesmo
+ * imóvel e a geração é recusada, o suporte libera aqui.
+ */
+function ImoveisAssinados({ e }: { e: Empresa }) {
+  const [itens, setItens] = useState<ContornoServico[] | null | undefined>(undefined);
+  const [msg, setMsg] = useState<string | null>(null);
+  const carregar = useCallback(() => { contornosDaEmpresa(e.id).then(setItens).catch(() => setItens(null)); }, [e.id]);
+  useEffect(() => { carregar(); }, [carregar]);
+  if (itens === null) return null;
+  async function liberar(c: ContornoServico) {
+    if (!(await confirmar({ titulo: `Liberar o imóvel de "${c.denominacao}"?`, texto: "A próxima geração deste serviço grava o desenho de novo. Use só quando for o MESMO imóvel levantado outra vez.", confirmar: "Liberar" }))) return;
+    try { await liberarContorno(c.servico_id); setMsg(`Liberado: ${c.denominacao}.`); carregar(); }
+    catch (err) { setMsg(err instanceof Error ? err.message : String(err)); }
+  }
+  return (
+    <section className="sa-card" style={{ marginTop: 18 }}>
+      <header>
+        <h3>Imóvel de cada serviço<Dica>1 crédito vale para 1 imóvel: a primeira geração grava o contorno, e as seguintes só saem se o desenho for o mesmo imóvel (metade ou mais em comum). Se o cliente refez o levantamento do mesmo imóvel e a geração foi recusada, libere aqui.</Dica></h3>
+        {itens && itens.length > 0 && <span className="sub">{itens.length} serviço(s)</span>}
+      </header>
+      {msg && <div className="sa-vazio" style={{ textAlign: "left" }}>{msg}</div>}
+      {itens === undefined ? <Carregando /> : itens.length === 0 ? (
+        <div className="sa-vazio">Nenhum serviço gerado desde a trava de imóvel.</div>
+      ) : (
+        <div className="sa-tabela-wrap">
+          <table className="sa-tabela">
+            <thead><tr><th>Serviço</th><th>Tipo</th><th className="num">Área (ha)</th><th>Assinado em</th><th /></tr></thead>
+            <tbody>
+              {itens.map((c) => (
+                <tr key={c.servico_id}>
+                  <td><b>{c.denominacao}</b><div className="sub mono" style={{ fontSize: 11.5 }}>{c.servico_id}</div></td>
+                  <td style={{ textTransform: "capitalize" }}>{c.modalidade}</td>
+                  <td className="num">{fmtNum(Number(c.area_ha))}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{fmtData(c.assinado_em)}</td>
+                  <td><button type="button" onClick={() => liberar(c)}>Liberar</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 

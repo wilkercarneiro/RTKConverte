@@ -53,6 +53,17 @@ export async function acessosDaEmpresa(id: string, limite = 50): Promise<AcessoE
   const r = await supabase.rpc("sa_acessos", { p_escritorio: id, p_limite: limite });
   return r.error ? null : ((r.data as AcessoEmpresa[]) ?? []);
 }
+/** Serviço com o imóvel assinado na 1ª geração (0039): 1 crédito = 1 imóvel. */
+export interface ContornoServico { servico_id: string; denominacao: string; modalidade: string; area_ha: number; assinado_em: string }
+/** Banco sem a 0039 (ou qualquer falha): null, e a seção some. */
+export async function contornosDaEmpresa(id: string): Promise<ContornoServico[] | null> {
+  const r = await supabase.rpc("sa_contornos_da_empresa", { p_escritorio: id });
+  return r.error ? null : ((r.data as ContornoServico[]) ?? []);
+}
+/** O cliente refez o levantamento do MESMO imóvel: a próxima geração assina de novo. */
+export const liberarContorno = async (servicoId: string): Promise<void> => {
+  ok(await supabase.rpc("sa_liberar_contorno", { p_servico: servicoId }));
+};
 export interface RecursoEmpresa { chave: string; liberado: boolean; origem: "excecao" | "plano" | "padrao"; excecao: boolean | null }
 export interface Contato {
   id: string; nome: string; empresa: string | null; telefone: string; email: string | null;

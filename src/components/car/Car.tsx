@@ -13,7 +13,8 @@ import {
   vegetacaoPorLado,
 } from "../../lib/car/motor.ts";
 import type { ProjetoCar, ResultadoCar } from "../../lib/car/motor.ts";
-import { CAMADAS, baixar, gerarKmlCar, gerarKmlVegetacao, nomeArquivo, zipCompleto, zipDaCamada } from "../../lib/car/saidas.ts";
+import { CAMADAS, nomeArquivo } from "../../lib/car/saidas.ts";
+import { baixarEntrega } from "../../lib/entregas";
 import type { CamadaCar } from "../../lib/car/saidas.ts";
 import { carregarProjetoCar, marcarCarExportado, salvarProjetoCar } from "../../lib/car/persistencia.ts";
 import { Dica, GiroMapa, StatusSalvamento } from "../ui";
@@ -207,12 +208,10 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
     if (!projeto || !res) return;
     setBaixando(qual);
     try {
-      const base = nomeArquivo(projeto.nome);
-      const dados = { municipio: servico.municipio, uf: servico.uf, proprietario: servico.detentor_nome };
-      if (qual === "kml") baixar(gerarKmlCar(projeto, res), `${base}_CAR.kml`, "application/vnd.google-earth.kml+xml");
-      else if (qual === "kml-vegetacao") baixar(gerarKmlVegetacao(projeto, res, dados), `${base}_VEGETACAO_NATIVA.kml`, "application/vnd.google-earth.kml+xml");
-      else if (qual === "tudo") baixar(await zipCompleto(projeto, res, dados), `${base}_CAR.zip`);
-      else baixar(await zipDaCamada(projeto, res, qual), `${base}_${CAMADAS.find((c) => c.id === qual)!.arquivo}.zip`);
+      // o servidor gera a partir do projeto GRAVADO (e confere o imóvel do
+      // serviço, 0039): grava antes de pedir
+      await armazenamento.salvar(servico.id, projeto);
+      await baixarEntrega({ servico_id: servico.id, saida: qual });
       if (servico.status !== "gerado") {
         await armazenamento.marcarExportado?.(servico.id);
         setServico({ ...servico, status: "gerado" });

@@ -40,6 +40,27 @@ Método: leitura do código + testes no banco real dentro de `begin … rollback
 - Timeouts do Postgres: anon 3 s, authenticated 8 s; PostgREST no máximo 1000 linhas.
 - Segredos: nenhum service_role, chave da OpenAI/Asaas/Mapbox no repositório nem no bundle.
 
+## Reanálise depois da publicação (04/11, noite) e travas dos itens 2 a 5
+
+Conferido de fora (chave pública) e pela estrutura do banco: a 0038 e as 14
+funções estão no ar; tudo responde 401/403/413 como devia. O que faltava:
+
+| # | Item | Correção (`scripts/publicar-travas.sh`) |
+|---|---|---|
+| 2 | Login: senha mínima 6, 150 logins/5 min por IP | GoTrue: mínimo 8 com letras e números; `/token` 60/5 min por IP. O IP do limite **não** é falsificável: o Traefik descarta o `X-Forwarded-For` do cliente (teste com `X-Forwarded-For: 9.9.9.9` registrou o IP real). Reautenticação na troca de senha ficou desligada: a VPS não tem SMTP e a troca de senha provisória quebraria |
+| 3 | Gateway sem limite por IP | Traefik `rtk-limite-api@file` (40 req/s, rajada 200) no roteador da API; o Traefik publica em modo host, então vê o IP real |
+| 4 | 1 crédito gerava outro imóvel trocando os vértices | 0039: `servicos_contorno` + `conferir_contorno`. A 1ª geração grava o contorno; as seguintes precisam de ≥ 50% em comum com ele e com o desenho novo (sempre contra o original, sem "andar" aos poucos). Ligado em gerar-documentos, gerar-planta, gerar-pecas e entregar. Superadmin libera na ficha da empresa (Uso → Imóvel de cada serviço). Testado no banco real com rollback: ponto corrigido 98% passa; outro imóvel 0%, pedaço de dentro 6% e área em volta 11% barram |
+| 5 | CAR e loteamento gerados no navegador | Função `entregar`: lê o projeto do banco (car_projetos / loteamentos + vértices), confere o contorno e gera shapefiles/KML do CAR e planta, memoriais, quadro, KML, DXF, locação e infraestrutura do loteamento. O site não traz mais os geradores (conferido no pacote) |
+
+Limite que continua: a tela do loteamento e do CAR desenha o projeto no
+navegador, então quem abre as ferramentas do navegador vê as coordenadas do
+próprio serviço pago. O que o crédito protege agora são os documentos oficiais,
+que só saem do servidor e só para o imóvel do serviço.
+
+Credenciais vistas durante a reanálise (rotacionar): senha do Postgres do
+`sb_rtkconverte` em `stack.json` e a senha Basic do painel no rótulo
+`sb-rtkconverte-panel` do api-gw.
+
 ## Pendências (não feitas aqui — decisão ou infraestrutura)
 
 1. **Firewall da VPS desligado** (`ufw inactive`): as portas 2377/7946 do Docker Swarm ficam abertas para a internet. Ligar o ufw liberando só 22, 80, 443 (e 8080 se o IPTV usar) — mexe em todos os sistemas da VPS.

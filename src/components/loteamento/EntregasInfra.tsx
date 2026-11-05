@@ -5,31 +5,19 @@
 import { useMemo, useState } from "react";
 import type { Resultado } from "../../lib/loteamento/calculo.ts";
 import type { Projeto } from "../../lib/loteamento/modelo.ts";
-import type { DadosCarimbo, Folha } from "../../lib/loteamento/planta.ts";
+import type { Folha } from "../../lib/loteamento/planta.ts";
 import { calcularInfra, infraDe, REDES } from "../../lib/loteamento/infra/index.ts";
 import type { ParametrosInfra } from "../../lib/loteamento/infra/index.ts";
-import { gerarPlantasInfra } from "../../lib/loteamento/infra/planta.ts";
-import { dxfRedes, memorialInfra, zipPlanilhas } from "../../lib/loteamento/infra/saidas.ts";
-import { gerarDocx } from "../../lib/loteamento/docx.ts";
-import type { Servico } from "../../lib/types";
 import { Dica } from "../ui";
 
 const f = (v: number, c = 2) => v.toLocaleString("pt-BR", { minimumFractionDigits: c, maximumFractionDigits: c });
 const soma = (o: Record<number, number>) => Object.values(o).reduce((a, b) => a + b, 0);
 
-function baixar(dados: BlobPart, nome: string, tipo: string) {
-  const url = URL.createObjectURL(new Blob([dados], { type: tipo }));
-  const a = Object.assign(document.createElement("a"), { href: url, download: nome });
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-}
-
-export function EntregasInfra({ servico, projeto, res, base, obterCarimbo, onExportou, onMudarInfra }: {
-  servico: Servico;
+export function EntregasInfra({ projeto, res, pedir, onExportou, onMudarInfra }: {
   projeto: Projeto;
   res: Resultado;
-  base: string;
-  obterCarimbo: () => Promise<DadosCarimbo>;
+  /** pede o arquivo ao servidor (função `entregar`), que gera a partir do banco */
+  pedir: (saida: string, extra?: Record<string, unknown>) => Promise<void>;
   onExportou: () => void;
   onMudarInfra?: (p: Partial<ParametrosInfra>) => void;
 }) {
@@ -59,19 +47,10 @@ export function EntregasInfra({ servico, projeto, res, base, obterCarimbo, onExp
   const cor = (id: string) => REDES.find((x) => x.id === id)?.cor ?? "#999";
   const avisos = [...a.avisos, ...e.avisos, ...d.avisos, ...el.avisos];
 
-  const pranchas = () => fazer("pranchas", async () => {
-    const c = await obterCarimbo();
-    const bytes = await gerarPlantasInfra(res, projeto, r, c, folha);
-    baixar(bytes as unknown as BlobPart, `PROJETOS_DE_INFRAESTRUTURA_${base}_${folha}.pdf`, "application/pdf");
-  });
-  const memorial = () => fazer("memorial", async () => {
-    const c = await obterCarimbo();
-    const secoes = memorialInfra(res, projeto, r, { municipio: servico.municipio ?? "", uf: servico.uf ?? "", rt: c.rt, rtRegistro: c.rtRegistro, trt: c.trt });
-    const blob = await gerarDocx(secoes, `${projeto.nome} — projetos de infraestrutura`);
-    baixar(blob, `MEMORIAL_INFRAESTRUTURA_${base}.docx`, blob.type);
-  });
-  const planilhas = () => fazer("planilhas", async () => baixar(await zipPlanilhas(res, r, base), `PLANILHAS_INFRAESTRUTURA_${base}.zip`, "application/zip"));
-  const dxf = () => fazer("dxf", () => baixar(dxfRedes(res, r), `REDES_${base}.dxf`, "application/dxf"));
+  const pranchas = () => fazer("pranchas", () => pedir("infra-pranchas", { folha }));
+  const memorial = () => fazer("memorial", () => pedir("infra-memorial"));
+  const planilhas = () => fazer("planilhas", () => pedir("infra-planilhas"));
+  const dxf = () => fazer("dxf", () => pedir("infra-dxf"));
 
   return (
     <section className="bloco lot-entrega-infra" id="lot-infra">
