@@ -119,6 +119,17 @@ export function BotaoTelaCheia({ className, onAlternar, rotulo = false }: {
   const ref = useRef<HTMLButtonElement>(null);
   const cheia = useTelaCheia(ref);
   const clicar = useCallback(() => { onAlternar?.(); alternarTelaCheia(ref.current); }, [onAlternar]);
+  // a tela saiu do ar em tela cheia (trocou de rota, fechou o serviço): sem
+  // isto a página ficava presa sem rolagem, com a classe no <html>
+  useEffect(() => () => {
+    queueMicrotask(() => {
+      if (ativa && !ativa.isConnected) {
+        delete ativa.dataset.telaCheiaNavegador;
+        aplicar(null);
+        sairDoNavegador();
+      }
+    });
+  }, []);
   const titulo = cheia ? "Sair da tela cheia (Esc)" : "Tela cheia: o mapa, as ferramentas e o painel ocupam a tela toda";
   return (
     <button ref={ref} type="button" className={`botao-tela-cheia${cheia ? " ativa" : ""}${className ? ` ${className}` : ""}`}
