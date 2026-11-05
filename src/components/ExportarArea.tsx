@@ -18,7 +18,7 @@ import { FORMATOS_AREA } from "../lib/exportar/formatos.ts";
 import type { FormatoArea } from "../lib/exportar/formatos.ts";
 import { temPermissao } from "../lib/permissoes";
 import { telaParaCss } from "../lib/zoom";
-import { avisar } from "./ui";
+import { avisar, confirmar } from "./ui";
 import "./exportar.css";
 
 /** Largura do menu em px do CSS (cabe "Pacote CAD (.zip)" com o "para que serve" ao lado). */
@@ -76,6 +76,22 @@ export function ExportarArea({ servicoId, temPerimetro, antes }: {
 
   async function exportar(f: FormatoArea) {
     setPos(null);
+    // o primeiro arquivo do serviço (exportar ou gerar) fixa o imóvel dele
+    // (0039: 1 crédito = 1 imóvel). Exportar para "conferir" com o fuso ou os
+    // pontos errados prendia o serviço ao desenho errado — avisa uma vez.
+    const chave = `vertces.exportou.${servicoId}`;
+    let jaAvisou = false;
+    try { jaAvisou = localStorage.getItem(chave) === "1"; } catch { /* sem armazenamento: avisa */ }
+    if (!jaAvisou) {
+      const ok = await confirmar({
+        titulo: "Exportar fixa o imóvel deste serviço",
+        texto: "O primeiro arquivo do serviço — exportado ou gerado — amarra o serviço a este desenho (1 crédito = 1 imóvel). Depois dá para corrigir pontos, mas não trocar de imóvel. Confira o fuso e o perímetro antes.",
+        confirmar: "Está certo, exportar",
+        cancelar: "Voltar e conferir",
+      });
+      if (!ok) return;
+      try { localStorage.setItem(chave, "1"); } catch { /* segue */ }
+    }
     setGerando(f);
     try {
       await antes?.();

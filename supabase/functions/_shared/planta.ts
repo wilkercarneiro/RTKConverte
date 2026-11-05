@@ -170,7 +170,8 @@ export interface DadosPlanta {
    * confrontante é BR/estadual/ferrovia. Informativa — não muda área nem
    * perímetro (em imóvel rural a aplicação é controversa). `porVia` troca o
    * padrão por sigla ("BR-116") ou tipo ("estadual"): é a redução por lei
-   * municipal. Ausente = não sai (a planta fica como era).
+   * municipal. Ausente = não sai; gerar-planta e gerar-documentos passam o
+   * padrão sempre (naoEdificavelDaPlanta), salvo `recuo_vias.planta: false`.
    */
   naoEdificavel?: { padrao: number; porVia?: Record<string, number> };
   matricula: string;
@@ -297,6 +298,41 @@ function textoFit(c: Ctx, bruto: string, x: number, y: number, size: number, max
 // da área do imóvel, sem tocar nas divisas
 // ---------------------------------------------------------------------------
 interface Pt { x: number; y: number }
+
+function pontoNoAnel(p: Pt, anel: Pt[]): boolean {
+  let d = false;
+  for (let i = 0, j = anel.length - 1; i < anel.length; j = i++) {
+    const a = anel[i], b = anel[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) d = !d;
+  }
+  return d;
+}
+
+/** Os pedaços do segmento a→b que ficam dentro do anel (corta nos cruzamentos com as arestas). */
+export function dentroDoAnel(a: Pt, b: Pt, anel: Pt[]): [Pt, Pt][] {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const ts = [0, 1];
+  for (let i = 0; i < anel.length; i++) {
+    const p = anel[i], q = anel[(i + 1) % anel.length];
+    const ex = q.x - p.x, ey = q.y - p.y;
+    const den = dx * ey - dy * ex;
+    if (Math.abs(den) < 1e-12) continue;
+    const t = ((p.x - a.x) * ey - (p.y - a.y) * ex) / den;
+    const u = ((p.x - a.x) * dy - (p.y - a.y) * dx) / den;
+    if (t > 0 && t < 1 && u >= 0 && u <= 1) ts.push(t);
+  }
+  ts.sort((x, y) => x - y);
+  const out: [Pt, Pt][] = [];
+  for (let k = 0; k + 1 < ts.length; k++) {
+    if (ts[k + 1] - ts[k] < 1e-9) continue;
+    const m = (ts[k] + ts[k + 1]) / 2;
+    if (!pontoNoAnel({ x: a.x + dx * m, y: a.y + dy * m }, anel)) continue;
+    const p0 = { x: a.x + dx * ts[k], y: a.y + dy * ts[k] }, p1 = { x: a.x + dx * ts[k + 1], y: a.y + dy * ts[k + 1] };
+    const ult = out[out.length - 1];
+    if (ult && Math.abs(ult[1].x - p0.x) < 1e-9 && Math.abs(ult[1].y - p0.y) < 1e-9) ult[1] = p1; else out.push([p0, p1]);
+  }
+  return out;
+}
 
 function pontoDentro(p: Pt, poly: Pt[]): boolean {
   let dentro = false;
@@ -1038,6 +1074,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
         return Number.isFinite(w) && w > 0 ? w : 0;
       });
       const P = (i: number): Pt => ({ x: X(vs[(i + nv) % nv].e), y: Y(vs[(i + nv) % nv].n) });
+      const anelPts = Array.from({ length: nv }, (_, i) => P(i));
       // reta deslocada para dentro do lado i (a normal da aresta aponta para fora)
       const desl = (i: number, off: number): [Pt, Pt] => {
         const n = normalAresta(i), a = P(i), b = P(i + 1);
@@ -1073,10 +1110,14 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
         pts.push(depois && Math.hypot(depois.x - ult[1].x, depois.y - ult[1].y) < 4 * off ? depois : ult[1]);
         const nome = linhasDescritivo(trechoDoIdx(ini).descritivo)[0] ?? "";
         obj(c, `nao-edificavel:${ai}:${ini}`, "restricao", `Faixa não edificável (${fmtMetros(w)} m) — ${nome}`);
+        // só o que cai DENTRO do imóvel: a ponta que encontra a reta da divisa
+        // vizinha pode passar dela (ângulo fechado) e sair para fora do anel
         for (let j = 0; j + 1 < pts.length; j++) {
-          const seg = { x1: pts[j].x, y1: pts[j].y, x2: pts[j + 1].x, y2: pts[j + 1].y };
-          linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 1.6, LARANJA_NE, TRACO_NE);
-          obstaculos.push(seg);
+          for (const [a, b] of dentroDoAnel(pts[j], pts[j + 1], anelPts)) {
+            const seg = { x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+            linha(c, seg.x1, seg.y1, seg.x2, seg.y2, 1.6, LARANJA_NE, TRACO_NE);
+            obstaculos.push(seg);
+          }
         }
         largurasNe.add(w);
       }

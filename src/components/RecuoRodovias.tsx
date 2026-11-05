@@ -9,7 +9,8 @@
 // consulta ao DNIT traz a largura oficial do trecho (Termo de Reconhecimento)
 // quando existe e acusa se o perímetro ENTRA na faixa de domínio.
 import { useEffect, useMemo, useState } from "react";
-import { classificarVia, nomeDaVia, recuoDaVia, resumoRecuo, REGRAS_RECUO, type AjusteRecuo, type Via } from "../lib/recuo";
+import { classificarVia, nomeDaVia, recuoDaVia, regraDaVia, resumoRecuo, type AjusteRecuo, type Via } from "../lib/recuo";
+import { lerHectares } from "../lib/desmembramento";
 import { consultarDnit, type ResultadoDnit } from "../lib/dnit";
 import { Dica } from "./ui";
 
@@ -32,9 +33,10 @@ export function viasDosConfrontantes(rotulos: (string | null | undefined)[]): { 
 }
 
 const fmtM = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+// "7,5", "7.5" e "1.234,5" (o mesmo leitor das áreas): antes "7.5" virava 75 m
 const lerNum = (s: string): number | null => {
-  const v = Number(s.replace(/\./g, "").replace(",", "."));
-  return s.trim() && Number.isFinite(v) && v >= 0 ? v : null;
+  const v = lerHectares(s.replace(/m$/i, ""));
+  return Number.isFinite(v) && v >= 0 ? v : null;
 };
 
 export function RecuoRodovias({ rotulos, aneisLonLat, uf, ajustes, onAjustes, rural = true, eixo = false, planta, onPlanta }: {
@@ -96,7 +98,7 @@ export function RecuoRodovias({ rotulos, aneisLonLat, uf, ajustes, onAjustes, ru
         {vias.map(({ chave, rotulo, via }) => {
           const aj = ajustes[chave] ?? {};
           const r = recuoDaVia(via, aj);
-          const reg = REGRAS_RECUO[via.tipo];
+          const reg = regraDaVia(via);
           const dn = via.tipo === "federal" && dnit?.r ? {
             faixas: dnit.r.faixas.filter((f) => !via.sigla || f.br === via.sigla),
             invasoes: dnit.r.invasoes.filter((i) => !via.sigla || i.br === via.sigla),

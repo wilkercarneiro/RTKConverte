@@ -31,6 +31,19 @@ export function ehDesmembramento(d: ParametrosDivisao | null | undefined): boole
   return d?.tipo === "desmembramento";
 }
 
+/**
+ * A divisão como foi SALVA (tipo e remanescente de `aplicado`), não o rascunho
+ * da prancheta: trocar partilha ↔ desmembramento ou a remanescente sem salvar
+ * não pode mudar o papel das glebas já salvas (a parte do herdeiro B virava
+ * "remanescente" e gerar passava o serviço dela ao proprietário). Sem
+ * `aplicado` é partilha — toda divisão gravada antes do desmembramento.
+ */
+export function divisaoAplicada(d: ParametrosDivisao | null | undefined): ParametrosDivisao | null {
+  if (!d) return null;
+  const a = d.aplicado;
+  return { ...d, tipo: a?.tipo ?? "partilha", remanescente: a?.tipo === "desmembramento" ? a.remanescente : null };
+}
+
 /** O papel da área na posição k (ordem das glebas salvas). Na partilha toda área é "parte". */
 export function papelDaArea(d: ParametrosDivisao | null | undefined, k: number): PapelArea {
   if (!ehDesmembramento(d)) return "parte";
@@ -380,27 +393,83 @@ const CAMPOS_DA_PESSOA = [
 ] as const;
 
 const txt = (v: unknown) => String(v ?? "").trim();
+const normal = (v: unknown) => txt(v).normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/\s+/g, " ");
+const soDigitos = (v: unknown) => txt(v).replace(/\D/g, "");
 
 /**
- * O que atualizar no cabeçalho do serviço da área para ele seguir a divisão
- * (null = nada). Denominação e CPF vão sozinhos; trocou quem recebe, vai a
- * pessoa inteira como servicoDaArea a monta (o RG e o endereço do dono antigo
- * não servem ao novo).
+ * "MARIA" e "MARIA DE SOUZA" são a mesma pessoa para este fim: o nome do
+ * serviço da área foi completado lá, não trocado. Pessoa diferente é quando
+ * nenhum dos dois nomes começa pelas palavras do outro.
  */
-export function mudancasNoCabecalho(
+export function mesmaPessoa(a: unknown, b: unknown): boolean {
+  const x = normal(a), y = normal(b);
+  if (!x || !y) return true;
+  if (x === y) return true;
+  const [curto, longo] = x.length <= y.length ? [x, y] : [y, x];
+  return longo.startsWith(curto + " ");
+}
+
+export interface DiferencaCabecalho {
+  /** o que gravar, se a pessoa aceitar levar a divisão ao serviço da área */
+  patch: Partial<Servico>;
+  /** o que muda, para a pergunta ("Adquirente: MARIA → JOÃO") */
+  linhas: string[];
+  /** trocou quem recebe: o RG, endereço e espólio de quem estava lá saem */
+  trocaPessoa: boolean;
+}
+
+/**
+ * O que difere entre o cabeçalho do serviço da área e a divisão (null = nada).
+ * NUNCA grava sozinho: a tela pergunta antes (o serviço da área pode ter sido
+ * corrigido lá — nome completo, CPF, RG, endereço). Regras:
+ *  - campo vazio na divisão não apaga o que está no serviço da área;
+ *  - nome que é a mesma pessoa (completado lá) não conta como diferença;
+ *  - trocou de fato quem recebe: vai a pessoa inteira como servicoDaArea a
+ *    monta (o RG e o endereço do dono antigo não servem ao novo) — e a
+ *    pergunta diz isso.
+ */
+export function diferencasNoCabecalho(
   atual: Partial<Pick<Servico, "denominacao" | "detentor_nome" | "detentor_cpf">> | null | undefined,
   esperado: Partial<Servico>,
-): Partial<Servico> | null {
+): DiferencaCabecalho | null {
   if (!atual) return null;
-  if (txt(atual.detentor_nome) !== txt(esperado.detentor_nome)) {
-    const patch: Record<string, unknown> = { denominacao: esperado.denominacao ?? null };
+  const patch: Record<string, unknown> = {};
+  const linhas: string[] = [];
+  let trocaPessoa = false;
+  if (txt(esperado.detentor_nome) && !mesmaPessoa(atual.detentor_nome, esperado.detentor_nome)) {
+    trocaPessoa = true;
     for (const k of CAMPOS_DA_PESSOA) patch[k] = (esperado as Record<string, unknown>)[k] ?? (k === "is_espolio" ? false : null);
-    return patch as Partial<Servico>;
+    linhas.push(`Quem recebe: ${txt(atual.detentor_nome) || "(vazio)"} → ${txt(esperado.detentor_nome)}`);
+  } else if (soDigitos(esperado.detentor_cpf) && soDigitos(atual.detentor_cpf) !== soDigitos(esperado.detentor_cpf)) {
+    patch.detentor_cpf = esperado.detentor_cpf;
+    linhas.push(`CPF/CNPJ: ${txt(atual.detentor_cpf) || "(vazio)"} → ${txt(esperado.detentor_cpf)}`);
   }
-  const patch: Partial<Servico> = {};
-  if (txt(atual.denominacao) !== txt(esperado.denominacao)) patch.denominacao = esperado.denominacao ?? null;
-  if (txt(atual.detentor_cpf) !== txt(esperado.detentor_cpf)) patch.detentor_cpf = esperado.detentor_cpf ?? null;
-  return Object.keys(patch).length ? patch : null;
+  if (txt(esperado.denominacao) && normal(atual.denominacao) !== normal(esperado.denominacao)) {
+    patch.denominacao = esperado.denominacao;
+    linhas.push(`Imóvel: ${txt(atual.denominacao) || "(vazio)"} → ${txt(esperado.denominacao)}`);
+  }
+  return linhas.length ? { patch: patch as Partial<Servico>, linhas, trocaPessoa } : null;
+}
+
+/**
+ * Ao trocar o desenho do serviço da área, a confrontação descrita LÁ (nome do
+ * vizinho, matrícula, CNS, texto) continua nos vértices que não mudaram de
+ * lugar (até 1 mm). Só os pontos novos vêm com a confrontação da divisão.
+ */
+export function manterConfrontacao<T extends Partial<Vertice>>(novos: T[], antes: readonly Partial<Vertice>[]): T[] {
+  const chave = (v: Partial<Vertice>) => (v.e == null || v.n == null ? null : `${Math.round(Number(v.e) * 1000)}|${Math.round(Number(v.n) * 1000)}`);
+  const porPosicao = new Map<string, Partial<Vertice>>();
+  for (const v of antes) { const k = chave(v); if (k && !porPosicao.has(k)) porPosicao.set(k, v); }
+  return novos.map((v) => {
+    const k = chave(v);
+    const a = k ? porPosicao.get(k) : undefined;
+    if (!a) return v;
+    return {
+      ...v,
+      descritivo: a.descritivo, tipo_limite: a.tipo_limite, eh_via: a.eh_via, cns: a.cns, matricula: a.matricula,
+      apelido_txt: a.apelido_txt, numerado: a.numerado, exibir_planta: a.exibir_planta,
+    };
+  });
 }
 
 type VerticeDesenho = Pick<Vertice, "e" | "n" | "tipo" | "codigo">;

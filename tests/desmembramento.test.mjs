@@ -197,20 +197,39 @@ test("desmembramento · o serviço da área acompanha a divisão: cabeçalho e d
   const { glebas, vertices: vs } = desmembrar();
   const esperado = D.servicoDaArea(servico, glebas[0], "desmembrada");
   const igual = { denominacao: esperado.denominacao, detentor_nome: esperado.detentor_nome, detentor_cpf: esperado.detentor_cpf };
-  assert.equal(D.mudancasNoCabecalho(igual, esperado), null, "nada mudou, nada a gravar");
-  assert.deepEqual(D.mudancasNoCabecalho({ ...igual, denominacao: "VELHA" }, esperado), { denominacao: esperado.denominacao });
-  // trocou quem recebe: vai a pessoa inteira (o RG e o espólio do dono antigo não servem ao novo)
-  const p = D.mudancasNoCabecalho({ ...igual, detentor_nome: "ESPÓLIO DE JOSÉ" }, esperado);
+  assert.equal(D.diferencasNoCabecalho(igual, esperado), null, "nada mudou, nada a gravar");
+  const den = D.diferencasNoCabecalho({ ...igual, denominacao: "VELHA" }, esperado);
+  assert.deepEqual(den.patch, { denominacao: esperado.denominacao });
+  assert.equal(den.trocaPessoa, false);
+  assert.match(den.linhas[0], /VELHA →/);
+  // nome completado no serviço da área: a mesma pessoa, nada a levar (o RG e o endereço de lá ficam)
+  assert.equal(D.diferencasNoCabecalho({ ...igual, detentor_nome: "Maria Compradora de Souza" }, esperado), null);
+  // a divisão sem CPF ou sem denominação não apaga o que foi preenchido lá
+  assert.equal(D.diferencasNoCabecalho(igual, { ...esperado, detentor_cpf: null, denominacao: "" }), null);
+  assert.equal(D.diferencasNoCabecalho({ ...igual, detentor_cpf: "111.222.333-44" }, { ...esperado, detentor_cpf: null }), null);
+  // trocou quem recebe: vai a pessoa inteira (o RG e o espólio do dono antigo não servem ao novo) — e a tela pergunta
+  const d = D.diferencasNoCabecalho({ ...igual, detentor_nome: "ESPÓLIO DE JOSÉ" }, esperado);
+  assert.equal(d.trocaPessoa, true);
+  const p = d.patch;
   assert.equal(p.detentor_nome, "MARIA COMPRADORA");
   assert.equal(p.is_espolio, false);
   assert.equal(p.inventariante_nome, null);
   assert.equal(p.detentor_rg, null);
+  assert.ok(D.mesmaPessoa("JOSÉ", "jose da silva"));
+  assert.ok(!D.mesmaPessoa("JOSÉ", "JOSEFA"));
   const vizinhas = glebas.map((g, i) => D.glebaComPapel(g, D.papelDaArea(servico.divisao, i)));
   const vp = verticesDaParte(servico, vs, vizinhas, 0, "s");
   assert.ok(D.mesmoDesenho(vp, vp.map((v) => ({ ...v, descritivo: "descrito no serviço da área" }))), "a confrontação descrita lá fica");
   assert.ok(!D.mesmoDesenho(vp, vp.map((v, i) => (i === 2 ? { ...v, e: v.e + 0.01 } : v))), "a divisa andou 1 cm");
   assert.ok(!D.mesmoDesenho(vp, vp.map((v, i) => (i === 0 ? { ...v, codigo: "DSBN-M-9999" } : v))), "o imóvel foi renumerado");
   assert.ok(!D.mesmoDesenho(vp, vp.slice(1)));
+  // trocou o desenho: o vértice que ficou no lugar mantém a confrontação descrita lá; o que andou vem da divisão
+  const descritos = vp.map((v) => ({ ...v, descritivo: "VIZINHO DESCRITO LÁ", matricula: "999" }));
+  const novos = vp.map((v, i) => (i === 2 ? { ...v, e: v.e + 5 } : v));
+  const m = D.manterConfrontacao(novos, descritos);
+  assert.equal(m[0].descritivo, "VIZINHO DESCRITO LÁ");
+  assert.equal(m[0].matricula, "999");
+  assert.equal(m[2].descritivo, vp[2].descritivo);
 });
 
 test("desmembramento · destacar a área pela frente, fundo e laterais: encostada no lado, com a área exata", () => {

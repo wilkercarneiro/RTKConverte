@@ -19,7 +19,8 @@ import { chamarFuncao, supabase } from "../lib/supabase";
 import type { Gleba, Servico, Vertice } from "../lib/types";
 import { verticesDaParte } from "../lib/divisao_servico";
 import {
-  ROTULO_PAPEL, ehDesmembramento, glebaComPapel, mesmoDesenho, mudancasNoCabecalho, papelDaArea, quemRecebe, servicoDaArea, type PapelArea,
+  ROTULO_PAPEL, diferencasNoCabecalho, divisaoAplicada, ehDesmembramento, glebaComPapel, manterConfrontacao, mesmoDesenho, papelDaArea, quemRecebe, servicoDaArea,
+  type DiferencaCabecalho, type PapelArea,
 } from "../lib/desmembramento";
 import { areaHaDoAnel } from "../lib/glebas";
 import { precisaNumerar } from "../lib/codigos_marcos";
@@ -87,7 +88,9 @@ const extDoPath = (p: string) => p.split(".").pop() ?? "";
 /** As áreas de uma divisão, o estado da geração e as ações — um só, para as duas vistas. */
 export function useDocumentosDasAreas(ctx: ContextoAreas) {
   const { servico, vertices, glebas, setGlebas, salvar, numerarMarcos, avisar, setErro, folha, metragem } = ctx;
-  const desm = ehDesmembramento(servico.divisao);
+  // o papel de cada área vem da divisão SALVA, não do rascunho da prancheta
+  const aplicada = useMemo(() => divisaoAplicada(servico.divisao), [servico.divisao]);
+  const desm = ehDesmembramento(aplicada);
   const unidade = desm ? "área" : "parte";
   const unidades = desm ? "áreas" : "partes";
   /** As mensagens de crédito falam de parte; no desmembramento é área. */
@@ -104,7 +107,7 @@ export function useDocumentosDasAreas(ctx: ContextoAreas) {
 
   const partes = useMemo(() => glebas.filter((g) => g.anel.length >= 3), [glebas]);
   const areas: AreaDoc[] = useMemo(() => partes.map((g, i) => {
-    const papel = papelDaArea(servico.divisao, i);
+    const papel = papelDaArea(aplicada, i);
     const sid = g.servico_parte_id ?? null;
     return {
       chave: g.id ?? `i${i}`, i, gleba: g, papel,
@@ -114,7 +117,7 @@ export function useDocumentosDasAreas(ctx: ContextoAreas) {
       servicoId: sid,
       docs: sid ? docs[sid] ?? null : null,
     };
-  }), [partes, servico, docs]);
+  }), [partes, servico, aplicada, docs]);
 
   const marcada = (a: AreaDoc) => (escolha ? escolha.has(a.chave) : true);
   const marcar = (a: AreaDoc, sim: boolean) => {
@@ -173,37 +176,85 @@ export function useDocumentosDasAreas(ctx: ContextoAreas) {
   });
 
   /**
-   * O serviço da área segue a divisão: cabeçalho (nome do imóvel e quem recebe)
-   * e desenho (vértices). Devolve como desfazer o desenho, se a geração falhar
-   * — o serviço da área não pode ficar com um desenho que não gerou.
+   * O serviço da área segue a divisão: cabeçalho (só se a pessoa aceitou levar
+   * — `patch`) e desenho (vértices; a confrontação descrita lá fica nos pontos
+   * que não andaram). Devolve como desfazer os dois, se a geração falhar — o
+   * serviço da área não pode ficar com um desenho ou um dono que não gerou.
    */
-  async function acompanharDivisao(sid: string, a: AreaDoc, novos: Vertice[]): Promise<{ desfazer: (() => Promise<void>) | null; mudou: boolean }> {
-    let mudou = false;
-    const { data: sv } = await supabase.from("servicos").select("id, denominacao, detentor_nome, detentor_cpf").eq("id", sid).maybeSingle();
-    const patch = mudancasNoCabecalho(sv as Partial<Servico> | null, servicoDaArea(servico, a.gleba, a.papel));
+  async function acompanharDivisao(sid: string, novos: Vertice[], patch: Partial<Servico> | null): Promise<{ desfazer: (() => Promise<void>) | null }> {
+    const desfazeres: (() => Promise<void>)[] = [];
     if (patch) {
+      const campos = Object.keys(patch).join(", ");
+      const { data: velho } = await supabase.from("servicos").select(campos).eq("id", sid).maybeSingle();
       const { error } = await supabase.from("servicos").update(patch).eq("id", sid);
       if (error) throw error;
-      mudou = true;
+      if (velho) desfazeres.push(async () => { await supabase.from("servicos").update(velho as Partial<Servico>).eq("id", sid); });
     }
     const { data: atuais, error: eL } = await supabase.from("vertices").select().eq("servico_id", sid).order("ordem");
     if (eL) throw eL;
     const antes = (atuais ?? []) as Vertice[];
-    if (!antes.length || mesmoDesenho(antes, novos)) return { desfazer: null, mudou };
-    const { error: eD } = await supabase.from("vertices").delete().eq("servico_id", sid);
-    if (eD) throw eD;
-    const { error: eI } = await supabase.from("vertices").insert(novos);
-    if (eI) {
-      await supabase.from("vertices").insert(antes);
-      throw eI;
+    if (!mesmoDesenho(antes, novos)) {
+      // sem vértices: a criação parou antes de gravá-los (tentar de novo completa)
+      if (antes.length) {
+        const { error: eD } = await supabase.from("vertices").delete().eq("servico_id", sid);
+        if (eD) throw eD;
+      }
+      const { error: eI } = await supabase.from("vertices").insert(manterConfrontacao(novos, antes));
+      if (eI) {
+        if (antes.length) await supabase.from("vertices").insert(antes);
+        throw eI;
+      }
+      if (antes.length) {
+        desfazeres.push(async () => {
+          await supabase.from("vertices").delete().eq("servico_id", sid);
+          await supabase.from("vertices").insert(antes);
+        });
+      }
     }
-    return {
-      mudou: true,
-      desfazer: async () => {
-        await supabase.from("vertices").delete().eq("servico_id", sid);
-        await supabase.from("vertices").insert(antes);
-      },
-    };
+    return { desfazer: desfazeres.length ? async () => { for (const f of desfazeres.reverse()) await f(); } : null };
+  }
+
+  /**
+   * Antes de gerar: o cabeçalho de cada serviço de área já criado difere da
+   * divisão? Nada é levado sem perguntar (o serviço da área pode ter sido
+   * corrigido lá). Serviço de área concluído fica como está.
+   */
+  async function conferirServicosDasAreas(lista: AreaDoc[]): Promise<{ levar: Map<string, DiferencaCabecalho>; concluidos: Set<string> }> {
+    const ids = lista.map((a) => a.servicoId).filter((x): x is string => !!x);
+    const levar = new Map<string, DiferencaCabecalho>();
+    const concluidos = new Set<string>();
+    if (!ids.length) return { levar, concluidos };
+    const { data, error } = await supabase.from("servicos").select("id, denominacao, detentor_nome, detentor_cpf, concluido_em").in("id", ids);
+    if (error) throw error;
+    const porId = new Map(((data ?? []) as (Partial<Servico> & { id: string })[]).map((x) => [x.id, x]));
+    const diferentes: { a: AreaDoc; d: DiferencaCabecalho }[] = [];
+    for (const a of lista) {
+      const sv = a.servicoId ? porId.get(a.servicoId) : undefined;
+      if (!sv) continue;
+      if (sv.concluido_em) { concluidos.add(a.servicoId!); continue; }
+      const d = diferencasNoCabecalho(sv, servicoDaArea(servico, a.gleba, a.papel));
+      if (d) diferentes.push({ a, d });
+    }
+    if (diferentes.length) {
+      const um = diferentes.length === 1;
+      const ok = await confirmar({
+        titulo: um ? `O serviço da ${unidade} ${diferentes[0].a.nome} está diferente da divisão` : `O serviço de ${diferentes.length} ${unidades} está diferente da divisão`,
+        texto: (
+          <>
+            <p>Levar para o serviço {um ? `da ${unidade}` : `das ${unidades}`} o que está na divisão?</p>
+            <ul>
+              {diferentes.map(({ a, d }) => <li key={a.chave}><b>{a.nome}</b>: {d.linhas.join("; ")}</li>)}
+            </ul>
+            {diferentes.some((x) => x.d.trocaPessoa) && <p>Onde muda quem recebe, o RG, o endereço e os dados de espólio de quem estava lá saem (eram da outra pessoa).</p>}
+            <p className="sub">Manter: os documentos saem com os dados que estão no serviço {um ? `da ${unidade}` : `de cada ${unidade}`}.</p>
+          </>
+        ),
+        confirmar: "Levar o que está na divisão",
+        cancelar: "Manter como está",
+      });
+      if (ok) for (const { a, d } of diferentes) levar.set(a.servicoId!, d);
+    }
+    return { levar, concluidos };
   }
 
   async function gerar() {
@@ -243,6 +294,10 @@ export function useDocumentosDasAreas(ctx: ContextoAreas) {
       if (!ok) return;
     }
 
+    let conferido: Awaited<ReturnType<typeof conferirServicosDasAreas>>;
+    try { conferido = await conferirServicosDasAreas(alvo); } catch (e) { setErro(e instanceof Error ? e.message : String(e)); return; }
+    const { levar, concluidos } = conferido;
+
     setGerando(true);
     setErro(null);
     setAvisos([]);
@@ -263,14 +318,21 @@ export function useDocumentosDasAreas(ctx: ContextoAreas) {
           const { data: novo, error } = await supabase.from("servicos").insert(servicoDaArea(servico, a.gleba, a.papel)).select().single();
           if (error) throw error;
           const criado = (novo as Servico).id;
+          criadas++;
+          // liga a área ao serviço ANTES dos vértices: se algo falhar daqui em
+          // diante, tentar de novo usa este serviço (sem gastar outro crédito)
+          if (a.gleba.id) {
+            const { error: eG } = await supabase.from("glebas").update({ servico_parte_id: criado }).eq("id", a.gleba.id);
+            if (eG) throw eG;
+          }
+          ligarServico(a.i, criado);
           const { error: eV } = await supabase.from("vertices").insert(verticesDaParte(servico, vs, vizinhas, a.i, criado));
           if (eV) throw eV;
-          if (a.gleba.id) await supabase.from("glebas").update({ servico_parte_id: criado }).eq("id", a.gleba.id);
-          ligarServico(a.i, criado);
           sid = criado;
-          criadas++;
+        } else if (concluidos.has(sid)) {
+          avisosGer.push(`${a.nome}: o serviço está concluído — gerado com o desenho e os dados que estão nele (a divisão não foi levada).`);
         } else {
-          desfazer = (await acompanharDivisao(sid, a, verticesDaParte(servico, vs, vizinhas, a.i, sid))).desfazer;
+          desfazer = (await acompanharDivisao(sid, verticesDaParte(servico, vs, vizinhas, a.i, sid), levar.get(sid)?.patch ?? null)).desfazer;
         }
         let r: GeradoArea;
         try {

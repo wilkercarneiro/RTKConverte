@@ -7,7 +7,7 @@
 // domínio inteira sai da terra útil; e a largura do padrão pede confirmação.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classificarVia, confrontanteDaVia, naoEdificavelDaPlanta, notaRecuo, recuoDaVia, resumoRecuo } from "../src/lib/recuo.ts";
+import { classificarVia, confrontanteDaVia, naoEdificavelDaPlanta, notaRecuo, recuoDaVia, regraDaVia, resumoRecuo } from "../src/lib/recuo.ts";
 
 test("naoEdificavelDaPlanta: padrão ligado, redução só com lei (revalidada) e desligável", () => {
   assert.deepEqual(naoEdificavelDaPlanta(null), { padrao: 15, porVia: {} });
@@ -111,4 +111,19 @@ test("loteamento: estrada do levantamento já nasce com o recuo da lei", async (
 
 test("naoEdificavelDaPlanta: estrada municipal com a lei do município entra pela chave do tipo", () => {
   assert.deepEqual(naoEdificavelDaPlanta({ vias: { municipal: { naoEdificavel: 6, leiMunicipal: "Lei 5/2019" } } }), { padrao: 15, porVia: { municipal: 6 } });
+});
+
+test("recuo · classificação: ferrovia por extenso, código de UF só como rodovia (revisão 05/11)", () => {
+  const t = (s) => classificarVia(s)?.tipo ?? null;
+  assert.equal(t("ESTRADA DE FERRO VITÓRIA A MINAS"), "ferrovia");
+  assert.equal(t("ESTRADA DO PA 25 DE MAIO"), "municipal", "PA = projeto de assentamento, não rodovia do Pará");
+  assert.equal(t("RUA SE 10"), null);
+  assert.equal(t("BA-120"), "estadual");
+  assert.equal(t("BA 052"), "estadual");
+  assert.equal(t("ROD. BA 120"), "estadual");
+  assert.equal(t("RODOVIA BA 052"), "estadual");
+  assert.equal(t("ESTRADA MUNICIPAL BA-001"), "municipal");
+  assert.equal(regraDaVia({ tipo: "estadual", uf: "BA" }).dominio, 30);
+  assert.equal(regraDaVia({ tipo: "estadual", uf: "MG" }).dominio, null, "fora da Bahia não há padrão de largura");
+  assert.match(regraDaVia({ tipo: "estadual", uf: "MG" }).orgao, /MG/);
 });

@@ -111,6 +111,12 @@ export interface ParametrosDivisao {
    * remanescente. null = sem remanescente (todas as áreas saem do imóvel).
    */
   remanescente?: number | null;
+  /**
+   * O tipo e a remanescente da divisão SALVA (gravados ao salvar as glebas).
+   * `tipo`/`remanescente` acima são o rascunho da prancheta e mudam antes de
+   * salvar; os documentos de cada área leem só este. Ausente = partilha.
+   */
+  aplicado?: { tipo: "partilha" | "desmembramento"; remanescente: number | null };
 }
 
 export interface Servico {

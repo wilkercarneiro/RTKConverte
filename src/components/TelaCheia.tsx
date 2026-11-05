@@ -34,9 +34,19 @@ function sairDoNavegador(): void {
  * barra de gerar e cabeçalhos fixos de tabela apareciam POR CIMA do mapa
  * (visto no mapa do SIGEF da etapa Confrontantes).
  */
+// a lista dos marcados: desmarcar por ela, não subindo de novo pela área — a
+// área pode já ter saído da página (trocou de tela em tela cheia) e aí não tem
+// mais pais, e .app/#root ficavam marcados para sempre
+let marcados: HTMLElement[] = [];
 function marcarAncestrais(el: HTMLElement | null, ligar: boolean): void {
+  if (!ligar) {
+    for (const p of marcados) p.classList.remove("tela-cheia-ancestral");
+    marcados = [];
+    return;
+  }
   for (let p = el?.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
-    p.classList.toggle("tela-cheia-ancestral", ligar);
+    p.classList.add("tela-cheia-ancestral");
+    marcados.push(p);
   }
 }
 

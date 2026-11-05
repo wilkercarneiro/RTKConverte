@@ -100,7 +100,7 @@ const VERTICES_LAB = DESM_SALVO?.vertices ?? VERTICES;
 
 const SERVICO = {
   id: SID, tipo: "geo", modalidade: COMPLETO ? "completo" : "conferencia", status: "gerado", tem_glebas: COM_GLEBAS,
-  ...(DESMEMBRAMENTO ? { divisao: { tipo: "desmembramento", iguais: false, remanescente: 1, ...(DESM_SALVO?.divisao ?? {}) } } : DIVISAO ? { divisao: { iguais: true } } : {}),
+  ...(DESMEMBRAMENTO ? { divisao: { tipo: "desmembramento", iguais: false, remanescente: 1, aplicado: { tipo: "desmembramento", remanescente: 1 }, ...(DESM_SALVO?.divisao ?? {}) } } : DIVISAO ? { divisao: { iguais: true } } : {}),
   nome_arquivo_txt: "LABORATORIO.txt", fuso_utm: 24, credenciado_id: "c1", rt_id: "rt1",
   denominacao: "FAZENDA LABORATÓRIO", detentor_nome: "FULANO DE TAL", detentor_cpf: "000.000.000-00",
   municipio: "ARACI", uf: "BA", trt: "BR0000000000", created_at: new Date(Date.now() - 864e5).toISOString(),

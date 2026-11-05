@@ -637,6 +637,11 @@ export function DivisaoEditor({ modo = "divisao", servico, vertices: todos, gleb
         azimute: azManual, inverter, iguais, projeto,
         ...(ehGleba ? {} : { tipo }),
         ...(desm ? { remanescente: remanescente !== null && remanescente < nPartes ? remanescente : null } : {}),
+        // o que vale para os documentos de cada área (o rascunho acima muda antes de salvar)
+        aplicado: {
+          tipo: !ehGleba && desm ? "desmembramento" : "partilha",
+          remanescente: !ehGleba && desm && remanescente !== null && remanescente < nPartes ? remanescente : null,
+        },
       } as ParametrosDivisao,
     });
   };

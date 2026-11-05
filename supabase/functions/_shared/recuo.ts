@@ -85,12 +85,28 @@ export const REGRAS_RECUO: Record<TipoVia, RegraRecuo> = {
   },
 };
 
+/**
+ * A regra que vale para a via: a estadual com padrão de 30 m é a da Bahia
+ * (SEINFRA/SIT). Rodovia de outra UF fica sem largura padrão — o operador
+ * informa a do órgão rodoviário daquele estado.
+ */
+export function regraDaVia(via: Pick<Via, "tipo" | "uf">): RegraRecuo {
+  const r = REGRAS_RECUO[via.tipo];
+  if (via.tipo !== "estadual" || !via.uf || via.uf === "BA") return r;
+  return {
+    ...r,
+    dominio: null,
+    orgao: `órgão rodoviário de ${via.uf}`,
+    fonteDominio: `Rodovia estadual de ${via.uf}: a largura é a do órgão rodoviário do estado (DER ou equivalente), no projeto de cada trecho. Informe a largura.`,
+  };
+}
+
 const sem = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase();
 
 const UFS = "AC|AL|AM|AP|BA|CE|DF|ES|GO|MA|MG|MS|MT|PA|PB|PE|PI|PR|RJ|RN|RO|RR|RS|SC|SE|SP|TO";
 const RE_BR = /\bBR\s*[-–]?\s*(\d{3})\b/;
 const RE_ESTADUAL = new RegExp(`\\b(${UFS})\\s*[-–]?\\s*(\\d{2,3})\\b`);
-const RE_FERROVIA = /\b(FERROVIA|FERROVIARI[AO]|LINHA\s+FERREA|LEITO\s+FERROVIARIO|EF\s*-?\s*\d{3})\b/;
+const RE_FERROVIA = /\b(FERROVIA|FERROVIARI[AO]|ESTRADA\s+DE\s+FERRO|LINHA\s+FERREA|LEITO\s+FERROVIARIO|EF\s*-?\s*\d{3})\b/;
 const RE_MUNICIPAL = /\b(ESTRADA\s+(MUNICIPAL|VICINAL)|VICINAL|ESTRADA|CORREDOR|SERVIDAO|EM\s*-\s*\d+)\b/;
 const RE_RODOVIA_ESTADUAL = /\bRODOVIA\s+ESTADUAL\b/;
 const RE_RODOVIA_FEDERAL = /\bRODOVIA\s+FEDERAL\b/;
@@ -116,8 +132,11 @@ export function classificarVia(rotulo: string | null | undefined): Via | null {
   if (br) return { tipo: "federal", sigla: `BR-${br[1]}`, uf: null };
   if (RE_RODOVIA_FEDERAL.test(t)) return { tipo: "federal", sigla: null, uf: null };
   // sigla de UF + 2 ou 3 dígitos ("BA-120", "BA 052", "SE 100"): rodovia estadual
+  // sem hífen, só com "RODOVIA"/"ROD." ou sozinho: "ESTRADA DO PA 25 DE MAIO"
+  // (projeto de assentamento) e "RUA SE 10" não são rodovia estadual
   const est = t.match(RE_ESTADUAL);
-  if (est) return { tipo: "estadual", sigla: `${est[1]}-${est[2].padStart(3, "0")}`, uf: est[1] };
+  const ehCodigo = !!est && (/[-–]/.test(est[0]) || /\bROD(OVIA\b|\.)/.test(t) || t.trim() === est[0].trim());
+  if (est && ehCodigo) return { tipo: "estadual", sigla: `${est[1]}-${est[2].padStart(3, "0")}`, uf: est[1] };
   if (RE_RODOVIA_ESTADUAL.test(t)) return { tipo: "estadual", sigla: null, uf: null };
   // "BA" ou "RODOVIA BA" sem número (o confrontante sai assim no campo)
   if (/^\s*(RODOVIA\s+)?BA\s*$/.test(t)) return { tipo: "estadual", sigla: null, uf: "BA" };
@@ -171,7 +190,7 @@ export interface Recuo {
  * Não edificável abaixo do padrão só com lei municipal e nunca abaixo de 5 m.
  */
 export function recuoDaVia(via: Via, aj: AjusteRecuo = {}): Recuo {
-  const r = REGRAS_RECUO[via.tipo];
+  const r = regraDaVia(via);
   const avisos: string[] = [];
   const informado = typeof aj.dominio === "number" && Number.isFinite(aj.dominio) && aj.dominio >= 0;
   const dominio = informado ? (aj.dominio as number) : r.dominio;
@@ -205,7 +224,7 @@ const m = (v: number) => `${v.toLocaleString("pt-BR", { maximumFractionDigits: 2
 
 /** Confrontante no padrão do INCRA: "RODOVIA BR-116 - FAIXA DE DOMÍNIO (DNIT)". */
 export function confrontanteDaVia(v: Via): string {
-  const r = REGRAS_RECUO[v.tipo];
+  const r = regraDaVia(v);
   if (v.tipo === "municipal") return "ESTRADA MUNICIPAL";
   if (v.tipo === "ferrovia") return `${v.sigla ? `FERROVIA ${v.sigla}` : "FERROVIA"} - FAIXA DE DOMÍNIO`;
   return `RODOVIA ${v.sigla ?? (v.tipo === "federal" ? "FEDERAL" : "ESTADUAL")} - FAIXA DE DOMÍNIO (${r.orgao.toUpperCase()})`;
@@ -214,7 +233,7 @@ export function confrontanteDaVia(v: Via): string {
 /** Uma linha para a tela: "faixa de domínio 30 m do eixo (padrão SEINFRA) · não edificável 15 m". */
 export function resumoRecuo(r: Recuo): string {
   const partes: string[] = [];
-  if (r.dominio !== null) partes.push(`faixa de domínio ${m(r.dominio)} do eixo${r.origemDominio === "padrao" ? ` (padrão ${REGRAS_RECUO[r.via.tipo].orgao} — confirme)` : ""}`);
+  if (r.dominio !== null) partes.push(`faixa de domínio ${m(r.dominio)} do eixo${r.origemDominio === "padrao" ? ` (padrão ${regraDaVia(r.via).orgao} — confirme)` : ""}`);
   else partes.push("faixa de domínio: sem regra geral");
   partes.push(r.naoEdificavel > 0 ? `não edificável ${m(r.naoEdificavel)}${r.reduzida ? " (lei municipal)" : ""}` : "sem faixa não edificável");
   return partes.join(" · ");
@@ -254,7 +273,7 @@ export function naoEdificavelDaPlanta(salvo: unknown): { padrao: number; porVia:
  */
 export function notaRecuo(r: Recuo, aj: AjusteRecuo = {}): string {
   const nome = nomeDaVia(r.via).toUpperCase();
-  const reg = REGRAS_RECUO[r.via.tipo];
+  const reg = regraDaVia(r.via);
   const dom = r.dominio !== null
     ? `faixa de domínio da ${r.via.tipo === "ferrovia" ? "" : "RODOVIA "}${nome} (${m(r.dominio)} de cada lado do eixo; fonte: ${r.origemDominio === "informada" ? "informada pelo responsável técnico" : `padrão ${reg.orgao}`})`
     : `faixa de domínio da ${nome}`;
