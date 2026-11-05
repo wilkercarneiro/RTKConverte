@@ -99,6 +99,18 @@ export interface ParametrosDivisao {
   iguais?: boolean;
   /** rascunho da prancheta (projeto de loteamento com as partes como lotes desenhados) */
   projeto?: unknown;
+  /**
+   * O que a divisão é. Partilha (herança): partes iguais ou na fração de cada
+   * herdeiro. Desmembramento: uma ou mais áreas saem do imóvel, cada uma com a
+   * área digitada, e o resto fica como ÁREA REMANESCENTE do proprietário.
+   * Ausente = partilha (é o que toda divisão gravada antes disto é).
+   */
+  tipo?: "partilha" | "desmembramento";
+  /**
+   * Desmembramento: a posição (na ordem das partes/glebas salvas) da área
+   * remanescente. null = sem remanescente (todas as áreas saem do imóvel).
+   */
+  remanescente?: number | null;
 }
 
 export interface Servico {
@@ -169,7 +181,7 @@ export interface Servico {
   inventariante_nome?: string | null;
   inventariante_cpf?: string | null;
   inventariante_rg?: string | null;
-  /** Divisão em partes iguais (partilha): presente = serviço nasceu para dividir. */
+  /** Divisão do imóvel (partilha ou desmembramento): presente = serviço nasceu para dividir. */
   divisao?: ParametrosDivisao | null;
 }
 
