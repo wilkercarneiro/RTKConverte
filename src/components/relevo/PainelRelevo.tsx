@@ -14,6 +14,7 @@ import { buscarRelevoDeFundo, calcularRelevoEmSegundoPlano, coberturaDoImovel, i
 import { curvasParaDxf, curvasParaKml } from "../../lib/relevo/exportar.ts";
 import { webglDisponivel, MOTIVO_SEM_WEBGL } from "../../lib/webgl";
 import { Dica } from "../ui";
+import { BotaoTelaCheia } from "../TelaCheia";
 import "./relevo.css";
 
 const Relevo3D = lazy(() => import("./Relevo3D"));
@@ -183,7 +184,7 @@ export function PainelRelevo({ vertices, aneis: aneisOrdens, fuso, nome, altura 
   const sem3d = !webglDisponivel();
 
   return (
-    <div className="relevo">
+    <div className="relevo" data-tela-cheia="">
       <div className="relevo-barra">
         <div className="relevo-intervalo" role="group" aria-label="Intervalo das curvas">
           <span className="relevo-rotulo">Curvas a cada</span>
@@ -200,6 +201,7 @@ export function PainelRelevo({ vertices, aneis: aneisOrdens, fuso, nome, altura 
             title="Para o Google Earth: mestras e intermediárias em pastas separadas">Baixar KML</button>
           <button type="button" className="principal" disabled={!m || ocupado || sem3d} onClick={() => setVer3d(true)}
             title={sem3d ? MOTIVO_SEM_WEBGL : "Terreno do imóvel em 3D, com satélite, curvas e os marcos"}>Ver em 3D</button>
+          <BotaoTelaCheia className="relevo-tela-cheia" />
         </div>
       </div>
 

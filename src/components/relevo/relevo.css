@@ -33,3 +33,8 @@
 }
 .rl3d-painel { width: min(270px, calc(100vw - 32px)); }
 .rl3d-voltar { margin-top: 10px; }
+
+/* tela cheia (TelaCheia.tsx): o desenho ocupa o que sobra */
+.relevo-tela-cheia { height: 32px; width: 36px; padding: 0; display: inline-grid; place-items: center; }
+.relevo.em-tela-cheia { display: flex; flex-direction: column; padding: 14px 18px; overflow: auto; }
+.relevo.em-tela-cheia > .relevo-desenho { flex: 1 1 auto; height: auto !important; min-height: 0; }
