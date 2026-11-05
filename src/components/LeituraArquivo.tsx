@@ -26,6 +26,7 @@ import { VERSAO_TODAS } from "../../supabase/functions/_shared/leitor/versoes.ts
 import { desenharEsboco, fmtArea, fmtM, medirEsboco } from "../lib/esboco";
 import type { Esboco, PontoEsboco } from "../lib/esboco";
 import { Dica } from "./ui";
+import { lonLatDeUtm, PreviaRestricoes } from "./RestricoesImovel";
 import "./leitura.css";
 
 const proj4: Proj4 = (de, para, c) => (proj4lib as unknown as Proj4)(de, para, c);
@@ -386,6 +387,14 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
     try { return medirEsboco(partesEsboco, z); } catch { return null; }
   }, [partesEsboco, fusoEsboco, fusos]);
 
+  // prévia das restrições: o desenho atual em lon/lat, no fuso que o esboço usaria
+  // (sem fuso decidido não há onde pôr o imóvel — a prévia espera)
+  const fusoPrevia = fusoEsboco ?? (fusos.length === 1 ? fusos[0].zone : null);
+  const aneisPrevia = useMemo(() => {
+    if (!fusoPrevia || partesEsboco.flat().length < 3) return [];
+    try { return lonLatDeUtm(partesEsboco, fusoPrevia); } catch { return []; }
+  }, [partesEsboco, fusoPrevia]);
+
   const bloqueios = leitura ? leitura.avisos.filter((a) => a.nivel === "bloqueio") : [];
   const faltaConfirmar = leitura ? leitura.aConfirmar.filter((c) => !confirmados.has(c)) : [];
   const pode = !!leitura && leitura.ok && faltaConfirmar.length === 0 && !criando && modo.t === "ver";
@@ -548,6 +557,9 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
               </>
             )}
           </div>
+
+          {/* prévia GRÁTIS das restrições (TI, UC, assentamento…): só tem/não tem, antes do crédito */}
+          {aneisPrevia.length > 0 && <PreviaRestricoes aneisLonLat={aneisPrevia} fuso={fusoPrevia} />}
 
           <div className="lt-bloco">
             <h4>Como entendemos<Dica lado="baixo">{origem.texto} Os números são copiados do arquivo, nunca digitados: cada coordenada tem a linha de onde saiu.</Dica></h4>

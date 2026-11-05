@@ -247,6 +247,21 @@ test("sem perímetro não consulta nada; o aviso diz que não substitui certidã
   assert.match(AVISO_RESTRICOES, /não substitui certidão/);
 });
 
+test("PDF: croqui, tabela por base, data da consulta, fontes fora e o aviso", async () => {
+  const { gerarPdfRestricoes, nomeArquivoRestricoes } = await import("../src/lib/restricoes_pdf.ts");
+  const { PDFDocument } = await import("pdf-lib");
+  const fx = fixture("monte_pascoal");
+  const { f } = gravado(fx, { falhar: { "lim_uso_militar_a": 500 } });
+  const r = await consultarRestricoes([fx.anel], { fuso: fx.fuso, fetch: f, agora: AGORA });
+  const bytes = await gerarPdfRestricoes(r, [fx.anel], { imovel: "Fazenda Teste", municipio: "Porto Seguro", uf: "BA" });
+  assert.ok(bytes.length > 3000);
+  const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
+  assert.ok(pdf.getPageCount() >= 1);
+  assert.equal(pdf.getTitle(), "Análise de restrições do imóvel");
+  if (process.env.RESTRICOES_PDF) fs.writeFileSync(process.env.RESTRICOES_PDF, bytes);
+  assert.equal(nomeArquivoRestricoes(r, "Fazenda São João"), "analise-restricoes-Fazenda_Sao_Joao-2026-11-05.pdf");
+});
+
 test("AO VIVO: as bases públicas de verdade (Monte Pascoal)", { skip: !process.env.RESTRICOES_AO_VIVO && "só com RESTRICOES_AO_VIVO=1", timeout: 120_000 }, async () => {
   const fx = fixture("monte_pascoal");
   const r = await consultarRestricoes([fx.anel], { fuso: 24 });

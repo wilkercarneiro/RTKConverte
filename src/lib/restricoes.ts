@@ -662,6 +662,10 @@ export const fmtHa = (m2: number): string => `${fmtNum(m2 / 10000, 4)} ha`;
 export const fmtPct = (p: number): string => `${fmtNum(p, p > 0 && p < 0.01 ? 4 : 2)}%`;
 export const fmtM = (m: number): string => `${fmtNum(m, m < 10 ? 1 : 0)} m`;
 
+/** Minúsculas no meio da frase, sem estragar sigla: "Área embargada (IBAMA)" → "área embargada (IBAMA)". */
+export const minusculas = (s: string): string =>
+  s.split(" ").map((w) => (/^\(?[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,}\)?$/.test(w) ? w : w.toLowerCase())).join(" ");
+
 export const ROTULO_CLASSE: Record<ClasseRestricao, string> = {
   sobrepoe: "Sobrepõe", encosta: "Encosta", livre: "Livre", nao_consultado: "Não consultado",
 };
@@ -693,8 +697,8 @@ export function resumoRestricoes(r: ResultadoRestricoes): { sobrepoe: ResultadoF
   const por = (c: ClasseRestricao) => r.fontes.filter((f) => f.classe === c);
   const sobrepoe = por("sobrepoe"), encosta = por("encosta"), livres = por("livre"), naoConsultadas = por("nao_consultado");
   const partes: string[] = [];
-  if (sobrepoe.length) partes.push(`sobrepõe ${sobrepoe.map((f) => f.singular.toLowerCase()).join(", ")}`);
-  if (encosta.length) partes.push(`encosta em ${encosta.map((f) => f.singular.toLowerCase()).join(", ")}`);
+  if (sobrepoe.length) partes.push(`sobrepõe ${sobrepoe.map((f) => minusculas(f.singular)).join(", ")}`);
+  if (encosta.length) partes.push(`encosta em ${encosta.map((f) => minusculas(f.singular)).join(", ")}`);
   if (!sobrepoe.length && !encosta.length && (livres.length || !naoConsultadas.length)) partes.push("nenhuma restrição encontrada nas bases consultadas");
   if (naoConsultadas.length) partes.push(`${naoConsultadas.length} base(s) não consultada(s)`);
   const t = partes.join("; ");

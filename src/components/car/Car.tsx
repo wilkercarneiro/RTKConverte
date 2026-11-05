@@ -20,6 +20,7 @@ import { carregarProjetoCar, marcarCarExportado, salvarProjetoCar } from "../../
 import { Dica, GiroMapa, StatusSalvamento } from "../ui";
 import { BotaoConcluir, useConclusao } from "../ConcluirServico";
 import { ExportarArea } from "../ExportarArea";
+import { RestricoesImovel } from "../RestricoesImovel";
 import { CarEditor, COR } from "./CarEditor";
 import type { FerramentaCar, SelecaoCar } from "./CarEditor";
 import "./car.css";
@@ -89,6 +90,9 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
     if (!projeto) return null;
     try { return calcularCar(projeto); } catch { return null; }
   }, [projeto]);
+  // o perímetro do CAR (lon/lat do KML) para o cartão de restrições; muda só quando o perímetro muda
+  const perimetroCar = projeto?.perimetro;
+  const aneisRestricoes = useMemo(() => (perimetroCar && perimetroCar.length >= 3 ? [perimetroCar as [number, number][]] : []), [perimetroCar]);
 
   const mostrar = useCallback((t: string, erro = false) => setMsg({ t, erro }), []);
 
@@ -431,6 +435,10 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
               </div>
             ))}
           </section>
+
+          {/* restrições do imóvel (TI, UC, assentamento, embargo…): o CAR já pagou, não cobra */}
+          <RestricoesImovel aneisLonLat={aneisRestricoes} fuso={null} classe="car-cartao restricoes compacto" id="car-restricoes"
+            dados={{ imovel: projeto.nome || servico.denominacao, municipio: servico.municipio, uf: servico.uf }} />
 
           {res.avisos.length > 0 && (
             <section className="car-cartao car-avisos">

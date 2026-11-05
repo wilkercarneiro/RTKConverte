@@ -33,8 +33,11 @@ import { CORES, MapaSVG } from "./MapaSVG";
 import type { FundoSatelite } from "./MapaSVG";
 import { PainelSigef } from "./PainelSigef";
 import { RecuoRodovias } from "./RecuoRodovias";
+import { RestricoesImovel } from "./RestricoesImovel";
+import { camadasDoResultado } from "../lib/restricoes";
+import type { ResultadoRestricoes } from "../lib/restricoes";
 import type { PontoMapa } from "./MapaInterativo";
-import { aneisLonLat, lonLatDoVertice } from "../lib/sigef";
+import { aneisLonLat, lonLatComoNaArea, lonLatDoVertice } from "../lib/sigef";
 import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { avisarHistoricoAtualizado, folhaDoTitulo, nomeDaGlebaNoTitulo, ultimaGeracao } from "../lib/historico";
@@ -546,6 +549,11 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   // anéis que o mapa desenha (partes/glebas ou a sequência do TXT).
   const fusoSigef = servico.fuso_utm ?? inicial.preview.fuso ?? 24;
   const aneisSigef = useMemo(() => aneisLonLat(vertices, fusoSigef, aneisMapa), [vertices, fusoSigef, aneisMapa]);
+  // restrições do imóvel (TI, UC, assentamento…): o cartão consulta e o mapa interativo pinta
+  const [restricoes, setRestricoes] = useState<ResultadoRestricoes | null>(null);
+  const camadasRestricoes = useMemo(() => camadasDoResultado(restricoes), [restricoes]);
+  // o imóvel lido como o motor de área do serviço lê (GMS primeiro): a área da análise = a do serviço
+  const aneisRestricoes = useMemo(() => aneisLonLat(vertices, fusoSigef, aneisMapa, lonLatComoNaArea), [vertices, fusoSigef, aneisMapa]);
   const pontosSigef = useMemo<PontoMapa[]>(() => vertices.flatMap((v) => {
     const ll = lonLatDoVertice(v, fusoSigef);
     return ll ? [{ lonlat: ll, rotulo: String(v.num_txt ?? v.rotulo_txt ?? v.codigo ?? v.ordem), titulo: `${v.codigo ?? ""} ${v.tipo}
@@ -1748,6 +1756,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               onAjustes={(vias) => setServico((s) => ({ ...s, recuo_vias: { ...(s.recuo_vias ?? {}), vias } }))}
               planta={servico.recuo_vias?.planta !== false}
               onPlanta={(v) => setServico((s) => ({ ...s, recuo_vias: { ...(s.recuo_vias ?? {}), planta: v } }))} />
+            {/* ------- Restrições do imóvel (05/11/2026): TI, UC, assentamento, quilombola,
+                embargos, fronteira, militar e arqueológico pelas bases públicas; sem crédito ------- */}
+            <RestricoesImovel aneisLonLat={aneisRestricoes} fuso={fusoSigef} onResultado={setRestricoes}
+              dados={{ imovel: servico.denominacao, municipio: servico.municipio, uf: servico.uf }} />
             {/* ------- Vértices: na mesma etapa, porque a ORDEM deles é o que define os
                 trechos e o mapa acima; reordenar aqui atualiza tudo ao mesmo tempo. ------- */}
             <div className="etapa-cabeca" id="bloco-vertices">
@@ -1936,7 +1948,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     vértices, ao lado, continuam na tela */}
                 <BarreiraErro onde="o mapa" compacta chave={`${fundoMapa}|${servico.id}`}>
                   {fundoMapa === "mapa" && mapaInterativoOk ? (
-                    <PainelSigef modo="sobreposicao" aneis={aneisSigef} pontos={pontosSigef} uf={servico.uf} altura={440}
+                    <PainelSigef modo="sobreposicao" aneis={aneisSigef} pontos={pontosSigef} uf={servico.uf} altura={440} restricoes={camadasRestricoes}
                       semMapa={'use "Satélite" ou "Esquema", logo acima'} />
                   ) : (
                     <MapaSVG vertices={vertices} trechos={trechosOrdenados} verticeInicial={verticeInicial} partes={aneisMapa ?? undefined}

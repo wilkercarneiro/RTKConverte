@@ -18,6 +18,7 @@ import maplibregl from "maplibre-gl";
 import type { GeoJSONSource, Map as MapaGl, StyleSpecification } from "maplibre-gl";
 import type { FeatureParcela, LonLat, Sobreposicao } from "../lib/sigef";
 import { fecharAnel } from "../lib/sigef";
+import type { CamadaRestricao } from "../lib/restricoes";
 import { esquecerWebgl, MOTIVO_SEM_WEBGL, webglDisponivel } from "../lib/webgl";
 
 /** Texto para o usuário a partir do erro do MapLibre. */
@@ -47,6 +48,8 @@ interface Props {
   sobreposicoes?: Sobreposicao[];
   /** anéis em destaque (ex.: CSVs do vizinho na etapa de área certificada) */
   destaques?: { codigo: string; nome: string; anel: LonLat[] }[];
+  /** áreas protegidas/especiais (TI, UC, assentamento…) com a cor do tipo — src/lib/restricoes.ts */
+  restricoes?: CamadaRestricao[];
   /** código da sobreposição a piscar/enquadrar */
   foco?: string | null;
   altura?: number | string;
@@ -74,12 +77,20 @@ function estilo(): StyleSpecification {
       parcelas: { type: "geojson", data: VAZIO },
       sobreposicoes: { type: "geojson", data: VAZIO },
       destaques: { type: "geojson", data: VAZIO },
+      restricoes: { type: "geojson", data: VAZIO },
+      "restricoes-sobre": { type: "geojson", data: VAZIO },
+      "restricoes-pt": { type: "geojson", data: VAZIO },
       imovel: { type: "geojson", data: VAZIO },
       vertices: { type: "geojson", data: VAZIO },
     },
     layers: [
       { id: "satelite", type: "raster", source: "esri" },
       { id: "sombra", type: "hillshade", source: "relevo", paint: { "hillshade-exaggeration": 0.35, "hillshade-shadow-color": "#0b1a12" } },
+      // restrições por baixo das parcelas: a área inteira clara, o pedaço do imóvel dentro dela forte
+      { id: "restricoes-fill", type: "fill", source: "restricoes", paint: { "fill-color": ["get", "cor"], "fill-opacity": 0.2 } },
+      { id: "restricoes-line", type: "line", source: "restricoes", paint: { "line-color": ["get", "cor"], "line-width": 2 } },
+      { id: "restricoes-sobre-fill", type: "fill", source: "restricoes-sobre", paint: { "fill-color": ["get", "cor"], "fill-opacity": 0.55 } },
+      { id: "restricoes-pt", type: "circle", source: "restricoes-pt", paint: { "circle-radius": 5, "circle-color": ["get", "cor"], "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.5 } },
       { id: "parcelas-fill", type: "fill", source: "parcelas", paint: { "fill-color": "#F59E0B", "fill-opacity": 0.18 } },
       { id: "parcelas-line", type: "line", source: "parcelas", paint: { "line-color": "#FBBF24", "line-width": 1.6 } },
       { id: "destaques-fill", type: "fill", source: "destaques", paint: { "fill-color": "#22D3EE", "fill-opacity": 0.15 } },
@@ -187,6 +198,20 @@ export function MapaInterativo(props: Props) {
     const esconder = () => { mapa.getCanvas().style.cursor = ""; popup.remove(); };
     mapa.on("mousemove", "parcelas-fill", mostrar);
     mapa.on("mouseleave", "parcelas-fill", esconder);
+    // nome da restrição (texto, nunca HTML: o nome vem das bases públicas)
+    const mostrarRestricao = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+      const f = e.features?.[0]; if (!f) return;
+      const p = f.properties as Record<string, string>;
+      mapa.getCanvas().style.cursor = "pointer";
+      const caixa = document.createElement("div");
+      const b = document.createElement("b"); b.textContent = String(p.nome ?? ""); caixa.appendChild(b);
+      const s = document.createElement("div"); s.textContent = String(p.rotulo ?? ""); caixa.appendChild(s);
+      popup.setLngLat(e.lngLat).setDOMContent(caixa).addTo(mapa);
+    };
+    for (const camada of ["restricoes-fill", "restricoes-pt"]) {
+      mapa.on("mousemove", camada, mostrarRestricao);
+      mapa.on("mouseleave", camada, esconder);
+    }
     mapa.on("load", () => { prontoRef.current = true; aplicar(); });
     mapa.on("zoom", () => ajustarRotulos());
     mapaRef.current = mapa;
@@ -232,6 +257,20 @@ export function MapaInterativo(props: Props) {
     });
     const fcDest = poligonos((destaques ?? []).map((d) => d.anel));
     (mapa.getSource("destaques") as GeoJSONSource).setData(fcDest);
+    const restricoes = propsRef.current.restricoes ?? [];
+    const props = (c: CamadaRestricao) => ({ cor: c.cor, nome: c.nome, rotulo: c.rotulo, tipo: c.tipo });
+    (mapa.getSource("restricoes") as GeoJSONSource).setData({
+      type: "FeatureCollection",
+      features: restricoes.filter((c) => c.geometria).map((c) => ({ type: "Feature", properties: props(c), geometry: c.geometria! })),
+    });
+    (mapa.getSource("restricoes-sobre") as GeoJSONSource).setData({
+      type: "FeatureCollection",
+      features: restricoes.filter((c) => c.sobreposta).map((c) => ({ type: "Feature", properties: props(c), geometry: c.sobreposta! })),
+    });
+    (mapa.getSource("restricoes-pt") as GeoJSONSource).setData({
+      type: "FeatureCollection",
+      features: restricoes.flatMap((c) => c.pontos.map((p) => ({ type: "Feature" as const, properties: props(c), geometry: { type: "Point" as const, coordinates: p } }))),
+    });
     mapa.setPaintProperty("sobre-fill", "fill-opacity", foco ? ["case", ["==", ["get", "codigo"], foco], 0.7, 0.3] : 0.45);
 
     // marcadores: vértices do imóvel e nome das parcelas
@@ -283,7 +322,7 @@ export function MapaInterativo(props: Props) {
     }
   }
 
-  useEffect(() => { aplicar(); }, [props.aneis, props.pontos, props.parcelas, props.sobreposicoes, props.destaques, props.foco, props.cor]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { aplicar(); }, [props.aneis, props.pontos, props.parcelas, props.sobreposicoes, props.destaques, props.restricoes, props.foco, props.cor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>

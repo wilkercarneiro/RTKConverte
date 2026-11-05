@@ -6,10 +6,14 @@
 //   #/lab/leitura/semsigma PNEZD sem precisões (σ declarado na prévia)
 //   #/lab/leitura/versoes  levantamento + os mesmos pontos "postp_" (só uma versão entra)
 //   #/lab/leitura/manual   formato não reconhecido: o operador mapeia as colunas
-// A leitura é feita aqui mesmo, pelo leitor de verdade; nada sai do navegador.
+//   #/lab/leitura/pascoal  o desenho no Monte Pascoal (TI + Parque Nacional): prévia grátis das restrições
+//   #/lab/leitura/livre    o desenho em Feira de Santana: prévia sem restrição
+// A leitura é feita aqui mesmo, pelo leitor de verdade; o arquivo não sai do
+// navegador (a prévia das restrições consulta as bases públicas pelo perímetro).
 import { useMemo, useState } from "react";
 import proj4lib from "proj4";
 import type { Proj4 } from "../../supabase/functions/_shared/geo.ts";
+import { GEO_DEF, utmDef } from "../../supabase/functions/_shared/geo.ts";
 import { lerLinhas } from "../../supabase/functions/_shared/leitor/index.ts";
 import { separarLinhas } from "../../supabase/functions/_shared/leitor/abertura.ts";
 import { APOIO_PADRAO, camposVazios } from "../../supabase/functions/_shared/leitor/receita.ts";
@@ -52,6 +56,15 @@ function caso(nome: string): { arquivo: string; linhas: string[]; receita?: Rece
         ...lev.filter((p) => p.num % 5 !== 1).map((p) => lin(`postp_${p.num}${p.rotulo ?? ""}`, p.e - 145.6 + (p.num % 3) * 0.4, p.n + 159.2 - (p.num % 4) * 0.3, p.h + 42.7, 0.12)),
       ] };
     }
+    case "pascoal":
+    case "livre": {
+      // prévia grátis das restrições: o desenho da LARISSA levado ao Monte Pascoal
+      // (TI + Parque Nacional) ou a Feira de Santana (sem restrição), fuso 24
+      const ll: [number, number] = nome === "pascoal" ? [-39.345, -16.905] : [-38.86, -12.33];
+      const [e0, n0] = proj4(GEO_DEF, utmDef(24), ll);
+      const ce = base.reduce((s, p) => s + p.e, 0) / base.length, cn = base.reduce((s, p) => s + p.n, 0) / base.length;
+      return { arquivo: `FAZENDA_${nome.toUpperCase()}.csv`, linhas: base.map((p) => `${p.num},${(p.n - cn + n0).toFixed(3)},${(p.e - ce + e0).toFixed(3)},${p.h.toFixed(3)},${p.rotulo ?? ""}`) };
+    }
     case "semsigma":
       return { arquivo: "pontos_pnezd.csv", linhas: base.map((p) => `${p.num},${p.n.toFixed(3)},${p.e.toFixed(3)},${p.h.toFixed(3)},${p.rotulo ?? ""}`) };
     case "manual":
@@ -67,7 +80,7 @@ export function LaboratorioLeitura() {
   const [confirmada, setConfirmada] = useState<LeituraConfirmada | null>(null);
   // UF da área de cada caso (os arquivos de referência são da Bahia: 23S × 24S)
   const uf = "BA";
-  const [fuso, setFuso] = useState<number | null>(null);
+  const [fuso, setFuso] = useState<number | null>(nome === "pascoal" || nome === "livre" ? 24 : null);
   const resposta: RespostaLeitura = useMemo(() => {
     const l = c.receita ? null : nome === "manual" ? null : lerLinhas(c.linhas, { proj4 });
     return {
