@@ -21,7 +21,7 @@ import type { Resultado } from "../../lib/loteamento/calculo.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { centroide, comprimento, dist, esquerda, pontoNaPolilinha } from "../../lib/loteamento/geom.ts";
 
-export interface Rotulo { texto: string; x: number; y: number; visivel: boolean; tipo: "quadra" }
+export interface Rotulo { texto: string; x: number; y: number; visivel: boolean; tipo: "quadra" | "marco" }
 
 export interface EventosMaquete {
   /** lote sob o cursor (índice) e posição na tela */
@@ -304,6 +304,9 @@ export class Maquete {
   private texAntes: THREE.Texture;
   readonly texProjeto: THREE.CanvasTexture;
   private rotulosQuadra: { texto: string; p: Pt }[];
+  /** marcos do perímetro (serviço GEO): pinos com o código */
+  private marcos: { texto: string; p: Pt; pino: THREE.Group }[] = [];
+  private grupoMarcos = new THREE.Group();
   private ro: ResizeObserver;
   private gravador: MediaRecorder | null = null;
   private stream: MediaStream | null = null;
@@ -1498,7 +1501,46 @@ export class Maquete {
   // -------------------------------------------------------------------------
 
   /** Exagero vertical (a cortina de seleção usa os mesmos uniforms e acompanha sozinha). */
-  setExagero(e: number): void { this.U.uExag.value = e; this.sombraSuja = true; this.sujo = 3; }
+  setExagero(e: number): void { this.U.uExag.value = e; this.posicionarMarcos(); this.sombraSuja = true; this.sujo = 3; }
+
+  /** Altura do pino do marco (m de mundo): legível de longe, sem virar um poste. */
+  private get alturaPino(): number { return Math.max(4, Math.min(40, this.raio * 0.035)); }
+
+  /**
+   * Marcos do perímetro como pinos com o código (relevo do serviço GEO). O
+   * rótulo segue o pino; os pinos acompanham o exagero vertical.
+   */
+  setMarcos(lista: { texto: string; p: Pt }[]): void {
+    for (const m of this.marcos) this.grupoMarcos.remove(m.pino);
+    const H = this.alturaPino, r = Math.max(0.25, H * 0.03);
+    const haste = new THREE.CylinderGeometry(r, r, H, 8);
+    haste.translate(0, H / 2, 0);
+    const cabeca = new THREE.SphereGeometry(Math.max(0.8, H * 0.14), 16, 12);
+    cabeca.translate(0, H, 0);
+    const matHaste = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.6 });
+    const matCabeca = new THREE.MeshStandardMaterial({ color: 0xd8342a, roughness: 0.45, emissive: 0x3a0806 });
+    this.marcos = lista.map((m) => {
+      const pino = new THREE.Group();
+      const a = new THREE.Mesh(haste, matHaste), b = new THREE.Mesh(cabeca, matCabeca);
+      a.castShadow = b.castShadow = true;
+      pino.add(a, b);
+      this.grupoMarcos.add(pino);
+      return { ...m, pino };
+    });
+    if (!this.grupoMarcos.parent) this.scene.add(this.grupoMarcos);
+    this.posicionarMarcos();
+    this.sombraSuja = true;
+    this.sujo = 3;
+  }
+
+  private posicionarMarcos(): void {
+    for (const m of this.marcos) {
+      const [x, z] = this.xz(m.p);
+      m.pino.position.set(x, this.alturaMundo(m.p), z);
+    }
+  }
+
+  setVisivelMarcos(v: boolean): void { this.grupoMarcos.visible = v; this.ultimosRotulos = ""; this.sujo = 3; }
 
   setVisivel(camada: "casas" | "arvores" | "meioFio" | "redes", v: boolean): void {
     const o = camada === "casas" ? this.grupoCasas : camada === "arvores" ? this.grupoArvores : camada === "redes" ? this.grupoInfra : this.meioFio;
@@ -2466,7 +2508,10 @@ export class Maquete {
     const rumo = Math.atan2(f.x, -f.z);
     if (this.ev.onBussola && !(Math.abs(rumo - this.ultimoRumo) < 0.005)) { this.ultimoRumo = rumo; this.ev.onBussola(rumo); }
     if (!this.ev.onRotulos) return;
-    const r = this.renderer.domElement.getBoundingClientRect();
+    // px do CSS (o transform dos rótulos é em px do CSS): com o zoom de 80% da
+    // página o getBoundingClientRect vinha na escala da tela e o rótulo saía
+    // puxado para o canto de cima à esquerda
+    const r = { width: this.renderer.domElement.clientWidth, height: this.renderer.domElement.clientHeight };
     const v = new THREE.Vector3();
     const cam = this.camera.position;
     const itens = this.rotulosQuadra.map((q) => {
@@ -2479,13 +2524,20 @@ export class Maquete {
         const p = cam.clone().lerp(w, s / 20);
         if (p.y < this.alturaMundo([p.x + this.centro[0], -p.z + this.centro[1]]) - 0.5) visivel = false;
       }
-      return { texto: q.texto, x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height, visivel, tipo: "quadra" as const, d: cam.distanceTo(w) };
+      return { texto: q.texto, x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height, visivel, tipo: "quadra" as Rotulo["tipo"], d: cam.distanceTo(w) };
     });
+    if (this.grupoMarcos.visible) for (const m of this.marcos) {
+      const w = m.pino.position.clone();
+      w.y += this.alturaPino * 1.25;
+      v.copy(w).project(this.camera);
+      const visivel = v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05;
+      itens.push({ texto: m.texto, x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height, visivel, tipo: "marco", d: cam.distanceTo(w) });
+    }
     // sem amontoar: o mais perto ganha, o outro some
     const mostrados: { x: number; y: number }[] = [];
     for (const it of [...itens].sort((a, b) => a.d - b.d)) {
       if (!it.visivel) continue;
-      if (mostrados.some((m) => Math.hypot(m.x - it.x, m.y - it.y) < 38)) { it.visivel = false; continue; }
+      if (mostrados.some((m) => Math.hypot(m.x - it.x, m.y - it.y) < (it.tipo === "marco" ? 22 : 38))) { it.visivel = false; continue; }
       mostrados.push(it);
     }
     const out: Rotulo[] = itens.map(({ texto, x, y, visivel, tipo }) => ({ texto, x, y, visivel, tipo }));

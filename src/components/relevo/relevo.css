@@ -1,0 +1,40 @@
+/* ---- vista Relevo do serviço GEO (curvas de nível) ---- */
+.relevo { display: flex; flex-direction: column; gap: 10px; }
+.relevo-barra { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
+.relevo-intervalo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.relevo-rotulo { font-size: 12.5px; color: var(--texto-2); font-weight: 600; margin-right: 2px; }
+.relevo-intervalo button { height: 28px; padding: 0 12px; font-size: 12.5px; border-radius: 999px; border: 1px solid var(--borda); background: var(--card); color: var(--texto-2); cursor: pointer; }
+.relevo-intervalo button.ativo { background: #6B3A12; border-color: #6B3A12; color: #fff; }
+.relevo-acoes { display: flex; gap: 8px; flex-wrap: wrap; }
+.relevo-acoes button { height: 32px; font-size: 13px; }
+.relevo-desenho { position: relative; width: 100%; border-radius: 10px; overflow: hidden; background: #F4F2EC; }
+.relevo-desenho svg { width: 100%; height: 100%; display: block; }
+.relevo-carregando {
+  position: absolute; inset: auto 12px 12px 12px; display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.94); box-shadow: var(--sombra-alta);
+  font-size: 13px; color: var(--texto-2);
+}
+.relevo-carregando.erro { color: var(--perigo); }
+.relevo-giro { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #E6D9C6; border-top-color: #6B3A12; animation: relevo-giro 0.9s linear infinite; }
+@keyframes relevo-giro { to { transform: rotate(360deg); } }
+.relevo-legenda { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: #33453C; align-items: center; }
+.relevo-legenda span { display: inline-flex; align-items: center; gap: 6px; }
+.relevo-l { display: inline-block; width: 22px; border-top: 1px solid #9A6A3A; }
+.relevo-l.mestra { border-top: 2.5px solid #6B3A12; }
+.relevo-ponto { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #D8342A; box-shadow: 0 0 0 1.5px #fff, 0 0 0 2.5px rgba(0,0,0,.15); }
+.relevo-nota { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--texto-2); background: var(--alerta-claro); border-radius: 10px; padding: 9px 12px; }
+.relevo-nota b { color: var(--texto); }
+
+/* ---- 3D do relevo: pinos dos marcos com o código ---- */
+.m3d-marco {
+  position: absolute; left: 0; top: 0; margin: -24px 0 0 0; padding: 2px 7px; border-radius: 6px; white-space: nowrap;
+  font: 700 11.5px/1.3 var(--mono, monospace); color: #fff; background: rgba(150, 30, 22, 0.9);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35); translate: -50% 0; pointer-events: none;
+}
+.rl3d-painel { width: min(270px, calc(100vw - 32px)); }
+.rl3d-voltar { margin-top: 10px; }
+
+/* tela cheia (TelaCheia.tsx): o desenho ocupa o que sobra */
+.relevo-tela-cheia { height: 32px; width: 36px; padding: 0; display: inline-grid; place-items: center; }
+.relevo.em-tela-cheia { display: flex; flex-direction: column; padding: 14px 18px; overflow: auto; }
+.relevo.em-tela-cheia > .relevo-desenho { flex: 1 1 auto; height: auto !important; min-height: 0; }
