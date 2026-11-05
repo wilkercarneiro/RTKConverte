@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Publica na VPS as melhorias de 05/11/2026 (pedido do Wilker, 8 itens):
-#   - banco: 0040 (autocadastro: planos à venda, períodos, parcelas) e 0041
-#     (servicos.recuo_vias) — cada uma numa transação, REST reiniciado;
+#   - banco: 0040 (autocadastro), 0041 (recuo das vias), 0042 (monografia) e 0043 (autenticidade); todas antes do site
+#     — cada uma numa transação, REST reiniciado;
 #   - funções: as que mudaram desde o que está no ar ($ANTES), cada uma só com os
 #     arquivos do fecho de imports que mudaram (scripts/fecho-imports.mjs
 #     --desde), por cima da pasta baixada da VPS — módulo que lá é ESBOÇO
@@ -30,7 +30,7 @@ BKF="$BASE/backup-funcoes-$DATA-melhorias"
 BKB="$BASE/backup-banco-$DATA-melhorias"
 ANTES="7231285"
 HOST="utxqkbgfgpbczqjtieyu.supabase.agenteselevex.top"
-MIGRACOES=(supabase/migrations/0040_autocadastro.sql supabase/migrations/0041_recuo_vias.sql)
+MIGRACOES=(supabase/migrations/0040_autocadastro.sql supabase/migrations/0041_recuo_vias.sql supabase/migrations/0042_monografia.sql supabase/migrations/0043_autenticidade.sql)
 EXEC=false
 [ "${1:-}" = "--executar" ] && EXEC=true
 
@@ -162,12 +162,14 @@ const h = { apikey: anon, Authorization: `Bearer ${anon}`, "Content-Type": "appl
 const t = async (n, url, o = {}) => { try { const r = await fetch(url, { headers: h, ...o }); console.log(`   ${n.padEnd(36)} ${r.status} ${(await r.text()).slice(0, 100)}`); } catch (e) { console.log(`   ${n} ERRO ${e.message}`); } };
 await t("REST anônimo", `${U}/rest/v1/servicos?select=id&limit=1`);
 await t("recuo_vias (coluna nova)", `${U}/rest/v1/servicos?select=recuo_vias&limit=1`);
+await t("monografia (coluna nova)", `${U}/rest/v1/servicos?select=monografia&limit=1`);
+await t("verificar_documento (público)", `${U}/rest/v1/rpc/verificar_documento`, { method: "POST", body: JSON.stringify({ p_codigo: "0000000000000000000A" }) });
 await t("cadastro_planos (público)", `${U}/rest/v1/rpc/cadastro_planos`, { method: "POST", body: "{}" });
 await t("cobranca cadastro_criar vazio", `${U}/functions/v1/cobranca`, { method: "POST", body: JSON.stringify({ acao: "cadastro_criar" }) });
 for (const f of ["entregar", "gerar-documentos", "gerar-planta", "gerar-pecas"])
   await t(`fn ${f} sem login`, `${U}/functions/v1/${f}`, { method: "POST", body: JSON.stringify({ servico_id: "00000000-0000-0000-0000-000000000000", saida: "area", formato: "kml" }) });
 JS
 else
-  echo "   [simulação] REST 200; recuo_vias 200; cadastro_planos 200; cadastro_criar vazio 400; funções 401"
+  echo "   [simulação] REST 200; recuo_vias 200; monografia 200; verificar_documento 200 vazio; cadastro_planos 200; cadastro_criar vazio 400; funções 401"
 fi
 echo; $EXEC && echo "Publicado. Backups: $BKB / $BKF. Agora: push da main (site); depois, religar o webhook do Asaas no painel." || echo "Simulação concluída. Rode com --executar para publicar."
