@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import proj4lib from "proj4";
 import { GEO_DEF, utmDef } from "../../supabase/functions/_shared/geo.ts";
 import {
-  AVISO_RESTRICOES, consultarRestricoes, fmtData, minusculas, previaRestricoes, resumoRestricoes, ROTULO_CLASSE, textoFonte, textoItem,
+  AVISO_RESTRICOES, consultarRestricoes, fmtData, previaRestricoes, resumoPrevia, resumoRestricoes, ROTULO_CLASSE, textoFonte, textoItem,
 } from "../lib/restricoes";
 import type { CamadaRestricao, LonLat, ResultadoRestricoes } from "../lib/restricoes";
 import type { DadosRelatorioRestricoes } from "../lib/restricoes_pdf";
@@ -37,8 +37,11 @@ function consultarComCache(aneis: LonLat[][], fuso: number | null | undefined, f
   const c = cache.get(k);
   if (!forcar && c && Date.now() - c.em < VALIDADE_MS) return c.p;
   const p = consultarRestricoes(aneis, { fuso });
-  cache.set(k, { em: Date.now(), p });
-  p.catch(() => cache.delete(k));
+  const entrada = { em: Date.now(), p };
+  cache.set(k, entrada);
+  // resultado com base fora do ar não fica guardado: ao voltar, consulta de novo
+  const largar = () => { if (cache.get(k) === entrada) cache.delete(k); };
+  p.then((r) => { if (r.fontes.some((f) => f.classe === "nao_consultado")) largar(); }, largar);
   return p;
 }
 
@@ -90,7 +93,9 @@ export function RestricoesImovel({ aneisLonLat, fuso, dados, onResultado, id = "
 
   if (!aneisLonLat.some((a) => a.length >= 3)) return null;
   const resumo = r ? resumoRestricoes(r) : null;
-  const classeGeral = !resumo ? "" : resumo.sobrepoe.length ? "sobrepoe" : resumo.encosta.length ? "encosta" : resumo.naoConsultadas.length === r!.fontes.length ? "nao_consultado" : "livre";
+  // verde só com TODAS as bases completas e livres (resumoRestricoes.estado)
+  const classeGeral = resumo ? resumo.estado : "";
+  const semResposta = resumo ? resumo.naoConsultadas.length + resumo.incompletas.length : 0;
   // livres ficam recolhidas: o que importa aparece primeiro
   const comAlgo = r ? r.fontes.filter((f) => f.classe !== "livre") : [];
   const livres = r ? r.fontes.filter((f) => f.classe === "livre") : [];
@@ -137,7 +142,7 @@ export function RestricoesImovel({ aneisLonLat, fuso, dados, onResultado, id = "
                 <span className="sub">{f.orgao}</span>
                 <Dica>{f.nota}{f.servidor ? ` Servidor: ${f.servidor}.` : ""}{f.atualizacao ? ` Registro mais recente atualizado em ${fmtData(f.atualizacao)}.` : ""}</Dica>
               </div>
-              <p className="restricao-texto">{textoFonte(f, r.encostaM)}{f.cortada ? " (há mais áreas na vizinhança do que as listadas)" : ""}</p>
+              <p className="restricao-texto">{textoFonte(f, r.encostaM)}{f.cortada && f.classe !== "incompleta" ? " (há mais áreas na vizinhança do que as listadas)" : ""}</p>
               {f.itens.length > 0 && (
                 <ul className="restricao-itens">
                   {f.itens.map((it) => (
@@ -159,6 +164,11 @@ export function RestricoesImovel({ aneisLonLat, fuso, dados, onResultado, id = "
               {abertas
                 ? <ul>{livres.map((f) => <li key={f.tipo} title={f.servidor ?? undefined}><span className="restricao-cor" style={{ background: f.cor }} aria-hidden /> {f.rotulo} <span className="sub">· {f.orgao}</span></li>)}</ul>
                 : <span className="sub"> {livres.map((f) => f.singular).join(", ")}</span>}
+              {semResposta > 0 && (
+                <p className="restricoes-aviso-incompleta" role="note">
+                  Consulta incompleta: {semResposta} de {r.fontes.length} base(s) sem resposta completa (listadas acima). Nelas não dá para dizer que o imóvel está livre.
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -193,7 +203,7 @@ export function PreviaRestricoes({ aneisLonLat, fuso }: { aneisLonLat: LonLat[][
   const { carregando, r, deNovo } = useRestricoes(aneisLonLat, fuso, 1500);
   if (!aneisLonLat.some((a) => a.length >= 3)) return null;
   const previa = r ? previaRestricoes(r) : [];
-  const tem = previa.filter((p) => p.tem);
+  const resumo = resumoPrevia(previa);
   return (
     <div className="lt-bloco previa-restricoes">
       <h4>Áreas protegidas e especiais <span className="previa-gratis">prévia grátis</span><Dica lado="baixo">
@@ -204,13 +214,11 @@ export function PreviaRestricoes({ aneisLonLat, fuso }: { aneisLonLat: LonLat[][
       {carregando && !r && <p className="sub"><span className="spinner" /> consultando as bases públicas…</p>}
       {r && (
         <>
-          <p className={`previa-resumo ${tem.length ? "tem" : "nao"}`}>
-            {tem.length ? `Sobreposição encontrada: ${tem.map((p) => minusculas(p.rotulo)).join(", ")}.` : previa.some((p) => p.tem === null) ? "Nenhuma sobreposição nas bases que responderam." : "Nenhuma sobreposição encontrada."}
-          </p>
+          <p className={`previa-resumo ${resumo.classe}`}>{resumo.texto}</p>
           <ul className="previa-chips">
             {previa.map((p) => (
-              <li key={p.tipo} className={p.tem === null ? "nulo" : p.tem ? "tem" : "nao"}>
-                <i style={{ background: p.cor }} aria-hidden /><span>{p.rotulo}</span><b>{p.tem === null ? "não consultado" : p.tem ? "tem sobreposição" : "não tem"}</b>
+              <li key={p.tipo} className={p.incompleta ? "incompleta" : p.tem === null ? "nulo" : p.tem ? "tem" : "nao"}>
+                <i style={{ background: p.cor }} aria-hidden /><span>{p.rotulo}</span><b>{p.incompleta ? "incompleta" : p.tem === null ? "não consultado" : p.tem ? "tem sobreposição" : "não tem"}</b>
               </li>
             ))}
           </ul>

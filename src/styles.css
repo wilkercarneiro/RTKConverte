@@ -1647,6 +1647,9 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .restricoes.sobrepoe > header .desc { color: var(--perigo); }
 .restricoes.encosta > header .desc { color: var(--alerta-escuro); }
 .restricoes.livre > header .desc { color: var(--floresta); }
+/* consulta incompleta / nenhuma base respondeu: alerta, nunca o verde de livre */
+.restricoes.incompleta > header .desc, .restricoes.falhou > header .desc { color: var(--alerta-escuro); }
+.restricoes.incompleta, .restricoes.falhou { border-color: #F2D49B; }
 .restricoes > header .esticar { flex: 1; }
 .restricoes > header button { height: 32px; padding: 0 12px; font-size: 13px; }
 .restricoes.sobrepoe { border-color: #F3B4B4; }
@@ -1662,6 +1665,7 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .restricao-selo.sobrepoe { background: var(--perigo); }
 .restricao-selo.encosta { background: var(--alerta); }
 .restricao-selo.livre { background: var(--floresta); }
+.restricao-selo.incompleta { background: var(--alerta); }
 .restricao-texto { margin: 0; font-size: 13px; color: var(--texto-2); }
 .restricao-itens { margin: 0; padding: 0 0 0 4px; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .restricao-itens li { font-size: 13.5px; display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 3px solid var(--borda); }
@@ -1673,6 +1677,7 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .restricoes-livres li { display: flex; align-items: center; gap: 6px; }
 .restricoes-livres button.link, .previa-restricoes button.link { background: none; border: 0; padding: 0; height: auto; color: var(--primaria-escura); font-size: 13px; cursor: pointer; text-decoration: underline; }
 .restricoes-rodape { margin: 12px 0 0; font-size: 12px; }
+.restricoes-aviso-incompleta { margin: 6px 0 0; font-size: 12.5px; font-weight: 600; color: var(--alerta-escuro); }
 /* legenda das camadas no mapa interativo */
 .legenda-restricoes { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 12px; font-size: 12.5px; background: var(--card); border: 1px solid var(--borda); border-top: 0; }
 .legenda-restricoes span { display: inline-flex; align-items: center; gap: 6px; }
@@ -1684,12 +1689,14 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .previa-resumo { margin: 0; font-size: 13.5px; font-weight: 600; }
 .previa-resumo.tem { color: var(--perigo); }
 .previa-resumo.nao { color: var(--floresta); }
+.previa-resumo.alerta { color: var(--alerta-escuro); }
 .previa-chips { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 3px 16px; font-size: 12.5px; }
 .previa-chips li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 2px 0; border-bottom: 1px dashed var(--borda); }
 .previa-chips li i { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .previa-chips li.tem b { color: var(--perigo); }
 .previa-chips li.nao b { color: var(--floresta); font-weight: 500; }
 .previa-chips li.nulo b { color: var(--texto-3); font-weight: 500; }
+.previa-chips li.incompleta b { color: var(--alerta-escuro); font-weight: 500; }
 /* no painel estreito do CAR */
 .restricoes.compacto > header { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin-bottom: 10px; }
 .restricoes.compacto > header h3 { margin: 0; }

@@ -53,7 +53,8 @@ export type Caixa = [number, number, number, number];
 export interface Servidor {
   /** quem publica o dado neste servidor, para o texto ("FUNAI — GeoServer") */
   nome: string;
-  buscar: (caixa: Caixa, f: typeof fetch, imovel: Caixa) => Promise<{ feicoes: Feicao[]; cortada: boolean }>;
+  /** `caixa`: imóvel + margem do mapa; `imovel`: só o imóvel; `perto`: imóvel + a distância de "encosta" */
+  buscar: (caixa: Caixa, f: typeof fetch, imovel: Caixa, perto: Caixa) => Promise<{ feicoes: Feicao[]; cortada: boolean }>;
 }
 
 export interface FonteRestricao {
@@ -68,7 +69,12 @@ export interface FonteRestricao {
   nota: string;
 }
 
-export type ClasseRestricao = "sobrepoe" | "encosta" | "livre" | "nao_consultado";
+/**
+ * "incompleta": a base respondeu, mas com mais áreas na vizinhança do que o
+ * teto de páginas da consulta, e nenhuma das que vieram sobrepõe — não dá
+ * para afirmar que está livre.
+ */
+export type ClasseRestricao = "sobrepoe" | "encosta" | "livre" | "incompleta" | "nao_consultado";
 
 export interface ItemRestricao {
   tipo: TipoRestricao;
@@ -201,20 +207,53 @@ async function lerJson(r: Response, quem: string): Promise<Record<string, unknow
   let j: Record<string, unknown>;
   try { j = JSON.parse(t); } catch { throw new Error(`${quem}: resposta inesperada (${t.slice(0, 80).replace(/\s+/g, " ")})`); }
   const erro = j.error as { message?: string; code?: number } | undefined;
+  // o ArcGIS devolve HTTP 200 com {"error":{"code":500}}: é o mesmo 5xx passageiro
+  // e precisa da 2ª tentativa (o texto "respondeu 5xx" é o que a consulta reconhece)
+  if (erro && Number(erro.code) >= 500 && Number(erro.code) < 600) throw new Error(`${quem} respondeu ${erro.code}: ${erro.message ?? "erro"}`);
   if (erro) throw new Error(`${quem}: ${erro.message ?? "erro"}${erro.code ? ` (${erro.code})` : ""}`);
   return j;
 }
 
-/** Consulta de feições numa camada do ArcGIS Server (query por envelope, GeoJSON em lon/lat). */
+/**
+ * Páginas por consulta: com 300 feições por página, até 1.500 áreas na caixa.
+ * Passou disso, a fonte fica "incompleta" (nunca "livre").
+ */
+export const MAX_PAGINAS = 5;
+
+/** A mesma feição? (servidor que ignora a paginação devolve a 1ª página de novo) */
+const assinatura = (x: Feature | undefined): string => (x ? `${x.id ?? ""}|${JSON.stringify(x.properties ?? {})}` : "");
+
+/**
+ * Pagina uma consulta: `pagina(offset)` busca a partir do registro `offset`.
+ * Para quando a resposta não vem cortada, quando o servidor ignora o offset
+ * (a página repete) ou no teto de páginas — nestes dois casos fica cortada.
+ */
+async function paginar(pagina: (offset: number) => Promise<{ features: Feature[]; cortada: boolean }>) {
+  const todas: Feature[] = [];
+  let offset = 0;
+  for (let k = 0; k < MAX_PAGINAS; k++) {
+    const { features, cortada } = await pagina(offset);
+    if (k > 0 && features.length && assinatura(features[0]) === assinatura(todas[0])) return { features: todas, cortada: true };
+    todas.push(...features);
+    if (!cortada || !features.length) return { features: todas, cortada: false };
+    offset += features.length;
+  }
+  return { features: todas, cortada: true };
+}
+
+/** Consulta de feições numa camada do ArcGIS Server (query por envelope, GeoJSON em lon/lat), paginada por resultOffset. */
 async function arcgis(f: typeof fetch, url: string, caixa: Caixa, campos: string[], extra: Record<string, string> = {}, max = 300) {
-  const q = new URLSearchParams({
-    geometry: caixa.join(","), geometryType: "esriGeometryEnvelope", inSR: "4326", spatialRel: "esriSpatialRelIntersects",
-    outFields: campos.join(","), outSR: "4326", returnGeometry: "true", f: "geojson", resultRecordCount: String(max), ...extra,
+  return paginar(async (offset) => {
+    const q = new URLSearchParams({
+      geometry: caixa.join(","), geometryType: "esriGeometryEnvelope", inSR: "4326", spatialRel: "esriSpatialRelIntersects",
+      outFields: campos.join(","), outSR: "4326", returnGeometry: "true", f: "geojson", resultRecordCount: String(max), ...extra,
+    });
+    if (offset > 0) q.set("resultOffset", String(offset));
+    const j = await lerJson(await f(`${url}/query?${q}`), new URL(url).host);
+    const features = (j.features as Feature[] | undefined) ?? [];
+    const props = j.properties as { exceededTransferLimit?: boolean } | undefined;
+    return { features, cortada: Boolean(props?.exceededTransferLimit ?? j.exceededTransferLimit) || features.length >= max };
   });
-  const j = await lerJson(await f(`${url}/query?${q}`), new URL(url).host);
-  const features = (j.features as Feature[] | undefined) ?? [];
-  const props = j.properties as { exceededTransferLimit?: boolean } | undefined;
-  return { features, cortada: Boolean(props?.exceededTransferLimit ?? j.exceededTransferLimit) || features.length >= max };
 }
 
 /** Contagem no ArcGIS (sem baixar geometria). */
@@ -226,16 +265,21 @@ async function arcgisConta(f: typeof fetch, url: string, caixa: Caixa, rel: "esr
   return n;
 }
 
-/** GetFeature do WFS (GeoServer), caixa em lon/lat, GeoJSON. */
+/** GetFeature do WFS (GeoServer), caixa em lon/lat, GeoJSON, paginado por startIndex (o GeoServer aceita também no WFS 1.1). */
 async function wfs(f: typeof fetch, base: string, typeName: string, caixa: Caixa, max = 300) {
-  const q = new URLSearchParams({
-    service: "WFS", version: "1.1.0", request: "GetFeature", typeName, outputFormat: "application/json",
-    srsName: "EPSG:4326", maxFeatures: String(max), bbox: `${caixa.join(",")},EPSG:4326`,
+  return paginar(async (offset) => {
+    const q = new URLSearchParams({
+      service: "WFS", version: "1.1.0", request: "GetFeature", typeName, outputFormat: "application/json",
+      srsName: "EPSG:4326", maxFeatures: String(max), bbox: `${caixa.join(",")},EPSG:4326`,
+    });
+    if (offset > 0) q.set("startIndex", String(offset));
+    const j = await lerJson(await f(`${base}?${q}`), new URL(base).host);
+    if (j.type !== "FeatureCollection") throw new Error(`${new URL(base).host}: resposta inesperada`);
+    const features = (j.features as Feature[] | undefined) ?? [];
+    // o GeoServer diz o total (totalFeatures / numberMatched) quando sabe
+    const total = Number(j.totalFeatures ?? j.numberMatched);
+    return { features, cortada: Number.isFinite(total) && total > 0 ? offset + features.length < total : features.length >= max };
   });
-  const j = await lerJson(await f(`${base}?${q}`), new URL(base).host);
-  if (j.type !== "FeatureCollection") throw new Error(`${new URL(base).host}: resposta inesperada`);
-  const features = (j.features as Feature[] | undefined) ?? [];
-  return { features, cortada: features.length >= max };
 }
 
 const linha = (rotulo: string, v: unknown) => (txt(v) ? `${rotulo}: ${txt(v)}` : "");
@@ -411,17 +455,19 @@ export const FONTES: FonteRestricao[] = [
     nota: "Faixa de 150 km ao longo da fronteira terrestre (Lei 6.634/1979): alienação e concessão de terras dependem de assentimento prévio.",
     servidores: [{
       nome: "IBAMA/PAMGIA — faixa de fronteira do IBGE",
-      buscar: async (_caixa, f, imovel) => {
+      buscar: async (_caixa, f, imovel, perto) => {
         const url = `${PAMGIA_SYNC}/lim_faixa_fronteira_ibge_a/FeatureServer/0`;
         // A faixa é UM polígono do tamanho do país (9 MB): primeiro só conta.
-        if ((await arcgisConta(f, url, imovel, "esriSpatialRelIntersects")) === 0) return { feicoes: [], cortada: false };
+        // A contagem olha o imóvel MAIS a distância de "encosta": imóvel a 100 m
+        // da linha dos 150 km encosta na faixa, como nas outras bases.
+        if ((await arcgisConta(f, url, perto, "esriSpatialRelIntersects")) === 0) return { feicoes: [], cortada: false };
         const nome = "Faixa de Fronteira (150 km)";
         const detalhes = ["Lei 6.634/1979 e Decreto 85.064/1980"];
         if ((await arcgisConta(f, url, imovel, "esriSpatialRelWithin")) > 0) {
           return { cortada: false, feicoes: [{ id: "fronteira", nome, detalhes, poligonos: [], contemTudo: true, atualizacao: null }] };
         }
         // na borda dos 150 km: a geometria generalizada (~20 m) basta para o percentual
-        const { features } = await arcgis(f, url, imovel, ["nome"], { maxAllowableOffset: "0.0002" }, 5);
+        const { features } = await arcgis(f, url, perto, ["nome"], { maxAllowableOffset: "0.0002" }, 5);
         return {
           cortada: false,
           feicoes: features.map((x): Feicao => ({ id: "fronteira", nome, detalhes: [...detalhes, "Limite generalizado (~20 m) na borda da faixa"], poligonos: poligonosDe(x.geometry), atualizacao: null })),
@@ -454,8 +500,8 @@ export const FONTES: FonteRestricao[] = [
           atualizacao: dataDe(p.dt_sync),
         });
         const [pol, pts] = await Promise.all([
-          servidorArcgis("", `${PAMGIA_SYNC}/lim_sitios_arqueologicos_iphan_a/FeatureServer/0`, ["id_bem", "identificacao_bem", "co_iphan", "ds_classificacao", "dt_cadastro"], mapear).buscar(caixa, f, caixa),
-          servidorArcgis("", `${PAMGIA_SYNC}/loc_sitios_arqueologicos_iphan_p/FeatureServer/0`, ["id_bem", "identifica", "co_iphan", "ds_classif", "dt_cadastr", "dt_sync"], mapear, true).buscar(caixa, f, caixa),
+          servidorArcgis("", `${PAMGIA_SYNC}/lim_sitios_arqueologicos_iphan_a/FeatureServer/0`, ["id_bem", "identificacao_bem", "co_iphan", "ds_classificacao", "dt_cadastro"], mapear).buscar(caixa, f, caixa, caixa),
+          servidorArcgis("", `${PAMGIA_SYNC}/loc_sitios_arqueologicos_iphan_p/FeatureServer/0`, ["id_bem", "identifica", "co_iphan", "ds_classif", "dt_cadastr", "dt_sync"], mapear, true).buscar(caixa, f, caixa, caixa),
         ]);
         // o mesmo sítio pode vir nas duas camadas: vale o polígono
         const ids = new Set(pol.feicoes.map((x) => x.id));
@@ -561,13 +607,17 @@ export async function consultarRestricoes(aneis: LonLat[][], opcoes: OpcoesRestr
   const caixa: Caixa = [Math.min(...cantos.map((c) => c[0])), Math.min(...cantos.map((c) => c[1])), Math.max(...cantos.map((c) => c[0])), Math.max(...cantos.map((c) => c[1]))];
   const lls = todos;
   const caixaImovel: Caixa = [Math.min(...lls.map((p) => p[0])), Math.min(...lls.map((p) => p[1])), Math.max(...lls.map((p) => p[0])), Math.max(...lls.map((p) => p[1]))];
+  // o imóvel mais a distância de "encosta" (a faixa de fronteira conta nela)
+  const minP: Pt = [min[0] + margemM - encostaM, min[1] + margemM - encostaM], maxP: Pt = [max[0] - margemM + encostaM, max[1] - margemM + encostaM];
+  const cantosP = [minP, [maxP[0], minP[1]], maxP, [minP[0], maxP[1]]].map((p) => P.volta(p as Pt));
+  const caixaPerto: Caixa = [Math.min(...cantosP.map((c) => c[0])), Math.min(...cantosP.map((c) => c[1])), Math.max(...cantosP.map((c) => c[0])), Math.max(...cantosP.map((c) => c[1]))];
 
   const cruzar = (fonte: FonteRestricao, x: Feicao): ItemRestricao | null => {
     const comum = { tipo: fonte.tipo, id: x.id, nome: x.nome, detalhes: x.detalhes, atualizacao: x.atualizacao ?? null };
     if (x.contemTudo) {
       return { ...comum, classe: "sobrepoe", areaM2: areaImovelM2, pct: 100, distanciaM: 0, geometria: null, sobreposta: multiPoligono(imovel, P), pontos: [] };
     }
-    if (x.pontos?.length) {
+    if (x.pontos?.length && !x.poligonos.length) {
       const pts = x.pontos.map(P.ida);
       const dentro = pts.some((p) => imovel.some((im) => dentroAnel(p, im.ext)));
       const d = dentro ? 0 : Math.min(...pts.flatMap((p) => imovelUtm.map((a) => distAneis([p], a))));
@@ -605,25 +655,15 @@ export async function consultarRestricoes(aneis: LonLat[][], opcoes: OpcoesRestr
       const ctl = new AbortController();
       const f: typeof fetch = (u, init) => f0(u, { ...(init ?? {}), signal: ctl.signal });
       try {
-        const { feicoes, cortada } = await comTempo(s.buscar(caixa, f, caixaImovel), timeoutMs, ctl);
-        const porId = new Map<string, ItemRestricao>();
-        for (const x of feicoes) {
+        const { feicoes, cortada } = await comTempo(s.buscar(caixa, f, caixaImovel, caixaPerto), timeoutMs, ctl);
+        const itens: ItemRestricao[] = [];
+        for (const x of agruparPorId(feicoes)) {
           const it = cruzar(fonte, x);
-          if (!it) continue;
-          // a mesma área em vários pedaços (MultiPolygon partido pela base): soma
-          const ja = porId.get(it.id);
-          if (!ja) { porId.set(it.id, it); continue; }
-          if (it.classe === "sobrepoe" || ja.classe === "sobrepoe") {
-            const soma = (ja.classe === "sobrepoe" ? ja.areaM2 : 0) + (it.classe === "sobrepoe" ? it.areaM2 : 0);
-            porId.set(it.id, {
-              ...ja, classe: soma >= AREA_MINIMA_M2 || ja.classe === "sobrepoe" || it.classe === "sobrepoe" ? "sobrepoe" : ja.classe, areaM2: soma,
-              pct: areaImovelM2 > 0 ? Math.min(100, (soma / areaImovelM2) * 100) : 0, distanciaM: 0,
-              geometria: juntar(ja.geometria, it.geometria), sobreposta: juntar(ja.sobreposta, it.sobreposta), pontos: [...ja.pontos, ...it.pontos],
-            });
-          } else if (it.distanciaM < ja.distanciaM) porId.set(it.id, { ...it, geometria: juntar(ja.geometria, it.geometria) });
+          if (it) itens.push(it);
         }
-        r.itens = [...porId.values()].sort((a, b) => (a.classe === b.classe ? b.areaM2 - a.areaM2 || a.distanciaM - b.distanciaM : a.classe === "sobrepoe" ? -1 : 1));
-        r.classe = r.itens.some((i) => i.classe === "sobrepoe") ? "sobrepoe" : r.itens.length ? "encosta" : "livre";
+        r.itens = itens.sort((a, b) => (a.classe === b.classe ? b.areaM2 - a.areaM2 || a.distanciaM - b.distanciaM : a.classe === "sobrepoe" ? -1 : 1));
+        // resposta cortada sem sobreposição: há mais áreas do que as que vieram, então nunca "livre"
+        r.classe = r.itens.some((i) => i.classe === "sobrepoe") ? "sobrepoe" : cortada ? "incompleta" : r.itens.length ? "encosta" : "livre";
         r.servidor = s.nome;
         r.cortada = cortada;
         r.atualizacao = feicoes.map((x) => x.atualizacao ?? "").filter(Boolean).sort().pop() ?? null;
@@ -645,10 +685,24 @@ function semFechoLL(a: LonLat[]): LonLat[] {
   return b.length > 1 && b[0][0] === b[b.length - 1][0] && b[0][1] === b[b.length - 1][1] ? b.slice(0, -1) : b;
 }
 
-function juntar(a: GeoJSON.MultiPolygon | null, b: GeoJSON.MultiPolygon | null): GeoJSON.MultiPolygon | null {
-  if (!a) return b;
-  if (!b) return a;
-  return { type: "MultiPolygon", coordinates: [...a.coordinates, ...b.coordinates] };
+/**
+ * A mesma área em vários pedaços (MultiPolygon partido pela base, ou o registro
+ * repetido): vira UMA feição com todos os polígonos e pontos. O cruzamento
+ * então recorta a união (o clipper soma pedaços sobrepostos sem contar duas
+ * vezes) e guarda a geometria de todos os pedaços para o mapa e o croqui.
+ */
+export function agruparPorId(feicoes: Feicao[]): Feicao[] {
+  const porId = new Map<string, Feicao>();
+  for (const x of feicoes) {
+    const ja = porId.get(x.id);
+    if (!ja) { porId.set(x.id, { ...x, poligonos: [...x.poligonos], pontos: x.pontos ? [...x.pontos] : undefined }); continue; }
+    ja.poligonos.push(...x.poligonos);
+    if (x.pontos?.length) ja.pontos = [...(ja.pontos ?? []), ...x.pontos];
+    ja.contemTudo = ja.contemTudo || x.contemTudo;
+    const at = [ja.atualizacao, x.atualizacao].filter((d): d is string => !!d).sort().pop() ?? null;
+    ja.atualizacao = at;
+  }
+  return [...porId.values()];
 }
 
 // ---------------------------------------------------------------------------
@@ -667,7 +721,7 @@ export const minusculas = (s: string): string =>
   s.split(" ").map((w) => (/^\(?[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,}\)?$/.test(w) ? w : w.toLowerCase())).join(" ");
 
 export const ROTULO_CLASSE: Record<ClasseRestricao, string> = {
-  sobrepoe: "Sobrepõe", encosta: "Encosta", livre: "Livre", nao_consultado: "Não consultado",
+  sobrepoe: "Sobrepõe", encosta: "Encosta", livre: "Livre", incompleta: "Incompleta", nao_consultado: "Não consultado",
 };
 
 /** A frase de um item ("sobrepõe 12,3456 ha (4,10% do imóvel)" / "a 85 m do perímetro"). */
@@ -683,6 +737,10 @@ export function textoItem(it: ItemRestricao): string {
 export function textoFonte(f: ResultadoFonte, encostaM: number): string {
   if (f.classe === "nao_consultado") return `não consultado: ${f.motivo ?? "sem resposta"}`;
   if (f.classe === "livre") return `nenhuma área a menos de ${fmtM(encostaM)} do imóvel`;
+  if (f.classe === "incompleta") {
+    const perto = f.itens.length ? ` ${f.itens.length === 1 ? "1 área" : `${f.itens.length} áreas`} a menos de ${fmtM(encostaM)}, sem sobreposição;` : "";
+    return `resposta incompleta:${perto} a base tem mais áreas na vizinhança do que o limite da consulta (${MAX_PAGINAS * 300} registros), então não dá para afirmar que está livre — consulte de novo ou direto no órgão`;
+  }
   const s = f.itens.filter((i) => i.classe === "sobrepoe");
   if (s.length) {
     const area = s.reduce((t, i) => t + i.areaM2, 0);
@@ -692,25 +750,84 @@ export function textoFonte(f: ResultadoFonte, encostaM: number): string {
   return `${f.itens.length === 1 ? "1 área" : `${f.itens.length} áreas`} a menos de ${fmtM(encostaM)}, sem sobreposição`;
 }
 
+/**
+ * Estado geral da consulta (a cor do cartão, do resumo do PDF e da prévia):
+ *  - "sobrepoe": alguma base achou sobreposição (vale mesmo com bases fora);
+ *  - "livre" (verde): SÓ quando todas as bases responderam completas e livres;
+ *  - "encosta": todas responderam completas, alguma encosta;
+ *  - "incompleta" (alerta): nenhuma sobreposição, mas alguma base fora ou com resposta cortada;
+ *  - "falhou" (alerta): nenhuma base respondeu.
+ */
+export type EstadoGeral = "sobrepoe" | "encosta" | "livre" | "incompleta" | "falhou";
+
+/** "Consulta incompleta: 4 de 9 bases não responderam; 1 de 9 com resposta cortada". */
+function textoIncompleta(fora: number, cortadas: number, total: number): string {
+  const p: string[] = [];
+  if (fora) p.push(`${fora} de ${total} ${total === 1 ? "base" : "bases"} não ${fora === 1 ? "respondeu" : "responderam"}`);
+  if (cortadas) p.push(`${cortadas} de ${total} com resposta cortada no limite de registros`);
+  return `consulta incompleta: ${p.join("; ")}`;
+}
+
 /** Resumo geral para o cabeçalho do cartão. */
-export function resumoRestricoes(r: ResultadoRestricoes): { sobrepoe: ResultadoFonte[]; encosta: ResultadoFonte[]; livres: ResultadoFonte[]; naoConsultadas: ResultadoFonte[]; texto: string } {
+export function resumoRestricoes(r: ResultadoRestricoes): {
+  sobrepoe: ResultadoFonte[]; encosta: ResultadoFonte[]; livres: ResultadoFonte[]; incompletas: ResultadoFonte[]; naoConsultadas: ResultadoFonte[];
+  estado: EstadoGeral; texto: string;
+} {
   const por = (c: ClasseRestricao) => r.fontes.filter((f) => f.classe === c);
-  const sobrepoe = por("sobrepoe"), encosta = por("encosta"), livres = por("livre"), naoConsultadas = por("nao_consultado");
+  const sobrepoe = por("sobrepoe"), encosta = por("encosta"), livres = por("livre"), incompletas = por("incompleta"), naoConsultadas = por("nao_consultado");
+  const total = r.fontes.length;
+  const semResposta = !total || naoConsultadas.length === total;
+  const faltou = naoConsultadas.length > 0 || incompletas.length > 0;
+  const estado: EstadoGeral = sobrepoe.length ? "sobrepoe" : semResposta ? "falhou" : faltou ? "incompleta" : encosta.length ? "encosta" : "livre";
   const partes: string[] = [];
-  if (sobrepoe.length) partes.push(`sobrepõe ${sobrepoe.map((f) => minusculas(f.singular)).join(", ")}`);
-  if (encosta.length) partes.push(`encosta em ${encosta.map((f) => minusculas(f.singular)).join(", ")}`);
-  if (!sobrepoe.length && !encosta.length && (livres.length || !naoConsultadas.length)) partes.push("nenhuma restrição encontrada nas bases consultadas");
-  if (naoConsultadas.length) partes.push(`${naoConsultadas.length} base(s) não consultada(s)`);
+  if (estado === "falhou") {
+    partes.push(`não foi possível consultar: ${total ? (total === 1 ? "a base não respondeu" : `nenhuma das ${total} bases respondeu`) : "nenhuma base"}`);
+  } else {
+    if (sobrepoe.length) partes.push(`sobrepõe ${sobrepoe.map((f) => minusculas(f.singular)).join(", ")}`);
+    if (encosta.length) partes.push(`encosta em ${encosta.map((f) => minusculas(f.singular)).join(", ")}`);
+    if (faltou) partes.push(textoIncompleta(naoConsultadas.length, incompletas.length, total));
+    else if (!sobrepoe.length && !encosta.length) partes.push("nenhuma restrição encontrada nas bases consultadas");
+  }
   const t = partes.join("; ");
-  return { sobrepoe, encosta, livres, naoConsultadas, texto: t.charAt(0).toUpperCase() + t.slice(1) + "." };
+  return { sobrepoe, encosta, livres, incompletas, naoConsultadas, estado, texto: t.charAt(0).toUpperCase() + t.slice(1) + "." };
+}
+
+export interface ItemPrevia {
+  tipo: TipoRestricao;
+  rotulo: string;
+  cor: string;
+  /** true = tem sobreposição; false = não tem (resposta completa); null = não deu para afirmar */
+  tem: boolean | null;
+  /** a base respondeu, mas cortada no limite (tem = null) */
+  incompleta: boolean;
 }
 
 /**
  * A prévia grátis do Novo serviço: por tipo, só "tem / não tem sobreposição"
- * (null = não deu para consultar). Nome, área e % ficam para o serviço.
+ * (null = não deu para consultar, ou resposta cortada). Nome, área e % ficam para o serviço.
  */
-export function previaRestricoes(r: ResultadoRestricoes): { tipo: TipoRestricao; rotulo: string; cor: string; tem: boolean | null }[] {
-  return r.fontes.map((f) => ({ tipo: f.tipo, rotulo: f.rotulo, cor: f.cor, tem: f.classe === "nao_consultado" ? null : f.classe === "sobrepoe" }));
+export function previaRestricoes(r: ResultadoRestricoes): ItemPrevia[] {
+  return r.fontes.map((f) => ({
+    tipo: f.tipo, rotulo: f.rotulo, cor: f.cor,
+    tem: f.classe === "nao_consultado" || f.classe === "incompleta" ? null : f.classe === "sobrepoe",
+    incompleta: f.classe === "incompleta",
+  }));
+}
+
+/** A frase e a cor do resumo da prévia: verde só com todas as bases completas e sem sobreposição. */
+export function resumoPrevia(previa: ItemPrevia[]): { classe: "tem" | "nao" | "alerta"; texto: string } {
+  const tem = previa.filter((p) => p.tem);
+  const fora = previa.filter((p) => p.tem === null && !p.incompleta).length;
+  const cortadas = previa.filter((p) => p.incompleta).length;
+  const total = previa.length;
+  const nota = fora || cortadas ? ` (${textoIncompleta(fora, cortadas, total)})` : "";
+  if (tem.length) return { classe: "tem", texto: `Sobreposição encontrada: ${tem.map((p) => minusculas(p.rotulo)).join(", ")}${nota}.` };
+  if (!total || fora === total) return { classe: "alerta", texto: "Não foi possível consultar as bases públicas agora. Consulte de novo em alguns minutos." };
+  if (fora || cortadas) {
+    const t = textoIncompleta(fora, cortadas, total);
+    return { classe: "alerta", texto: `${t.charAt(0).toUpperCase()}${t.slice(1)}. Nas que responderam completas, nenhuma sobreposição.` };
+  }
+  return { classe: "nao", texto: "Nenhuma sobreposição encontrada." };
 }
 
 /** Camadas para o mapa interativo: a área (recortada na vista) e o pedaço sobreposto, com a cor do tipo. */

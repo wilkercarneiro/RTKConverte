@@ -31,9 +31,16 @@ const M = 40;
 const COR_TEXTO = rgb(0.12, 0.14, 0.13);
 const COR_SUB = rgb(0.38, 0.42, 0.4);
 const COR_LINHA = rgb(0.82, 0.84, 0.83);
-const COR_CLASSE: Record<string, RGB> = {
+export const COR_CLASSE: Record<string, RGB> = {
   sobrepoe: rgb(0.78, 0.13, 0.13), encosta: rgb(0.8, 0.5, 0.02), livre: rgb(0.1, 0.5, 0.27), nao_consultado: rgb(0.45, 0.45, 0.45),
+  // consulta incompleta ou sem resposta: alerta (âmbar escuro), nunca o verde de livre
+  incompleta: rgb(0.62, 0.4, 0.04), falhou: rgb(0.62, 0.4, 0.04),
 };
+
+/** Cor do resumo no topo do PDF: a do estado geral (verde só com todas as bases completas e livres). */
+export function corDoResumo(r: ResultadoRestricoes): RGB {
+  return COR_CLASSE[resumoRestricoes(r).estado];
+}
 
 const hex = (h: string): RGB => {
   const n = parseInt(h.replace("#", ""), 16);
@@ -94,7 +101,7 @@ export async function gerarPdfRestricoes(r: ResultadoRestricoes, aneis: LonLat[]
   if (dados.emitente) escrever(`Emitido por: ${dados.emitente}`, { tam: 9, cor: COR_SUB });
   y -= 4;
   const resumo = resumoRestricoes(r);
-  escrever(resumo.texto, { tam: 11, f: negrito, cor: resumo.sobrepoe.length ? COR_CLASSE.sobrepoe : resumo.encosta.length ? COR_CLASSE.encosta : COR_CLASSE.livre, entre: 6 });
+  escrever(resumo.texto, { tam: 11, f: negrito, cor: corDoResumo(r), entre: 6 });
 
   // ---- croqui ----
   const H = 290;
@@ -146,8 +153,10 @@ export async function gerarPdfRestricoes(r: ResultadoRestricoes, aneis: LonLat[]
   escrever("Fontes consultadas", { tam: 12, f: negrito, entre: 6 });
   const ok = r.fontes.filter((f) => f.classe !== "nao_consultado");
   const fora = r.fontes.filter((f) => f.classe === "nao_consultado");
+  const cortadas = r.fontes.filter((f) => f.classe === "incompleta");
   escrever(ok.length ? ok.map((f) => `${f.singular}: ${f.servidor}`).join("; ") + "." : "Nenhuma base respondeu.", { tam: 8.5 });
-  if (fora.length) escrever(`Não consultadas: ${fora.map((f) => `${f.singular} (${f.motivo})`).join("; ")}. Refaça a consulta mais tarde para estas bases.`, { tam: 8.5, f: negrito, cor: COR_CLASSE.nao_consultado });
+  if (fora.length) escrever(`Não consultadas: ${fora.map((f) => `${f.singular} (${f.motivo})`).join("; ")}. Refaça a consulta mais tarde para estas bases.`, { tam: 8.5, f: negrito, cor: COR_CLASSE.incompleta });
+  if (cortadas.length) escrever(`Resposta incompleta (mais áreas do que o limite da consulta): ${cortadas.map((f) => f.singular).join("; ")}. Nestas bases o resultado não permite afirmar que o imóvel está livre.`, { tam: 8.5, f: negrito, cor: COR_CLASSE.incompleta });
   escrever(`Critério: "sobrepõe" quando a interseção passa de 1 m²; "encosta" quando a área está a até ${fmtM(r.encostaM)} do perímetro sem sobrepor. Áreas calculadas em UTM (fuso ${r.fuso}S) com o mesmo método da área do imóvel.`, { tam: 8, cor: COR_SUB });
 
   // ---- aviso ----

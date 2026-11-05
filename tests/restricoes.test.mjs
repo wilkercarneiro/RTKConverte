@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import proj4 from "proj4";
 import {
-  AVISO_RESTRICOES, camadasDoResultado, consultarRestricoes, FONTES, HOSTS_RESTRICOES, previaRestricoes, resumoRestricoes, textoFonte, textoItem,
+  AVISO_RESTRICOES, camadasDoResultado, consultarRestricoes, FONTES, HOSTS_RESTRICOES, MAX_PAGINAS, previaRestricoes, resumoPrevia, resumoRestricoes, textoFonte, textoItem,
 } from "../src/lib/restricoes.ts";
 import { calcularAreaHa, GEO_DEF, utmDef } from "../supabase/functions/_shared/geo.ts";
 
@@ -25,7 +25,11 @@ const fixture = (nome) => JSON.parse(fs.readFileSync(new URL(`./fixtures/restric
 const chave = (u) => {
   const x = new URL(u);
   const p = x.searchParams;
-  return [x.host, decodeURIComponent(x.pathname), p.get("typeName") ?? "", p.get("spatialRel") ?? "", p.get("returnCountOnly") ?? "", p.get("geometry") ?? p.get("bbox") ?? ""].join("|");
+  // a contagem da faixa de fronteira foi gravada com a caixa do imóvel; hoje vai
+  // com a caixa + 300 m (encosta). Os imóveis gravados estão a centenas de km da
+  // faixa: a resposta (count 0) é a mesma, então a caixa não entra na chave.
+  const geo = x.pathname.includes("lim_faixa_fronteira") ? "" : (p.get("geometry") ?? p.get("bbox") ?? "");
+  return [x.host, decodeURIComponent(x.pathname), p.get("typeName") ?? "", p.get("spatialRel") ?? "", p.get("returnCountOnly") ?? "", geo].join("|");
 };
 
 function gravado(fx, { falhar = {} } = {}) {
@@ -146,9 +150,10 @@ test("fonte fora do ar não derruba as outras; a cópia assume quando o principa
   assert.match(textoFonte(fonte(r, "militar"), r.encostaM), /^não consultado: /);
   const resumo = resumoRestricoes(r);
   assert.equal(resumo.naoConsultadas.length, 4);
-  assert.match(resumo.texto, /4 base\(s\) não consultada\(s\)/);
-  assert.equal(resumo.texto, "Nenhuma restrição encontrada nas bases consultadas; 4 base(s) não consultada(s).", "sem todas as bases, o resumo diz quais faltaram");
-  assert.deepEqual(previaRestricoes(r).find((p) => p.tipo === "ti"), { tipo: "ti", rotulo: "Terras Indígenas", cor: FONTES[0].cor, tem: null });
+  // sem todas as bases não é "livre" (verde): é consulta incompleta, em alerta
+  assert.equal(resumo.estado, "incompleta");
+  assert.equal(resumo.texto, "Consulta incompleta: 4 de 9 bases não responderam.", "sem todas as bases, o resumo diz quantas faltaram");
+  assert.deepEqual(previaRestricoes(r).find((p) => p.tipo === "ti"), { tipo: "ti", rotulo: "Terras Indígenas", cor: FONTES[0].cor, tem: null, incompleta: false });
 });
 
 test("cópia do PAMGIA quando a FUNAI cai: o resultado diz qual servidor respondeu", async () => {
@@ -260,6 +265,217 @@ test("PDF: croqui, tabela por base, data da consulta, fontes fora e o aviso", as
   assert.equal(pdf.getTitle(), "Análise de restrições do imóvel");
   if (process.env.RESTRICOES_PDF) fs.writeFileSync(process.env.RESTRICOES_PDF, bytes);
   assert.equal(nomeArquivoRestricoes(r, "Fazenda São João"), "analise-restricoes-Fazenda_Sao_Joao-2026-11-05.pdf");
+});
+
+// ---------------------------------------------------------------------------
+// Resposta cortada, paginação, estado geral (verde só com tudo completo)
+// ---------------------------------------------------------------------------
+
+/** Quadrado local (m) perto de O, em lon/lat. */
+function local(O, lat = O[1]) {
+  const mLon = 1 / (111320 * Math.cos(Math.abs(lat) * Math.PI / 180)), mLat = 1 / 110574;
+  const P = (x, y) => [O[0] + x * mLon, O[1] + y * mLat];
+  const q = (x0, y0, x1, y1) => [P(x0, y0), P(x1, y0), P(x1, y1), P(x0, y1), P(x0, y0)];
+  return { P, q };
+}
+const fcResp = (features, extra = {}) => new Response(JSON.stringify({ type: "FeatureCollection", features, ...extra }));
+
+test("ArcGIS cortado: pagina por resultOffset e acha a sobreposição da 2ª página", async () => {
+  const { q } = local([-39.0, -12.0]);
+  const offsets = [];
+  const longe = (i) => ({ properties: { cd_sipra: `L${i}`, nome_proje: `Longe ${i}` }, geometry: { type: "Polygon", coordinates: [q(5000 + i, 5000, 5100 + i, 5100)] } });
+  const f = async (url) => {
+    const u = new URL(String(url));
+    if (u.pathname.includes("lim_assentamentos_incra_a")) {
+      const off = Number(u.searchParams.get("resultOffset") ?? 0);
+      offsets.push(off);
+      // página de 2 (o servidor limita abaixo dos 300 pedidos) com exceededTransferLimit
+      if (off === 0) return fcResp([longe(0), longe(1)], { exceededTransferLimit: true });
+      return fcResp([{ properties: { cd_sipra: "BA9", nome_proje: "PA Dentro" }, geometry: { type: "Polygon", coordinates: [q(-50, -50, 100, 150)] } }]);
+    }
+    return fcResp([]);
+  };
+  const imovel = q(0, 0, 200, 100).slice(0, 4);
+  const r = await consultarRestricoes([imovel], { fuso: 24, fetch: f, agora: AGORA, tipos: ["assentamento"] });
+  const pa = r.fontes[0];
+  assert.deepEqual(offsets, [0, 2], "a 2ª página começa depois dos 2 que vieram");
+  assert.equal(pa.classe, "sobrepoe");
+  assert.equal(pa.cortada, false, "todas as páginas lidas");
+  assert.equal(pa.itens[0].nome, "PA Dentro");
+});
+
+test("resposta cortada sem sobreposição: 'incompleta', nunca 'livre' (servidor que ignora o offset)", async () => {
+  const { q } = local([-39.0, -12.0]);
+  let n = 0;
+  const f = async (url) => {
+    const u = new URL(String(url));
+    if (u.pathname.includes("lim_assentamentos_incra_a")) {
+      n++;
+      // sempre a mesma página, cortada (servidor sem paginação)
+      return fcResp([{ properties: { cd_sipra: "L1", nome_proje: "Longe" }, geometry: { type: "Polygon", coordinates: [q(5000, 5000, 5100, 5100)] } }], { exceededTransferLimit: true });
+    }
+    return fcResp([]);
+  };
+  const imovel = q(0, 0, 200, 100).slice(0, 4);
+  const r = await consultarRestricoes([imovel], { fuso: 24, fetch: f, agora: AGORA, tipos: ["assentamento"] });
+  const pa = r.fontes[0];
+  assert.equal(n, 2, "a página repetida encerra a paginação");
+  assert.equal(pa.classe, "incompleta");
+  assert.equal(pa.cortada, true);
+  assert.match(textoFonte(pa, r.encostaM), /^resposta incompleta: .*não dá para afirmar que está livre/);
+  const resumo = resumoRestricoes(r);
+  assert.equal(resumo.estado, "incompleta");
+  assert.equal(resumo.texto, "Consulta incompleta: 1 de 1 com resposta cortada no limite de registros.");
+  const previa = previaRestricoes(r);
+  assert.deepEqual(previa.map((p) => [p.tem, p.incompleta]), [[null, true]]);
+  assert.equal(resumoPrevia(previa).classe, "alerta");
+});
+
+test("teto de páginas: cortada em todas as páginas fica 'incompleta' depois de MAX_PAGINAS", async () => {
+  const { q } = local([-39.0, -12.0]);
+  let n = 0;
+  const f = async (url) => {
+    const u = new URL(String(url));
+    if (u.pathname.includes("lim_assentamentos_incra_a")) {
+      const off = Number(u.searchParams.get("resultOffset") ?? 0);
+      n++;
+      return fcResp([{ properties: { cd_sipra: `L${off}`, nome_proje: `Longe ${off}` }, geometry: { type: "Polygon", coordinates: [q(5000, 5000, 5100, 5100)] } }], { exceededTransferLimit: true });
+    }
+    return fcResp([]);
+  };
+  const r = await consultarRestricoes([q(0, 0, 200, 100).slice(0, 4)], { fuso: 24, fetch: f, agora: AGORA, tipos: ["assentamento"] });
+  assert.equal(n, MAX_PAGINAS);
+  assert.equal(r.fontes[0].classe, "incompleta");
+});
+
+test("WFS cortado: pagina por startIndex com o totalFeatures do GeoServer", async () => {
+  const { q } = local([-39.35, -16.9]);
+  const inicios = [];
+  const longe = (i) => ({ properties: { terrai_codigo: i, terrai_nome: `Longe ${i}` }, geometry: { type: "Polygon", coordinates: [q(5000 + i, 5000, 5100 + i, 5100)] } });
+  const f = async (url) => {
+    const u = new URL(String(url));
+    if (u.host === "geoserver.funai.gov.br") {
+      const ini = Number(u.searchParams.get("startIndex") ?? 0);
+      inicios.push(ini);
+      if (ini === 0) return fcResp([longe(1), longe(2)], { totalFeatures: 3 });
+      return fcResp([{ properties: { terrai_codigo: 9, terrai_nome: "Dentro" }, geometry: { type: "Polygon", coordinates: [q(-100, -100, 300, 300)] } }], { totalFeatures: 3 });
+    }
+    return fcResp([]);
+  };
+  const r = await consultarRestricoes([q(0, 0, 200, 100).slice(0, 4)], { fuso: 24, fetch: f, agora: AGORA, tipos: ["ti"] });
+  assert.deepEqual(inicios, [0, 2]);
+  assert.equal(r.fontes[0].classe, "sobrepoe");
+  assert.equal(r.fontes[0].itens[0].nome, "TI Dentro");
+});
+
+test("estado geral: verde só com todas completas e livres; 8 de 9 fora e todas fora são alerta (cartão e PDF)", async () => {
+  const { corDoResumo, COR_CLASSE } = await import("../src/lib/restricoes_pdf.ts");
+  const { q } = local([-39.0, -12.0]);
+  const imovel = q(0, 0, 200, 100).slice(0, 4);
+  const vazio = async (url) => (String(url).includes("returnCountOnly") ? new Response(JSON.stringify({ count: 0 })) : fcResp([]));
+  const livre = await consultarRestricoes([imovel], { fuso: 24, fetch: vazio, agora: AGORA });
+  assert.equal(resumoRestricoes(livre).estado, "livre");
+  assert.equal(corDoResumo(livre), COR_CLASSE.livre);
+  assert.equal(resumoPrevia(previaRestricoes(livre)).classe, "nao");
+
+  // só a faixa de fronteira responde (8 de 9 fora)
+  const quase = await consultarRestricoes([imovel], { fuso: 24, agora: AGORA, fetch: async (url) => {
+    if (String(url).includes("lim_faixa_fronteira")) return new Response(JSON.stringify({ count: 0 }));
+    throw new TypeError("Failed to fetch");
+  } });
+  const rq = resumoRestricoes(quase);
+  assert.equal(rq.estado, "incompleta");
+  assert.equal(rq.texto, "Consulta incompleta: 8 de 9 bases não responderam.");
+  assert.notEqual(corDoResumo(quase), COR_CLASSE.livre, "PDF não pinta de verde");
+  const pq = resumoPrevia(previaRestricoes(quase));
+  assert.equal(pq.classe, "alerta");
+  assert.match(pq.texto, /^Consulta incompleta: 8 de 9 bases não responderam\./);
+
+  // nenhuma respondeu
+  const nada = await consultarRestricoes([imovel], { fuso: 24, agora: AGORA, fetch: async () => { throw new TypeError("Failed to fetch"); } });
+  const rn = resumoRestricoes(nada);
+  assert.equal(rn.estado, "falhou");
+  assert.equal(rn.texto, "Não foi possível consultar: nenhuma das 9 bases respondeu.");
+  assert.notEqual(corDoResumo(nada), COR_CLASSE.livre);
+  const pn = resumoPrevia(previaRestricoes(nada));
+  assert.equal(pn.classe, "alerta");
+  assert.match(pn.texto, /^Não foi possível consultar/);
+  // o PDF sai mesmo assim, sem quebrar
+  const { gerarPdfRestricoes } = await import("../src/lib/restricoes_pdf.ts");
+  assert.ok((await gerarPdfRestricoes(nada, [imovel], {})).length > 2000);
+});
+
+test("ArcGIS com HTTP 200 e {error:{code:500}} tenta de novo no mesmo servidor", async () => {
+  const { q } = local([-39.0, -12.0]);
+  let n = 0;
+  const f = async (url) => {
+    if (String(url).includes("lim_uso_militar_a")) {
+      n++;
+      if (n === 1) return new Response(JSON.stringify({ error: { code: 500, message: "Error performing query operation" } }));
+      return fcResp([]);
+    }
+    return fcResp([]);
+  };
+  const r = await consultarRestricoes([q(0, 0, 200, 100).slice(0, 4)], { fuso: 24, fetch: f, agora: AGORA, tipos: ["militar"] });
+  assert.equal(n, 2, "a 2ª tentativa aconteceu");
+  assert.equal(r.fontes[0].classe, "livre");
+});
+
+test("faixa de fronteira: a 100 m da linha dos 150 km dá 'encosta'", async () => {
+  const { q } = local([-57.6, -19.0]);
+  const pedidos = [];
+  const f = async (url) => {
+    const u = new URL(String(url));
+    if (u.pathname.includes("lim_faixa_fronteira_ibge_a")) {
+      const rel = u.searchParams.get("spatialRel"), conta = u.searchParams.get("returnCountOnly") === "true";
+      pedidos.push(conta ? `conta:${rel}` : "geometria");
+      if (conta && rel === "esriSpatialRelWithin") return new Response(JSON.stringify({ count: 0 }));
+      // a caixa do imóvel (0..200 m) não cruza a faixa (que começa em x = 300 m); a de encosta (+300 m) cruza
+      const [x0] = u.searchParams.get("geometry").split(",").map(Number);
+      const [, , x1] = u.searchParams.get("geometry").split(",").map(Number);
+      const faixaX = q(300, 0, 0, 0)[0][0];
+      if (conta) return new Response(JSON.stringify({ count: x1 >= faixaX && x0 <= faixaX + 1 ? 1 : 0 }));
+      return fcResp([{ properties: { nome: "Faixa" }, geometry: { type: "Polygon", coordinates: [q(300, -5000, 9000, 5000)] } }]);
+    }
+    return fcResp([]);
+  };
+  const r = await consultarRestricoes([q(0, 0, 200, 100).slice(0, 4)], { fuso: 21, fetch: f, agora: AGORA, tipos: ["fronteira"], encostaM: 300 });
+  const fr = r.fontes[0];
+  assert.deepEqual(pedidos, ["conta:esriSpatialRelIntersects", "conta:esriSpatialRelWithin", "geometria"]);
+  assert.equal(fr.classe, "encosta");
+  assert.ok(Math.abs(fr.itens[0].distanciaM - 100) < 1, `${fr.itens[0].distanciaM} m`);
+});
+
+test("pedaços do mesmo id: área da UNIÃO (sem contar duas vezes) e todas as geometrias guardadas", async () => {
+  const { q } = local([-39.0, -12.0]);
+  const f = async (url) => {
+    const u = decodeURIComponent(String(url));
+    if (u.includes("lim_quilombos_incra_a")) {
+      // o mesmo território duas vezes, sobrepostas: cada uma cobre 150 × 100 m do imóvel (200 × 100)
+      return fcResp([
+        { properties: { cd_quilomb: 7, nm_comunid: "Repetido" }, geometry: { type: "Polygon", coordinates: [q(-100, -10, 150, 110)] } },
+        { properties: { cd_quilomb: 7, nm_comunid: "Repetido" }, geometry: { type: "Polygon", coordinates: [q(50, -10, 300, 110)] } },
+      ]);
+    }
+    if (u.includes("lim_assentamentos_incra_a")) {
+      // o mesmo assentamento em dois pedaços, ambos só encostando (120 m e 250 m)
+      return fcResp([
+        { properties: { cd_sipra: "BA1", nome_proje: "PA Vizinho" }, geometry: { type: "Polygon", coordinates: [q(320, 0, 400, 100)] } },
+        { properties: { cd_sipra: "BA1", nome_proje: "PA Vizinho" }, geometry: { type: "Polygon", coordinates: [q(0, 350, 200, 450)] } },
+      ]);
+    }
+    return fcResp([]);
+  };
+  const r = await consultarRestricoes([q(0, 0, 200, 100).slice(0, 4)], { fuso: 24, fetch: f, agora: AGORA, tipos: ["quilombola", "assentamento"] });
+  const qui = fonte(r, "quilombola");
+  assert.equal(qui.itens.length, 1);
+  assert.ok(Math.abs(qui.itens[0].areaM2 - 20000) < 5, `união: ${qui.itens[0].areaM2} m² (somado daria 30.000)`);
+  assert.ok(Math.abs(qui.itens[0].pct - 100) < 0.05);
+  const pa = fonte(r, "assentamento");
+  assert.equal(pa.classe, "encosta");
+  assert.equal(pa.itens.length, 1);
+  assert.ok(Math.abs(pa.itens[0].distanciaM - 120) < 1, `${pa.itens[0].distanciaM} m (o mais perto)`);
+  assert.equal(pa.itens[0].geometria.coordinates.length, 2, "os dois pedaços ficam no mapa/croqui");
 });
 
 test("AO VIVO: as bases públicas de verdade (Monte Pascoal)", { skip: !process.env.RESTRICOES_AO_VIVO && "só com RESTRICOES_AO_VIVO=1", timeout: 120_000 }, async () => {

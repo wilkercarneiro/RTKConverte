@@ -10,7 +10,7 @@ import type { Curva, GradeCotas, Pt } from "../../lib/relevo/curvas.ts";
 import { caixaDe, cotaBilinear, pontosDeRotulo } from "../../lib/relevo/curvas.ts";
 import type { ModeloRelevo } from "../../lib/relevo/modelo.ts";
 import type { EntradaRelevo } from "../../lib/relevo/modelo.ts";
-import { buscarRelevoDeFundo, calcularRelevoEmSegundoPlano, coberturaDoImovel, imovelDosVertices } from "../../lib/relevo/imovel.ts";
+import { buscarRelevoDeFundo, calcularRelevoEmSegundoPlano, coberturaDoImovel, imovelDosVertices, RelevoCancelado } from "../../lib/relevo/imovel.ts";
 import { curvasParaDxf, curvasParaKml } from "../../lib/relevo/exportar.ts";
 import { webglDisponivel, MOTIVO_SEM_WEBGL } from "../../lib/webgl";
 import { Dica } from "../ui";
@@ -104,7 +104,7 @@ function imagemDoRelevo(g: GradeCotas, aneis: Pt[][], min: number, max: number, 
 }
 
 export function PainelRelevo({ vertices, aneis: aneisOrdens, fuso, nome, altura = 440 }: Props) {
-  const im = useMemo(() => imovelDosVertices(vertices, aneisOrdens), [vertices, aneisOrdens]);
+  const im = useMemo(() => imovelDosVertices(vertices, aneisOrdens, fuso), [vertices, aneisOrdens, fuso]);
   const chave = useMemo(() => `${fuso}|${im.pts.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(";")}|${im.hs.join(",")}`, [im, fuso]);
   const [intervalo, setIntervalo] = useState<number | null>(null);
   const [estado, setEstado] = useState<"relevo" | "calculo" | "pronto" | "erro">("relevo");
@@ -119,29 +119,34 @@ export function PainelRelevo({ vertices, aneis: aneisOrdens, fuso, nome, altura 
     if (im.aneis.length === 0 || comAltitude < 3) return;
     const n = ++pedido.current;
     let vivo = true;
+    // trocar o intervalo ou fechar o painel encerra o worker do cálculo anterior
+    const ctl = new AbortController();
     (async () => {
       try {
         setEstado(cacheBase.has(chave) ? "calculo" : "relevo");
         let base = cacheBase.get(chave);
         if (!base) {
-          base = buscarRelevoDeFundo(im, fuso).catch(() => null);
-          cacheBase.set(chave, base);
+          const p = buscarRelevoDeFundo(im, fuso).catch(() => null);
+          base = p;
+          cacheBase.set(chave, p);
+          // falha de rede (null) não fica guardada: a próxima abertura tenta de novo
+          void p.then((x) => { if (!x && cacheBase.get(chave) === p) cacheBase.delete(chave); });
         }
         const b = await base;
         if (!vivo || n !== pedido.current) return;
         setEstado("calculo");
-        const r = await calcularRelevoEmSegundoPlano({ base: b, pts: im.pts, hs: im.hs, aneis: im.aneis, intervalo, cobertura: coberturaDoImovel(im.pts) });
+        const r = await calcularRelevoEmSegundoPlano({ base: b, pts: im.pts, hs: im.hs, aneis: im.aneis, intervalo, cobertura: coberturaDoImovel(im.pts) }, ctl.signal);
         if (!vivo || n !== pedido.current) return;
         if (!r) { setErro("os vértices não têm altitude suficiente"); setEstado("erro"); return; }
         setM(r);
         setEstado("pronto");
       } catch (e) {
-        if (!vivo) return;
+        if (!vivo || e instanceof RelevoCancelado) return;
         setErro(e instanceof Error ? e.message : String(e));
         setEstado("erro");
       }
     })();
-    return () => { vivo = false; };
+    return () => { vivo = false; ctl.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chave, intervalo]);
 

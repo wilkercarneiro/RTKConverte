@@ -131,17 +131,21 @@ function pintarRelevo(ctx: CanvasRenderingContext2D, q: Quadro, res: Resultado, 
 function aplicarRotulos(el: HTMLDivElement | null, rs: Rotulo[]): void {
   if (!el) return;
   for (const r of rs) {
-    let s = el.querySelector<HTMLSpanElement>(`span[data-q="${CSS.escape(r.texto)}"]`);
+    let s = el.querySelector<HTMLSpanElement>(`span[data-q="${CSS.escape(r.chave)}"]`);
     if (!s) {
       s = document.createElement("span");
       s.className = r.tipo === "marco" ? "m3d-marco" : "m3d-quadra";
-      s.dataset.q = r.texto;
+      s.dataset.q = r.chave; // por id/índice: dois marcos com o mesmo texto são dois rótulos
       s.textContent = r.texto;
       el.appendChild(s);
     }
+    if (s.textContent !== r.texto) s.textContent = r.texto;
     s.style.display = r.visivel ? "" : "none";
     s.style.transform = `translate(${r.x}px, ${r.y}px)`;
   }
+  // rótulo que não veio nesta leva (cena montada de novo com menos itens) some
+  const chaves = new Set(rs.map((r) => r.chave));
+  for (const s of el.querySelectorAll<HTMLSpanElement>("span[data-q]")) if (!chaves.has(s.dataset.q ?? "")) s.style.display = "none";
 }
 
 export default function Relevo3D({ nome, fuso, grade, aneis, marcos, curvas, intervalo, fonte, desnivel, onFechar }: Props) {

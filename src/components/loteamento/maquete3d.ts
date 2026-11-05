@@ -21,7 +21,8 @@ import type { Resultado } from "../../lib/loteamento/calculo.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
 import { centroide, comprimento, dist, esquerda, pontoNaPolilinha } from "../../lib/loteamento/geom.ts";
 
-export interface Rotulo { texto: string; x: number; y: number; visivel: boolean; tipo: "quadra" | "marco" }
+/** `chave`: identidade estável do rótulo (dois marcos com o mesmo texto são dois rótulos) */
+export interface Rotulo { chave: string; texto: string; x: number; y: number; visivel: boolean; tipo: "quadra" | "marco" }
 
 export interface EventosMaquete {
   /** lote sob o cursor (índice) e posição na tela */
@@ -2514,7 +2515,7 @@ export class Maquete {
     const r = { width: this.renderer.domElement.clientWidth, height: this.renderer.domElement.clientHeight };
     const v = new THREE.Vector3();
     const cam = this.camera.position;
-    const itens = this.rotulosQuadra.map((q) => {
+    const itens = this.rotulosQuadra.map((q, i) => {
       const [x, z] = this.xz(q.p);
       const w = new THREE.Vector3(x, this.alturaMundo(q.p) + 22, z);
       v.copy(w).project(this.camera);
@@ -2524,15 +2525,18 @@ export class Maquete {
         const p = cam.clone().lerp(w, s / 20);
         if (p.y < this.alturaMundo([p.x + this.centro[0], -p.z + this.centro[1]]) - 0.5) visivel = false;
       }
-      return { texto: q.texto, x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height, visivel, tipo: "quadra" as Rotulo["tipo"], d: cam.distanceTo(w) };
+      return { chave: `q${i}`, texto: q.texto, x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height, visivel, tipo: "quadra" as Rotulo["tipo"], d: cam.distanceTo(w) };
     });
-    if (this.grupoMarcos.visible) for (const m of this.marcos) {
+    // marcos desligados: os rótulos vão com visivel:false (antes nem iam, e o
+    // último quadro ficava congelado na tela)
+    const comMarcos = this.grupoMarcos.visible;
+    this.marcos.forEach((m, i) => {
       const w = m.pino.position.clone();
       w.y += this.alturaPino * 1.25;
       v.copy(w).project(this.camera);
-      const visivel = v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05;
-      itens.push({ texto: m.texto, x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height, visivel, tipo: "marco", d: cam.distanceTo(w) });
-    }
+      const visivel = comMarcos && v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05;
+      itens.push({ chave: `m${i}`, texto: m.texto, x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height, visivel, tipo: "marco", d: cam.distanceTo(w) });
+    });
     // sem amontoar: o mais perto ganha, o outro some
     const mostrados: { x: number; y: number }[] = [];
     for (const it of [...itens].sort((a, b) => a.d - b.d)) {
@@ -2540,7 +2544,7 @@ export class Maquete {
       if (mostrados.some((m) => Math.hypot(m.x - it.x, m.y - it.y) < (it.tipo === "marco" ? 22 : 38))) { it.visivel = false; continue; }
       mostrados.push(it);
     }
-    const out: Rotulo[] = itens.map(({ texto, x, y, visivel, tipo }) => ({ texto, x, y, visivel, tipo }));
+    const out: Rotulo[] = itens.map(({ chave, texto, x, y, visivel, tipo }) => ({ chave, texto, x, y, visivel, tipo }));
     const chave = out.map((x) => `${x.visivel ? 1 : 0}${Math.round(x.x)},${Math.round(x.y)}`).join("|");
     if (chave === this.ultimosRotulos) return;
     this.ultimosRotulos = chave;
