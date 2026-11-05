@@ -1,7 +1,7 @@
 // Ferramentas da etapa de vértices: prévia da planilha do SIGEF (com os avisos
 // de consistência), renomear em lote e inserir ponto num lado. A regra mora nas
 // libs (planilha_sigef, consistencia_sigef, edicao_vertices); aqui é só tela.
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Dica, Gaveta } from "./ui";
 import type { AvisoConsistencia, VerticeApontado } from "../lib/consistencia_sigef";
 import { contarNiveis } from "../lib/consistencia_sigef";
@@ -277,9 +277,20 @@ export function InserirPontoNoLado({ vertices, nomePonto, comCodigosOficiais, co
   conferencia: boolean;
   /** comprimento do lado que sai do vértice (para dizer o limite da distância) */
   ladoM: (ordem: number) => number | null;
-  onInserir: (p: PedidoInsercaoTela) => void;
+  onInserir: (p: PedidoInsercaoTela) => void | Promise<void>;
   onFechar: () => void;
 }) {
+  // clique duplo em "Inserir ponto" gastava dois números do credenciado: a
+  // segunda chamada é ignorada enquanto a primeira não volta (o ref barra antes
+  // de o React redesenhar o botão desabilitado)
+  const [inserindo, setInserindo] = useState(false);
+  const emCurso = useRef(false);
+  async function inserir(p: PedidoInsercaoTela) {
+    if (emCurso.current) return;
+    emCurso.current = true;
+    setInserindo(true);
+    try { await onInserir(p); } finally { emCurso.current = false; setInserindo(false); }
+  }
   const lista = useMemo(() => [...vertices].sort((a, b) => a.ordem - b.ordem), [vertices]);
   const [ordem, setOrdem] = useState<number | "">("");
   const [modo, setModo] = useState<"meio" | "distancia">("meio");
@@ -339,9 +350,9 @@ export function InserirPontoNoLado({ vertices, nomePonto, comCodigosOficiais, co
         {a && b && <span className="sub">entre <b>{nomePonto(a)}</b> e <b>{nomePonto(b)}</b>{lado !== null ? ` · lado de ${num(lado, 3)} m` : ""}</span>}
         <span style={{ flex: 1 }} />
         <button className="fantasma" onClick={onFechar}>cancelar</button>
-        <button className="principal" disabled={!pronto} onClick={() => ordem !== "" && onInserir({
+        <button className="principal" disabled={!pronto || inserindo} aria-busy={inserindo} onClick={() => ordem !== "" && inserir({
           ordem, posicao: modo === "meio" ? { modo: "meio" } : { modo: "distancia", metros: m }, tipo: tipo || null, codigo, reservar: reservar && comCodigosOficiais && !conferencia,
-        })}>Inserir ponto</button>
+        })}>{inserindo ? "Inserindo…" : "Inserir ponto"}</button>
       </div>
     </fieldset>
   );

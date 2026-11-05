@@ -50,7 +50,7 @@ import { Avisos, BarraEtapas, BotaoPerigo, confirmar, Dica, ProximaAcao, Rotulo,
 import { consumoDaNumeracao, numeracaoDosMarcos } from "../lib/codigos_marcos";
 import { previaDaPlanilha } from "../lib/planilha_sigef";
 import { conferirPlanilha, contarNiveis } from "../lib/consistencia_sigef";
-import { aplicarRenomeacao, desfazerRenomeacao, ehCodigoOficial, inserirNoLado } from "../lib/edicao_vertices";
+import { aplicarRenomeacao, desfazerInsercao, desfazerRenomeacao, ehCodigoOficial, inserirNoLado, reservarCodigoLivre } from "../lib/edicao_vertices";
 import type { MudancaNome } from "../lib/edicao_vertices";
 import { InserirPontoNoLado, ListaAvisosSigef, PreviaPlanilhaSigef, RenomearVertices } from "./VerticesFerramentas";
 import type { PedidoInsercaoTela } from "./VerticesFerramentas";
@@ -223,7 +223,7 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [ferramentaV, setFerramentaV] = useState<"renomear" | "inserir" | null>(null);
   const [previaSigefAberta, setPreviaSigefAberta] = useState(false);
   // desfazer da edição em lote: o estado dos vértices antes de cada operação
-  const [pilhaDesfazer, setPilhaDesfazer] = useState<{ rotulo: string; vertices: Vertice[]; mudancas?: MudancaNome[] }[]>([]);
+  const [pilhaDesfazer, setPilhaDesfazer] = useState<{ rotulo: string; vertices: Vertice[]; mudancas?: MudancaNome[]; inserido?: Vertice }[]>([]);
   // Vértices marcados para reordenar em bloco (chave = id do vértice, que não
   // muda quando a ordem muda). `ultimoClicado` é a âncora do Shift+clique.
   const [selVert, setSelVert] = useState<Set<string>>(() => new Set());
@@ -759,13 +759,28 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     const a = en(lista[i]), b = en(lista[(i + 1) % lista.length]);
     return a && b ? Math.hypot(b[0] - a[0], b[1] - a[1]) : null;
   }
-  function guardarParaDesfazer(rotulo: string, mudancas?: MudancaNome[]) {
-    setPilhaDesfazer((p) => [...p.slice(-9), { rotulo, vertices, mudancas }]);
+  function guardarParaDesfazer(rotulo: string, mudancas?: MudancaNome[], inserido?: Vertice) {
+    setPilhaDesfazer((p) => [...p.slice(-9), { rotulo, vertices, mudancas, inserido }]);
   }
   function desfazerEdicao() {
     const ultimo = pilhaDesfazer[pilhaDesfazer.length - 1];
     if (!ultimo) return;
     setPilhaDesfazer((p) => p.slice(0, -1));
+    // inserir ponto: tira SÓ o ponto (pelo id) e devolve as ordens dos
+    // empurrados — voltar a foto da tabela apagaria o que foi editado depois
+    if (ultimo.inserido) {
+      const r = desfazerInsercao(vertices, ultimo.inserido);
+      if (!r.ok) {
+        avisar("alerta", r.motivo === "apagado"
+          ? `Nada a desfazer: o ponto ${ultimo.inserido.codigo ?? "inserido"} já foi apagado da tabela.`
+          : `O ponto ${ultimo.inserido.codigo ?? "inserido"} foi alterado depois de inserido; ele não foi removido. Apague-o na tabela se for o caso.`);
+        return;
+      }
+      setVertices(r.vertices);
+      setCamposAbertos(new Set());
+      avisar("ok", `Desfeito: ${ultimo.rotulo}.`);
+      return;
+    }
     // renomear: volta só os códigos (o resto da tabela pode ter mudado depois)
     setVertices(ultimo.mudancas ? (vs) => desfazerRenomeacao(vs, ultimo.mudancas!) : ultimo.vertices);
     setCamposAbertos(new Set());
@@ -795,7 +810,12 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     setFerramentaV(null);
     avisar("ok", `${mudam.length} vértice(s) renomeado(s). Confira na prévia da planilha.`);
   }
+  const inserindoPonto = useRef(false);
   async function inserirPonto(p: PedidoInsercaoTela) {
+    // segunda chamada enquanto a primeira não volta: ignorada (clique duplo
+    // reservava dois números do credenciado)
+    if (inserindoPonto.current) return;
+    inserindoPonto.current = true;
     setErro(null);
     try {
       // ensaio sem código: valida o lado e a distância antes de reservar número
@@ -806,13 +826,19 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
       if (p.reservar) {
         if (!servico.credenciado_id) { setErro("Escolha o credenciado em Dados para reservar o número."); return; }
         const t = ensaio.novo.tipo;
-        const { data: base, error: eA } = await supabase.rpc("alocar_contadores", { p_credenciado: servico.credenciado_id, dm: t === "M" ? 1 : 0, dp: t === "P" ? 1 : 0, dv: t === "V" ? 1 : 0 });
-        if (eA) throw eA;
-        const b = (Array.isArray(base) ? base[0] : base) as { base_m: number; base_p: number; base_v: number } | null;
-        if (!b || b.base_m == null) throw new Error("Não foi possível reservar o número do credenciado. Confira o credenciado em Dados.");
         const prefixo = credenciado?.prefixo_vertice;
         if (!prefixo) throw new Error("Credenciado sem prefixo de vértice.");
-        codigo = codigoVertice(prefixo, t, t === "M" ? b.base_m : t === "P" ? b.base_p : b.base_v);
+        const credId = servico.credenciado_id;
+        // o contador do credenciado pode estar atrás dos códigos do serviço
+        // (planilha importada, número digitado à mão): o código reservado é
+        // conferido contra TODOS os vértices; repetido, reserva o próximo
+        codigo = await reservarCodigoLivre(async () => {
+          const { data: base, error: eA } = await supabase.rpc("alocar_contadores", { p_credenciado: credId, dm: t === "M" ? 1 : 0, dp: t === "P" ? 1 : 0, dv: t === "V" ? 1 : 0 });
+          if (eA) throw eA;
+          const b = (Array.isArray(base) ? base[0] : base) as { base_m: number; base_p: number; base_v: number } | null;
+          if (!b || b.base_m == null) throw new Error("Não foi possível reservar o número do credenciado. Confira o credenciado em Dados.");
+          return codigoVertice(prefixo, t, t === "M" ? b.base_m : t === "P" ? b.base_p : b.base_v);
+        }, vertices.map((v) => v.codigo));
       } else if (!codigo && oficiais) {
         const ok = await confirmar({
           titulo: "Inserir o ponto sem código?",
@@ -823,13 +849,15 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         if (!ok) return;
       }
       const r = inserirNoLado(vertices, { ordem: p.ordem, posicao: p.posicao, tipo: p.tipo ?? undefined, codigo, servicoId: servico.id, utmDe: utmDoVertice, id: ensaio.novo.id });
-      guardarParaDesfazer(`inserir ponto ${codigo ?? ""}`.trim());
+      guardarParaDesfazer(`inserir ponto ${codigo ?? ""}`.trim(), undefined, r.novo);
       setVertices(r.vertices);
       setCamposAbertos(new Set());
       setFerramentaV(null);
       avisar("ok", `Ponto ${r.novo.tipo}${codigo ? ` ${codigo}` : ""} inserido a ${r.distanciaM.toFixed(3).replace(".", ",")} m do vértice, no lado de ${r.ladoM.toFixed(3).replace(".", ",")} m.${p.reservar ? " O número foi reservado no credenciado (desfazer não devolve o número)." : ""}`);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      inserindoPonto.current = false;
     }
   }
   /** Da prévia da planilha para a linha da tabela de vértices. */
