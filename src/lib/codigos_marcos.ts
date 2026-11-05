@@ -29,31 +29,24 @@ type Contadores = { M: number; P: number; V: number };
 const provisorio = (v: Pick<Vertice, "codigo" | "codigo_provisorio">) =>
   !!v.codigo_provisorio || ehCodigoDeConferencia(v.codigo) || (!!v.codigo && v.codigo.startsWith("PROV-"));
 
-/** Os vértices como o servidor os enxerga ao alocar (código provisório vira ausente). */
-function comoNoServidor(vertices: Vertice[]): Vertice[] {
+/**
+ * Os vértices como o servidor os enxerga ao alocar: código provisório vira
+ * ausente. Na conferência de área (`conferencia`), ao contrário, só fica o
+ * código no formato da prévia (P-1, M-1) — o resto a geração refaz. Mesma regra
+ * do bloco "PROMOÇÃO a serviço completo" de gerar-documentos.
+ */
+export function comoNoServidor(vertices: Vertice[], conferencia = false): Vertice[] {
   return [...vertices].sort((a, b) => a.ordem - b.ordem)
-    .map((v) => (!v.inserido_manual && provisorio(v) ? { ...v, codigo: null } : v));
-}
-
-/** Falta numerar algum marco? (o que faria a geração realocar tudo) */
-export const precisaNumerar = (vertices: Vertice[]): boolean =>
-  comoNoServidor(vertices).some((v) => !v.codigo && !v.inserido_manual);
-
-/** Quantos números de cada tipo a alocação consome (para alocar_contadores). */
-export function consumoDaNumeracao(vertices: Vertice[]): Contadores {
-  const c = { M: 0, P: 0, V: 0 };
-  for (const v of comoNoServidor(vertices)) if (!v.inserido_manual || !v.codigo) c[v.tipo as keyof Contadores]++;
-  return c;
+    .map((v) => (!v.inserido_manual && (conferencia ? !ehCodigoDeConferencia(v.codigo) : provisorio(v)) ? { ...v, codigo: null } : v));
 }
 
 /**
- * Código de cada linha do banco (ordem → código) a partir dos contadores
- * reservados — a mesma numeração que gerar-documentos gravaria.
+ * Linhas do banco → entrada de `montarServico`, campo a campo como
+ * gerar-documentos monta (`vertices: VerticeServico[]`). `realocar` = algum
+ * vértice sem código: aí só o código digitado à mão (inserido) é mantido.
  */
-export function numeracaoDosMarcos(servico: Servico, vertices: Vertice[], prefixo: string, contadores: Contadores): Map<number, string> {
-  const vs = comoNoServidor(vertices);
-  const realocar = vs.some((v) => !v.codigo && !v.inserido_manual);
-  const entrada: VerticeServico[] = vs.map((v) => ({
+export function entradaDoServidor(vs: Vertice[], realocar: boolean): VerticeServico[] {
+  return vs.map((v) => ({
     ordem: v.ordem,
     numTxt: v.num_txt,
     e: v.e === null ? null : Number(v.e),
@@ -75,6 +68,27 @@ export function numeracaoDosMarcos(servico: Servico, vertices: Vertice[], prefix
     numerado: v.numerado,
     exibirPlanta: v.exibir_planta !== false,
   }));
+}
+
+/** Falta numerar algum marco? (o que faria a geração realocar tudo) */
+export const precisaNumerar = (vertices: Vertice[]): boolean =>
+  comoNoServidor(vertices).some((v) => !v.codigo && !v.inserido_manual);
+
+/** Quantos números de cada tipo a alocação consome (para alocar_contadores). */
+export function consumoDaNumeracao(vertices: Vertice[]): Contadores {
+  const c = { M: 0, P: 0, V: 0 };
+  for (const v of comoNoServidor(vertices)) if (!v.inserido_manual || !v.codigo) c[v.tipo as keyof Contadores]++;
+  return c;
+}
+
+/**
+ * Código de cada linha do banco (ordem → código) a partir dos contadores
+ * reservados — a mesma numeração que gerar-documentos gravaria.
+ */
+export function numeracaoDosMarcos(servico: Servico, vertices: Vertice[], prefixo: string, contadores: Contadores): Map<number, string> {
+  const vs = comoNoServidor(vertices);
+  const realocar = vs.some((v) => !v.codigo && !v.inserido_manual);
+  const entrada = entradaDoServidor(vs, realocar);
   const input: ServicoInput = {
     fusoUtm: servico.fuso_utm!,
     verticeInicialOrdem: servico.vertice_inicial ?? 0,
