@@ -1474,9 +1474,12 @@ button.gp-executar:hover:not(:disabled) { background: var(--primaria); color: #f
   .tela-cheia > .car-area-trabalho { flex: 1 1 0; contain: size; min-height: 520px; }
   /* Divisão: menos borda em volta e a prancheta nunca abaixo de 560 px; o corpo
      não encolhe abaixo do conteúdo (a página rola, a barra de salvar não some) */
-  .conf-divisao > .conferencia-corpo { flex: 1 0 auto; padding-top: 8px; padding-bottom: 2px; }
-  .conf-divisao #bloco-divisao { min-height: auto; padding: 10px 14px; gap: 8px; }
+  .conf-divisao > .conferencia-corpo { flex: 1 0 auto; padding-top: 6px; padding-bottom: 2px; }
+  .conf-divisao #bloco-divisao { min-height: auto; padding: 8px 14px; gap: 6px; }
+  .conf-divisao #bloco-divisao > header { min-height: 0; }
   .conf-divisao #bloco-divisao > header h3 { font-size: 15px; margin: 0; }
+  /* o seletor partilha | desmembramento mora no cabeçalho do bloco: mais baixo aqui */
+  .conf-divisao #bloco-divisao > header .dm-tipo > button { height: 28px; }
   .conf-divisao .dv-prancheta { flex: 1 1 0; contain: size; min-height: 560px; }
   .conf-divisao #bloco-divisao > .dv-barra { padding-top: 6px; }
 }
