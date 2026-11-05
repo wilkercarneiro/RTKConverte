@@ -128,6 +128,40 @@ test("inserir a uma distância; fora do lado → erro claro", () => {
   assert.equal(f.novo.ordem, vs.length);
 });
 
+test("reserva de número: código já usado no serviço → reserva o próximo; 5 repetidos → recusa clara", async () => {
+  const { reservarCodigoLivre } = await import("../src/lib/edicao_vertices.ts");
+  const usados = ["DSBN-P-0100", "DSBN-P-0101", null, "DSBN-M-0001"];
+  let n = 100;
+  const pedidos = [];
+  const reservar = async () => { pedidos.push(n); return `DSBN-P-${String(n++).padStart(4, "0")}`; };
+  assert.equal(await reservarCodigoLivre(reservar, usados), "DSBN-P-0102");
+  assert.deepEqual(pedidos, [100, 101, 102]);
+  // contador muito atrás: depois de 5 tentativas recusa (sem inserir código repetido)
+  const todos = Array.from({ length: 10 }, (_, i) => `DSBN-P-${String(200 + i).padStart(4, "0")}`);
+  n = 200;
+  await assert.rejects(reservarCodigoLivre(reservar, todos), /5 números que já estão neste serviço.*credenciado/);
+  assert.equal(n, 205, "cinco reservas, nenhuma a mais");
+});
+
+test("desfazer a inserção pelo id: tira o ponto, devolve as ordens e guarda as edições de depois", async () => {
+  const { desfazerInsercao } = await import("../src/lib/edicao_vertices.ts");
+  const vs = base();
+  const r = inserirNoLado(vs, { ordem: 3, posicao: { modo: "meio" }, servicoId: SID });
+  // depois da inserção, a pessoa edita outro vértice (antes e depois do ponto)
+  const editados = r.vertices.map((v) => (v.id === "v1" ? { ...v, descritivo: "VIZINHO NOVO" } : v.id === "v8" ? { ...v, h: 999 } : v));
+  const d = desfazerInsercao(editados, r.novo);
+  assert.equal(d.ok, true);
+  assert.equal(d.vertices.length, vs.length);
+  assert.ok(!d.vertices.some((v) => v.id === r.novo.id));
+  assert.deepEqual([...d.vertices].sort((a, b) => a.ordem - b.ordem).map((v) => v.id), vs.map((v) => v.id), "cada um volta à sua ordem");
+  assert.equal(d.vertices.find((v) => v.id === "v1").descritivo, "VIZINHO NOVO", "edição anterior preservada");
+  assert.equal(d.vertices.find((v) => v.id === "v8").h, 999, "edição posterior ao ponto preservada");
+  // ponto apagado ou alterado: não desfaz
+  assert.deepEqual(desfazerInsercao(editados.filter((v) => v.id !== r.novo.id), r.novo), { ok: false, motivo: "apagado" });
+  const mexido = editados.map((v) => (v.id === r.novo.id ? { ...v, e: v.e + 1 } : v));
+  assert.deepEqual(desfazerInsercao(mexido, r.novo), { ok: false, motivo: "alterado" });
+});
+
 test("tipo e confrontação herdados do lado: P sem confrontação; M copia o trecho e a planilha não muda de confrontante", () => {
   const vs = base();
   assert.equal(tipoHerdado({ tipo: "M" }, { tipo: "M" }), "P");

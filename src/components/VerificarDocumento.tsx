@@ -32,6 +32,9 @@ export function normalizarCodigo(entrada: string): string {
   return entrada.toUpperCase().replace(/[\s\-.]/g, "").replace(/O/g, "0").replace(/[IL]/g, "1");
 }
 
+/** Prévia de conferência (tipo planta_previa, ver _shared/autenticidade.ts): não é o documento final. */
+export const ehPrevia = (tipo: string | null | undefined): boolean => tipo === "planta_previa";
+
 export function codigoEmGrupos(c: string): string {
   return c.match(/.{1,4}/g)?.join("-") ?? c;
 }
@@ -105,9 +108,17 @@ export function VerificarDocumento({ codigo, consultar = consultarNoBanco }: { c
           const r = estado.r;
           return (
             <>
-              <div className="verif-selo ok"><span className="verif-icone">✓</span>
-                <div><h1>Documento autêntico</h1>
-                  <p>Emitido pelo sistema Vertces em {dataHora(r.emitido_em)}.</p></div></div>
+              {/* prévia de conferência: códigos provisórios, não serve para protocolar —
+                  não pode sair com o verde de "autêntico" */}
+              {ehPrevia(r.tipo) ? (
+                <div className="verif-selo previa"><span className="verif-icone">!</span>
+                  <div><h1>Prévia de conferência — não é o documento final</h1>
+                    <p>Emitida pelo sistema Vertces em {dataHora(r.emitido_em)} só para conferência: os códigos dos vértices são provisórios e ela não vale para protocolo.</p></div></div>
+              ) : (
+                <div className="verif-selo ok"><span className="verif-icone">✓</span>
+                  <div><h1>Documento autêntico</h1>
+                    <p>Emitido pelo sistema Vertces em {dataHora(r.emitido_em)}.</p></div></div>
+              )}
               {r.versao_mais_nova_em && (
                 <p className="verif-aviso">Existe uma emissão mais nova deste documento (de {dataHora(r.versao_mais_nova_em)}). Confira se a cópia em mãos é a mais recente.</p>
               )}

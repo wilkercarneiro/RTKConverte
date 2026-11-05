@@ -93,6 +93,40 @@ test("escolha dos marcos e fuso pela longitude", () => {
   assert.equal(montarMonografia(entrada({ escolhidos: [] })).fichas.length, todos.length, "vazio = todos");
 });
 
+test("só os marcos do próprio credenciado: vizinho certificado e outro prefixo ficam de fora", async () => {
+  const { marcoDoCredenciado } = await import("../supabase/functions/_shared/monografia.ts");
+  const { separarMarcos } = await import("../supabase/functions/_shared/monografia.ts");
+  assert.equal(marcoDoCredenciado("DSBN-M-3605", "DSBN"), true);
+  assert.equal(marcoDoCredenciado("dsbn-m-3605", "DSBN"), true);
+  assert.equal(marcoDoCredenciado("AKJU-M-0010", "DSBN"), false, "outro credenciado");
+  assert.equal(marcoDoCredenciado("DSBN-M-3605", "DSBN", { codigo: "DSBN-M-3605", inserido_manual: true }), false, "vizinho certificado");
+  assert.equal(marcoDoCredenciado("M-0001", ""), true, "sem prefixo: vale só a marca de inserido");
+  // anel com um marco do vizinho (outro prefixo) e um inserido de área certificada com o nosso prefixo
+  const primeiro = sigef.linhas[0].codigo;
+  const linhas = sigef.linhas.map((l, i) => ({
+    ...l, ...(i === 0 ? { codigo: "AKJU-M-0010" } : {}), ...(l.vante === primeiro ? { vante: "AKJU-M-0010" } : {}),
+  }));
+  const todos = marcosDosAneis([linhas]);
+  const inserido = todos.find((c) => c.startsWith("DSBN-M-") && c !== todos[1]);
+  const m = montarMonografia(entrada({
+    aneis: [linhas],
+    vertices: [{ codigo: inserido, tipo: "M", inserido_manual: true }],
+  }));
+  const codigos = m.fichas.map((f) => f.codigo);
+  assert.ok(!codigos.includes("AKJU-M-0010"), "marco de outro prefixo não entra");
+  assert.ok(!codigos.includes(inserido), "marco inserido de área certificada não entra");
+  assert.equal(codigos.length, todos.length - 2);
+  assert.deepEqual(new Set(m.deFora), new Set(["AKJU-M-0010", inserido]));
+  // escolher explicitamente um de fora também não o põe na monografia (nem o chama de "não encontrado")
+  const e = montarMonografia(entrada({ aneis: [linhas], escolhidos: ["AKJU-M-0010", codigos[0]] }));
+  assert.deepEqual(e.fichas.map((f) => f.codigo), [codigos[0]]);
+  assert.deepEqual(e.naoEncontrados, []);
+  // a tela usa a mesma regra
+  const s = separarMarcos(todos, "DSBN", [inserido]);
+  assert.deepEqual(s.deFora.sort(), ["AKJU-M-0010", inserido].sort());
+  assert.equal(s.proprios.length, todos.length - 2);
+});
+
 test("campos digitados: normalização tolerante", () => {
   assert.deepEqual(normalizarCamposMonografia(null), {});
   assert.deepEqual(normalizarCamposMonografia([1, 2]), {});

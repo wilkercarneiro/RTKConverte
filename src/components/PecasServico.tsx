@@ -5,7 +5,7 @@
 // Experiência: o PDF já preencheu a maior parte, então só o que costuma faltar
 // fica à vista; o restante vive em seções recolhíveis com selo de preenchimento.
 // Como na conferência, é uma etapa por vez: Dados, Confrontantes, Documentos.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
 import { rotuloRT, TIPOS_LIMITE, UFS } from "../lib/domains";
 import { contarPreenchidos, useAutosave, useAvisos } from "../lib/ux";
@@ -20,6 +20,7 @@ import { AutoriaServico } from "./Auditoria";
 import { Icone, ICONE } from "./Icone";
 import { textoSemCredito } from "../lib/creditos";
 import { MonografiaMarcos, unirMarcos, type ArquivoGerado } from "./MonografiaMarcos";
+import { gravarServicoTolerante, type MemoColunas } from "../lib/coluna_ausente";
 
 interface TrechoPdf {
   id?: string; codigo_inicio: string; descritivo: string; tipo_limite: string; eh_via: boolean;
@@ -240,12 +241,15 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
     }
   }
 
+  const memoColunas = useRef<MemoColunas>({});
   async function salvar() {
     if (!servico) return;
     // a conclusão só muda pelo botão "Concluir serviço" (ver Conferencia.salvar)
     const { id, status, concluido_em, concluido_por, ...campos } = servico;
     void concluido_em; void concluido_por;
-    const { error: e1 } = await supabase.from("servicos").update(campos).eq("id", id);
+    // banco sem a 0042: grava o resto e avisa uma vez (ver lib/coluna_ausente)
+    const { error: e1 } = await gravarServicoTolerante(campos, (d) => supabase.from("servicos").update(d).eq("id", id),
+      memoColunas.current, (m) => avisar("alerta", m));
     if (e1) throw e1;
     const { error: e2 } = await supabase.from("trechos_confrontantes").delete().eq("servico_id", id);
     if (e2) throw e2;
@@ -732,6 +736,7 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
 
             <MonografiaMarcos
               marcos={unirMarcos(marcosPdf, trechos.map((t) => t.codigo_inicio), Object.keys(servico.monografia?.marcos ?? {}))}
+              prefixo={credenciados.find((c) => c.id === servico.credenciado_id)?.prefixo_vertice ?? null}
               campos={servico.monografia}
               onCampos={(c) => campo("monografia", c)}
               onGerar={(escolhidos) => gerarMonografia(escolhidos)}

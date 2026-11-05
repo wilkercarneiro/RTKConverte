@@ -135,6 +135,29 @@ begin
   end;
 end $$;
 reset role;
+
+-- o IP vem da ip_da_requisicao() (0029): o x-forwarded-for forjado a cada
+-- consulta não fura o limite quando o proxy manda cf-connecting-ip
+delete from limites_uso where chave like 'verificar:%';
+set role anon;
+do $$
+declare i int;
+begin
+  for i in 1..30 loop
+    perform set_config('request.headers', json_build_object('cf-connecting-ip', '198.51.100.7', 'x-forwarded-for', '10.9.' || i || '.1')::text, false);
+    perform * from verificar_documento('7K3M9QXW2ZR4TNBV8C6J');
+  end loop;
+  perform set_config('request.headers', '{"cf-connecting-ip": "198.51.100.7", "x-forwarded-for": "10.9.99.1"}', false);
+  begin
+    perform * from verificar_documento('7K3M9QXW2ZR4TNBV8C6H');
+    raise exception 'FALHOU: trocar o x-forwarded-for furou o limite por IP';
+  exception when raise_exception then
+    if sqlerrm like 'FALHOU%' then raise; end if;
+    raise notice 'ok: o limite usa o cf-connecting-ip (x-forwarded-for forjado não fura)';
+  end;
+end $$;
+reset role;
+select pg_temp.ok((select count(*) = 1 from limites_uso where chave = 'verificar:198.51.100.7'), 'a chave do limite é o IP da ip_da_requisicao()');
 select set_config('request.headers', '', false);
 
 -- coluna da assinatura do RT

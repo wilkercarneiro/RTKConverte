@@ -12,6 +12,7 @@ import { contadoresParaGravar, ultimosDe, ultimoUsado } from "../lib/contadores"
 import type { CampoContador, UltimosUsados } from "../lib/contadores";
 import type { Credenciado, RT } from "../lib/types";
 import { caminhoAssinatura, prepararAssinatura } from "../lib/assinatura";
+import { gravarSemColunasAusentes } from "../lib/coluna_ausente";
 
 type NovoRT = Omit<RT, "id">;
 /**
@@ -52,6 +53,9 @@ export function Cadastros({ escritorioId = null }: { escritorioId?: string | nul
 
 export function CadastroRTs({ escritorioId = null }: { escritorioId?: string | null }) {
   const [rts, setRts] = useState<RT[]>([]);
+  // a coluna assinar_com_imagem (migração 0043) existe no banco? null = ainda não
+  // se sabe (lista vazia): manda o campo e, se o banco recusar, repete sem ele
+  const [temColunaAssinar, setTemColunaAssinar] = useState<boolean | null>(null);
   const [form, setForm] = useState<NovoRT | null>(null); // null = formulário fechado
   const [editId, setEditId] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -72,7 +76,10 @@ export function CadastroRTs({ escritorioId = null }: { escritorioId?: string | n
   async function recarregar() {
     const { data, error } = await supabase.from("responsaveis_tecnicos").select().order("nome");
     setFalha(error ? error.message : null);
-    if (!error) setRts((data as RT[]) ?? []);
+    if (!error) {
+      setRts((data as RT[]) ?? []);
+      if (data?.length) setTemColunaAssinar("assinar_com_imagem" in (data[0] as object));
+    }
     if (pastaAssinaturas) {
       const { data: arqs } = await supabase.storage.from("templates").list(pastaAssinaturas, { limit: 1000 });
       setComAssinatura(new Set((arqs ?? []).map((a) => /^rt-(.+)\.png$/.exec(a.name)?.[1]).filter((x): x is string => !!x)));
@@ -138,13 +145,20 @@ export function CadastroRTs({ escritorioId = null }: { escritorioId?: string | n
     setErro(null);
     setSalvando(true);
     try {
-      const dados = { ...form, nome: form.nome.trim(), conselho_numero: (form.conselho_numero ?? "").trim() };
+      const dados: Partial<NovoRT> = { ...form, nome: form.nome.trim(), conselho_numero: (form.conselho_numero ?? "").trim() };
+      // banco sem a 0043: o campo não vai (senão o cadastro inteiro é recusado)
+      if (temColunaAssinar === false) delete dados.assinar_com_imagem;
+      const OPCIONAIS = ["assinar_com_imagem"] as const;
       let id = editId;
       if (editId) {
-        const { error } = await supabase.from("responsaveis_tecnicos").update(dados).eq("id", editId);
+        const { resultado: { error }, omitidas } = await gravarSemColunasAusentes(dados, OPCIONAIS,
+          (d) => supabase.from("responsaveis_tecnicos").update(d).eq("id", editId));
+        if (omitidas.length) setTemColunaAssinar(false);
         if (error) { setErro(error.message); return; }
       } else {
-        const { data, error } = await supabase.from("responsaveis_tecnicos").insert(dados).select("id").single();
+        const { resultado: { data, error }, omitidas } = await gravarSemColunasAusentes(dados, OPCIONAIS,
+          (d) => supabase.from("responsaveis_tecnicos").insert(d).select("id").single());
+        if (omitidas.length) setTemColunaAssinar(false);
         if (error) { setErro(error.message); return; }
         id = (data as { id: string }).id;
       }
@@ -292,12 +306,12 @@ export function CadastroRTs({ escritorioId = null }: { escritorioId?: string | n
                   <p className="sub">Só quem tem a permissão &quot;Dados da empresa&quot; envia a imagem da assinatura.</p>
                 )}
               </div>
-              <label className="check">
+              {temColunaAssinar !== false && <label className="check">
                 <input type="checkbox" checked={form.assinar_com_imagem !== false}
                   disabled={!(assinatura.t === "salva" || assinatura.t === "nova")}
                   onChange={(e) => campo("assinar_com_imagem", e.target.checked)} />
                 <span>Assinar os documentos com a imagem da assinatura</span>
-              </label>
+              </label>}
             </div>
           )}
           <div className="rodape-acoes">

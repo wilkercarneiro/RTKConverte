@@ -390,16 +390,71 @@ export async function lerCena(bytes: Uint8Array | ArrayBuffer): Promise<Cena | n
 // ---------------------------------------------------------------------------
 const c3 = (c: Cor) => rgb(c[0], c[1], c[2]);
 
+/** Objeto da cena que guarda o selo de autenticidade (QR + código). */
+export const OBJ_AUTENTICIDADE = "autenticidade";
+/** O que fica no lugar do selo quando a planta é refeita pelo editor. */
+export const TEXTO_SEM_SELO = ["Planta editada após a emissão —", "sem selo de autenticidade"];
+
+/**
+ * Tira o selo de autenticidade da cena e põe no lugar um aviso curto.
+ *
+ * O QR e o código apontam para o SHA-256 do PDF emitido; a planta refeita pelo
+ * editor é OUTRO arquivo, e manter o selo faria a página pública confirmar um
+ * documento que não é este. Sem QR, sem código: só o aviso, no mesmo lugar.
+ * `medir(t, tam)` dá a largura impressa do texto (negrito) na fonte do PDF.
+ */
+export function semSeloAutenticidade(cena: Cena, medir: (t: string, tam: number) => number): Cena {
+  const doSelo = cena.itens.filter((it) => it.obj === OBJ_AUTENTICIDADE);
+  if (!doSelo.length) return cena;
+  // caixa do selo: onde o aviso vai morar
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const juntar = (ax: number, ay: number, bx: number, by: number) => {
+    x0 = Math.min(x0, ax, bx); y0 = Math.min(y0, ay, by);
+    x1 = Math.max(x1, ax, bx); y1 = Math.max(y1, ay, by);
+  };
+  for (const it of doSelo) {
+    if (it.k === "ret" || it.k === "imagem") juntar(it.x, it.y, it.x + it.w, it.y + it.h);
+    else if (it.k === "texto") juntar(it.x, it.y, it.x + it.w, it.y + it.tam);
+    else if (it.k === "linha") juntar(it.x1, it.y1, it.x2, it.y2);
+    else if (it.k === "elipse") juntar(it.x - it.rx, it.y - it.ry, it.x + it.rx, it.y + it.ry);
+    else if (it.k === "caminho") juntar(it.x, it.y, it.x, it.y);
+  }
+  const itens = cena.itens.filter((it) => it.obj !== OBJ_AUTENTICIDADE);
+  if (Number.isFinite(x0) && x1 > x0 && y1 > y0) {
+    const w = x1 - x0, h = y1 - y0;
+    const larg1 = Math.max(...TEXTO_SEM_SELO.map((t) => medir(t, 1)));
+    const tam = Math.max(4, Math.min(16, h / 4, (w * 0.92) / Math.max(larg1, 1e-6)));
+    const passo = tam * 1.3;
+    const yMeio = y0 + h / 2;
+    TEXTO_SEM_SELO.forEach((t, i) => {
+      const lw = medir(t, tam);
+      itens.push({
+        id: `semselo${i + 1}`, obj: OBJ_AUTENTICIDADE, k: "texto", t,
+        x: x0 + (w - lw) / 2, y: yMeio + passo / 2 - i * passo - tam * 0.35,
+        tam, negrito: true, cor: [0.55, 0.1, 0.1], w: lw,
+      });
+    });
+  }
+  return {
+    ...cena,
+    objetos: { ...cena.objetos, [OBJ_AUTENTICIDADE]: { rotulo: "Aviso: planta editada (sem selo)", cat: cena.objetos[OBJ_AUTENTICIDADE]?.cat ?? "rodape" } },
+    itens,
+  };
+}
+
 /**
  * Reconstrói o PDF a partir da cena: a mesma tela, as mesmas fontes padrão, a
  * mesma redução para a folha. Peças ocultas ficam de fora. A cena vai junto,
  * para a planta editada poder ser editada de novo.
+ *
+ * O selo de autenticidade NÃO sobrevive à reconstrução (ver `semSeloAutenticidade`).
  */
-export async function cenaParaPdf(cena: Cena, limparTexto: (t: string) => string = (t) => t): Promise<Uint8Array> {
+export async function cenaParaPdf(cenaOriginal: Cena, limparTexto: (t: string) => string = (t) => t): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
-  const page = pdf.addPage([cena.tela.w, cena.tela.h]);
+  const page = pdf.addPage([cenaOriginal.tela.w, cenaOriginal.tela.h]);
   const f = await pdf.embedFont(StandardFonts.Helvetica);
   const fb = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const cena = semSeloAutenticidade(cenaOriginal, (t, tam) => fb.widthOfTextAtSize(limparTexto(t), tam));
   const imgs = new Map<string, PDFImage>();
   for (const [id, im] of Object.entries(cena.imagens)) {
     const b = deBase64(im.b64);

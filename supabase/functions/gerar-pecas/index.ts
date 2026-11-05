@@ -24,7 +24,7 @@ import { mensagemDeErro } from "../_shared/vertices_db.ts";
 import { aplicarAssinaturaRt, carregarAssinaturaRt } from "../_shared/assinatura_rt.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 import { anelDoSigef, conferirContorno } from "../_shared/contorno.ts";
-import { escreverMonografia, marcosDosAneis, montarMonografia, normalizarCamposMonografia } from "../_shared/monografia.ts";
+import { escreverMonografia, marcoDoCredenciado, marcosDosAneis, montarMonografia, normalizarCamposMonografia } from "../_shared/monografia.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
 
@@ -604,12 +604,19 @@ Deno.serve(async (req) => {
 
     // 3) a monografia dos marcos: um DOCX, uma página por marco (vértice M),
     //    no modelo do Memorial Descritivo da empresa (timbre dela)
-    const todosMarcos = marcosDosAneis((blocos.length ? blocos : [sigef]).map((b) => b.linhas));
-    let monografiaResumo: { marcos: number; naoEncontrados?: string[] } | undefined;
+    //    Só os marcos do PRÓPRIO credenciado: o do vizinho certificado (inserido_manual)
+    //    e o de outro prefixo estão no anel, mas não são nossos para descrever.
+    const marcosNoPerimetro = marcosDosAneis((blocos.length ? blocos : [sigef]).map((b) => b.linhas));
+    const vertPorCodigo = new Map((vertices ?? []).filter((v) => v.codigo).map((v) => [String(v.codigo).trim(), v]));
+    const todosMarcos = marcosNoPerimetro.filter((c) => marcoDoCredenciado(c, dados.codigoCredenciado, vertPorCodigo.get(c)));
+    const marcosDeFora = marcosNoPerimetro.filter((c) => !todosMarcos.includes(c));
+    let monografiaResumo: { marcos: number; naoEncontrados?: string[]; deFora?: string[] } | undefined;
     if (pedeMonografia) {
       const mono = montarMonografia({
         aneis: (blocos.length ? blocos : [sigef]).map((b) => b.linhas),
-        vertices: (vertices ?? []).map((v) => ({ codigo: v.codigo, tipo: v.tipo, sigma_pos: v.sigma_pos, sigma_h: v.sigma_h, metodo: v.metodo })),
+        vertices: (vertices ?? []).map((v) => ({
+          codigo: v.codigo, tipo: v.tipo, sigma_pos: v.sigma_pos, sigma_h: v.sigma_h, metodo: v.metodo, inserido_manual: !!v.inserido_manual,
+        })),
         fuso: servico.fuso_utm ?? null,
         escolhidos: Array.isArray(marcos) ? marcos.map(String) : null,
         campos: normalizarCamposMonografia(servico.monografia),
@@ -628,7 +635,9 @@ Deno.serve(async (req) => {
       if (!mono.fichas.length) {
         const msg = todosMarcos.length
           ? "Nenhum dos marcos escolhidos está no perímetro: escolha de novo na lista."
-          : "O perímetro não tem marcos (vértices M): não há monografia a gerar.";
+          : marcosNoPerimetro.length
+            ? `Os marcos do perímetro não são do credenciado do serviço (${marcosDeFora.slice(0, 6).join(", ")}${marcosDeFora.length > 6 ? "…" : ""}): não há monografia a gerar.`
+            : "O perímetro não tem marcos (vértices M): não há monografia a gerar.";
         if (soMonografia) return json({ erro: msg }, 422);
         avisos.push(msg);
       } else {
@@ -647,7 +656,11 @@ Deno.serve(async (req) => {
         const s = await supa.storage.from("gerados").createSignedUrl(path, 3600, { download: `Monografia dos marcos - ${nomeBase}.docx` });
         arquivos.push({ titulo, url: s.data?.signedUrl ?? "" });
         if (mono.naoEncontrados.length) avisos.push(`Marcos que não estão no perímetro e ficaram de fora: ${mono.naoEncontrados.join(", ")}.`);
-        monografiaResumo = { marcos: n, naoEncontrados: mono.naoEncontrados.length ? mono.naoEncontrados : undefined };
+        if (mono.deFora.length) avisos.push(`Marcos de vizinho certificado ou de outro credenciado ficaram fora da monografia: ${mono.deFora.join(", ")}.`);
+        monografiaResumo = {
+          marcos: n, naoEncontrados: mono.naoEncontrados.length ? mono.naoEncontrados : undefined,
+          deFora: mono.deFora.length ? mono.deFora : undefined,
+        };
       }
     }
 
@@ -681,6 +694,7 @@ Deno.serve(async (req) => {
       },
       // marcos do perímetro (a tela lista para escolher na monografia)
       marcos: todosMarcos,
+      marcosDeFora: marcosDeFora.length ? marcosDeFora : undefined,
       monografia: monografiaResumo,
       // Aviso não é erro: as peças saíram. Mas um memorial que não casou com a
       // gleba desenhada precisa chegar ao operador antes do cartório.

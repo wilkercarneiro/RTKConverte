@@ -281,3 +281,54 @@ export function inserirNoLado(vertices: Vertice[], p: PedidoInsercao): Resultado
     distanciaM: d,
   };
 }
+
+/**
+ * Reserva no credenciado um código que NÃO esteja em nenhum vértice do serviço.
+ * O contador pode estar atrás do que o serviço já usa (planilha importada,
+ * código digitado à mão): código repetido → reserva o próximo, até `tentativas`
+ * vezes; depois disso, recusa com uma mensagem que diz o que fazer.
+ */
+export async function reservarCodigoLivre(
+  reservar: () => Promise<string>,
+  codigosDoServico: Iterable<string | null | undefined>,
+  tentativas = 5,
+): Promise<string> {
+  const emUso = new Set<string>();
+  for (const c of codigosDoServico) if (c?.trim()) emUso.add(c.trim().toUpperCase());
+  const repetidos: string[] = [];
+  for (let i = 0; i < tentativas; i++) {
+    const codigo = (await reservar()).trim();
+    if (!emUso.has(codigo.toUpperCase())) return codigo;
+    repetidos.push(codigo);
+  }
+  throw new Error(
+    `O contador do credenciado devolveu ${tentativas} números que já estão neste serviço (${repetidos.join(", ")}). ` +
+    "Ajuste o último número usado no cadastro do credenciado (Cadastros) ou digite o código do ponto à mão.",
+  );
+}
+
+/** Campos do ponto inserido que, mudados depois, tornam o desfazer arriscado. */
+const CAMPOS_DO_INSERIDO = ["e", "n", "h", "tipo", "codigo", "metodo", "lat_gms", "lon_gms", "descritivo", "tipo_limite"] as const;
+
+export type ResultadoDesfazerInsercao =
+  | { ok: true; vertices: Vertice[] }
+  | { ok: false; motivo: "apagado" | "alterado" };
+
+/**
+ * Desfaz a inserção de UM ponto pelo id, sem voltar a foto da tabela: tira o
+ * ponto e devolve a ordem de quem foi empurrado (todo vértice depois dele desce
+ * uma casa). Qualquer outra edição feita depois da inserção fica como está.
+ * Se o ponto já foi apagado ou mexido (coordenada, tipo, código…), não desfaz.
+ */
+export function desfazerInsercao(vertices: Vertice[], inserido: Vertice): ResultadoDesfazerInsercao {
+  const atual = vertices.find((v) => v.id === inserido.id);
+  if (!atual) return { ok: false, motivo: "apagado" };
+  const mudou = CAMPOS_DO_INSERIDO.some((k) => String(atual[k] ?? "") !== String(inserido[k] ?? ""));
+  if (mudou) return { ok: false, motivo: "alterado" };
+  return {
+    ok: true,
+    vertices: vertices
+      .filter((v) => v.id !== inserido.id)
+      .map((v) => (v.ordem > atual.ordem ? { ...v, ordem: v.ordem - 1 } : v)),
+  };
+}

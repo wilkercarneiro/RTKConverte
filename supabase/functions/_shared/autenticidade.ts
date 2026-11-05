@@ -185,7 +185,9 @@ export interface Emissao {
 }
 
 /**
- * Reserva → gera (com o selo) → confirma com o hash dos bytes finais. Se a
+ * Reserva → gera (com o selo). NÃO confirma: o hash só vai ao registro depois
+ * que o arquivo estiver no Storage (`publicarEmissao`) — confirmar antes deixava
+ * a página pública dizendo "autêntico" para um PDF que nunca foi entregue. Se a
  * geração falhar, a reserva é descartada e o erro sobe como antes.
  */
 export async function emitirComAutenticidade(
@@ -203,8 +205,31 @@ export async function emitirComAutenticidade(
   }
   const hash = await sha256Hex(bytes);
   if (!codigo) return { bytes, codigo: null, hash, aviso: "A planta saiu sem o selo de autenticidade (QR): o registro de emissão não está disponível no banco." };
-  if (!(await confirmarCodigo(svc, codigo, hash))) {
-    return { bytes, codigo, hash, aviso: "A planta saiu com o QR de autenticidade, mas o registro da emissão não foi confirmado: a verificação dela pode não funcionar. Gere de novo." };
-  }
   return { bytes, codigo, hash };
+}
+
+/** A emissão não vai ser entregue (upload falhou, geração abortada): apaga a reserva. */
+export async function descartarEmissao(svc: unknown, e: Pick<Emissao, "codigo">): Promise<void> {
+  if (e.codigo) await descartarCodigo(svc, e.codigo);
+}
+
+/**
+ * Sobe o PDF e SÓ ENTÃO confirma o registro com o hash. Upload que falha apaga
+ * a reserva e o erro sobe; confirmação que falha vira aviso (o PDF já está lá).
+ * Devolve o aviso, se houver.
+ */
+export async function publicarEmissao(
+  svc: unknown, e: Emissao, subir: (bytes: Uint8Array) => Promise<void>,
+): Promise<string | undefined> {
+  try {
+    await subir(e.bytes);
+  } catch (err) {
+    await descartarEmissao(svc, e);
+    throw err;
+  }
+  if (!e.codigo) return undefined;
+  if (!(await confirmarCodigo(svc, e.codigo, e.hash))) {
+    return "A planta saiu com o QR de autenticidade, mas o registro da emissão não foi confirmado: a verificação dela pode não funcionar. Gere de novo.";
+  }
+  return undefined;
 }
