@@ -90,6 +90,16 @@ for f in "${FUNCOES[@]}"; do
     mkdir -p "$(dirname "$alvo")" && cp "$p" "$alvo"
     echo "   $f: $dv ← repo"
   done <<< "${ARQS[$f]}"
+  # arquivo do fecho que NÃO mudou mas a função passou a importar e que não
+  # existe na pasta da VPS (ex.: gerar-planta agora importa timbre_automatico.ts)
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    dv="$(destino_vps "$f" "$p")"; [ -z "$dv" ] && continue
+    alvo="$PACOTE/$f/$dv"
+    [ -f "$alvo" ] && continue
+    mkdir -p "$(dirname "$alvo")" && cp "$p" "$alvo"
+    echo "   $f: $dv ← repo (faltava na VPS)"
+  done <<< "$(node scripts/fecho-imports.mjs "$f" 2>/dev/null | grep -v '^#' || true)"
 done
 if $ENTREGAR; then
   node scripts/empacotar-entregar.mjs
