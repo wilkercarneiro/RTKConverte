@@ -26,6 +26,7 @@ import { precisaNumerar } from "../lib/codigos_marcos";
 import { avisarConsumo, carregarCreditos, custoDeVarios, textoSemCredito } from "../lib/creditos";
 import { avisarHistoricoAtualizado, ultimaGeracao, type DocHistorico } from "../lib/historico";
 import { confirmar, Dica } from "./ui";
+import { ExportarArea } from "./ExportarArea";
 import "./desmembramento.css";
 
 /** Os quatro documentos de cada área, na ordem em que aparecem e entram no ZIP. */
@@ -380,6 +381,8 @@ export function DocumentosDasAreas({ estado, compacto = false, onVerDocumentos }
                 <span className={`dm-estado${pronta ? " pronto" : ""}`}>
                   {pronta ? (a.docs?.versao ? `documentos da v${a.docs.versao}` : "documentos prontos") : a.servicoId ? "serviço criado" : "sem serviço · 1 crédito"}
                 </span>
+                {/* a área em KML, DXF, GPX, SHP… direto daqui (o serviço da área já tem o anel dela) */}
+                {a.servicoId && pronta && <ExportarArea servicoId={a.servicoId} temPerimetro />}
                 {a.servicoId && <a className="dm-abrir" href={`#/servico/${a.servicoId}`}>Abrir o serviço da {unidade} →</a>}
               </span>
               {!compacto && pronta && (
