@@ -496,8 +496,8 @@ function imagem(rid: string, id: number, nome: string): string {
 /** rId do croqui da ficha `i` em word/_rels/document.xml.rels. */
 export const ridCroqui = (i: number) => `rIdMonoCroqui${i + 1}`;
 
-/** Corpo de uma página (uma ficha). */
-export function paginaDaFicha(m: Monografia, f: FichaMarco, i: number): string {
+/** Corpo de uma página (uma ficha). `rid` = relação da imagem do croqui. */
+export function paginaDaFicha(m: Monografia, f: FichaMarco, i: number, rid = ridCroqui(i)): string {
   const im = m.imovel;
   const partes: string[] = [];
   partes.push(p([{ t: "MONOGRAFIA DE MARCO", b: true, sz: 28 }], { jc: "center", quebra: i > 0 }));
@@ -526,7 +526,7 @@ export function paginaDaFicha(m: Monografia, f: FichaMarco, i: number): string {
   // croqui | foto
   const altura = Math.round(LADO_CM * TWIP_CM) + 120;
   const croqui = p([rot("CROQUI DE LOCALIZAÇÃO NO PERÍMETRO (sem escala)")], { jc: "center" })
-    + `<w:p><w:pPr><w:spacing w:before="40" w:after="0"/><w:jc w:val="center"/></w:pPr>${imagem(ridCroqui(i), 1000 + i, `Croqui ${f.codigo}`)}</w:p>`
+    + `<w:p><w:pPr><w:spacing w:before="40" w:after="0"/><w:jc w:val="center"/></w:pPr>${imagem(rid, 90001 + i, `Croqui ${f.codigo}`)}</w:p>`
     + p([{ t: `● ${f.codigo} em vermelho · demais marcos em cinza · N para cima`, sz: 14, cor: "555555" }], { jc: "center" });
   const foto = p([rot("FOTO DO MARCO")], { jc: "center" })
     + p([{ t: "(colar a foto aqui)", sz: 14, cor: "999999" }], { jc: "center", antes: Math.round(altura / 2) - 200 });
@@ -556,14 +556,14 @@ const SECAO_PADRAO = `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top=
  * document.xml da monografia sobre o do modelo: mantém a abertura (namespaces
  * do modelo, mais os de imagem que faltarem) e a seção; troca só o corpo.
  */
-export function documentoMonografiaXml(m: Monografia, modeloXml?: string | null): string {
+export function documentoMonografiaXml(m: Monografia, modeloXml?: string | null, rids?: string[]): string {
   let abertura = modeloXml?.match(/<w:document\b[^>]*>/)?.[0] ?? `<w:document xmlns:w="${NS.w}">`;
   for (const [pre, uri] of Object.entries(NS)) {
     if (!new RegExp(`\\sxmlns:${pre}="`).test(abertura)) abertura = abertura.replace(/>$/, ` xmlns:${pre}="${uri}">`);
   }
   const secao = (modeloXml && secaoDoModelo(modeloXml)) || SECAO_PADRAO;
   const corpo = m.fichas.length
-    ? m.fichas.map((f, i) => paginaDaFicha(m, f, i)).join("")
+    ? m.fichas.map((f, i) => paginaDaFicha(m, f, i, rids?.[i])).join("")
     : p([{ t: "Nenhum marco (vértice tipo M) no perímetro.", sz: SZ }]);
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n${abertura}<w:body>${corpo}${secao}</w:body></w:document>`;
 }
@@ -576,18 +576,35 @@ export function documentoMonografiaXml(m: Monografia, modeloXml?: string | null)
 export async function escreverMonografia(zip: JSZip, m: Monografia): Promise<void> {
   const docPath = "word/document.xml", relsPath = "word/_rels/document.xml.rels";
   const modeloXml = zip.file(docPath) ? await zip.file(docPath)!.async("string") : null;
-  zip.file(docPath, documentoMonografiaXml(m, modeloXml));
   let rels = zip.file(relsPath) ? await zip.file(relsPath)!.async("string")
     : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`;
+  // Nada do modelo é sobrescrito nem removido: os rIds e os nomes de mídia do
+  // croqui fogem de TODOS os que o pacote já usa (documento, cabeçalhos,
+  // rodapés — o modelo próprio da empresa pode ter logo no cabeçalho).
+  const idsUsados = new Set<string>();
+  for (const nome of Object.keys(zip.files)) {
+    if (!nome.endsWith(".rels")) continue;
+    const xml = await zip.file(nome)!.async("string");
+    for (const mm of xml.matchAll(/\bId="([^"]+)"/g)) idsUsados.add(mm[1]);
+  }
+  const livre = (base: string, usado: (s: string) => boolean) => {
+    let k = 1;
+    while (usado(`${base}${k}`)) k++;
+    return `${base}${k}`;
+  };
+  const rids: string[] = [];
   for (let i = 0; i < m.fichas.length; i++) {
     const f = m.fichas[i];
     const png = await croquiPng(f.anel, f.indice, f.outrosMarcos);
-    const alvo = `media/monografia-croqui-${i + 1}.png`;
+    const nomeMidia = livre("monografia-croqui-", (s) => !!zip.file(`word/media/${s}.png`));
+    const alvo = `media/${nomeMidia}.png`;
     zip.file(`word/${alvo}`, png);
-    const id = ridCroqui(i);
-    rels = rels.replace(new RegExp(`<Relationship\\b[^>]*Id="${id}"[^>]*/>`), "");
+    const id = livre("rIdMonoCroqui", (s) => idsUsados.has(s));
+    idsUsados.add(id);
+    rids.push(id);
     rels = rels.replace("</Relationships>", `<Relationship Id="${id}" Type="${NS.r}/image" Target="${alvo}"/></Relationships>`);
   }
+  zip.file(docPath, documentoMonografiaXml(m, modeloXml, rids));
   zip.file(relsPath, rels);
   const ctPath = "[Content_Types].xml";
   let ct = zip.file(ctPath) ? await zip.file(ctPath)!.async("string") : "";
