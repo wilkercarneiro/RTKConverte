@@ -67,7 +67,7 @@ export function Configuracoes({ escritorio = { estado: "legado" } }: { escritori
       <Abas rotulo="Seções das configurações" abas={abas} ativa={aba} onTrocar={trocar} />
       <div role="tabpanel" aria-label={abas.find((a) => a.chave === aba)?.rotulo} className="painel-aba">
         {aba === "empresa" && <Empresa pasta={pasta} />}
-        {aba === "cadastros" && <Cadastros />}
+        {aba === "cadastros" && <Cadastros escritorioId={escritorio.estado === "ok" ? escritorio.escritorio.id : null} />}
         {aba === "modelos" && temModelos && <Modelos pasta={pasta} />}
         {aba === "integracoes" && <IntegracaoGprol />}
         {aba === "plano" && <PlanoUso escritorio={escritorio} />}

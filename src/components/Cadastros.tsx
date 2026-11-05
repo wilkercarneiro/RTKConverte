@@ -11,6 +11,7 @@ import { temPermissao } from "../lib/permissoes";
 import { contadoresParaGravar, ultimosDe, ultimoUsado } from "../lib/contadores";
 import type { CampoContador, UltimosUsados } from "../lib/contadores";
 import type { Credenciado, RT } from "../lib/types";
+import { caminhoAssinatura, prepararAssinatura } from "../lib/assinatura";
 
 type NovoRT = Omit<RT, "id">;
 /**
@@ -21,8 +22,15 @@ type FormCredenciado = { nome: string; prefixo_vertice: string; ultimos: Ultimos
 
 const RT_VAZIO: NovoRT = {
   nome: "", formacao: "", conselho_sigla: "CFTA", conselho_numero: "",
-  cpf: "", identidade: "", crea: null, trt: null,
+  cpf: "", identidade: "", crea: null, trt: null, assinar_com_imagem: true,
 };
+
+/** Imagem da assinatura em edição: a que já está no Storage, uma nova a enviar, ou "remover". */
+type EstadoAssinatura =
+  | { t: "nenhuma" }
+  | { t: "salva"; url: string }
+  | { t: "nova"; blob: Blob; url: string }
+  | { t: "remover" };
 
 // O banco recusa apagar um registro que já está em uso por algum serviço (FK).
 function mensagemErro(e: { code?: string; message: string }, oQue: string): string {
@@ -33,49 +41,94 @@ function mensagemErro(e: { code?: string; message: string }, oQue: string): stri
 const ICONE_PESSOA = "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8";
 const ICONE_CREDENCIADO = "M12 2 3 7v6c0 5 4 8 9 9 5-1 9-4 9-9V7zM9 12l2 2 4-4";
 
-export function Cadastros() {
+export function Cadastros({ escritorioId = null }: { escritorioId?: string | null }) {
   return (
     <>
-      <CadastroRTs />
+      <CadastroRTs escritorioId={escritorioId} />
       <CadastroCredenciados />
     </>
   );
 }
 
-function CadastroRTs() {
+export function CadastroRTs({ escritorioId = null }: { escritorioId?: string | null }) {
   const [rts, setRts] = useState<RT[]>([]);
   const [form, setForm] = useState<NovoRT | null>(null); // null = formulário fechado
   const [editId, setEditId] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [falha, setFalha] = useState<string | null>(null);
+  // ids dos RTs que já têm a imagem da assinatura no Storage
+  const [comAssinatura, setComAssinatura] = useState<Set<string>>(new Set());
+  const [assinatura, setAssinatura] = useState<EstadoAssinatura>({ t: "nenhuma" });
+  const [limpar, setLimpar] = useState(true);
+  const [preparando, setPreparando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
   const { avisar } = useAvisos();
   const pode = temPermissao("cadastros.editar");
+  // a imagem mora em templates/, que só quem configura a empresa grava
+  const podeAssinatura = pode && !!escritorioId && temPermissao("empresa.configurar");
+  const pastaAssinaturas = escritorioId ? `escritorios/${escritorioId}/assinaturas` : null;
 
   async function recarregar() {
     const { data, error } = await supabase.from("responsaveis_tecnicos").select().order("nome");
     setFalha(error ? error.message : null);
     if (!error) setRts((data as RT[]) ?? []);
+    if (pastaAssinaturas) {
+      const { data: arqs } = await supabase.storage.from("templates").list(pastaAssinaturas, { limit: 1000 });
+      setComAssinatura(new Set((arqs ?? []).map((a) => /^rt-(.+)\.png$/.exec(a.name)?.[1]).filter((x): x is string => !!x)));
+    }
     setCarregando(false);
   }
 
-  useEffect(() => { recarregar(); }, []);
+  useEffect(() => { recarregar(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function campo<K extends keyof NovoRT>(k: K, v: NovoRT[K]) {
     setForm((f) => (f ? { ...f, [k]: v } : f));
   }
 
+  function trocarAssinatura(a: EstadoAssinatura) {
+    setAssinatura((antiga) => { if (antiga.t === "nova") URL.revokeObjectURL(antiga.url); return a; });
+  }
+
   function abrirNovo() {
     setEditId(null);
     setForm({ ...RT_VAZIO });
+    trocarAssinatura({ t: "nenhuma" });
     setErro(null);
   }
 
-  function abrirEdicao(r: RT) {
+  async function abrirEdicao(r: RT) {
     const { id, ...campos } = r;
     setEditId(id);
-    setForm({ ...campos, conselho_sigla: r.conselho_sigla ?? "CFTA" });
+    setForm({ ...campos, conselho_sigla: r.conselho_sigla ?? "CFTA", assinar_com_imagem: r.assinar_com_imagem !== false });
     setErro(null);
+    trocarAssinatura({ t: "nenhuma" });
+    if (escritorioId && comAssinatura.has(id)) {
+      const { data } = await supabase.storage.from("templates").createSignedUrl(caminhoAssinatura(escritorioId, id), 600);
+      if (data?.signedUrl) trocarAssinatura({ t: "salva", url: data.signedUrl });
+    }
+  }
+
+  function fechar() {
+    setForm(null);
+    setEditId(null);
+    setErro(null);
+    trocarAssinatura({ t: "nenhuma" });
+  }
+
+  async function escolherAssinatura(f: File) {
+    setPreparando(true);
+    setErro(null);
+    try {
+      const blob = await prepararAssinatura(f, { limparFundo: limpar });
+      trocarAssinatura({ t: "nova", blob, url: URL.createObjectURL(blob) });
+      // imagem nova: assinar com ela é o que a pessoa quer
+      campo("assinar_com_imagem", true);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPreparando(false);
+    }
   }
 
   async function salvar() {
@@ -83,15 +136,34 @@ function CadastroRTs() {
     if (!form.nome.trim()) { setErro("Informe o nome do responsável técnico."); return; }
     if (!(form.conselho_numero ?? "").trim()) { setErro("Informe o número do registro no conselho."); return; }
     setErro(null);
-    const dados = { ...form, nome: form.nome.trim(), conselho_numero: (form.conselho_numero ?? "").trim() };
-    const { error } = editId
-      ? await supabase.from("responsaveis_tecnicos").update(dados).eq("id", editId)
-      : await supabase.from("responsaveis_tecnicos").insert(dados);
-    if (error) { setErro(error.message); return; }
-    avisar("ok", editId ? "Responsável técnico atualizado." : "Responsável técnico cadastrado — já disponível nos serviços.");
-    setForm(null);
-    setEditId(null);
-    await recarregar();
+    setSalvando(true);
+    try {
+      const dados = { ...form, nome: form.nome.trim(), conselho_numero: (form.conselho_numero ?? "").trim() };
+      let id = editId;
+      if (editId) {
+        const { error } = await supabase.from("responsaveis_tecnicos").update(dados).eq("id", editId);
+        if (error) { setErro(error.message); return; }
+      } else {
+        const { data, error } = await supabase.from("responsaveis_tecnicos").insert(dados).select("id").single();
+        if (error) { setErro(error.message); return; }
+        id = (data as { id: string }).id;
+      }
+      // a imagem vai depois do cadastro: o caminho leva o id do RT
+      let falhaImagem: string | null = null;
+      if (id && escritorioId && assinatura.t === "nova") {
+        const { error } = await supabase.storage.from("templates").upload(caminhoAssinatura(escritorioId, id), assinatura.blob, { upsert: true, contentType: "image/png" });
+        if (error) falhaImagem = `o cadastro foi salvo, mas a imagem da assinatura não: ${error.message}`;
+      } else if (id && escritorioId && assinatura.t === "remover") {
+        const { error } = await supabase.storage.from("templates").remove([caminhoAssinatura(escritorioId, id)]);
+        if (error) falhaImagem = `o cadastro foi salvo, mas a imagem da assinatura não foi removida: ${error.message}`;
+      }
+      if (falhaImagem) { setErro(falhaImagem.charAt(0).toUpperCase() + falhaImagem.slice(1)); await recarregar(); return; }
+      avisar("ok", editId ? "Responsável técnico atualizado." : "Responsável técnico cadastrado — já disponível nos serviços.");
+      fechar();
+      await recarregar();
+    } finally {
+      setSalvando(false);
+    }
   }
 
   async function remover(r: RT) {
@@ -105,7 +177,11 @@ function CadastroRTs() {
     if (error) { setErro(mensagemErro(error, "este responsável")); return; }
     setErro(null);
     avisar("ok", `Responsável técnico "${r.nome}" excluído.`);
-    if (editId === r.id) { setForm(null); setEditId(null); }
+    // a imagem da assinatura vai junto (sem o RT ela não serve para nada)
+    if (escritorioId && comAssinatura.has(r.id) && podeAssinatura) {
+      await supabase.storage.from("templates").remove([caminhoAssinatura(escritorioId, r.id)]);
+    }
+    if (editId === r.id) fechar();
     await recarregar();
   }
 
@@ -125,7 +201,7 @@ function CadastroRTs() {
             acao={pode && !form ? <button className="principal" onClick={abrirNovo}>Cadastrar responsável</button> : undefined} />
         ) : (
           <div className="tabela-wrap"><table className="tabela-vertices">
-            <thead><tr><th>Nome</th><th className="col-sec">Formação</th><th>Conselho</th><th className="col-sec">CPF</th>{pode && <th><span className="sr-only">Ações</span></th>}</tr></thead>
+            <thead><tr><th>Nome</th><th className="col-sec">Formação</th><th>Conselho</th><th className="col-sec">CPF</th>{escritorioId && <th className="col-sec">Assinatura</th>}{pode && <th><span className="sr-only">Ações</span></th>}</tr></thead>
             <tbody>
               {rts.map((r) => (
                 <tr key={r.id}>
@@ -133,6 +209,11 @@ function CadastroRTs() {
                   <td className="col-sec">{r.formacao || "—"}</td>
                   <td className="mono">{(r.conselho_sigla ?? "CREA")} {(r.conselho_numero ?? "").trim() || (r.crea ?? "") || "—"}</td>
                   <td className="mono col-sec">{r.cpf || "—"}</td>
+                  {escritorioId && (
+                    <td className="col-sec">{comAssinatura.has(r.id)
+                      ? (r.assinar_com_imagem === false ? "imagem (desligada)" : "imagem nos documentos")
+                      : "—"}</td>
+                  )}
                   {pode && (
                     <td className="acao">
                       <button className="fantasma" onClick={() => abrirEdicao(r)} aria-label={`Editar ${r.nome}`}>Editar</button>
@@ -177,9 +258,51 @@ function CadastroRTs() {
                 placeholder="ex.: BR20250804764" />
             </label>
           </div>
+          {escritorioId && (
+            <div className="assinatura-rt">
+              <div className="titulo-campo">Imagem da assinatura
+                <Dica>Foto ou escaneamento da assinatura em papel branco. O sistema tira o fundo branco e põe a imagem acima da linha do responsável técnico no memorial, no tabular, nas peças e no carimbo da planta. É só uma IMAGEM da assinatura — não é assinatura digital ICP-Brasil e não substitui o certificado digital.</Dica>
+              </div>
+              <div className="assinatura-rt-corpo">
+                <div className={`assinatura-rt-previa${assinatura.t === "salva" || assinatura.t === "nova" ? " com" : ""}`}>
+                  {assinatura.t === "salva" || assinatura.t === "nova"
+                    ? <img src={assinatura.url} alt={`Assinatura de ${form.nome || "responsável técnico"}`} />
+                    : <span className="sub">{assinatura.t === "remover" ? "A imagem será removida ao salvar." : "Nenhuma imagem enviada."}</span>}
+                </div>
+                {podeAssinatura ? (
+                  <div className="assinatura-rt-acoes">
+                    <label className="dropzone linha"
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && !preparando) escolherAssinatura(f); }}>
+                      {preparando ? <><span className="spinner" /> Preparando…</> : <b>{assinatura.t === "salva" || assinatura.t === "nova" ? "Trocar imagem" : "Enviar imagem"} — arraste ou clique</b>}
+                      <input type="file" accept="image/png,image/jpeg,image/webp" hidden disabled={preparando}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) escolherAssinatura(f); e.target.value = ""; }} />
+                    </label>
+                    <div className="assinatura-rt-opcoes">
+                      <label className="check">
+                        <input type="checkbox" checked={limpar} onChange={(e) => setLimpar(e.target.checked)} />
+                        <span>Tirar o fundo branco<Dica>desligue se a imagem já for PNG com fundo transparente</Dica></span>
+                      </label>
+                      {(assinatura.t === "salva" || assinatura.t === "nova") && (
+                        <button type="button" className="fantasma" onClick={() => trocarAssinatura(editId && comAssinatura.has(editId) ? { t: "remover" } : { t: "nenhuma" })}>Remover imagem</button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="sub">Só quem tem a permissão &quot;Dados da empresa&quot; envia a imagem da assinatura.</p>
+                )}
+              </div>
+              <label className="check">
+                <input type="checkbox" checked={form.assinar_com_imagem !== false}
+                  disabled={!(assinatura.t === "salva" || assinatura.t === "nova")}
+                  onChange={(e) => campo("assinar_com_imagem", e.target.checked)} />
+                <span>Assinar os documentos com a imagem da assinatura</span>
+              </label>
+            </div>
+          )}
           <div className="rodape-acoes">
-            <button className="principal" onClick={salvar}>{editId ? "Salvar alterações" : "Cadastrar"}</button>
-            <button className="fantasma" onClick={() => { setForm(null); setEditId(null); setErro(null); }}>Cancelar</button>
+            <button className="principal" onClick={salvar} disabled={salvando || preparando}>{salvando ? "Salvando…" : editId ? "Salvar alterações" : "Cadastrar"}</button>
+            <button className="fantasma" onClick={fechar}>Cancelar</button>
           </div>
         </fieldset>
       )}

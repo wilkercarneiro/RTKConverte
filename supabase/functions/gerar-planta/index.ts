@@ -28,6 +28,9 @@ import type { LonLat } from "../_shared/satelite.ts";
 import { autorDaChamada, exigirPermissao, exigirServicoDoUsuario, gravarHistoricoDocumentos } from "../_shared/acesso.ts";
 import type { ClienteHistorico, ClienteUsuario } from "../_shared/acesso.ts";
 import { escritorioDoServico } from "../_shared/modelos.ts";
+import { identidadeDaEmpresa } from "../_shared/timbre_automatico.ts";
+import { carregarAssinaturaRt } from "../_shared/assinatura_rt.ts";
+import { emitirComAutenticidade, metadadosPublicos } from "../_shared/autenticidade.ts";
 import { mensagemDeErro, substituirVertices } from "../_shared/vertices_db.ts";
 import type { ClienteVertices } from "../_shared/vertices_db.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
@@ -314,13 +317,26 @@ Deno.serve(async (req) => {
       satelite: sat.imagem,
       glebas: glebasPlanta,
       partes: partesPlanta,
+      // imagem da assinatura do RT, se cadastrada e ligada (Configurações → Responsáveis)
+      assinaturaRt: await carregarAssinaturaRt(supa, servico.escritorio_id, rt),
     });
 
     // faixa não edificável das rodovias (recuo automático, 05/11/2026): sai por
     // padrão nos trechos de BR/estadual/ferrovia; o serviço pode reduzir (com a
     // lei municipal) ou desligar em servicos.recuo_vias
     const naoEdificavel = naoEdificavelDaPlanta((servico as { recuo_vias?: unknown }).recuo_vias);
-    const pdfBytes = await gerarPlantaPdf({ ...dados, metragem: metragem === true, naoEdificavel }, undefined, { editavel: true });
+    // Selo de autenticidade: cada emissão ganha um código (QR na folha) e um
+    // registro com o SHA-256 do PDF — conferível na página pública.
+    const emissao = await emitirComAutenticidade(supa, {
+      servico_id, escritorio_id: servico.escritorio_id ?? null, tipo: "planta_sigef",
+      metadados: metadadosPublicos({
+        tipo: "planta_sigef", servico, rt, empresa: (await identidadeDaEmpresa(supa, esc.id))?.nome ?? null,
+        areaFmt, perimetroFmt, folha: folhaSaida, dataStr: dados.dataStr,
+      }),
+    }, (selo) => gerarPlantaPdf({ ...dados, metragem: metragem === true, naoEdificavel, ...(selo ? { autenticidade: selo } : {}) }, undefined, { editavel: true }),
+    Deno.env.get("URL_VERIFICACAO") || undefined);
+    if (emissao.aviso) avisos.push(emissao.aviso);
+    const pdfBytes = emissao.bytes;
 
     // O PDF saiu: agora o serviço pode assumir o perímetro do SIGEF.
     if (persistirReconciliados.length > 0) {
@@ -348,6 +364,8 @@ Deno.serve(async (req) => {
       planta_pdf: s.data?.signedUrl,
       avisos,
       resumo: { vertices: vertices.length, area: areaFmt, perimetro: perimetroFmt, logo: !!dados.logo, folha: folhaSaida },
+      // código de verificação impresso no QR (null = saiu sem o selo; ver avisos)
+      autenticidade: emissao.codigo ? { codigo: emissao.codigo, sha256: emissao.hash } : null,
     });
   } catch (err) {
     if (err instanceof CorpoInvalido) return json({ erro: err.message }, err.status);

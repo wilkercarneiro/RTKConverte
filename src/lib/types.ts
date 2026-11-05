@@ -274,6 +274,8 @@ export interface RT {
   conselho_sigla: string | null;
   conselho_numero: string | null;
   identidade: string | null;
+  /** usar a imagem da assinatura nos documentos (migração 0043; padrão ligado) */
+  assinar_com_imagem?: boolean | null;
 }
 
 export interface PreviewParse {

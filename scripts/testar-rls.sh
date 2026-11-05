@@ -41,7 +41,7 @@ for f in supabase/migrations/*.sql; do
     0020_escritorios.sql|0024_saas.sql|0025_equipe.sql|0026_auditoria.sql|0027_creditos.sql|0028_*|0029_*|0033_*|0034_*|0035_*|0036_*|0037_*) continue ;;  # aplicadas abaixo, entre as etapas
     # 0038+ usam a origem_id (0027) e as carteiras (0034): também entram abaixo, em ordem
     # (sem isto o script parava na 0038 desde 04/11/2026)
-    0038_*|0039_*|0040_*|0041_*) continue ;;
+    0038_*|0039_*|0040_*|0041_*|0042_*|0043_*) continue ;;
     # usa servicos.tipo, que só nasce na 0005: em produção foi aplicada depois
     0002_confrontacao_no_vertice.sql) continue ;;
   esac
@@ -147,12 +147,12 @@ else
 fi
 
 # 0040 em diante (não dependem do PostGIS), com os testes delas
-for f in supabase/migrations/0040_*.sql supabase/migrations/0041_*.sql; do
+for f in supabase/migrations/0040_*.sql supabase/migrations/0041_*.sql supabase/migrations/0042_*.sql supabase/migrations/0043_*.sql; do
   [ -f "$f" ] || continue
   "${PSQL[@]}" -f "$f" >/dev/null
   echo "migração aplicada: $f"
 done
-for t in tests/rls/autocadastro.sql tests/rls/recuo_vias.sql; do
+for t in tests/rls/autocadastro.sql tests/rls/recuo_vias.sql tests/rls/autenticidade.sql; do
   [ -f "$t" ] || continue
   PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f "$t" 2>&1 >/dev/null | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
   echo "testes de $t: todos passaram"
