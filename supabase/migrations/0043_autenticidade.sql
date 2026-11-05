@@ -74,8 +74,17 @@ begin
   end if;
   -- limite por IP (a 0038 traz a consumir_limite; sem ela, só o código protege)
   if to_regprocedure('consumir_limite(text,integer,integer)') is not null then
+    -- o IP pela ip_da_requisicao() da 0029 (prefere cf-connecting-ip/x-real-ip):
+    -- o 1º x-forwarded-for vem de quem chama e troca a cada consulta, o que
+    -- furava o limite
     begin
-      v_ip := split_part(coalesce(current_setting('request.headers', true)::json ->> 'x-forwarded-for', ''), ',', 1);
+      if to_regprocedure('ip_da_requisicao()') is not null then
+        execute 'select ip_da_requisicao()' into v_ip;
+      else
+        v_ip := split_part(coalesce(current_setting('request.headers', true)::json ->> 'cf-connecting-ip',
+                                    current_setting('request.headers', true)::json ->> 'x-real-ip',
+                                    current_setting('request.headers', true)::json ->> 'x-forwarded-for', ''), ',', 1);
+      end if;
     exception when others then
       v_ip := '';
     end;
