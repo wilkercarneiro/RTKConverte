@@ -7,6 +7,7 @@
 // próxima ação diz em uma frase o que falta, e o trabalho é salvo sozinho.
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { chamarFuncao, supabase } from "../lib/supabase";
+import { baixarZip, type ArquivoZip } from "../lib/zip_download";
 import {
   LADOS, METODOS_POSICIONAMENTO, NATUREZAS_AREA, NATUREZAS_SERVICO,
   rotuloRT, SITUACOES, TIPOS_LIMITE, TIPOS_PESSOA, UFS,
@@ -134,6 +135,26 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [novoV, setNovoV] = useState({ aposOrdem: "", codigo: "", lat: "", lon: "", h: "", sigmaH: "0,02" });
   const [erro, setErro] = useState<string | null>(null);
   const [gerado, setGerado] = useState<Gerado | null>(null);
+  const [zipandoDocs, setZipandoDocs] = useState(false);
+  /** "Baixar tudo (ZIP)" dos documentos gerados: memorial, planilha, planta geral e as A3 das glebas. */
+  async function baixarTudoGerado() {
+    if (!gerado) return;
+    const base = servico.denominacao || servico.nome_arquivo_txt?.replace(/\.txt$/i, "") || "imovel";
+    const arquivos: ArquivoZip[] = [
+      { nome: `Memorial Descritivo - ${base}.docx`, url: gerado.memorial_docx },
+      { nome: `Planilha SIGEF - ${base}.ods`, url: gerado.planilha_ods },
+      ...(gerado.planta_pdf ? [{ nome: `Planta ${gerado.folha ?? "A1"} - ${base}.pdf`, url: gerado.planta_pdf }] : []),
+      ...(gerado.glebas ?? []).filter((g) => g.planta_pdf).map((g) => ({ nome: `Planta A3 - ${g.nome}.pdf`, url: g.planta_pdf!, pasta: "Plantas A3" })),
+    ];
+    setZipandoDocs(true);
+    try {
+      await baixarZip(arquivos, `Documentos - ${base}${gerado.versao != null ? ` - v${gerado.versao}` : ""}`);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      setZipandoDocs(false);
+    }
+  }
   const [ocupado, setOcupado] = useState(false);
   const [rtExtras, setRtExtras] = useState({ formacao: "", conselho_sigla: "CFTA", conselho_numero: "", identidade: "", cpf: "" });
   // Os extras do RT chegam do cadastro DEPOIS do primeiro desenho. Só o que o
@@ -2300,6 +2321,11 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 <header>
                   <h3>Documentos gerados<Dica>regeração ilimitada — cada geração vira uma nova versão no histórico</Dica></h3>
                   {gerado.versao != null && <span className="desc">última geração · v{gerado.versao}</span>}
+                  <span className="esticar" />
+                  {/* um clique para o pacote inteiro (memorial, planilha, plantas) */}
+                  <button type="button" className="fantasma" disabled={zipandoDocs} onClick={() => void baixarTudoGerado()}>
+                    {zipandoDocs ? "Montando o ZIP…" : "Baixar tudo (ZIP)"}
+                  </button>
                 </header>
                 <div className="downloads">
                   <a className="botao-download" href={gerado.memorial_docx} target="_blank" rel="noreferrer">
