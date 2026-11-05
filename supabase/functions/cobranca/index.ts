@@ -6,11 +6,14 @@
 // FUNCTIONS_VERIFY_JWT_MAP com false, como a `gprol`. Quem chama:
 //   - o Asaas, em POST …/functions/v1/cobranca?origem=asaas, com o token no
 //     header asaas-access-token (configurado pelo próprio painel);
+//   - a página de cadastro, SEM login (só a chave pública): cadastro_criar, em
+//     cadastro.ts (0040);
 //   - o site, com o JWT da pessoa: as ações em fluxos.ts.
 import { createClient } from "@supabase/supabase-js";
 import { tratarAcao, tratarWebhook, ErroUsuario } from "./fluxos.ts";
+import { tratarPublico } from "./cadastro.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, lerTexto, LIMITE_MB } from "../_shared/limite.ts";
-import type { Banco, CartaoSalvo, Deps, EmpresaCobranca, PedidoCredito, ReservaRecarga, Usuario } from "./fluxos.ts";
+import type { Banco, CartaoSalvo, Deps, EmpresaCobranca, PedidoCredito, PlanoAVenda, ReservaRecarga, Usuario } from "./fluxos.ts";
 import type { CarteiraDoPlano } from "../_shared/mensagens_cobranca.ts";
 
 const CORS = {
@@ -71,16 +74,16 @@ function banco(svc: Svc): Banco {
     },
     async empresa(id) {
       const r = await svc.from("escritorios")
-        .select("id, nome, cnpj, email, telefone, responsavel, status, mensalidade, plano:planos(nome, preco_mensal)")
+        .select("id, nome, cnpj, email, telefone, responsavel, status, mensalidade, origem, plano:planos(nome, preco_mensal)")
         .eq("id", id).maybeSingle();
       falhou(r, "empresa");
       if (!r.data) return null;
       const e = r.data as unknown as {
         id: string; nome: string; cnpj: string | null; email: string | null; telefone: string | null; responsavel: string | null;
-        status: string; mensalidade: number | null; plano: { nome: string; preco_mensal: number | null } | null;
+        status: string; mensalidade: number | null; origem: string | null; plano: { nome: string; preco_mensal: number | null } | null;
       };
       const [cob, dono, sit, renova] = await Promise.all([
-        svc.from("cobranca_empresas").select("asaas_cliente_id, asaas_assinatura_id, situacao, link_pagamento, valor, proximo_vencimento")
+        svc.from("cobranca_empresas").select("asaas_cliente_id, asaas_assinatura_id, situacao, link_pagamento, valor, proximo_vencimento, ciclo")
           .eq("escritorio_id", id).maybeSingle(),
         svc.from("membros_escritorio").select("user_id").eq("escritorio_id", id).eq("papel", "dono").order("created_at").limit(1).maybeSingle(),
         svc.rpc("situacao_creditos", { p_escritorio: id }),
@@ -94,7 +97,7 @@ function banco(svc: Svc): Banco {
         id: e.id, nome: e.nome, cnpj: e.cnpj, email: e.email, telefone: e.telefone, responsavel: e.responsavel, status: e.status,
         plano: e.plano?.nome ?? null,
         mensalidade: e.mensalidade ?? e.plano?.preco_mensal ?? null,
-        login, creditos,
+        login, creditos, origem: e.origem,
         renovacao: typeof renova.data === "string" ? renova.data : null,
         cobranca: (cob.data as EmpresaCobranca["cobranca"]) ?? null,
       };
@@ -168,6 +171,43 @@ function banco(svc: Svc): Banco {
     async atividade(escritorioId, acao, alvo, userId) {
       await svc.from("atividades").insert({ escritorio_id: escritorioId, user_id: userId, acao, alvo: alvo.slice(0, 200) });
     },
+    // ---- autocadastro (0040)
+    async planoParaVenda(id) {
+      const r = await svc.from("planos").select("id, nome, preco_mensal, ativo, vende_no_site").eq("id", id).maybeSingle();
+      falhou(r, "plano");
+      return (r.data as PlanoAVenda | null) ?? null;
+    },
+    async documentoCadastrado(documento) {
+      const r = await svc.from("escritorios").select("id").eq("cnpj", documento).limit(1);
+      falhou(r, "empresa");
+      return (r.data ?? []).length > 0;
+    },
+    async criarConta(email, senha, metadados) {
+      // o mesmo do superadmin: e-mail já confirmado (a VPS não manda e-mail de confirmação)
+      const { data, error } = await svc.auth.admin.createUser({ email, password: senha, email_confirm: true, user_metadata: metadados });
+      if (error || !data.user) {
+        const m = error?.message ?? "Não foi possível criar a conta";
+        return { erro: m, duplicado: /already been registered|already registered|already exists/i.test(m) };
+      }
+      return { id: data.user.id };
+    },
+    async removerConta(userId) {
+      await svc.auth.admin.deleteUser(userId);
+    },
+    async inserirEmpresa(campos) {
+      const r = await svc.from("escritorios").insert(campos).select("id").single();
+      if (r.error) throw Object.assign(new Error(`empresa: ${r.error.message}`), { codigo: r.error.code });
+      return (r.data as { id: string }).id;
+    },
+    async inserirMembro(escritorioId, userId, nome) {
+      falhou(await svc.from("membros_escritorio").insert({ escritorio_id: escritorioId, user_id: userId, papel: "dono", nome }), "membro");
+    },
+    async inserirConfigEmpresa(escritorioId, pares) {
+      falhou(await svc.from("config_empresa").insert(Object.entries(pares).map(([key, value]) => ({ escritorio_id: escritorioId, key, value }))), "configurações");
+    },
+    async removerEmpresa(escritorioId) {
+      falhou(await svc.from("escritorios").delete().eq("id", escritorioId), "empresa");
+    },
   };
 }
 
@@ -228,9 +268,14 @@ Deno.serve(async (req) => {
       const r = await tratarWebhook(deps, req.headers.get("asaas-access-token"), await lerTexto(req, 256 * 1024));
       return json(r.corpo, r.status);
     }
+    const b = await lerJson(req, LIMITE_MB(1)).catch((e) => { if (e instanceof CorpoInvalido && e.status === 413) throw e; return {}; }) as Record<string, unknown>;
+    // a página de cadastro (sem login): a função confere e limita tudo sozinha
+    if (b.acao === "cadastro_criar") {
+      const r = await tratarPublico(deps, ipDoPedido(req), b);
+      return json(r.corpo, r.status);
+    }
     const u = await usuario(req, svc);
     if (!u) return json({ erro: "Sessão inválida ou expirada. Entre de novo." }, 401);
-    const b = await lerJson(req, LIMITE_MB(1)).catch((e) => { if (e instanceof CorpoInvalido && e.status === 413) throw e; return {}; }) as Record<string, unknown>;
     const r = await tratarAcao(deps, u, b);
     return json(r.corpo, r.status);
   } catch (err) {
