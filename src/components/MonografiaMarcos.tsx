@@ -6,6 +6,7 @@
 // para completar à mão.
 import { useMemo, useState } from "react";
 import type { CamposMarco, CamposMonografia } from "../../supabase/functions/_shared/monografia.ts";
+import { separarMarcos } from "../../supabase/functions/_shared/monografia.ts";
 import { Dica, Rotulo } from "./ui";
 
 export interface ArquivoGerado { titulo: string; url: string }
@@ -20,9 +21,13 @@ export function unirMarcos(...listas: (readonly (string | null | undefined)[] | 
   return [...vistos];
 }
 
-export function MonografiaMarcos({ marcos, campos, onCampos, onGerar, ocupado, arquivo, erro, semPdf, onEnviarPdf }: {
+export function MonografiaMarcos({ marcos: conhecidos, prefixo, deVizinho, campos, onCampos, onGerar, ocupado, arquivo, erro, semPdf, onEnviarPdf }: {
   /** códigos dos marcos conhecidos (vazio = ainda não se sabe: sai com todos) */
   marcos: string[];
+  /** prefixo do credenciado do serviço: marco de outro prefixo não entra */
+  prefixo?: string | null;
+  /** códigos de marcos inseridos de área certificada vizinha: não entram */
+  deVizinho?: readonly (string | null | undefined)[];
   campos: CamposMonografia | null | undefined;
   onCampos: (c: CamposMonografia) => void;
   /** `null` = todos os marcos */
@@ -35,6 +40,7 @@ export function MonografiaMarcos({ marcos, campos, onCampos, onGerar, ocupado, a
   onEnviarPdf?: (f: File) => void;
 }) {
   const c = campos ?? {};
+  const { proprios: marcos, deFora } = useMemo(() => separarMarcos(conhecidos, prefixo, deVizinho), [conhecidos, prefixo, deVizinho]);
   // guarda os DESMARCADOS: marco que aparecer depois já entra marcado
   const [fora, setFora] = useState<Set<string>>(new Set());
   const [aberto, setAberto] = useState<string | null>(null);
@@ -129,10 +135,17 @@ export function MonografiaMarcos({ marcos, campos, onCampos, onGerar, ocupado, a
             })}
           </div>
         </>
-      ) : (
+      ) : deFora.length ? null : (
         <p className="sub" style={{ margin: "14px 0 0" }}>
           A lista dos marcos aparece depois de ler o PDF do SIGEF ou de gerar as peças.
           Gerando agora, sai uma página para cada marco do perímetro.
+        </p>
+      )}
+      {deFora.length > 0 && (
+        <p className="sub" style={{ margin: "10px 0 0" }}>
+          {deFora.length === 1 ? "1 marco do perímetro não entra" : `${deFora.length} marcos do perímetro não entram`}: são de
+          área certificada vizinha ou de outro credenciado{prefixo ? ` (o deste serviço é ${prefixo})` : ""} —{" "}
+          <span className="mono">{deFora.slice(0, 8).join(", ")}{deFora.length > 8 ? " …" : ""}</span>.
         </p>
       )}
 

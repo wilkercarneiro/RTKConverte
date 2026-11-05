@@ -147,6 +147,35 @@ export function rotuloMetodo(m: string | null | undefined): string {
 export interface VerticeBanco {
   codigo: string | null; tipo?: string | null;
   sigma_pos?: number | string | null; sigma_h?: number | string | null; metodo?: string | null;
+  /** vértice que veio de área certificada vizinha (certificados.ts): o marco é DELE */
+  inserido_manual?: boolean | null;
+}
+
+/**
+ * O marco é do próprio credenciado do serviço? A monografia descreve os marcos
+ * que NÓS implantamos: o marco do vizinho certificado (entra no anel com o
+ * código e o GMS dele, `inserido_manual=true`) e o de outro credenciado
+ * (prefixo diferente) ficam de fora. Sem prefixo conhecido, vale só a marca de
+ * inserido.
+ */
+export function marcoDoCredenciado(codigo: string, prefixo: string | null | undefined, vertice?: VerticeBanco | null): boolean {
+  if (vertice?.inserido_manual) return false;
+  const p = String(prefixo ?? "").trim().toUpperCase();
+  if (!p) return true;
+  return String(codigo).trim().toUpperCase().startsWith(`${p}-`);
+}
+
+/**
+ * Separa os marcos do próprio credenciado (prefixo do código igual ao dele) dos
+ * de fora: o do vizinho certificado (`deVizinho`: vértices inseridos de área
+ * certificada) e o de outro prefixo. A monografia só descreve os nossos — a
+ * mesma regra do servidor (`marcoDoCredenciado`).
+ */
+export function separarMarcos(marcos: readonly string[], prefixo: string | null | undefined, deVizinho: readonly (string | null | undefined)[] = []): { proprios: string[]; deFora: string[] } {
+  const vizinho = new Set(deVizinho.map((c) => (c ?? "").trim()).filter(Boolean));
+  const proprios: string[] = [], deFora: string[] = [];
+  for (const m of marcos) (marcoDoCredenciado(m, prefixo, { codigo: m, inserido_manual: vizinho.has(m) }) ? proprios : deFora).push(m);
+  return { proprios, deFora };
 }
 
 export type Proj = (lonDeg: number, latDeg: number, fuso: number) => [number, number];
@@ -158,7 +187,7 @@ export interface EntradaMonografia {
   vertices?: VerticeBanco[];
   /** Fuso do serviço; sem ele, o do centro do imóvel. */
   fuso?: number | null;
-  /** Códigos escolhidos na tela; vazio/ausente = todos os marcos. */
+  /** Códigos escolhidos na tela; vazio/ausente = todos os marcos do credenciado. */
   escolhidos?: string[] | null;
   campos?: CamposMonografia;
   imovel: {
@@ -198,6 +227,8 @@ export interface Monografia {
   dataStr: string;
   /** Códigos pedidos que não estão no perímetro (aviso para a tela). */
   naoEncontrados: string[];
+  /** Marcos do perímetro que não são do credenciado (vizinho certificado, outro prefixo). */
+  deFora: string[];
 }
 
 const numDe = (v: unknown): number => {
@@ -219,10 +250,13 @@ export function montarMonografia(ent: EntradaMonografia): Monografia {
     : lons.length ? fusoDaLongitude(lons.reduce((s, x) => s + x, 0) / lons.length) : 24;
   const mc = 6 * fuso - 183;
 
-  const todos = marcosDosAneis(ent.aneis);
+  const noPerimetro = marcosDosAneis(ent.aneis);
+  // só os marcos do próprio credenciado (nem o do vizinho certificado, nem outro prefixo)
+  const todos = noPerimetro.filter((c) => marcoDoCredenciado(c, ent.codigoCredenciado, porCodigo.get(c)));
+  const deFora = noPerimetro.filter((c) => !todos.includes(c));
   const pedidos = (ent.escolhidos ?? []).map((c) => c.trim()).filter(Boolean);
   const alvo = pedidos.length ? todos.filter((c) => pedidos.includes(c)) : todos;
-  const naoEncontrados = pedidos.filter((c) => !todos.includes(c));
+  const naoEncontrados = pedidos.filter((c) => !noPerimetro.includes(c));
 
   const fichas: FichaMarco[] = [];
   for (const codigo of alvo) {
@@ -268,7 +302,7 @@ export function montarMonografia(ent: EntradaMonografia): Monografia {
   return {
     fichas, imovel: ent.imovel, rt: ent.rt,
     codigoCredenciado: ent.codigoCredenciado ?? "", trt: ent.trt ?? "", dataStr: ent.dataStr,
-    naoEncontrados,
+    naoEncontrados, deFora,
   };
 }
 

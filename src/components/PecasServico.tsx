@@ -736,6 +736,7 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
 
             <MonografiaMarcos
               marcos={unirMarcos(marcosPdf, trechos.map((t) => t.codigo_inicio), Object.keys(servico.monografia?.marcos ?? {}))}
+              prefixo={credenciados.find((c) => c.id === servico.credenciado_id)?.prefixo_vertice ?? null}
               campos={servico.monografia}
               onCampos={(c) => campo("monografia", c)}
               onGerar={(escolhidos) => gerarMonografia(escolhidos)}

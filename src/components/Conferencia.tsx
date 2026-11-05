@@ -498,6 +498,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const temSigef = !!sigefB64 || !!salvo.sigef;
 
   const credenciado = credenciados.find((c) => c.id === servico.credenciado_id) ?? null;
+  // marcos que vieram de área certificada vizinha (certificados.ts): não são nossos para a monografia
+  const marcosDeVizinho = useMemo(() => vertices.filter((v) => v.tipo === "M" && v.inserido_manual).map((v) => v.codigo), [vertices]);
   const rtSel = rts.find((r) => r.id === servico.rt_id) ?? null;
 
   // carrega extras do RT quando o RT selecionado muda
@@ -2795,6 +2797,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             {!ehConferencia && docsProntos && temSigef && (
               <MonografiaMarcos
                 marcos={unirMarcos(vertices.filter((v) => v.tipo === "M").map((v) => v.codigo))}
+                prefixo={credenciado?.prefixo_vertice ?? null}
+                deVizinho={marcosDeVizinho}
                 campos={servico.monografia}
                 onCampos={(c) => campo("monografia", c)}
                 onGerar={gerarMonografia}
