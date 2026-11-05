@@ -15,13 +15,14 @@ import { caixa, dist } from "../../lib/loteamento/geom.ts";
 import type { Poligono, Pt } from "../../lib/loteamento/geom.ts";
 import { CampoNum } from "./Painel";
 import { Dica } from "../ui";
+import { ImportarPronto } from "./ImportarPronto";
 
 interface Props {
   projeto: Projeto;
   perimetro: Perimetro;
   onMudar: (pr: Projeto) => void;
-  /** proposta escolhida (ou projeto sem ruas, para desenhar à mão) */
-  onPronto: (pr: Projeto) => void;
+  /** proposta escolhida, projeto sem ruas (desenho à mão) ou o loteamento importado — com a mensagem para a barra */
+  onPronto: (pr: Projeto, msg?: string) => void;
   fuso: number;
 }
 
@@ -57,6 +58,7 @@ export function Miniatura({ res, largura = 300, altura = 210 }: { res: Resultado
 }
 
 export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Props) {
+  const projetoAtual = projeto;
   const p = projeto.params;
   const setP = (patch: Partial<Parametros>) => onMudar({ ...projeto, params: { ...p, ...patch } });
   // lote: as faixas mín/padrão/máx andam juntas (ver mudarLote)
@@ -103,6 +105,11 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
 
   function gerar() {
     setErro(null);
+    // gerar de novo depois de importar um loteamento pronto: o do arquivo sai (ruas com
+    // corpo, áreas e quadras dele) e ficam as respostas das Perguntas
+    const projeto = projetoAtual.importado
+      ? { ...projetoAtual, importado: undefined, ruas: projetoAtual.ruas.filter((r) => !r.corpo), areas: projetoAtual.areas.filter((a) => !a.id.startsWith("imp-")), quadras: [] }
+      : projetoAtual;
     if (modoRuas === "mao") { onPronto({ ...projeto, ruas: projeto.ruas.filter((r) => r.id.startsWith("m")), gerado: true }); return; }
     setGerando(true);
     setPropostas(null);
@@ -133,6 +140,8 @@ export function Assistente({ projeto, perimetro, onMudar, onPronto, fuso }: Prop
   const conf = conferirConfiguracao(p, areaHa * 1e4);
   return (
     <div className="lot-assistente">
+      <ImportarPronto projeto={projeto} perimetro={perimetro} fuso={fuso} onUsar={onPronto}
+        previa={(res) => <Miniatura res={res} largura={300} altura={210} />} />
       <section className="bloco">
         <header>
           <h3>1. O terreno e os acessos<Dica>

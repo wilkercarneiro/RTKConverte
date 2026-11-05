@@ -36,6 +36,7 @@ import { arquivoDoCar, projetoCarDoBanco, SAIDAS_CAR } from "../../../src/lib/ca
 import type { SaidaCar } from "../../../src/lib/car/entregas.ts";
 import { arquivoDoLoteamento, SAIDAS_LOTEAMENTO } from "../../../src/lib/loteamento/entregas.ts";
 import type { PedidoLoteamento, SaidaLoteamento } from "../../../src/lib/loteamento/entregas.ts";
+import { conferirItens } from "../../../src/lib/loteamento/loteALote.ts";
 import { perimetroDoServico, projetoInicial } from "../../../src/lib/loteamento/perimetro.ts";
 import { calcular } from "../../../src/lib/loteamento/calculo.ts";
 import type { DadosCarimbo } from "../../../src/lib/loteamento/planta.ts";
@@ -179,6 +180,13 @@ Deno.serve(async (req) => {
           op: opcoesLocacao(c.op),
           locarRedes: c.locarRedes === true,
         };
+        // lote a lote: os ids vêm da tela, mas só valem os que existem no projeto
+        // recalculado aqui (até 60 por chamada: a tela divide os pedidos maiores)
+        if (saida === "lote" || saida === "lotes") {
+          const ok = conferirItens(res, saida === "lote" ? (typeof c.id === "string" ? [c.id] : null) : c.ids);
+          if ("erro" in ok) return json({ erro: ok.erro }, 400);
+          pedido.ids = ok.itens.map((x) => x.id);
+        }
         arquivo = await arquivoDoLoteamento(pedido, projeto, res, perimetro, s, carimboDoPedido(c.carimbo as Record<string, unknown> | undefined, s));
       }
     } else if (area) {

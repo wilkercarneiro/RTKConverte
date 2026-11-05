@@ -227,6 +227,16 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   }
   // nome e largura das ruas ao longo do eixo
   for (const r of res.ruas) {
+    // rua importada sem eixo: o nome vai deitado no meio do maior pedaço dela
+    if (r.eixo.length < 2) {
+      const maior = [...r.pols].sort((a, b) => areaPol(b) - areaPol(a))[0];
+      if (!maior) continue;
+      const tam = Math.max(5, Math.min(9, r.largura * ptm * 0.4));
+      const rot = T(`${r.nome.toUpperCase()}  (${fmt(r.largura)} m)`);
+      const c2 = P(pontoDoRotulo(maior, negrito.widthOfTextAtSize(rot, tam) / tam));
+      textoCentrado(page, negrito, rot, c2[0], c2[1], tam, rgb(0.5, 0.08, 0.08));
+      continue;
+    }
     let mi = -1, ml = 0;
     for (let i = 0; i + 1 < r.eixo.length; i++) {
       const [a, b] = recortar(r.eixo[i], r.eixo[i + 1], res);
@@ -480,7 +490,7 @@ function tituloCaixa(page: PDFPage, f: PDFFont, t: string, cx: number, cy: numbe
 }
 
 /** Rosa dos ventos de oito pontas com o N, como a das plantas da equipe. */
-function rosaDosVentos(page: PDFPage, f: PDFFont, cx: number, cy: number, r: number) {
+export function rosaDosVentos(page: PDFPage, f: PDFFont, cx: number, cy: number, r: number) {
   const ponta = (ang: number, comp: number, larg: number, cheia: boolean) => {
     const a = (ang * Math.PI) / 180;
     const d: Pt = [Math.sin(a), Math.cos(a)];
@@ -642,11 +652,12 @@ function recortar(a: Pt, b: Pt, res: Resultado): [Pt | null, Pt | null] {
   return [ini, fim];
 }
 
-function texto(page: PDFPage, f: PDFFont, t: string, x: number, y: number, tam: number, cor: RGB, rot = 0) {
+// (texto, textoCentrado e fit também servem à planta do lote, plantaLote.ts)
+export function texto(page: PDFPage, f: PDFFont, t: string, x: number, y: number, tam: number, cor: RGB, rot = 0) {
   page.drawText(T(t), { x, y, size: tam, font: f, color: cor, rotate: rot ? degrees(rot) : undefined });
 }
 
-function textoCentrado(page: PDFPage, f: PDFFont, t: string, x: number, y: number, tam: number, cor: RGB, rot = 0) {
+export function textoCentrado(page: PDFPage, f: PDFFont, t: string, x: number, y: number, tam: number, cor: RGB, rot = 0) {
   const s = T(t);
   const w = f.widthOfTextAtSize(s, tam);
   const a = (rot * Math.PI) / 180;
@@ -678,7 +689,7 @@ function tabela(page: PDFPage, f: PDFFont, fb: PDFFont, x: number, y: number, la
   return y;
 }
 
-function fit(t: string, f: PDFFont, tam: number, w: number): string {
+export function fit(t: string, f: PDFFont, tam: number, w: number): string {
   let s = T(t);
   while (s.length > 3 && f.widthOfTextAtSize(s, tam) > w) s = s.slice(0, -2) + "…";
   return T(s);

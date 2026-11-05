@@ -130,6 +130,8 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   const [historicoCmd, setHistoricoCmd] = useState<string[]>([]);
   const [ajuda, setAjuda] = useState(false);
   const [verAvisos, setVerAvisos] = useState(true);
+  // faixa "loteamento importado de X" na prancheta (fecha com o ×; volta ao importar de novo)
+  const [faixaImportado, setFaixaImportado] = useState(true);
   // painel da direita recolhido num trilho de ações rápidas (lembrado neste navegador)
   const [painelRecolhido, setPainelRecolhido] = useState(() => { try { return localStorage.getItem("vertces.lot.painelRecolhido") === "1"; } catch { return false; } });
   const recolherPainel = (v: boolean) => { setPainelRecolhido(v); try { localStorage.setItem("vertces.lot.painelRecolhido", v ? "1" : "0"); } catch { /* sem armazenamento */ } };
@@ -433,7 +435,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
       {etapa === "perguntas" && (
         <div className="conferencia-corpo fade">
           <Assistente projeto={projeto} perimetro={perimetro} fuso={fuso} onMudar={(p) => mudar(p)}
-            onPronto={(p) => { mudar({ ...p, gerado: true }); setSel(null); setEtapa("projeto"); mostrar("Proposta aplicada. Clique num lote para ajustar; duplo clique seleciona a quadra; digite comandos aqui embaixo."); }} />
+            onPronto={(p, m) => { mudar({ ...p, gerado: true }); setSel(null); setEtapa("projeto"); setFaixaImportado(true); mostrar(m ?? "Proposta aplicada. Clique num lote para ajustar; duplo clique seleciona a quadra; digite comandos aqui embaixo."); }} />
         </div>
       )}
 
@@ -477,6 +479,12 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
           {verAvisos && <Avisos res={res} params={projeto.params} sel={sel} onSel={setSel} onFocar={(p) => setFocar({ pt: p, n: Date.now() })} onFechar={() => setVerAvisos(false)} />}
 
           <div className="lot-centro">
+            {projeto.importado && faixaImportado && (
+              <div className="lot-faixa-importado" role="status">
+                <span>Loteamento importado de <b>{projeto.importado.arquivo}</b> — os lotes estão como no arquivo; dá para ajustar aqui.</span>
+                <button type="button" className="fantasma" title="Fechar" aria-label="Fechar o aviso" onClick={() => setFaixaImportado(false)}>×</button>
+              </div>
+            )}
             <Editor projeto={projeto} res={res} fuso={fuso} sel={sel} onSel={setSel} ferramenta={ferramenta} onFerramenta={setFerramenta}
               onMudar={mudar} onFimArraste={fimArraste} vista={vista} focar={focar} onMsg={(m) => mostrar(m)}
               validarEstrutura={(p, cfg) => {

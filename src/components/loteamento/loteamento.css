@@ -350,3 +350,46 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 .lot-entrega-grade.lot-infra-corpo { grid-template-columns: minmax(0, 470px) minmax(0, 1fr); }
 .lot-infra-param .grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
 @media (max-width: 900px) { .lot-entrega-grade.lot-infra-corpo { grid-template-columns: 1fr; } }
+
+/* Perguntas: "Já tem o loteamento pronto?" (importar DXF, KML/KMZ, GeoJSON) */
+.lot-importar { border-style: dashed; transition: border-color .15s, background .15s; }
+.lot-importar.arrastando { border-color: var(--primaria); background: var(--primaria-clara); }
+.lot-importar header .desc { margin-left: auto; }
+.lot-importar-escolha { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.lot-importar-escolha .lot-dica { margin: 0; }
+.lot-importar-botao { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 10px; background: var(--primaria); color: #fff; font-weight: 600; cursor: pointer; }
+.lot-importar-botao input { display: none; }
+.lot-importar-botao.desligado { opacity: .75; cursor: progress; }
+.lot-importar-previa { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; align-items: start; }
+.lot-importar-resumo { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.lot-importar-arquivo { font-size: 13px; color: var(--texto-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lot-importar-avisos { margin: 0; padding: 10px 12px 10px 28px; background: var(--alerta-claro); color: var(--alerta-escuro); border-radius: 10px; font-size: 12.5px; line-height: 1.45; display: flex; flex-direction: column; gap: 4px; }
+.lot-importar-acoes { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+@media (max-width: 900px) { .lot-importar-previa { grid-template-columns: 1fr; } }
+
+/* Prancheta: faixa do loteamento importado */
+.lot-faixa-importado { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 140px);
+  padding: 5px 6px 5px 14px; border-radius: 999px; background: rgba(255, 255, 255, .94); border: 1px solid var(--borda); box-shadow: 0 2px 10px rgba(0, 0, 0, .08); font-size: 12.5px; color: var(--texto-2); }
+.lot-faixa-importado span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lot-faixa-importado button { height: 24px; width: 24px; padding: 0; border-radius: 50%; flex: none; }
+
+/* Entregas: lote a lote */
+.lot-entrega-lotes header .desc { margin-left: auto; }
+.lot-lotes-topo { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.lot-lotes-topo > button.principal { margin-left: auto; }
+.lot-lotes-formato { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--texto-2); margin: 0; }
+.lot-lotes-formato select { height: 36px; max-width: 360px; }
+.lot-lotes-andamento { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 13px; color: var(--texto-2); }
+.lot-progresso { height: 6px; border-radius: 3px; background: var(--borda); overflow: hidden; }
+.lot-progresso i { display: block; height: 100%; background: var(--primaria); transition: width .25s; }
+.lot-lotes-grupos { display: flex; flex-direction: column; gap: 12px; max-height: 420px; overflow: auto; padding-right: 4px; }
+.lot-lotes-grupo { display: flex; flex-direction: column; gap: 6px; }
+.lot-lotes-grupo-nome { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13.5px; }
+.lot-lotes-grupo-nome span { color: var(--texto-3); font-size: 12px; }
+.lot-lotes-grupo-nome input, .lot-chip input { width: auto; height: auto; margin: 0; flex: none; }
+.lot-lotes-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.lot-chip { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--borda); border-radius: 999px; padding: 1px 2px 1px 8px; font-size: 12.5px; font-variant-numeric: tabular-nums; background: var(--card); }
+.lot-chip.marcado { border-color: var(--primaria); background: var(--primaria-clara); }
+.lot-chip label { display: inline-flex; align-items: center; gap: 5px; margin: 0; cursor: pointer; font-weight: 500; min-height: 0; height: auto; }
+.lot-chip-baixar { height: 22px; width: 22px; padding: 0; border: none; border-radius: 50%; background: transparent; color: var(--texto-2); font-size: 13px; line-height: 1; flex: none; }
+.lot-chip-baixar:hover:not(:disabled) { background: var(--primaria); color: #fff; }

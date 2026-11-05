@@ -18,14 +18,18 @@ import { calcularInfra } from "./infra/index.ts";
 import { pontosDasRedes } from "./infra/saidas.ts";
 import { dxfRedes, memorialInfra, zipPlanilhas } from "./infra/saidas.ts";
 import { gerarPlantasInfra } from "./infra/planta.ts";
+import { MAX_ITENS_POR_PEDIDO, itensLoteALote, pacoteLoteALote } from "./loteALote.ts";
 
 export type SaidaLoteamento =
   | "planta" | "memorial" | "memoriais" | "quadro" | "kml" | "dxf" | "locacao"
-  | "infra-pranchas" | "infra-memorial" | "infra-planilhas" | "infra-dxf";
+  | "infra-pranchas" | "infra-memorial" | "infra-planilhas" | "infra-dxf"
+  /** lote a lote (loteALote.ts): a pasta de um lote / um zip com até 60 lotes e áreas públicas */
+  | "lote" | "lotes";
 
 export const SAIDAS_LOTEAMENTO: SaidaLoteamento[] = [
   "planta", "memorial", "memoriais", "quadro", "kml", "dxf", "locacao",
   "infra-pranchas", "infra-memorial", "infra-planilhas", "infra-dxf",
+  "lote", "lotes",
 ];
 
 export interface PedidoLoteamento {
@@ -35,6 +39,8 @@ export interface PedidoLoteamento {
   op?: OpcoesLocacao;
   /** PVs, postes, hidrantes e reservatório também vão para a coletora */
   locarRedes?: boolean;
+  /** lote a lote: ids dos lotes e das áreas públicas (o servidor confere com `conferirItens`) */
+  ids?: string[];
 }
 
 /** O que os documentos leem do serviço. */
@@ -56,6 +62,24 @@ export function pontosParaLocacao(res: Resultado, perimetro: Perimetro, projeto:
   const base0 = pontosDeLocacao(res, perimetro, op);
   if (!locarRedes) return base0;
   try { return [...base0, ...pontosDasRedes(res, calcularInfra(res, projeto))]; } catch { return base0; }
+}
+
+/**
+ * "01 a 12" — ou, no loteamento importado com a numeração da planta aprovada
+ * (lote 12 sem o 11, quadra que começa no 5), os trechos: "05 a 09, 11 e 12".
+ */
+export function numeracaoDaQuadra(nums: number[]): string {
+  const ns = [...new Set(nums)].sort((a, b) => a - b);
+  if (!ns.length) return "—";
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  const faixas: string[] = [];
+  for (let i = 0; i < ns.length;) {
+    let j = i;
+    while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j++;
+    faixas.push(j === i ? p2(ns[i]) : j === i + 1 ? `${p2(ns[i])}, ${p2(ns[j])}` : `${p2(ns[i])} a ${p2(ns[j])}`);
+    i = j + 1;
+  }
+  return faixas.length > 1 ? `${faixas.slice(0, -1).join(", ")} e ${faixas[faixas.length - 1]}` : faixas[0];
 }
 
 function secoesMemorialGeral(projeto: Projeto, res: Resultado, perimetro: Perimetro, servico: ServicoLoteamento, c: DadosCarimbo): SecaoDocx[] {
@@ -95,7 +119,7 @@ function secoesMemorialGeral(projeto: Projeto, res: Resultado, perimetro: Perime
     {
       titulo: "4. QUADRAS",
       paragrafos: [],
-      tabela: [["Quadra", "Lotes", "Numeração", "Área dos lotes (m²)"], ...res.quadras.map((qq) => [qq.nome, String(qq.lotes.length), qq.lotes.length ? `01 a ${String(qq.lotes.length).padStart(2, "0")}` : "—", fmt(qq.lotes.reduce((s, l) => s + l.area, 0))])],
+      tabela: [["Quadra", "Lotes", "Numeração", "Área dos lotes (m²)"], ...res.quadras.map((qq) => [qq.nome, String(qq.lotes.length), numeracaoDaQuadra(qq.lotes.map((l) => l.numero)), fmt(qq.lotes.reduce((s, l) => s + l.area, 0))])],
     },
     {
       titulo: "5. SISTEMA VIÁRIO",
@@ -185,6 +209,18 @@ export async function arquivoDoLoteamento(
     case "infra-dxf": {
       const r = calcularInfra(res, projeto);
       return { dados: texto(dxfRedes(res, r)), nome: `REDES_${base}.dxf`, tipo: "application/dxf" };
+    }
+    case "lote":
+    case "lotes": {
+      // sem ids (chamada direta do módulo): o primeiro lote / os primeiros 60
+      const todos = itensLoteALote(res);
+      const pedidos = new Set(pedido.ids ?? []);
+      const escolhidos = pedidos.size ? todos.filter((x) => pedidos.has(x.id)) : todos;
+      const itens = escolhidos.slice(0, pedido.saida === "lote" ? 1 : MAX_ITENS_POR_PEDIDO);
+      if (!itens.length) throw new Error("Nenhum lote para gerar.");
+      const dados = await pacoteLoteALote({ itens, formato: pedido.formato }, projeto, res, perimetro, servico, carimbo);
+      const nome = itens.length === 1 ? `${itens[0].arquivo}_${base}.zip` : `LOTES_${base}.zip`;
+      return { dados, nome, tipo: "application/zip" };
     }
   }
   throw new Error("Arquivo de loteamento desconhecido.");
