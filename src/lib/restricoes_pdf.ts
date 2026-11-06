@@ -24,7 +24,30 @@ export interface DadosRelatorioRestricoes {
   proprietario?: string | null;
   /** quem emitiu (empresa / responsável) */
   emitente?: string | null;
+  // ---- extensões da Consultar imóvel (#/consulta); sem elas, o PDF é o de sempre ----
+  /** título do documento (padrão "Análise de restrições do imóvel") */
+  titulo?: string;
+  /** a frase do topo no lugar do resumo das restrições, com a cor do tom */
+  resumo?: { texto: string; tom: "neutro" | "ok" | "aviso" | "alerta" | "perigo"; linhas?: string[] } | null;
+  /** a área do imóvel no cabeçalho (o mesmo motor; vale quando a consulta de restrições não respondeu) */
+  areaM2?: number | null;
+  fuso?: number | null;
+  /** seções antes do resultado por base (identificação, SIGEF, CAR, queimadas, ambiente) */
+  secoes?: SecaoRelatorio[];
+  /** o laudo por IA, antes do aviso final */
+  laudo?: { texto: string; modelo?: string | null; quando: string } | null;
+  /** pontos no croqui (focos de queimada) */
+  pontos?: { lonlat: LonLat; cor: string }[];
 }
+
+export interface SecaoRelatorio {
+  titulo: string;
+  linhas: { texto: string; destaque?: boolean; sub?: string | null }[];
+}
+
+const COR_TOM: Record<string, RGB> = {
+  neutro: rgb(0.38, 0.42, 0.4), ok: rgb(0.1, 0.5, 0.27), aviso: rgb(0.62, 0.4, 0.04), alerta: rgb(0.62, 0.4, 0.04), perigo: rgb(0.78, 0.13, 0.13),
+};
 
 const A4: [number, number] = [595.28, 841.89];
 const M = 40;
@@ -72,7 +95,8 @@ const dataHora = (iso: string) => {
  */
 export async function gerarPdfRestricoes(r: ResultadoRestricoes, aneis: LonLat[][], dados: DadosRelatorioRestricoes = {}): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
-  doc.setTitle("Análise de restrições do imóvel");
+  const tituloDoc = dados.titulo || "Análise de restrições do imóvel";
+  doc.setTitle(tituloDoc);
   doc.setProducer("Vertces");
   doc.setCreationDate(new Date(r.quando));
   const fonte = await doc.embedFont(StandardFonts.Helvetica);
@@ -94,19 +118,25 @@ export async function gerarPdfRestricoes(r: ResultadoRestricoes, aneis: LonLat[]
   const regua = (esp = 6) => { garantir(esp * 2); y -= esp; page.drawLine({ start: { x: M, y }, end: { x: A4[0] - M, y }, thickness: 0.6, color: COR_LINHA }); y -= esp; };
 
   // ---- cabeçalho ----
-  escrever("Análise de restrições do imóvel", { tam: 16, f: negrito, entre: 6 });
+  escrever(tituloDoc, { tam: 16, f: negrito, entre: 6 });
   const ident = [dados.imovel, [dados.municipio, dados.uf].filter(Boolean).join("/"), dados.proprietario ? `Proprietário: ${dados.proprietario}` : ""].filter(Boolean).join(" · ");
   if (ident) escrever(ident, { tam: 10 });
-  escrever(`Área do imóvel: ${fmtHa(r.areaImovelM2)} (UTM SIRGAS 2000, fuso ${r.fuso}S) · Consulta em ${dataHora(r.quando)}`, { tam: 9, cor: COR_SUB });
+  escrever(`Área do imóvel: ${fmtHa(dados.areaM2 ?? r.areaImovelM2)} (UTM SIRGAS 2000, fuso ${dados.fuso ?? r.fuso}S) · Consulta em ${dataHora(r.quando)}`, { tam: 9, cor: COR_SUB });
   if (dados.emitente) escrever(`Emitido por: ${dados.emitente}`, { tam: 9, cor: COR_SUB });
   y -= 4;
-  const resumo = resumoRestricoes(r);
-  escrever(resumo.texto, { tam: 11, f: negrito, cor: corDoResumo(r), entre: 6 });
+  if (dados.resumo) {
+    escrever(dados.resumo.texto, { tam: 12, f: negrito, cor: COR_TOM[dados.resumo.tom] ?? COR_TEXTO, entre: 4 });
+    for (const l of dados.resumo.linhas ?? []) escrever(`• ${l}`, { tam: 9, x: M + 6 });
+    y -= 4;
+  } else {
+    const resumo = resumoRestricoes(r);
+    escrever(resumo.texto, { tam: 11, f: negrito, cor: corDoResumo(r), entre: 6 });
+  }
 
   // ---- croqui ----
   const H = 290;
   garantir(H + 40);
-  desenharCroqui(page, r, aneis, { x: M, y: y - H, w: L, h: H }, fonte);
+  desenharCroqui(page, r, aneis, { x: M, y: y - H, w: L, h: H }, fonte, dados.pontos ?? []);
   y -= H + 6;
   // legenda
   const tipos = r.fontes.filter((f) => f.itens.length);
@@ -123,9 +153,21 @@ export async function gerarPdfRestricoes(r: ResultadoRestricoes, aneis: LonLat[]
   y -= 16;
   escrever(`Áreas recortadas na vizinhança do imóvel. Cor mais forte: parte do imóvel dentro da restrição.`, { tam: 7.5, cor: COR_SUB });
 
+  // ---- seções da consulta (identificação, SIGEF, CAR, queimadas, ambiente) ----
+  for (const sec of dados.secoes ?? []) {
+    regua(8);
+    escrever(sec.titulo, { tam: 12, f: negrito, entre: 6 });
+    for (const l of sec.linhas) {
+      garantir(24);
+      escrever(l.texto, { tam: 9, f: l.destaque ? negrito : fonte, x: M + 6 });
+      if (l.sub) escrever(l.sub, { tam: 7.5, cor: COR_SUB, x: M + 12 });
+    }
+  }
+
   // ---- tabela por base ----
   regua(8);
-  escrever("Resultado por base consultada", { tam: 12, f: negrito, entre: 6 });
+  escrever(dados.secoes?.length ? "Restrições — resultado por base consultada" : "Resultado por base consultada", { tam: 12, f: negrito, entre: 6 });
+  if (!r.fontes.length) escrever("As bases de restrição não responderam nesta consulta. Refaça a consulta mais tarde.", { tam: 9, f: negrito, cor: COR_CLASSE.incompleta });
   for (const f of r.fontes) {
     garantir(40);
     const cor = COR_CLASSE[f.classe];
@@ -159,6 +201,19 @@ export async function gerarPdfRestricoes(r: ResultadoRestricoes, aneis: LonLat[]
   if (cortadas.length) escrever(`Resposta incompleta (mais áreas do que o limite da consulta): ${cortadas.map((f) => f.singular).join("; ")}. Nestas bases o resultado não permite afirmar que o imóvel está livre.`, { tam: 8.5, f: negrito, cor: COR_CLASSE.incompleta });
   escrever(`Critério: "sobrepõe" quando a interseção passa de 1 m²; "encosta" quando a área está a até ${fmtM(r.encostaM)} do perímetro sem sobrepor. Áreas calculadas em UTM (fuso ${r.fuso}S) com o mesmo método da área do imóvel.`, { tam: 8, cor: COR_SUB });
 
+  // ---- laudo por IA ----
+  if (dados.laudo?.texto) {
+    regua(8);
+    escrever("Parecer técnico preliminar (escrito por IA com os dados acima)", { tam: 12, f: negrito, entre: 6 });
+    escrever(`Gerado em ${dataHora(dados.laudo.quando)}${dados.laudo.modelo ? ` · modelo ${dados.laudo.modelo}` : ""}. Revise antes de usar: a responsabilidade técnica é do profissional.`, { tam: 7.5, cor: COR_SUB, entre: 6 });
+    for (const par of dados.laudo.texto.split(/\n+/)) {
+      const t = par.trim();
+      if (!t) continue;
+      const titulo = /^\d+\.\s/.test(t) && t.length < 80;
+      escrever(t, { tam: titulo ? 10 : 9, f: titulo ? negrito : fonte, entre: titulo ? 4 : 3, x: /^[-•]/.test(t) ? M + 8 : M });
+    }
+  }
+
   // ---- aviso ----
   regua(8);
   escrever(AVISO_RESTRICOES, { tam: 9, f: negrito });
@@ -166,13 +221,13 @@ export async function gerarPdfRestricoes(r: ResultadoRestricoes, aneis: LonLat[]
   // rodapé em todas as páginas
   const paginas = doc.getPages();
   paginas.forEach((p, i) => {
-    p.drawText(T(`Análise de restrições · consulta de ${dataHora(r.quando)} · página ${i + 1} de ${paginas.length}`), { x: M, y: 22, size: 7, font: fonte, color: COR_SUB });
+    p.drawText(T(`${dados.titulo ? dados.titulo : "Análise de restrições"} · consulta de ${dataHora(r.quando)} · página ${i + 1} de ${paginas.length}`), { x: M, y: 22, size: 7, font: fonte, color: COR_SUB });
   });
   return doc.save();
 }
 
 /** O croqui em escala: imóvel em preto, as áreas na cor do tipo, recortadas no quadro. */
-function desenharCroqui(page: PDFPage, r: ResultadoRestricoes, aneis: LonLat[][], q: { x: number; y: number; w: number; h: number }, fonte: PDFFont) {
+function desenharCroqui(page: PDFPage, r: ResultadoRestricoes, aneis: LonLat[][], q: { x: number; y: number; w: number; h: number }, fonte: PDFFont, extras: { lonlat: LonLat; cor: string }[] = []) {
   const def = utmDef(r.fuso);
   const U = (p: LonLat) => proj(GEO_DEF, def, p);
   const im = aneis.filter((a) => a.length >= 3).map((a) => a.map(U));
@@ -215,6 +270,10 @@ function desenharCroqui(page: PDFPage, r: ResultadoRestricoes, aneis: LonLat[][]
     }
   }
   page.drawSvgPath(caminho(im), { ...opts, borderColor: rgb(0, 0, 0), borderWidth: 1.8 });
+  for (const p of extras) {
+    const u = U(p.lonlat);
+    page.drawCircle({ x: q.x + Number(sx(u)), y: q.y + q.h - Number(sy(u)), size: 2.6, color: hex(p.cor), borderColor: rgb(1, 1, 1), borderWidth: 0.6 });
+  }
   page.pushOperators(popGraphicsState());
 
   // norte e escala
@@ -233,6 +292,6 @@ function desenharCroqui(page: PDFPage, r: ResultadoRestricoes, aneis: LonLat[][]
   page.drawText(T(`Escala aprox. 1:${escala.toLocaleString("pt-BR")} (A4)`), { x: bx, y: by + 8, size: 7, font: fonte, color: COR_SUB });
 }
 
-export const nomeArquivoRestricoes = (r: ResultadoRestricoes, imovel?: string | null) =>
-  `analise-restricoes-${(imovel || "imovel").normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\w-]+/g, "_").slice(0, 40)}-${r.quando.slice(0, 10)}.pdf`;
+export const nomeArquivoRestricoes = (r: ResultadoRestricoes, imovel?: string | null, prefixo = "analise-restricoes") =>
+  `${prefixo}-${(imovel || "imovel").normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\w-]+/g, "_").slice(0, 40)}-${r.quando.slice(0, 10)}.pdf`;
 
