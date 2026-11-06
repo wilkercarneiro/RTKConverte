@@ -210,7 +210,7 @@ label small, label .sub { font-weight: 400; }
 }
 
 /* ===== Início ===== */
-.inicio { width: 100%; padding: var(--pad-y) var(--pad-x) 60px; display: flex; flex-direction: column; gap: 28px; }
+.inicio { width: 100%; padding: var(--pad-y) var(--pad-x) 60px; display: flex; flex-direction: column; gap: 24px; }
 .inicio-cabeca h1 { font-size: 34px; margin: 0 0 6px; }
 .inicio-cabeca .sub { color: var(--texto-2); font-size: 15px; margin: 0; }
 .rotulo-secao { font-size: 13px; font-weight: 600; color: var(--texto-2); margin-bottom: 12px; }
@@ -1717,51 +1717,54 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .gp-pagina h1 { margin: 2px 0 0; }
 
 
-/* ---- Início: painel (créditos + cartões de números do mesmo tamanho; GPROL conectado é o 1º cartão) */
-.inicio-painel { display: flex; flex-direction: column; gap: 12px; }
-.cr-painel { display: flex; align-items: center; gap: 22px; padding: 14px 18px; border-radius: 16px; background: var(--card); box-shadow: var(--anel); }
-.cr-painel.alerta { background: #FFFBF3; box-shadow: inset 0 0 0 1px #EFD9AE; }
-.cr-p-cabeca { display: flex; align-items: center; gap: 12px; flex: none; min-width: 190px; }
-.cr-p-icone { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--primaria-clara); color: var(--primaria); }
-.cr-painel.alerta .cr-p-icone { background: var(--alerta-claro); color: var(--alerta-escuro); }
-.cr-p-titulo { display: flex; flex-direction: column; line-height: 1.25; }
-.cr-p-titulo b { font-family: var(--fonte-titulo); font-size: 16px; }
-.cr-p-titulo small { font-size: 12.5px; color: var(--texto-3); }
-.cr-p-titulo .cr-p-pend { color: var(--alerta-escuro); }
-.cr-p-carteiras { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 26px; padding-left: 22px; border-left: 1px solid var(--linha); }
-.cr-p-carteira { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 10px; min-width: 0; }
-.cr-p-nome { font-size: 12.5px; font-weight: 600; color: var(--texto-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cr-p-valor { justify-self: end; white-space: nowrap; font-size: 12.5px; color: var(--texto-3); }
-.cr-p-valor b { font-family: var(--fonte-titulo); font-size: 17px; color: var(--texto); font-variant-numeric: tabular-nums; }
-.cr-p-valor em { font-style: normal; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--primaria-clara); color: var(--floresta); font-weight: 600; font-size: 11.5px; }
-.cr-p-barra { grid-column: 1 / -1; height: 6px; border-radius: 999px; background: #E8EEEA; overflow: hidden; }
-.cr-p-barra i { display: block; height: 100%; border-radius: inherit; background: var(--primaria); transition: width .4s ease; }
-.cr-p-barra.baixa i { background: var(--alerta); }
-.cr-p-livre { font-size: 13.5px; color: var(--texto-2); align-self: center; }
-.cr-p-comprar { flex: none; height: 40px; padding: 0 18px; }
-@media (max-width: 860px) {
-  .cr-painel { flex-wrap: wrap; gap: 14px; }
-  .cr-p-carteiras { padding-left: 0; border-left: 0; flex-basis: 100%; }
-  .cr-p-comprar { width: 100%; }
-}
 
-.inicio-cartoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
-.ini-cartao { all: unset; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; min-height: 118px; padding: 14px 16px; border-radius: 16px; background: var(--card); box-shadow: var(--anel); }
-.ini-cartao.clicavel { cursor: pointer; transition: box-shadow .15s, transform .15s; }
-.ini-cartao.clicavel:hover { box-shadow: 0 0 0 2px var(--primaria); transform: translateY(-1px); }
-.ini-cartao.clicavel:focus-visible { outline: 3px solid var(--primaria); outline-offset: 2px; }
-.ini-c-rotulo { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--texto-2); }
-.ini-c-icone { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: #F0F4F1; color: var(--texto-2); }
-.ini-c-valor { margin-top: auto; font-family: var(--fonte-titulo); font-size: 30px; line-height: 1.05; letter-spacing: -0.02em; color: var(--texto); font-variant-numeric: tabular-nums; }
-.ini-c-dica { font-size: 12px; color: var(--texto-3); }
-.ini-cartao.gprol { background: linear-gradient(150deg, #EAF6EF 0%, #F7FBF9 70%); box-shadow: inset 0 0 0 1px #CFE7DA; }
-.ini-cartao.gprol .ini-c-rotulo { color: var(--floresta); }
-.ini-cartao.gprol .ini-c-icone { background: #D6EEE1; }
-.ini-cartao.gprol .gpc-pulso { width: 8px; height: 8px; }
-.ini-cartao.gprol .ini-c-valor { font-size: 22px; color: var(--floresta); }
-.ini-cartao.gprol.alerta { background: var(--alerta-claro); box-shadow: inset 0 0 0 1px #EFD9AE; }
-.ini-cartao.gprol.alerta .ini-c-rotulo, .ini-cartao.gprol.alerta .ini-c-valor { color: var(--alerta-escuro); }
-.ini-cartao.gprol.alerta .gpc-pulso, .ini-cartao.gprol.alerta .gpc-pulso i { background: var(--alerta); }
-.ini-c-link { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 12.5px; font-weight: 700; color: var(--primaria); }
-.ini-c-link:hover { text-decoration: underline; }
-.ini-c-link:focus-visible { outline: 2px solid var(--primaria); outline-offset: 2px; border-radius: 4px; }
+/* ---- Início: o topo é o "mapa de calor" da tela. Saudação + números na mesma
+   linha; créditos e GPROL em pílulas discretas logo abaixo; Retomar e Novo
+   serviço sobem para o meio da primeira dobra. */
+.inicio-cabeca { align-items: flex-end; }
+.inicio-cabeca h1 { margin-bottom: 4px; }
+.inicio-situacao { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.inicio-situacao:empty { display: none; }
+.ini-pilula { display: inline-flex; align-items: center; gap: 10px; min-height: 32px; padding: 3px 12px; border-radius: 999px; background: var(--card); box-shadow: var(--anel); font-size: 12.5px; color: var(--texto-2); white-space: nowrap; }
+.ini-pilula b { color: var(--texto); font-weight: 700; font-variant-numeric: tabular-nums; }
+.ini-pilula small { font-size: 12px; color: var(--texto-3); }
+.ini-p-icone { display: grid; place-items: center; color: var(--primaria); }
+.ini-p-link { all: unset; cursor: pointer; margin-right: -7px; height: 24px; padding: 0 11px; display: inline-flex; align-items: center; border-radius: 999px; background: var(--primaria-clara); color: var(--floresta); font-size: 12px; font-weight: 700; transition: background .15s, color .15s; }
+.ini-p-link:hover { background: var(--primaria); color: #fff; }
+.ini-p-link:focus-visible { outline: 2px solid var(--primaria); outline-offset: 2px; }
+.cr-pl-carteira { display: inline-flex; align-items: center; gap: 3px; }
+.cr-pl-carteira + .cr-pl-carteira { padding-left: 10px; border-left: 1px solid var(--linha); }
+.cr-pl-num { margin-left: 3px; white-space: nowrap; }
+.cr-pl-carteira em { font-style: normal; margin-left: 4px; color: var(--floresta); font-weight: 700; font-size: 11.5px; }
+.cr-pl-barra { width: 30px; height: 4px; margin-left: 6px; border-radius: 999px; background: #E3EAE6; overflow: hidden; }
+.cr-pl-barra i { display: block; height: 100%; border-radius: inherit; background: var(--primaria); transition: width .4s ease; }
+.cr-pl-barra.baixa i { background: var(--alerta); }
+.cr-pl-pend { color: var(--alerta-escuro); font-weight: 600; }
+.cr-pilula.alerta { background: #FFF8EC; box-shadow: inset 0 0 0 1px #EFD9AE; }
+.cr-pilula.alerta .ini-p-icone, .cr-pl-aviso { color: var(--alerta-escuro) !important; }
+.cr-pilula.alerta .ini-p-link { background: var(--alerta); color: #fff; }
+.gp-pilula .gpc-pulso { width: 8px; height: 8px; margin: 0 2px; }
+.gp-pilula b { color: var(--floresta); }
+.gp-pilula.alerta { background: #FFF8EC; box-shadow: inset 0 0 0 1px #EFD9AE; }
+.gp-pilula.alerta b { color: var(--alerta-escuro); }
+.gp-pilula.alerta .gpc-pulso, .gp-pilula.alerta .gpc-pulso i { background: var(--alerta); }
+
+.inicio-numeros { gap: 10px; flex-wrap: nowrap; }
+.inicio-numeros > div, .inicio-numeros > button { all: unset; box-sizing: border-box; min-width: 132px; padding: 12px 16px 11px; border-radius: 14px; background: var(--card); box-shadow: var(--anel); display: flex; flex-direction: column; gap: 3px; }
+.inicio-numeros b { display: flex; align-items: center; gap: 9px; font-family: var(--fonte-titulo); font-size: 28px; line-height: 1.1; letter-spacing: -0.02em; color: var(--texto); font-variant-numeric: tabular-nums; }
+.inicio-numeros > * > span:last-child { font-size: 12px; color: var(--texto-3); white-space: nowrap; }
+.inicio-numeros .ini-n-icone { width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; background: #F0F4F1; color: var(--texto-2); font-size: 0; }
+.inicio-numeros .clicavel { cursor: pointer; transition: box-shadow .15s, transform .15s; }
+.inicio-numeros .clicavel:hover { box-shadow: 0 0 0 2px var(--primaria); transform: translateY(-1px); }
+.inicio-numeros .clicavel:focus-visible { outline: 3px solid var(--primaria); outline-offset: 2px; }
+@media (max-width: 720px) {
+  .inicio-numeros { width: 100%; }
+  .inicio-numeros > div, .inicio-numeros > button { min-width: 0; flex: 1; padding: 10px 12px; }
+  .inicio-numeros b { font-size: 22px; gap: 7px; }
+  .inicio-numeros .ini-n-icone { display: none; }
+  .inicio-numeros > * > span:last-child { white-space: normal; line-height: 1.25; }
+  .inicio-situacao { min-width: 0; }
+  .ini-pilula { white-space: normal; flex-wrap: wrap; row-gap: 4px; border-radius: 16px; max-width: 100%; }
+  .gp-pilula small { display: none; }
+}
+.cr-pl-carteira.zerada b, .cr-pl-carteira.zerada small { color: var(--alerta-escuro); }

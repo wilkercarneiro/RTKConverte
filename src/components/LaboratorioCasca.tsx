@@ -155,9 +155,10 @@ const HISTORICO: Record<string, Linha[]> = {
 // créditos em carteiras (0034): o cenário vem da tela
 //   creditos = CAR e geral esgotados · aceite = CAR esgotado, geral sobrando
 //   socar = plano Só CAR · inicio = folga, com a mensalidade vencida
+//   inicio?esgotado = Início com o CAR zerado · inicio?esgotado=tudo = sem crédito (pílula em alerta)
 const TELA = location.hash.replace(/^#\/lab\/casca\/?/, "").split(/[/?]/)[0] || "inicio";
 const CREDITOS: Creditos = creditosDeExemplo({
-  carEsgotado: TELA === "creditos" || TELA === "aceite", geralEsgotado: TELA === "creditos", soCar: TELA === "socar",
+  carEsgotado: TELA === "creditos" || TELA === "aceite" || location.hash.includes("esgotado"), geralEsgotado: TELA === "creditos" || location.hash.includes("esgotado=tudo"), soCar: TELA === "socar",
   semAsaas: location.hash.includes("semasaas"),
 });
 

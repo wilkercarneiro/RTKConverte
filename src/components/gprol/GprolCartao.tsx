@@ -38,25 +38,23 @@ const Ico = ({ d, size = 16 }: { d: string; size?: number }) => (
  * (conectada, não mostra nada). modo "mini": conectada, o cartãozinho que mora
  * na linha dos números do Início (antes de "em andamento"); desconectada, nada.
  */
-export function GprolCartao({ onConfigurar, modo = "convite" }: { onConfigurar: () => void; modo?: "convite" | "mini" }) {
+export function GprolCartao({ onConfigurar, modo = "convite" }: { onConfigurar: () => void; modo?: "convite" | "pilula" }) {
   const { integracao, carregando } = useIntegracaoGprol();
   const [adiado, setAdiado] = useState(() => Number(lembrar(ADIADO) ?? 0) > Date.now());
   const [ocupado, setOcupado] = useState(false);
   const conectado = integracao?.status === "ativa";
 
-
   if (carregando) return null;
-  if (modo === "mini") {
+  if (modo === "pilula") {
     if (!conectado) return null;
     const i = integracao!;
+    const quando = i.ultimo_erro ? "a última sincronização falhou" : i.ultima_sincronizacao ? `sincronizado ${quandoFoi(i.ultima_sincronizacao)}` : "aguardando a 1ª sincronização";
     return (
-      <div className={`ini-cartao gprol${i.ultimo_erro ? " alerta" : ""}`} role="status">
-        <span className="ini-c-rotulo"><span className="ini-c-icone" aria-hidden="true"><span className="gpc-pulso"><i /></span></span>Integração GPROL</span>
-        <b className="ini-c-valor">{i.ultimo_erro ? "Com problema" : "Conectado"}</b>
-        <span className="ini-c-dica">
-          {i.ultimo_erro ? "a última sincronização falhou" : i.ultima_sincronizacao ? `sincronizado ${quandoFoi(i.ultima_sincronizacao)}` : "aguardando a 1ª sincronização"}
-        </span>
-        <button type="button" className="ini-c-link" onClick={onConfigurar}>Ver integração <Ico d={I.seta} size={14} /></button>
+      <div className={`ini-pilula gp-pilula${i.ultimo_erro ? " alerta" : ""}`} role="status">
+        <span className="gpc-pulso" aria-hidden="true"><i /></span>
+        <span>GPROL <b>{i.ultimo_erro ? "com problema" : "conectado"}</b></span>
+        <small>{quando}</small>
+        <button type="button" className="ini-p-link" onClick={onConfigurar} aria-label="Ver integração com o GPROL">Ver</button>
       </div>
     );
   }

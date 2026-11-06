@@ -66,18 +66,17 @@ function primeiroNome(nome?: string): string | null {
 
 const OK = "M20 6 9 17l-5-5";
 
-/** Um cartão de número do Início (mesmo tamanho dos outros, ícone e dica). */
-function Numero({ icone, rotulo, valor, dica, onClick }: { icone: string; rotulo: string; valor: number | string; dica?: string; onClick?: () => void }) {
+/** Um número compacto da linha da saudação (ícone, valor grande, rótulo). */
+function Numero({ icone, rotulo, valor, onClick }: { icone: string; rotulo: string; valor: number | string; onClick?: () => void }) {
   const corpo = (
     <>
-      <span className="ini-c-rotulo"><span className="ini-c-icone"><Icone d={icone} size={15} traco={2} /></span>{rotulo}</span>
-      <b className="ini-c-valor">{valor}</b>
-      {dica && <span className="ini-c-dica">{dica}</span>}
+      <b><span className="ini-n-icone" aria-hidden="true"><Icone d={icone} size={13} traco={2.2} /></span>{valor}</b>
+      <span>{rotulo}</span>
     </>
   );
   return onClick
-    ? <button type="button" className="ini-cartao clicavel" onClick={onClick} title="Ver todos os serviços">{corpo}</button>
-    : <div className="ini-cartao">{corpo}</div>;
+    ? <button type="button" className="clicavel" onClick={onClick} title="Ver todos os serviços">{corpo}</button>
+    : <div>{corpo}</div>;
 }
 
 export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, cobranca, onCobrancaMudou, onExecutarPedido, onConfigurarGprol, onVerPedidos }: Props) {
@@ -116,6 +115,8 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
   const quem = primeiroNome(nome);
   const criar = temPermissao("servicos.criar");
 
+  // O topo é o lugar mais visto da tela: só saudação, números e uma linha fina
+  // de situação (créditos, GPROL). Retomar e Novo serviço vêm logo abaixo.
   return (
     <div className="inicio fade">
       <div className="inicio-cabeca">
@@ -127,25 +128,21 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
               : emAndamento.length === 0 ? "Nenhum serviço em andamento. Que tal começar um?"
                 : `${emAndamento.length} ${emAndamento.length === 1 ? "serviço espera" : "serviços esperam"} por você.`}
           </p>
+          <div className="inicio-situacao">
+            {creditos && <CreditosResumo creditos={creditos} onAtualizar={onAtualizarCreditos ?? (() => {})} />}
+            {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} modo="pilula" />}
+          </div>
+        </div>
+        <div className="inicio-numeros" aria-label="Resumo">
+          <Numero icone={ICONE.relogio} rotulo="em andamento" valor={servicos === null ? "–" : emAndamento.length} />
+          <Numero icone={OK} rotulo="concluídos no mês" valor={servicos === null ? "–" : concluidosMes} />
+          <Numero icone={ICONE.arquivo} rotulo="serviços no total" valor={servicos === null ? "–" : servicos.length >= 200 ? "200+" : servicos.length}
+            onClick={onVerServicos} />
         </div>
       </div>
 
-      {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} />}
       <AvisoMensalidade cobranca={cobranca ?? null} />
       <AvisoCartao cobranca={cobranca ?? null} creditos={creditos} onCadastrado={onCobrancaMudou ?? (() => {})} />
-
-      <div className="inicio-painel">
-        {creditos && <CreditosResumo creditos={creditos} onAtualizar={onAtualizarCreditos ?? (() => {})} />}
-        <div className="inicio-cartoes" aria-label="Resumo">
-          {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} modo="mini" />}
-          <Numero icone={ICONE.relogio} rotulo="Em andamento" valor={servicos === null ? "–" : emAndamento.length}
-            dica={emAndamento.length === 1 ? "serviço aberto" : "serviços abertos"} />
-          <Numero icone={OK} rotulo="Concluídos no mês" valor={servicos === null ? "–" : concluidosMes}
-            dica={new Date().toLocaleDateString("pt-BR", { month: "long" })} />
-          <Numero icone={ICONE.arquivo} rotulo="Serviços no total" valor={servicos === null ? "–" : servicos.length >= 200 ? "200+" : servicos.length}
-            dica="desde o primeiro" onClick={onVerServicos} />
-        </div>
-      </div>
 
       {erro && (
         <div className="aviso-erro-pagina" role="alert">
@@ -183,6 +180,9 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
       {criar ? <NovoServico onNovo={onNovo} /> : (
         <p className="nota-permissao">Para abrir um serviço novo, peça a permissão “Criar serviços” a quem gerencia a equipe.</p>
       )}
+
+      {/* convite (só quando a empresa não está conectada): abaixo do que se usa todo dia */}
+      {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} />}
 
       {onExecutarPedido && <PedidosGprol onExecutar={onExecutarPedido} limite={3} onVerTodos={onVerPedidos} />}
 
