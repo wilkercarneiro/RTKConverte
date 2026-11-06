@@ -17,6 +17,11 @@ export type Rota =
   | { t: "equipe" }
   | { t: "ajuda" }
   | { t: "pedidos" }
+  // ferramentas (sem serviço): consultar/analisar um imóvel, medir no campo
+  // com o GPS do celular e calcular terraplanagem (corte e aterro)
+  | { t: "consulta" }
+  | { t: "campo" }
+  | { t: "terraplanagem" }
   // públicas (abrem sem login). #/assinar?plano=<id>&ciclo=anual: o autocadastro
   // (0040) com o plano e o período já escolhidos; #/cadastro (o link antigo) cai nela
   | { t: "assinar"; plano?: string; ciclo?: string }
@@ -59,6 +64,9 @@ export function hashParaRota(hash: string): Rota {
     case "marca": return { t: "admin", aba: "marca" };
     case "ajuda": return { t: "ajuda" };
     case "pedidos": return { t: "pedidos" };
+    case "consulta": return { t: "consulta" };
+    case "campo": return { t: "campo" };
+    case "terraplanagem": return { t: "terraplanagem" };
     case "cadastro":
     case "assinar": {
       const q = new URLSearchParams(consulta);

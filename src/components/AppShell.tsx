@@ -31,6 +31,9 @@ const I = {
   painel: "M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z",
   sair: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
   menu: "M3 6h18M3 12h18M3 18h18",
+  consulta: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3M8 11h6M11 8v6",
+  campo: "M12 2v3M12 19v3M2 12h3M19 12h3M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
+  terraplanagem: "M2 20h20M4 20l5-8 4 5 3-4 4 7M14 6l2-2 2 2M16 4v6",
 };
 
 /** `acao`: item que não navega (o suporte abre o painel do chat). */
@@ -44,6 +47,14 @@ function grupos(superadmin: boolean, suporte: number | null, esperando: number |
         { t: "inicio", rotulo: "Início", icone: I.inicio },
         { t: "servicos", rotulo: "Serviços", icone: I.servicos },
         { t: "clientes", rotulo: "Clientes", icone: I.clientes },
+      ],
+    },
+    {
+      titulo: "Ferramentas",
+      itens: [
+        { t: "consulta", rotulo: "Consultar imóvel", icone: I.consulta },
+        { t: "campo", rotulo: "Medir no campo", icone: I.campo },
+        { t: "terraplanagem", rotulo: "Terraplanagem", icone: I.terraplanagem },
       ],
     },
     {

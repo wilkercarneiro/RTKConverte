@@ -64,6 +64,14 @@ const LaboratorioVerificar = lazy(() => import("./components/LaboratorioVerifica
 const LaboratorioLeitura = lazy(() => import("./components/LaboratorioLeitura").then((m) => ({ default: m.LaboratorioLeitura })));
 const LaboratorioAssinar = lazy(() => import("./components/LaboratorioAssinar").then((m) => ({ default: m.LaboratorioAssinar })));
 // painel do superadmin: só quem administra o SaaS baixa este pedaço
+// Ferramentas sem serviço (plano em docs/plano-ferramentas-campo-consulta-terraplanagem.md)
+const ConsultaImovel = lazy(() => import("./components/consulta/ConsultaImovel").then((m) => ({ default: m.ConsultaImovel })));
+const Campo = lazy(() => import("./components/campo/Campo").then((m) => ({ default: m.Campo })));
+const Terraplanagem = lazy(() => import("./components/terraplanagem/Terraplanagem").then((m) => ({ default: m.Terraplanagem })));
+const LaboratorioConsulta = lazy(() => import("./components/consulta/LaboratorioConsulta").then((m) => ({ default: m.LaboratorioConsulta })));
+const LaboratorioCampo = lazy(() => import("./components/campo/LaboratorioCampo").then((m) => ({ default: m.LaboratorioCampo })));
+const LaboratorioTerraplanagem = lazy(() => import("./components/terraplanagem/LaboratorioTerraplanagem").then((m) => ({ default: m.LaboratorioTerraplanagem })));
+const LaboratorioImagemData = lazy(() => import("./components/imagem/LaboratorioImagemData").then((m) => ({ default: m.LaboratorioImagemData })));
 const PainelAdmin = lazy(() => import("./components/admin/PainelAdmin").then((m) => ({ default: m.PainelAdmin })));
 
 export default function App() {
@@ -214,6 +222,10 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/verificar")) return <Suspense fallback={null}><LaboratorioVerificar /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/leitura")) return <Suspense fallback={null}><LaboratorioLeitura /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/assinar")) return <Suspense fallback={null}><LaboratorioAssinar /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/consulta")) return <Suspense fallback={null}><LaboratorioConsulta /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/campo")) return <Suspense fallback={null}><LaboratorioCampo /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/terraplanagem")) return <Suspense fallback={null}><LaboratorioTerraplanagem /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/imagem")) return <Suspense fallback={null}><LaboratorioImagemData /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vertces", href: "#/" }} />;
@@ -472,6 +484,15 @@ export default function App() {
 
     case "ajuda":
       return <AppShell {...casca}><Ajuda /></AppShell>;
+
+    case "consulta":
+      return <AppShell {...casca}><Suspense fallback={null}><ConsultaImovel ir={ir} /></Suspense></AppShell>;
+
+    case "campo":
+      return <AppShell {...casca}><Suspense fallback={null}><Campo ir={ir} /></Suspense></AppShell>;
+
+    case "terraplanagem":
+      return <AppShell {...casca}><Suspense fallback={null}><Terraplanagem ir={ir} /></Suspense></AppShell>;
 
     case "pedidos":
       return (
