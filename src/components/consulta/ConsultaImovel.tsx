@@ -135,7 +135,8 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   const [pilha, setPilha] = useState<Retrato[]>([]);
   /** a vista do mapa (centro, zoom): o desenho não marca vértice na escala do Brasil */
   const vistaRef = useRef<{ centro: LonLat; zoom: number } | null>(null);
-  const [longe, setLonge] = useState(true);
+  // começa "perto": sem WebGL o mapa não abre e a dica do desenho não pode ficar presa em "Aproxime…"
+  const [longe, setLonge] = useState(false);
   const toque = useToque();
   const verbo = toque ? "Toque" : "Clique";
   const corrida = useRef(0);
@@ -409,7 +410,8 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     }
     if (ocupado) return;
     // um vizinho (CAR ou parcela do SIGEF que não está na lista de resultados): o balão "Consultar este vizinho"
-    const alvo = info?.alvo;
+    // a parcela do SIGEF que é a própria área consultada (mesma_parcela) não é vizinho: o clique seleciona o imóvel
+    const alvo = info?.alvo && !ehMesmaParcela(info.alvo.codigo) ? info.alvo : undefined;
     if (alvo && !imoveis.some((i) => i.codigo === alvo.codigo)) { setPontoPend(null); setVizinho({ ...alvo, ponto: p }); return; }
     setVizinho(null);
     const dentro = imoveis.find((i) => pontoEmPoligonos(p, i.poligonos));
@@ -417,6 +419,10 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     // com uma análise aberta, um clique para ler um rótulo (foco, restrição) não derruba a tela
     if (analise) { setPontoPend(p); return; }
     consultarAqui(p);
+  }
+
+  function ehMesmaParcela(codigo: string): boolean {
+    return analise?.sigef.estado === "ok" && analise.sigef.dados.sobreposicoes.some((x) => x.mesma_parcela && x.codigo === codigo);
   }
 
   function consultarAqui(p: LonLat) {
@@ -701,6 +707,11 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
         desenhando={!!desenho} onDesenhar={() => { if (desenho) setDesenho(null); else comecarDesenho(); }}
         onLocalizacao={ondeEstou} ocupado={ocupado} foco={busca.fase === "ocioso"} origem={origemBusca} />
 
+      {/* acima do mapa (no celular o mapa vem antes do painel): quem trocou de imóvel vê logo como voltar */}
+      {busca.fase === "resultado" && pilha.length > 0 && (
+        <button type="button" className="cr-voltar" onClick={voltarConsulta}>← Voltar para <b>{pilha[pilha.length - 1].rotulo}</b></button>
+      )}
+
       <div className="consulta-corpo">
         <div className="consulta-painel">
           {busca.fase === "ocioso" && <Inicio historico={historico} onExemplo={consultarTexto} onAbrir={abrirRegistro} onApagar={(r) => void apagarRegistro(r)} onTentar={carregarHistorico} verbo={verbo} />}
@@ -714,9 +725,6 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
           )}
           {busca.fase === "resultado" && (
             <>
-              {pilha.length > 0 && (
-                <button type="button" className="link cr-voltar" onClick={voltarConsulta}>← Voltar para {pilha[pilha.length - 1].rotulo}</button>
-              )}
               <Resultados busca={busca} selId={selId} onSelecionar={selecionar}
                 onDesenhar={comecarDesenho}
                 onEntorno={analisarEntorno} onTentar={() => consultarTexto(busca.entrada.texto)} />
@@ -737,7 +745,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
                     <button type="button" className="cb-alt" onClick={copiarConfrontantes} disabled={analise.sigef.estado === "carregando" || analise.car.estado === "carregando"}
                       title="As parcelas do SIGEF e os CAR que sobrepõem ou encostam na área, com código, nome, situação e distância — para o memorial ou a carta de anuência">Confrontantes</button>
                   )}
-                  {qLink && <button type="button" className="cb-alt" onClick={copiarLink} title="O link desta consulta (#/consulta?q=…), para mandar a alguém da equipe">Link desta consulta</button>}
+                  {qLink && <button type="button" className="cb-alt" onClick={copiarLink} title="O link desta consulta (#/consulta?q=…), para mandar a alguém da equipe"><span className="rot-longo">Link desta consulta</span><span className="rot-curto">Link</span></button>}
                 </div>
               )}
               {analise && <PainelAnalise analise={analise} onTentar={tentar} onAtualizar={() => analisar(analise.imovel, busca.municipio)} laudo={{ ...laudo, onEscrever: (r) => void escreverLaudo(r) }} />}
@@ -820,7 +828,7 @@ function LugarDoDesenho({ onIr, onOndeEstou, onAqui, onCancelar }: { onIr: (p: L
       {erro && <span className="cm-onde-erro" role="alert">Não entendi esse lugar. Cole a coordenada (lat, lon), a UTM com o fuso ou o link do Google Maps.</span>}
       <div className="cm-onde-acoes">
         <button type="button" onClick={onOndeEstou}>Onde estou</button>
-        <button type="button" className="fantasma" onClick={onAqui}>Desenhar onde o mapa estiver</button>
+        <button type="button" className="fantasma" onClick={onAqui}><span className="rot-longo">Desenhar onde o mapa estiver</span><span className="rot-curto">Desenhar aqui</span></button>
         <button type="button" className="fantasma" onClick={onCancelar}>Cancelar</button>
       </div>
     </div>

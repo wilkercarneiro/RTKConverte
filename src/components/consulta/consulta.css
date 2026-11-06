@@ -277,7 +277,20 @@ button.cb-origem-limpar:hover:not(:disabled) { background: #EEF2F0; color: var(-
 .cb:has(.cb-origem) { padding-bottom: 12px; }
 
 /* "← Voltar para …" (depois de consultar um vizinho) */
-button.cr-voltar { justify-self: start; font-size: 13px; font-weight: 600; padding: 0; height: auto; }
+/* pílula entre a busca e o corpo: no celular fica acima do mapa, à vista logo depois da troca */
+button.cr-voltar { justify-self: start; align-self: start; display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 14px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; color: var(--floresta); background: var(--primaria-clara); border: 1px solid transparent; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.cr-voltar b { overflow: hidden; text-overflow: ellipsis; }
+button.cr-voltar:hover:not(:disabled) { background: var(--card); border-color: var(--primaria); color: var(--floresta); }
+.consulta > button.cr-voltar { margin: -4px 0 10px; }
+/* rótulos curtos (Link, Desenhar aqui): só no celular */
+.ca-copiar-linha .rot-curto, .cm-onde-acoes .rot-curto { display: none; }
+@media (max-width: 600px) {
+  .ca-copiar-linha .rot-longo, .cm-onde-acoes .rot-longo { display: none; }
+  .ca-copiar-linha .rot-curto, .cm-onde-acoes .rot-curto { display: inline; }
+  .ca-copiar-linha { flex-wrap: nowrap; }
+  .ca-copiar-linha button.cb-alt { flex: 1 1 0; min-width: 0; justify-content: center; padding: 0 6px; }
+}
 
 /* Copiar: resumo, confrontantes e link — a mesma ação, numa linha */
 .ca-copiar-linha { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: -6px; }
@@ -291,9 +304,9 @@ button.cr-voltar { justify-self: start; font-size: 13px; font-weight: 600; paddi
 @media (max-width: 600px) {
   /* "Onde fica o imóvel?" no pé do mapa, na largura toda: em cima ficam o zoom e a bússola (antes um pedaço deles aparecia à direita) */
   .cm-desenho.cm-onde { top: auto; bottom: 30px; left: 8px; right: 8px; width: auto; transform: none; }
-  /* os três botões sem um sozinho na linha: Onde estou + Cancelar em cima, "Desenhar onde o mapa estiver" na largura toda */
-  .cm-onde-acoes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .cm-onde-acoes button:nth-child(2) { grid-column: 1 / -1; order: 3; }
+  /* os três botões numa linha só, com rótulos curtos (nenhum sozinho na linha) */
+  .cm-onde-acoes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cm-onde-acoes button { min-width: 0; padding: 0 6px; white-space: nowrap; }
   /* a linha de situação vazia não ocupa uma faixa entre "Consultar" e os botões */
   .cb-entendi.vazio { display: none; }
   .cb:has(.cb-origem) .cb-pe { gap: 8px; }
