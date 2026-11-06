@@ -70,6 +70,9 @@ button.cb-alt.ativo:hover:not(:disabled) { background: var(--floresta); color: #
 .cm-desenho .cm-conta { font-size: 12.5px; color: var(--texto-2); padding: 0 6px; font-variant-numeric: tabular-nums; }
 .cm-desenho button { height: 34px; }
 .cm-desenho .cm-conta.cruza { color: var(--perigo, #DC2626); font-weight: 600; }
+/* "consultar este ponto?" (clique fora da área com uma análise aberta): no alto, longe da legenda */
+.cm-desenho.cm-pergunta { top: 48px; bottom: auto; left: 12px; right: 12px; transform: none; width: fit-content; margin: 0 auto; flex-wrap: wrap; justify-content: center; white-space: normal; }
+.cm-pergunta .cm-conta small { font-variant-numeric: tabular-nums; color: var(--texto-3, var(--texto-2)); margin-left: 4px; }
 
 /* ---------- cartões do painel ---------- */
 .cp-bloco { background: var(--card); border-radius: var(--raio-cartao); box-shadow: var(--anel); padding: 16px 18px; display: grid; gap: 12px; min-width: 0; }

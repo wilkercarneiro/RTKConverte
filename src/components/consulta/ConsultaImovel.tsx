@@ -24,6 +24,8 @@ import { autointersecta, centroDe, circulo, fmtAreaCurta, maiorAnel, medir, pont
 import type { LonLat } from "../../lib/consulta/geometria.ts";
 import { dadosDoPdf, diferencaDeArea, restricoesVazias, resumoEmTexto } from "../../lib/consulta/relatorio.ts";
 import { fontesReais } from "../../lib/consulta/fontes.ts";
+import { fontesQueEsperavamUf, montarTarefas } from "../../lib/consulta/tarefas.ts";
+import type { Tarefas } from "../../lib/consulta/tarefas.ts";
 import type { FontesConsulta, RegistroConsulta, TipoEntrada } from "../../lib/consulta/fontes.ts";
 import type { ImovelEncontrado, Resposta } from "../../lib/consulta/tipos.ts";
 import type { Municipio } from "../../lib/consulta/ambiente.ts";
@@ -98,6 +100,8 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   const [registroId, setRegistroId] = useState<string | null>(null);
   const [laudo, setLaudo] = useState<{ estado: "pronto" | "gravando" | "escrevendo" | "indisponivel"; motivo?: string }>({ estado: "gravando" });
   const [desenho, setDesenho] = useState<LonLat[] | null>(null);
+  /** clique fora do imóvel com uma análise aberta: pergunta antes de trocar a tela */
+  const [pontoPend, setPontoPend] = useState<LonLat | null>(null);
   const [historico, setHistorico] = useState<Resposta<RegistroConsulta[]>>({ estado: "carregando" });
   const [arrastando, setArrastando] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
@@ -108,7 +112,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   /** a linha do histórico de CADA análise (chave: analise.quando), já gravada ou em gravação: o UPDATE
    *  vai sempre para a linha da própria análise, e "tentar de novo" antes do INSERT voltar não duplica */
   const registros = useRef(new Map<string, Promise<string | null>>());
-  const tarefasRef = useRef<Record<ChaveFonte, () => Promise<unknown>> | null>(null);
+  const tarefasRef = useRef<Tarefas | null>(null);
 
   const imoveis = busca.fase === "resultado" ? busca.imoveis : [];
   const sel = imoveis.find((i) => i.id === selId) ?? null;
@@ -137,24 +141,15 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     setRegistroId(null);
     setLaudo({ estado: "gravando" });
     setAnalise(analiseVazia(im, medidas));
-    const munP = municipio ? Promise.resolve(municipio) : fontes.municipio(centro[0], centro[1]);
-    const ufP = im.uf ? Promise.resolve(im.uf) : munP.then((m) => m?.uf ?? null, () => null);
-    const tarefas: Record<ChaveFonte, () => Promise<unknown>> = {
-      restricoes: () => fontes.restricoes(im.aneis, medidas.fuso),
-      sigef: () => ufP.then((uf) => fontes.sigefNaArea(im.aneis, uf, im.fonte === "sigef" ? im.codigo : null)),
-      car: () => ufP.then((uf) => fontes.carNaArea(im.aneis, uf, im.fonte === "car" ? im.codigo : null)),
-      focos: () => fontes.focos(im.aneis),
-      clima: () => fontes.clima(centro[0], centro[1]),
-      solo: () => fontes.solo(centro[0], centro[1]),
-      bioma: () => fontes.bioma(centro[0], centro[1]),
-      municipio: () => munP,
-    };
+    const tarefas = montarTarefas(fontes, im, medidas, centro, municipio);
     tarefasRef.current = tarefas;
     for (const k of CHAVES_FONTES) rodar(k, id, tarefas[k]);
   }
 
   function tentar(k: ChaveFonte) {
     const t = tarefasRef.current;
+    // a IA está escrevendo o laudo sobre os dados de agora: não troca os dados por baixo dela
+    if (laudo.estado === "escrevendo") { avisar("alerta", "Espere o laudo terminar de ser escrito para consultar de novo."); return; }
     if (!t || !analise) { if (sel) analisar(sel); return; }
     // os dados vão mudar: o laudo antigo deixa de valer (o banco também o apaga ao regravar o resultado)
     setAnalise((a) => (a ? { ...a, [k]: { estado: "carregando" }, laudo: null } : a));
@@ -163,6 +158,15 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     if (registroId) setLaudo({ estado: "gravando" });
     rodar(k, corrida.current, t[k]);
   }
+
+  // outra busca ou outro imóvel: a pergunta "consultar este ponto?" deixa de valer
+  useEffect(() => { setPontoPend(null); }, [busca.fase, selId]);
+
+  // o Município voltou a responder (tentar de novo): o SIGEF que rodou sem a UF é refeito com ela
+  useEffect(() => {
+    if (!analise || laudo.estado === "escrevendo") return;
+    for (const k of fontesQueEsperavamUf(analise)) tentar(k);
+  }, [analise?.quando, analise?.municipio.estado]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // terminou (ou terminou de novo, depois de "tentar de novo"): grava no histórico
   useEffect(() => {
@@ -362,7 +366,14 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     if (desenho) { setDesenho([...desenho, p]); return; }
     if (ocupado) return;
     const dentro = imoveis.find((i) => pontoEmPoligonos(p, i.poligonos));
-    if (dentro) { selecionar(dentro); return; }
+    if (dentro) { setPontoPend(null); selecionar(dentro); return; }
+    // com uma análise aberta, um clique para ler um rótulo (foco, restrição) não derruba a tela
+    if (analise) { setPontoPend(p); return; }
+    consultarAqui(p);
+  }
+
+  function consultarAqui(p: LonLat) {
+    setPontoPend(null);
     const t = `${p[1].toFixed(6)}, ${p[0].toFixed(6)}`;
     setTexto(t);
     guardarEndereco(t);
@@ -495,9 +506,10 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
       camadas.push({ tipo: "desenho" as TipoRestricao, cor: "#FFFFFF", nome: "Área sendo desenhada", rotulo: `${desenho.length} vértices`, geometria: { type: "MultiPolygon", coordinates: [[fecharAnel(desenho)]] }, sobreposta: null, pontos: [] });
     }
     const pontos: PontoMapa[] = desenho ? desenho.map((p, i) => ({ lonlat: p, rotulo: `P${i + 1}` })) : pontoBusca ? [{ lonlat: pontoBusca, rotulo: "Ponto consultado" }] : [];
+    if (pontoPend && !desenho) pontos.push({ lonlat: pontoPend, rotulo: "Consultar aqui?" });
     const sobreposicoes = sig ? sig.sobreposicoes.filter((x) => !x.mesma_parcela) : [];
     return { destaques, parcelas, camadas, pontos, sobreposicoes, aneis: sel?.aneis ?? [] };
-  }, [imoveis, selId, sel, busca, analise, desenho]);
+  }, [imoveis, selId, sel, busca, analise, desenho, pontoPend]);
 
   const legenda = [
     sel ? { cor: "#FFFFFF", rotulo: "Área analisada" } : null,
@@ -508,10 +520,15 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   ].filter(Boolean) as { cor: string; rotulo: string; ponto?: boolean }[];
 
   // gravata-borboleta: lados que se cruzam dão uma área sem sentido — não deixa fechar
-  const cruzamento = desenho && desenho.length >= 4 ? autointersecta(desenho) : null;
+  // os lados já marcados se cruzam (desfazer é o caminho) × só o lado de fechamento provisório cruza
+  // (num traçado côncavo isso passa ao continuar marcando)
+  const cruzaMarcado = desenho && desenho.length >= 4 ? autointersecta(desenho, undefined, true) : null;
+  const cruzamento = cruzaMarcado ?? (desenho && desenho.length >= 4 ? autointersecta(desenho) : null);
+  const soFecho = !!cruzamento && !cruzaMarcado;
+  const avisoCruza = soFecho ? "Fechando agora, os lados se cruzariam: continue marcando ou desfaça o último vértice" : "Os lados se cruzam: desfaça o último vértice";
   const dicaMapa = desenho
     ? desenho.length < 3 ? `Clique no mapa para marcar os vértices (${desenho.length} de pelo menos 3)`
-      : cruzamento ? "Os lados se cruzam: desfaça o último vértice" : "Continue marcando ou feche a área"
+      : cruzamento ? avisoCruza : "Continue marcando ou feche a área"
     : imoveis.length > 1 && !sel ? "Clique num imóvel para analisar" : "Clique no mapa para consultar um ponto";
 
   // ------------------------------------------------------------- arrastar arquivo
@@ -529,7 +546,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     <div className="pagina consulta" {...soltar}>
       <CabecalhoPagina olho="Ferramentas" titulo={<>Consultar imóvel<Dica>CAR, SIGEF, restrições (TI, UC, assentamento, quilombola, embargo, fronteira, área militar, sítio arqueológico), focos de queimada, bioma, solo e chuva de qualquer lugar — sem abrir serviço e sem gastar crédito. O resultado vira serviço de CAR com um clique e sai em PDF, KML, SHP, DXF…</Dica></>} />
       <BuscaConsulta texto={texto} onTexto={setTexto} onConsultar={(e, t) => void consultar(e, t)} onArquivo={(f) => void abrirArquivo(f)}
-        desenhando={!!desenho} onDesenhar={() => { if (desenho) setDesenho(null); else { setDesenho([]); avisar("ok", "Clique no mapa para marcar os vértices da área."); } }}
+        desenhando={!!desenho} onDesenhar={() => { if (desenho) setDesenho(null); else { setPontoPend(null); setDesenho([]); avisar("ok", "Clique no mapa para marcar os vértices da área."); } }}
         onLocalizacao={ondeEstou} ocupado={ocupado} foco={busca.fase === "ocioso"} />
 
       <div className="consulta-corpo">
@@ -578,12 +595,19 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
               {legenda.map((l) => <span key={l.rotulo}><i className={l.ponto ? "ponto" : ""} style={{ borderColor: l.cor === "#FFFFFF" ? "#33453C" : l.cor, background: l.ponto ? l.cor : `${l.cor}33` }} />{l.rotulo}</span>)}
             </div>
           )}
+          {pontoPend && !desenho && (
+            <div className="cm-desenho cm-pergunta" role="dialog" aria-label="Consultar outro ponto">
+              <span className="cm-conta">Consultar este ponto? <small>{descreverPonto(pontoPend[0], pontoPend[1])}</small></span>
+              <button type="button" onClick={() => setPontoPend(null)}>Ficar nesta área</button>
+              <button type="button" className="principal" autoFocus onClick={() => consultarAqui(pontoPend)}>Consultar o ponto</button>
+            </div>
+          )}
           {desenho && (
             <div className="cm-desenho" role="toolbar" aria-label="Desenho da área">
               {cruzamento
-                ? <span className="cm-conta cruza" role="alert" title={`No desenho, ${textoCruzamento(cruzamento, desenho.length)} (os vértices são P1, P2… no mapa).`}>Os lados se cruzam: desfaça o último vértice</span>
+                ? <span className="cm-conta cruza" role="alert" title={`No desenho, ${textoCruzamento(cruzamento, desenho.length, "P")}${soFecho ? " (o lado de fechamento ainda é provisório)" : ""}.`}>{avisoCruza}</span>
                 : <span className="cm-conta">{desenho.length} {desenho.length === 1 ? "vértice" : "vértices"}{desenho.length >= 3 ? ` · ${fmtAreaCurta(medir([desenho]).areaM2)}` : ""}</span>}
-              <button type="button" className={cruzamento ? "principal" : ""} disabled={!desenho.length} onClick={() => setDesenho(desenho.slice(0, -1))}>Desfazer</button>
+              <button type="button" className={cruzaMarcado ? "principal" : ""} disabled={!desenho.length} onClick={() => setDesenho(desenho.slice(0, -1))}>Desfazer</button>
               <button type="button" onClick={() => setDesenho(null)}>Cancelar</button>
               <button type="button" className={cruzamento ? "" : "principal"} disabled={desenho.length < 3 || !!cruzamento} onClick={concluirDesenho}
                 title={cruzamento ? "Os lados se cruzam: a área não teria sentido" : undefined}>Fechar a área</button>

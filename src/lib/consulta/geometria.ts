@@ -61,7 +61,7 @@ export function medir(aneis: LonLat[][]): Medidas {
  * trocado — a fórmula de Gauss dá uma área sem sentido). Testa cada par de lados NÃO vizinhos, em
  * UTM. Devolve os índices dos dois lados que se cruzam (o lado i vai do vértice i ao i+1), ou null.
  */
-export function autointersecta(anel: LonLat[], fuso?: number): [number, number] | null {
+export function autointersecta(anel: LonLat[], fuso?: number, semLadoDeFecho = false): [number, number] | null {
   const a = semFecho(anel);
   const n = a.length;
   if (n < 4) return null;
@@ -74,6 +74,7 @@ export function autointersecta(anel: LonLat[], fuso?: number): [number, number] 
     const p1 = u[i], p2 = u[(i + 1) % n];
     for (let j = i + 2; j < n; j++) {
       if (i === 0 && j === n - 1) continue; // o último lado encosta no primeiro
+      if (semLadoDeFecho && j === n - 1) continue; // desenho aberto: o lado último→primeiro ainda é provisório
       const q1 = u[j], q2 = u[(j + 1) % n];
       const d1 = sinal(lado(q1, q2, p1)), d2 = sinal(lado(q1, q2, p2)), d3 = sinal(lado(p1, p2, q1)), d4 = sinal(lado(p1, p2, q2));
       if (d1 * d2 < 0 && d3 * d4 < 0) return [i, j];
@@ -83,8 +84,8 @@ export function autointersecta(anel: LonLat[], fuso?: number): [number, number] 
 }
 
 /** "lado V2–V3 com o lado V4–V1" (os vértices numerados como na tela, a partir de 1). */
-export function textoCruzamento(par: [number, number], n: number): string {
-  const v = (i: number) => `V${(i % n) + 1}`;
+export function textoCruzamento(par: [number, number], n: number, prefixo = "V"): string {
+  const v = (i: number) => `${prefixo}${(i % n) + 1}`;
   return `o lado ${v(par[0])}–${v(par[0] + 1)} cruza o lado ${v(par[1])}–${v(par[1] + 1)}`;
 }
 

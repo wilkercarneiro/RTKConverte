@@ -32,7 +32,7 @@ interface Fixture {
 export const FIXTURE = JSON.parse(fixtureBruta) as Fixture;
 export const AGORA = new Date(FIXTURE.agora);
 
-export type EstadoLab = "normal" | "carregando" | "analisando" | "fora" | "erro" | "semhistorico" | "historico-erro" | "cortada";
+export type EstadoLab = "normal" | "carregando" | "analisando" | "fora" | "erro" | "semhistorico" | "historico-erro" | "cortada" | "ibge-instavel";
 
 const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nunca = <T>() => new Promise<T>(() => {});
@@ -109,6 +109,9 @@ export function fontesDoLaboratorio(estado: EstadoLab): FontesConsulta {
   const analisando = estado === "analisando";
   // região em queimada / muito CAR: o INPE e o SICAR respondem, mas cortados (nunca vira "nenhum foco" verde)
   const cortada = estado === "cortada";
+  // o IBGE falha na primeira vez e responde depois (o "tentar de novo" do Município tem de funcionar,
+  // e o SIGEF que rodou sem a UF é refeito com ela)
+  let ibgeFalhas = estado === "ibge-instavel" ? 1 : 0;
   const foraDoAr = async () => { await espera(900); throw new Error("servidor fora do ar ou inacessível"); };
   const registros: RegistroConsulta[] = [];
   let seq = 0;
@@ -155,10 +158,11 @@ export function fontesDoLaboratorio(estado: EstadoLab): FontesConsulta {
         const c = cruzarComImovel(aneis, im.poligonos);
         if (c.areaM2 > 0) sobre.push({ codigo: p.properties.codigo, nome: p.properties.nome, municipio: "Lençóis", uf: "BA", situacao: p.properties.situacao, area_ha: null, area_m2: c.areaM2, percentual_imovel: c.pct, geometria: c.sobreposta!, mesma_parcela: c.pct > 98 && p.properties.codigo === proprio });
       }
-      return { ...sigefDaArea(aneis, parcelas, sobre, proprio), online: "ok" };
+      return { ...sigefDaArea(aneis, parcelas, sobre, proprio), online: estado === "ibge-instavel" && !_uf ? "sem-uf" : "ok" };
     },
     async municipio(lon, lat) {
       if (travar) return nunca();
+      if (ibgeFalhas > 0) { ibgeFalhas--; await espera(600); throw new Error("o IBGE não respondeu (exemplo do laboratório)"); }
       if (!pertoDaFixture(lon, lat)) throw new Error("ponto fora da área gravada no laboratório");
       return consultarMunicipio(lon, lat, { fetch: replay });
     },

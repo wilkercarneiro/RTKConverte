@@ -22,6 +22,7 @@ import { autointersecta, caixaComMargem, centroDe, medir, textoCruzamento } from
 import { analiseVazia, compactarAnalise, dadosParaLaudo, fraseDaAnalise, resultadoParaGravar } from "../src/lib/consulta/analise.ts";
 import { dadosDoPdf, resumoEmTexto, restricoesVazias } from "../src/lib/consulta/relatorio.ts";
 import { sigefDaArea } from "../src/lib/consulta/sigef_imovel.ts";
+import { fontesQueEsperavamUf, montarTarefas } from "../src/lib/consulta/tarefas.ts";
 import { consultarRestricoes } from "../src/lib/restricoes.ts";
 import { gerarPdfRestricoes } from "../src/lib/restricoes_pdf.ts";
 import { FOCOS_POR_PAGINA, HOSTS_PONTE, PAGINAS_FOCOS, buscarFocos, camadasFocos, dadosDoLaudo, lerFocos, limparLaudo, montarPedidoLaudo, paginaCheia, urlFocos, validarCaixa, validarDesde, escreverLaudo } from "../supabase/functions/analise-imovel/logica.ts";
@@ -346,4 +347,71 @@ test("clima: as barras não mostram o mês cortado da ponta como se fosse seco",
 test("só os hosts das bases públicas foram chamados", () => {
   const hosts = new Set(pedidos.map((u) => new URL(u).host));
   for (const h of hosts) assert.ok(["geoserver.car.gov.br", "pamgia.ibama.gov.br", "geoserver.funai.gov.br", "geoservicos.inde.gov.br", "geoservicos.ibge.gov.br", "archive-api.open-meteo.com", "rest.isric.org", "servicodados.ibge.gov.br"].includes(h), h);
+});
+
+test("tentar de novo do Município chama o IBGE de novo, e o SIGEF ganha a UF quando ele volta", async () => {
+  let chamadas = 0;
+  const ufs = [];
+  const fontes = {
+    async municipio() { chamadas++; if (chamadas === 1) throw new Error("IBGE fora"); return { nome: "Lençóis", uf: "BA", codigo: "2919306" }; },
+    async sigefNaArea(_a, uf) { ufs.push(uf); return { sobreposicoes: [], vizinhas: [], raioM: 500, online: uf ? "ok" : "sem-uf" }; },
+    async carNaArea(_a, uf) { return { itens: [], cortada: false, uf }; },
+  };
+  const anel = [[-41.21, -12.41], [-41.20, -12.41], [-41.20, -12.40], [-41.21, -12.40]];
+  const im = { id: "d", fonte: "desenho", titulo: "Desenho", codigo: null, uf: null, municipio: null, aneis: [anel], poligonos: [[anel]] };
+  const t = montarTarefas(fontes, im, medir([anel]), centroDe([anel]));
+  // a 1ª rodada: município e SIGEF juntos (um pedido só ao IBGE), o IBGE falha
+  const [m1, s1] = await Promise.allSettled([t.municipio(), t.sigef()]);
+  assert.equal(m1.status, "rejected");
+  assert.equal(s1.value.online, "sem-uf");
+  assert.equal(chamadas, 1, "município e UF do SIGEF repartem o mesmo pedido");
+  // "tentar de novo": vai ao IBGE de novo (não devolve a mesma rejeição)
+  const m2 = await t.municipio();
+  assert.equal(m2.uf, "BA");
+  assert.equal(chamadas, 2);
+  // o SIGEF que rodou sem a UF é refeito com ela, sem perguntar ao IBGE outra vez
+  const a = { ...analiseVazia(im, medir([anel])), municipio: { estado: "ok", dados: m2 }, sigef: { estado: "ok", dados: s1.value } };
+  assert.deepEqual(fontesQueEsperavamUf(a), ["sigef"]);
+  const s2 = await t.sigef();
+  assert.equal(s2.online, "ok");
+  assert.deepEqual(ufs, [null, "BA"]);
+  assert.equal(chamadas, 2);
+  assert.equal((await t.car()).uf, "BA");
+  // imóvel com UF própria, ou SIGEF já consultado com a UF: nada a refazer
+  assert.deepEqual(fontesQueEsperavamUf({ ...a, imovel: { ...im, uf: "BA" } }), []);
+  assert.deepEqual(fontesQueEsperavamUf({ ...a, sigef: { estado: "ok", dados: s2 } }), []);
+  // o município que veio da busca pelo ponto não é perguntado de novo
+  let outra = 0;
+  const t2 = montarTarefas({ ...fontes, async municipio() { outra++; return null; } }, im, medir([anel]), centroDe([anel]), { nome: "Lençóis", uf: "BA", codigo: "2919306" });
+  assert.equal((await t2.municipio()).uf, "BA");
+  assert.equal(outra, 0);
+});
+
+test("UTM do hemisfério norte (Roraima/Amapá): banda N e 'norte' entendidos; o sul segue igual", () => {
+  // Boa Vista/RR: 2,8235° N, 60,6733° W → UTM 20N E 758.662 N 312.343
+  for (const t of ["UTM 20N 758662 312343", "758662 312343 20N", "fuso 20 norte E 758662 N 312343"]) {
+    const e = interpretarEntrada(t);
+    assert.equal(e.tipo, "coordenada", t);
+    assert.ok(Math.abs(e.lat - 2.8235) < 1e-4 && Math.abs(e.lon + 60.6733) < 1e-4, `${t} → ${e.lat}, ${e.lon}`);
+    assert.match(e.descricao, /UTM 20N/);
+  }
+  const semFuso = interpretarEntrada("758662 312343 norte");
+  assert.equal(semFuso.tipo, "utm_sem_fuso");
+  assert.equal(semFuso.norte, true);
+  // o sul não muda: "E … N 8628000" com a letra N do rótulo continua sul
+  const sul = interpretarEntrada("E 260000 N 8628000 24S");
+  assert.equal(sul.tipo, "coordenada");
+  assert.ok(sul.lat < -12);
+  assert.equal(interpretarEntrada("758662 312343").tipo, "invalida", "sem fuso nem hemisfério, N de 6 dígitos não é adivinhado");
+});
+
+test("desenho: o lado de fechamento provisório cruzando não é confundido com lados marcados que se cruzam", () => {
+  // um traçado côncavo sendo marcado: o fecho P5→P1 cruza o lado P3–P4, mas os lados marcados não se cruzam
+  const c = [[0, 0], [0.01, 0], [0.01, 0.006], [0.004, 0.01], [0.015, 0.01]].map(([x, y]) => [-41.2 + x, -12.4 + y]);
+  assert.equal(autointersecta(c, undefined, true), null, "lados já marcados não se cruzam");
+  assert.ok(autointersecta(c), "fechando agora, se cruzaria");
+  // gravata de verdade nos lados marcados
+  const g = [[0, 0], [0.01, 0.01], [0.01, 0], [0, 0.01], [-0.005, 0.005]].map(([x, y]) => [-41.2 + x, -12.4 + y]);
+  assert.ok(autointersecta(g, undefined, true));
+  assert.match(textoCruzamento([0, 2], 4, "P"), /P1–P2 cruza o lado P3–P4/);
 });

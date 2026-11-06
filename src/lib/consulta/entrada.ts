@@ -27,7 +27,7 @@ export type Entrada =
   | { tipo: "car"; codigo: string; uf: string; descricao: string }
   | { tipo: "sigef"; codigo: string; descricao: string }
   | { tipo: "coordenada"; lon: number; lat: number; origem: OrigemCoordenada; descricao: string; aviso?: string }
-  | { tipo: "utm_sem_fuso"; e: number; n: number; descricao: string }
+  | { tipo: "utm_sem_fuso"; e: number; n: number; descricao: string; norte?: boolean }
   | { tipo: "invalida"; motivo: string };
 
 const fmt = (v: number, casas = 6) => v.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
@@ -155,7 +155,17 @@ function lerUtm(t: string): Entrada | null {
     .replace(/\d{1,3}(?:\.\d{3}){2,}/g, (m) => m.replace(/\./g, ""));
   const nums = [...s.matchAll(/\d+(?:[.,]\d+)?/g)].map((m) => ({ txt: m[0], v: num(m[0]), i: m.index ?? 0 }));
   const e = nums.find((x) => x.v >= 100_000 && x.v < 1_000_000);
-  const n = nums.find((x) => x.v >= 1_000_000 && x.v <= 10_000_000);
+  let n = nums.find((x) => x.v >= 1_000_000 && x.v <= 10_000_000);
+  // hemisfério norte (Roraima, Amapá, norte do AM e do PA): "20N", "fuso 20 norte" — o N tem até 6
+  // dígitos. Só vale sem um N do sul no texto ("E 260000 N 8628000" continua sendo do sul).
+  let norte = false;
+  const marcaNorte = /\b(1[89]|2[0-2])\s*(?:n|p|norte)\b/i.exec(s) ?? /\bnorte\b/i.exec(s);
+  if (!n && e && marcaNorte) {
+    const fimMarca = marcaNorte.index + marcaNorte[0].length;
+    const cand = nums.filter((x) => x !== e && x.v < 1_000_000 && !(x.i >= marcaNorte.index && x.i < fimMarca) && !(Number.isInteger(x.v) && x.v >= 18 && x.v <= 25 && x.i < e.i));
+    const nn = cand.find((x) => x.i > e.i) ?? cand[0];
+    if (nn) { n = nn; norte = true; }
+  }
   if (!e || !n) return null;
   // fuso: "24L", "24S", "fuso 24", "zona 24", "UTM 24" ou um número 18–25 solto
   const mf = s.match(/(?:fuso|zona|zone|utm|mc)\s*[:=]?\s*(1[89]|2[0-5])\s*[a-z]?\b/i) ?? s.match(/\b(1[89]|2[0-5])\s*[c-hj-np-x]\b/i);
@@ -164,18 +174,19 @@ function lerUtm(t: string): Entrada | null {
     const solto = nums.find((x) => x !== e && x !== n && Number.isInteger(x.v) && x.v >= 18 && x.v <= 25);
     if (solto) fuso = solto.v;
   }
-  const descricao = `UTM E ${fmt(e.v, 2)} · N ${fmt(n.v, 2)}`;
-  if (fuso === null) return { tipo: "utm_sem_fuso", e: e.v, n: n.v, descricao };
-  return utmParaEntrada(e.v, n.v, fuso);
+  const descricao = `UTM E ${fmt(e.v, 2)} · N ${fmt(n.v, 2)}${norte ? " (hemisfério norte)" : ""}`;
+  if (fuso === null) return { tipo: "utm_sem_fuso", e: e.v, n: n.v, descricao, ...(norte ? { norte } : {}) };
+  return utmParaEntrada(e.v, n.v, fuso, norte);
 }
 
-export function utmParaEntrada(e: number, n: number, fuso: number): Entrada {
-  const [lon, lat] = proj(utmDef(fuso), GEO_DEF, [e, n]);
+export function utmParaEntrada(e: number, n: number, fuso: number, norte = false): Entrada {
+  // a definição é a do sul (falso norte de 10.000 km): no hemisfério norte o N soma esses 10.000 km
+  const [lon, lat] = proj(utmDef(fuso), GEO_DEF, [e, norte ? n + 10_000_000 : n]);
   if (!Number.isFinite(lon) || !Number.isFinite(lat)) return { tipo: "invalida", motivo: "Coordenada UTM inválida." };
   const aviso = !noBrasil(lon, lat)
     ? "Este ponto cai fora do Brasil — confira E, N e o fuso."
     : fusoDe(lon) !== fuso ? `O ponto cai no fuso ${fusoDe(lon)}, não no ${fuso}: confira o fuso.` : undefined;
-  return { tipo: "coordenada", lon, lat, origem: "utm", descricao: `UTM ${fuso}S E ${fmt(e, 2)} N ${fmt(n, 2)} → ${descreverPonto(lon, lat)}`, aviso };
+  return { tipo: "coordenada", lon, lat, origem: "utm", descricao: `UTM ${fuso}${norte ? "N" : "S"} E ${fmt(e, 2)} N ${fmt(n, 2)} → ${descreverPonto(lon, lat)}`, aviso };
 }
 
 /** O ponto de um link do Google Maps (o marcador vale mais que o centro da vista). */

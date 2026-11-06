@@ -50,7 +50,7 @@ export function PainelAnalise({ analise, onTentar, onAtualizar, laudo }: {
       <CartaoFocos a={analise} onTentar={() => onTentar("focos")} />
       <CartaoAmbiente a={analise} onTentar={onTentar} />
       <BlocoLaudo a={analise} {...laudo} />
-      <p className="ca-rodape">Consulta em {dataHora(analise.quando)} · bases públicas: alerta, não certidão<Dica>{AVISO_RESTRICOES}</Dica>{!f.carregando && <> · <button type="button" className="link" onClick={onAtualizar}>consultar tudo de novo</button></>}</p>
+      <p className="ca-rodape">Consulta em {dataHora(analise.quando)} · bases públicas: alerta, não certidão<Dica>{AVISO_RESTRICOES}</Dica>{!f.carregando && laudo.estado !== "escrevendo" && <> · <button type="button" className="link" onClick={onAtualizar}>consultar tudo de novo</button></>}</p>
     </section>
   );
 }

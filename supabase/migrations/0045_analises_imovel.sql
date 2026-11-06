@@ -51,10 +51,11 @@ create table if not exists analises_imovel (
   updated_at timestamptz not null default now()
 );
 create index if not exists analises_imovel_recentes on analises_imovel (escritorio_id, created_at desc);
-create index if not exists analises_imovel_laudos on analises_imovel (escritorio_id, laudo_em) where laudo_em is not null;
+-- (rodada 1 tinha um índice por laudo_em; o limite passou a contar em chamadas_ia)
+drop index if exists analises_imovel_laudos;
 
 comment on table analises_imovel is
-  'Consultar imóvel (#/consulta): histórico das análises da empresa e os laudos por IA (limite diário contado em laudo_em). Ver 0045.';
+  'Consultar imóvel (#/consulta): histórico das análises da empresa e os laudos por IA (limite diário contado em chamadas_ia, nome_arquivo = laudo:consulta-imovel). Ver 0045.';
 
 drop trigger if exists analises_imovel_escritorio on analises_imovel;
 create trigger analises_imovel_escritorio before insert on analises_imovel

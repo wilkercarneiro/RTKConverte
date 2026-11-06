@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
 
       // RLS: a consulta tem de ser da empresa de quem chama
       const { data: linha, error: eLinha } = await usuario.from("analises_imovel")
-        .select("id, escritorio_id, resultado, laudo, laudo_modelo, laudo_em").eq("id", id).maybeSingle();
+        .select("id, escritorio_id, resultado, laudo, laudo_modelo, laudo_em, updated_at").eq("id", id).maybeSingle();
       if (eLinha || !linha) return json({ erro: "Consulta não encontrada." }, 404);
       if (linha.laudo && corpo.refazer !== true) {
         return json({ laudo: linha.laudo, modelo: linha.laudo_modelo, quando: linha.laudo_em, guardado: true });
@@ -113,10 +113,13 @@ Deno.serve(async (req) => {
       });
       if (eConta2) console.error("analise-imovel: chamadas_ia", eConta2.message);
       const quando = new Date().toISOString();
-      const { error: eGrava } = await svc.from("analises_imovel")
+      // só grava se a consulta não mudou enquanto a IA escrevia (updated_at muda a cada regravação):
+      // o laudo guardado sempre corresponde aos dados guardados
+      const { data: gravadas, error: eGrava } = await svc.from("analises_imovel")
         .update({ laudo: r.texto, laudo_modelo: r.modelo, laudo_em: quando, laudo_custo_usd: r.custoUsd })
-        .eq("id", id).eq("escritorio_id", esc);
+        .eq("id", id).eq("escritorio_id", esc).eq("updated_at", linha.updated_at).select("id");
       if (eGrava) return json({ erro: "O laudo foi escrito, mas não deu para gravar. Tente de novo." }, 500);
+      if (!gravadas?.length) return json({ erro: "Os dados da consulta mudaram enquanto o laudo era escrito; peça o laudo de novo." }, 409);
       return json({ laudo: r.texto, modelo: r.modelo, quando, restantes: Math.max(0, limite - (count ?? 0) - 1) });
     }
 

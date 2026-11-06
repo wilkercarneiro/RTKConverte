@@ -2,7 +2,7 @@
 // diz o que o sistema entendeu ("Código do CAR · BA", "Coordenada → −12,40…");
 // colar algo que já dá para consultar consulta na hora, sem precisar do botão.
 // Ao lado, as outras entradas: arquivo, desenho no mapa e a localização do GPS.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { interpretarEntrada, utmParaEntrada } from "../../lib/consulta/entrada.ts";
 import type { Entrada } from "../../lib/consulta/entrada.ts";
 import { ACEITA_ARQUIVO } from "../../lib/consulta/arquivo.ts";
@@ -26,16 +26,23 @@ export function BuscaConsulta({ texto, onTexto, onConsultar, onArquivo, desenhan
 }) {
   const campo = useRef<HTMLInputElement>(null);
   const arquivo = useRef<HTMLInputElement>(null);
-  const [colado, setColado] = useState(false);
   const entrada = interpretarEntrada(texto);
 
   useEffect(() => { if (foco) campo.current?.focus({ preventScroll: true }); }, [foco]);
-  // colou algo consultável: consulta sem esperar o Enter
-  useEffect(() => {
+  // colou algo consultável: consulta sem esperar o Enter. O navegador dispara "paste" ANTES de mudar o
+  // valor do campo, então o texto novo é montado aqui (o colado no lugar da seleção) e não lido do estado.
+  function aoColar(e: React.ClipboardEvent<HTMLInputElement>) {
+    const colado = e.clipboardData?.getData("text") ?? "";
     if (!colado) return;
-    setColado(false);
-    if (consultavel(entrada) && !ocupado) onConsultar(entrada, texto);
-  }, [colado]); // eslint-disable-line react-hooks/exhaustive-deps
+    const el = e.currentTarget;
+    const ini = el.selectionStart ?? el.value.length, fim = el.selectionEnd ?? ini;
+    const novo = el.value.slice(0, ini) + colado + el.value.slice(fim);
+    const en = interpretarEntrada(novo);
+    if (!consultavel(en) || ocupado) return; // deixa o navegador colar normalmente
+    e.preventDefault();
+    onTexto(novo);
+    onConsultar(en, novo);
+  }
 
   function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -49,7 +56,7 @@ export function BuscaConsulta({ texto, onTexto, onConsultar, onArquivo, desenhan
         <label className="cb-campo">
           <span className="sr-only">Código do CAR, coordenada ou link do Google Maps</span>
           <Icone d={ICONE.busca} size={20} />
-          <input ref={campo} value={texto} onChange={(e) => onTexto(e.target.value)} onPaste={() => setColado(true)}
+          <input ref={campo} value={texto} onChange={(e) => onTexto(e.target.value)} onPaste={aoColar}
             placeholder="Cole o código do CAR, uma coordenada ou um link do Google Maps"
             autoComplete="off" spellCheck={false} inputMode="text" enterKeyHint="search" />
           {texto && <button type="button" className="cb-limpar" aria-label="Limpar" title="Limpar" onClick={() => { onTexto(""); campo.current?.focus(); }}>✕</button>}
@@ -59,7 +66,7 @@ export function BuscaConsulta({ texto, onTexto, onConsultar, onArquivo, desenhan
       <div className="cb-pe">
         <Entendi entrada={entrada} onFuso={(f) => {
           if (entrada.tipo !== "utm_sem_fuso") return;
-          const e = utmParaEntrada(entrada.e, entrada.n, f);
+          const e = utmParaEntrada(entrada.e, entrada.n, f, entrada.norte);
           onConsultar(e, `${texto} fuso ${f}`);
         }} />
         <div className="cb-alternativas" role="group" aria-label="Outras formas de informar a área">
@@ -89,7 +96,7 @@ function Entendi({ entrada, onFuso }: { entrada: Entrada; onFuso: (f: number) =>
       <div className="cb-entendi" role="status">
         <span className="cb-icone" aria-hidden>?</span>
         <span><b>{entrada.descricao}</b> · falta o fuso:</span>
-        <span className="cb-fusos">{FUSOS.map((f) => <button key={f} type="button" className="cb-fuso" onClick={() => onFuso(f)}>{f}S</button>)}</span>
+        <span className="cb-fusos">{FUSOS.filter((f) => !entrada.norte || f <= 22).map((f) => <button key={f} type="button" className="cb-fuso" onClick={() => onFuso(f)}>{f}{entrada.norte ? "N" : "S"}</button>)}</span>
       </div>
     );
   }

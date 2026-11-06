@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Publica na VPS as FERRAMENTAS (plano docs/plano-ferramentas-campo-consulta-terraplanagem.md):
-#   - banco: 0044 (medições do campo), 0045 (consultas + laudos + limite) e
-#     0046 (terraplanagens) — as que existirem no repositório; cada uma numa
-#     transação, REST reiniciado DEPOIS de todas;
+#   - banco: *_analises_imovel (0045), *_terraplanagens (0046) e *_medicoes_campo
+#     (0047) — achadas pelo NOME, as que existirem no repositório; a que já está
+#     na VPS (a tabela existe) é recusada; cada uma numa transação, REST
+#     reiniciado DEPOIS de todas;
 #   - função NOVA analise-imovel (focos do INPE e laudo por IA): pasta com o
 #     shim, deno.json e o fecho de imports (scripts/fecho-imports.mjs), testada
 #     no Deno daqui ("Listening") antes de ir;
@@ -37,15 +38,21 @@ passo() { echo; echo "==> $*"; }
 roda() { if $EXEC; then "$@"; else echo "   [simulação] $*"; fi; }
 ANON="$( { grep -E '^VITE_SUPABASE_ANON_KEY=' .env 2>/dev/null || true; } | head -1 | cut -d= -f2- | tr -d '"\r')"
 
+# pelo NOME, não pelo número: a numeração do plano (0044–0046) não vale mais — a 0044 da main é a
+# adesão (já publicada em 06/11) e o Campo virou 0047. Cada nome é também a tabela que a migração cria:
+# se ela já existe na VPS, a migração é recusada (não reaplica nada que já está no ar).
+FERRAMENTAS=(analises_imovel terraplanagens medicoes_campo)
 MIGRACOES=()
-for m in supabase/migrations/0044_*.sql supabase/migrations/0045_*.sql supabase/migrations/0046_*.sql; do
-  [ -f "$m" ] && MIGRACOES+=("$m")
+for t in "${FERRAMENTAS[@]}"; do
+  for m in supabase/migrations/[0-9][0-9][0-9][0-9]_"$t".sql; do
+    [ -f "$m" ] && MIGRACOES+=("$m")
+  done
 done
 
 # ------------------------------------------------------------ 0. o que vai
 passo "0. O que vai"
 for m in "${MIGRACOES[@]}"; do echo "   migração: $m"; done
-[ "${#MIGRACOES[@]}" -eq 0 ] && echo "   (nenhuma migração 0044–0046 no repositório)"
+[ "${#MIGRACOES[@]}" -eq 0 ] && echo "   (nenhuma migração das ferramentas no repositório: ${FERRAMENTAS[*]})"
 echo "   função nova: $NOVA"
 
 # ------------------------------------------------------------ 1. pacote local + Deno
@@ -92,6 +99,14 @@ roda ssh_ "set -e; mkdir -p $BKB $BKF
 passo "4. Migrações (cada uma em transação única) + REST"
 for m in "${MIGRACOES[@]}"; do
   n="$(basename "$m")"
+  tabela="$(basename "$m" .sql | sed -E 's/^[0-9]+_//')"
+  if $EXEC; then
+    ja="$(ssh_ "C=\$(docker ps --format '{{.Names}}' | grep sb_rtkconverte_db | head -1); docker exec \$C psql -U postgres -d postgres -tAc \"select to_regclass('public.$tabela') is not null\"" | tr -d '[:space:]')"
+    if [ "$ja" = "t" ]; then echo "   RECUSADA: $n — a tabela $tabela já existe na VPS (já publicada); nada reaplicado"; continue; fi
+    [ "$ja" = "f" ] || { echo "   não deu para conferir se $n já está na VPS (resposta: '$ja'): parei"; exit 1; }
+  else
+    echo "   [simulação] confere na VPS se a tabela $tabela já existe; se existir, recusa $n"
+  fi
   roda scp -q -i "$CHAVE" "$m" "$VPS:/tmp/$n"
   roda ssh_ "set -e; C=\$(docker ps --format '{{.Names}}' | grep sb_rtkconverte_db | head -1)
     docker cp /tmp/$n \$C:/tmp/$n
