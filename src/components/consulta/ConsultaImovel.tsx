@@ -18,9 +18,9 @@ import { fecharAnel, multiPoligono } from "../../lib/sigef";
 import { descreverPonto, interpretarEntrada } from "../../lib/consulta/entrada.ts";
 import type { Entrada } from "../../lib/consulta/entrada.ts";
 import { areaDoArquivo, textoDoArquivo } from "../../lib/consulta/arquivo.ts";
-import { analiseCompleta, analiseVazia, CHAVES_FONTES, compactarAnalise, ehPropriaArea, fraseDaAnalise } from "../../lib/consulta/analise.ts";
+import { analiseCompleta, analiseVazia, CHAVES_FONTES, ehPropriaArea, fraseDaAnalise, resultadoParaGravar } from "../../lib/consulta/analise.ts";
 import type { Analise, ChaveFonte } from "../../lib/consulta/analise.ts";
-import { centroDe, circulo, fmtAreaCurta, maiorAnel, medir, pontoEmPoligonos } from "../../lib/consulta/geometria.ts";
+import { autointersecta, centroDe, circulo, fmtAreaCurta, maiorAnel, medir, pontoEmPoligonos, textoCruzamento } from "../../lib/consulta/geometria.ts";
 import type { LonLat } from "../../lib/consulta/geometria.ts";
 import { dadosDoPdf, diferencaDeArea, restricoesVazias, resumoEmTexto } from "../../lib/consulta/relatorio.ts";
 import { fontesReais } from "../../lib/consulta/fontes.ts";
@@ -102,7 +102,12 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   const [arrastando, setArrastando] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
   const corrida = useRef(0);
+  /** a busca da vez (código, ponto, GPS, exemplo): a resposta de uma busca velha é descartada */
+  const buscaVez = useRef(0);
   const gravadoEm = useRef<string | null>(null);
+  /** a linha do histórico de CADA análise (chave: analise.quando), já gravada ou em gravação: o UPDATE
+   *  vai sempre para a linha da própria análise, e "tentar de novo" antes do INSERT voltar não duplica */
+  const registros = useRef(new Map<string, Promise<string | null>>());
   const tarefasRef = useRef<Record<ChaveFonte, () => Promise<unknown>> | null>(null);
 
   const imoveis = busca.fase === "resultado" ? busca.imoveis : [];
@@ -151,7 +156,11 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   function tentar(k: ChaveFonte) {
     const t = tarefasRef.current;
     if (!t || !analise) { if (sel) analisar(sel); return; }
-    setAnalise((a) => (a ? { ...a, [k]: { estado: "carregando" } } : a));
+    // os dados vão mudar: o laudo antigo deixa de valer (o banco também o apaga ao regravar o resultado)
+    setAnalise((a) => (a ? { ...a, [k]: { estado: "carregando" }, laudo: null } : a));
+    // o laudo só sai depois que os dados novos forem guardados (e regrava mesmo que a fonte falhe de novo)
+    gravadoEm.current = null;
+    if (registroId) setLaudo({ estado: "gravando" });
     rodar(k, corrida.current, t[k]);
   }
 
@@ -165,27 +174,41 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     const ent = busca.fase === "resultado" ? busca.entrada : { texto: analise.imovel.titulo, tipo: "arquivo" as TipoEntrada, rotulo: analise.imovel.titulo };
     const mun = analise.municipio.estado === "ok" ? analise.municipio.dados : null;
     setLaudo((l) => (l.estado === "escrevendo" ? l : { estado: "gravando" }));
-    fontes.historico.gravar({
+    const vez = corrida.current;
+    const chave = analise.quando;
+    const novo = {
       entrada: ent.texto, tipo: ent.tipo, rotulo: analise.imovel.titulo, codigo: analise.imovel.codigo,
       uf: mun?.uf ?? analise.imovel.uf, municipio: mun?.nome ?? analise.imovel.municipio,
       areaHa: Math.round(analise.medidas.areaM2) / 10_000, geometria: multiPoligono(analise.imovel.aneis),
-      resumo: f.texto, tom: f.tom, resultado: compactarAnalise(analise),
-    }, registroId).then((id) => {
+      resumo: f.texto, tom: f.tom, resultado: resultadoParaGravar(analise),
+    };
+    // em fila, por análise: o 2º gravar (depois de "tentar de novo") espera o 1º e faz UPDATE na MESMA linha
+    const anterior = registros.current.get(chave) ?? Promise.resolve(null);
+    const p = anterior.catch(() => null).then((id) => fontes.historico.gravar(novo, id));
+    registros.current.set(chave, p);
+    p.then((id) => {
+      carregarHistorico();
+      if (corrida.current !== vez) return; // o usuário já foi para outra área: não mexe na tela dela
       if (id) { setRegistroId(id); setLaudo((l) => (l.estado === "escrevendo" ? l : { estado: "pronto" })); }
       else setLaudo({ estado: "indisponivel", motivo: "O histórico e o laudo chegam com a atualização do banco (0045). A consulta ficou guardada neste navegador." });
-      carregarHistorico();
-    }, (e) => setLaudo({ estado: "indisponivel", motivo: `A consulta não foi guardada (${e instanceof Error ? e.message : String(e)}), então o laudo não pode ser escrito agora.` }));
+    }, (e) => {
+      if (corrida.current !== vez) return;
+      setLaudo({ estado: "indisponivel", motivo: `A consulta não foi guardada (${e instanceof Error ? e.message : String(e)}), então o laudo não pode ser escrito agora.` });
+    });
   }, [analise]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function escreverLaudo(refazer = false) {
     if (!registroId || !analise) return;
+    const vez = corrida.current;
     setLaudo({ estado: "escrevendo" });
     try {
       const l = await fontes.laudo(registroId, refazer);
+      carregarHistorico();
+      if (corrida.current !== vez) return;
       setAnalise((a) => (a ? { ...a, laudo: l } : a));
       setLaudo({ estado: "pronto" });
-      carregarHistorico();
     } catch (e) {
+      if (corrida.current !== vez) return;
       setLaudo({ estado: "pronto" });
       avisar("erro", e instanceof Error ? e.message : String(e));
     }
@@ -206,25 +229,31 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
 
   async function consultar(e: Entrada, original: string) {
     if (e.tipo === "car") {
+      const vez = ++buscaVez.current;
       const entrada: EntradaBusca = { texto: original, tipo: "car", rotulo: `CAR ${e.codigo}` };
       guardarEndereco(e.codigo);
       setBusca({ fase: "buscando", entrada, ponto: null, etapas: [{ nome: "CAR (SICAR)", estado: "carregando" }] });
       try {
         const achados = await fontes.carPorCodigo(e.codigo);
+        if (buscaVez.current !== vez) return;
         mostrar(entrada, achados, achados.length ? {} : { avisos: [`O SICAR não tem o código ${e.codigo} publicado. Confira o código no recibo; imóvel cancelado ou recém-inscrito pode não aparecer na base pública.`] });
       } catch (err) {
+        if (buscaVez.current !== vez) return;
         mostrar(entrada, [], { falhas: [`O SICAR não respondeu (${err instanceof Error ? err.message : String(err)}).`] });
       }
       return;
     }
     if (e.tipo === "sigef") {
+      const vez = ++buscaVez.current;
       const entrada: EntradaBusca = { texto: original, tipo: "sigef", rotulo: `Parcela SIGEF ${e.codigo.slice(0, 8)}…` };
       guardarEndereco(e.codigo);
       setBusca({ fase: "buscando", entrada, ponto: null, etapas: [{ nome: "SIGEF (base do sistema)", estado: "carregando" }] });
       try {
         const im = await fontes.sigefPorCodigo(e.codigo);
+        if (buscaVez.current !== vez) return;
         mostrar(entrada, im ? [im] : [], im ? {} : { avisos: ["A base do sistema não tem esta parcela. Se ela foi certificada há pouco, consulte pela coordenada de um vértice: o INCRA é consultado na hora."] });
       } catch (err) {
+        if (buscaVez.current !== vez) return;
         mostrar(entrada, [], { falhas: [`A busca no SIGEF falhou (${err instanceof Error ? err.message : String(err)}).`] });
       }
       return;
@@ -236,20 +265,25 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   }
 
   async function consultarPonto(lon: number, lat: number, entrada: EntradaBusca, aviso?: string) {
+    const vez = ++buscaVez.current;
     const ponto: LonLat = [lon, lat];
     const etapas: Etapa[] = [{ nome: "Município (IBGE)", estado: "carregando" }, { nome: "CAR (SICAR)", estado: "carregando" }, { nome: "SIGEF (INCRA)", estado: "carregando" }];
-    const marcar = (i: number, estado: Etapa["estado"], t?: string) =>
+    const marcar = (i: number, estado: Etapa["estado"], t?: string) => {
+      if (buscaVez.current !== vez) return; // etapa de uma busca velha não pinta a nova
       setBusca((b) => (b.fase === "buscando" ? { ...b, etapas: b.etapas.map((x, j) => (j === i ? { ...x, estado, texto: t } : x)) } : b));
+    };
     setBusca({ fase: "buscando", entrada, ponto, etapas });
     setSelId(null); setAnalise(null); corrida.current++;
     let municipio: Municipio | null = null;
     try { municipio = await fontes.municipio(lon, lat); marcar(0, "ok", municipio ? `${municipio.nome}/${municipio.uf}` : "fora de município"); }
     catch { marcar(0, "falhou", "não respondeu"); }
+    if (buscaVez.current !== vez) return;
     const uf = municipio?.uf ?? null;
     const [car, sig] = await Promise.allSettled([
       fontes.carNoPonto(lon, lat, uf).then((x) => { marcar(1, "ok", x.length ? `${x.length} imóvel(is)` : "nenhum imóvel"); return x; }, (e) => { marcar(1, "falhou", "não respondeu"); throw e; }),
       fontes.sigefNoPonto(lon, lat, uf).then((x) => { marcar(2, "ok", x.imoveis.length ? `${x.imoveis.length} parcela(s)` : "nenhuma parcela"); return x; }, (e) => { marcar(2, "falhou", "não respondeu"); throw e; }),
     ]);
+    if (buscaVez.current !== vez) return; // o usuário já pediu outra coisa (GPS, exemplo, outro ponto)
     const achados: ImovelEncontrado[] = [];
     const falhas: string[] = [];
     const avisos: string[] = aviso ? [aviso] : [];
@@ -275,6 +309,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
       const t = await textoDoArquivo(f.name, await f.arrayBuffer());
       const { imovel, avisos } = areaDoArquivo(f.name, t);
       setTexto("");
+      buscaVez.current++;
       mostrar({ texto: f.name, tipo: "arquivo", rotulo: imovel.titulo }, [imovel], { avisos });
     } catch (e) {
       avisar("erro", `Não deu para ler ${f.name}: ${e instanceof Error ? e.message : String(e)}`);
@@ -282,12 +317,13 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   }
 
   function concluirDesenho() {
-    if (!desenho || desenho.length < 3) return;
+    if (!desenho || desenho.length < 3 || autointersecta(desenho)) return;
     const im: ImovelEncontrado = {
       id: `desenho:${Date.now()}`, fonte: "desenho", codigo: null, titulo: "Área desenhada", aneis: [desenho], poligonos: [[desenho]], furos: 0,
       areaDeclaradaHa: null, municipio: null, uf: null, atualizacao: null, situacao: `${desenho.length} vértices marcados no mapa`, detalhes: [],
     };
     const ha = medir([desenho]).areaM2 / 10_000;
+    buscaVez.current++;
     mostrar({ texto: "desenho no mapa", tipo: "desenho", rotulo: "Área desenhada" }, [im],
       ha > 100_000 ? { avisos: [`Área de ${fmtAreaCurta(ha * 10_000)}: grande demais para um imóvel. Aproxime o mapa e desenhe pela divisa — algumas bases cortam a resposta em áreas assim.`] } : {});
   }
@@ -299,6 +335,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
       areaDeclaradaHa: null, municipio: null, uf: null, atualizacao: null, situacao: "Círculo de 5 ha em volta do ponto consultado", detalhes: [],
     };
     const ent = busca.fase === "resultado" ? busca.entrada : { texto: descreverPonto(ponto[0], ponto[1]), tipo: "coordenada" as TipoEntrada, rotulo: im.titulo };
+    buscaVez.current++;
     mostrar(ent, [im], { ponto, municipio: busca.fase === "resultado" ? busca.municipio : null });
   }
 
@@ -340,16 +377,19 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
       ...(base ?? { id: `hist:${r.id}`, fonte: r.tipo === "car" ? "car" : r.tipo === "sigef" ? "sigef" : "arquivo", codigo: r.codigo, titulo: r.rotulo, furos: 0, areaDeclaradaHa: null, municipio: r.municipio, uf: r.uf, atualizacao: null, situacao: null, detalhes: [] }),
       aneis, poligonos: aneis.map((a) => [a]),
     } as ImovelEncontrado;
-    corrida.current++;
+    corrida.current++; buscaVez.current++;
     setTexto(r.tipo === "car" || r.tipo === "coordenada" || r.tipo === "sigef" ? r.entrada : "");
     setBusca({ fase: "resultado", entrada: { texto: r.entrada, tipo: r.tipo, rotulo: r.rotulo }, imoveis: [im], ponto: null, falhas: [], avisos: [], municipio: null });
     setSelId(im.id);
     setDesenho(null);
     if (r.resultado) {
       const res = r.resultado;
-      gravadoEm.current = `${res.quando}|${CHAVES_FONTES.map((k) => res[k].estado).join(",")}`;
-      setAnalise({ ...res, imovel: im, laudo: r.laudo });
       const local = r.id.startsWith("local-");
+      // consulta guardada antes do para_laudo (sem laudo ainda): regrava ao abrir, e o laudo fica disponível
+      const semParaLaudo = !local && !r.laudo && !("para_laudo" in res);
+      gravadoEm.current = semParaLaudo ? null : `${res.quando}|${CHAVES_FONTES.map((k) => res[k].estado).join(",")}`;
+      registros.current.set(res.quando, Promise.resolve(local ? null : r.id));
+      setAnalise({ ...res, imovel: im, laudo: r.laudo });
       setRegistroId(local ? null : r.id);
       setLaudo(local ? { estado: "indisponivel", motivo: "Consulta guardada só neste navegador: o laudo precisa da atualização do banco (0045)." } : { estado: "pronto" });
       tarefasRef.current = null;
@@ -467,8 +507,11 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     mapa.camadas.some((c) => c.tipo === ("focos" as TipoRestricao)) ? { cor: "#DC2626", rotulo: "Foco de queimada", ponto: true } : null,
   ].filter(Boolean) as { cor: string; rotulo: string; ponto?: boolean }[];
 
+  // gravata-borboleta: lados que se cruzam dão uma área sem sentido — não deixa fechar
+  const cruzamento = desenho && desenho.length >= 4 ? autointersecta(desenho) : null;
   const dicaMapa = desenho
-    ? desenho.length < 3 ? `Clique no mapa para marcar os vértices (${desenho.length} de pelo menos 3)` : "Continue marcando ou feche a área"
+    ? desenho.length < 3 ? `Clique no mapa para marcar os vértices (${desenho.length} de pelo menos 3)`
+      : cruzamento ? "Os lados se cruzam: desfaça o último vértice" : "Continue marcando ou feche a área"
     : imoveis.length > 1 && !sel ? "Clique num imóvel para analisar" : "Clique no mapa para consultar um ponto";
 
   // ------------------------------------------------------------- arrastar arquivo
@@ -537,10 +580,13 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
           )}
           {desenho && (
             <div className="cm-desenho" role="toolbar" aria-label="Desenho da área">
-              <span className="cm-conta">{desenho.length} {desenho.length === 1 ? "vértice" : "vértices"}{desenho.length >= 3 ? ` · ${fmtAreaCurta(medir([desenho]).areaM2)}` : ""}</span>
-              <button type="button" disabled={!desenho.length} onClick={() => setDesenho(desenho.slice(0, -1))}>Desfazer</button>
+              {cruzamento
+                ? <span className="cm-conta cruza" role="alert" title={`No desenho, ${textoCruzamento(cruzamento, desenho.length)} (os vértices são P1, P2… no mapa).`}>Os lados se cruzam: desfaça o último vértice</span>
+                : <span className="cm-conta">{desenho.length} {desenho.length === 1 ? "vértice" : "vértices"}{desenho.length >= 3 ? ` · ${fmtAreaCurta(medir([desenho]).areaM2)}` : ""}</span>}
+              <button type="button" className={cruzamento ? "principal" : ""} disabled={!desenho.length} onClick={() => setDesenho(desenho.slice(0, -1))}>Desfazer</button>
               <button type="button" onClick={() => setDesenho(null)}>Cancelar</button>
-              <button type="button" className="principal" disabled={desenho.length < 3} onClick={concluirDesenho}>Fechar a área</button>
+              <button type="button" className={cruzamento ? "" : "principal"} disabled={desenho.length < 3 || !!cruzamento} onClick={concluirDesenho}
+                title={cruzamento ? "Os lados se cruzam: a área não teria sentido" : undefined}>Fechar a área</button>
             </div>
           )}
         </div>
@@ -664,10 +710,11 @@ function CartaoImovel({ im, ativo, onClick, varios }: { im: ImovelEncontrado; at
       <span className={`cr-titulo${im.fonte === "car" ? " mono" : ""}`}>
         {im.fonte === "car" ? im.codigo : im.titulo}
         {im.codigo && (
-          <span role="button" tabIndex={0} className="cr-copiar" onClick={(e) => { e.stopPropagation(); void navigator.clipboard?.writeText(im.codigo!).then(() => { setCopiado(true); setTimeout(() => setCopiado(false), 1400); }); }}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void navigator.clipboard?.writeText(im.codigo!); } }}>
+          <button type="button" className="cr-copiar" aria-label={`Copiar o código ${im.codigo}`}
+            onClick={(e) => { e.stopPropagation(); void navigator.clipboard?.writeText(im.codigo!).then(() => { setCopiado(true); setTimeout(() => setCopiado(false), 1400); }); }}
+            onKeyDown={(e) => e.stopPropagation()}>
             {copiado ? "copiado ✓" : "copiar"}
-          </span>
+          </button>
         )}
       </span>
       <span className="cr-area">
@@ -679,5 +726,11 @@ function CartaoImovel({ im, ativo, onClick, varios }: { im: ImovelEncontrado; at
     </>
   );
   if (!varios) return <div className="cr-imovel ativo">{conteudo}</div>;
-  return <button type="button" role="option" aria-selected={ativo} className={`cr-imovel${ativo ? " ativo" : ""}`} onClick={onClick}>{conteudo}</button>;
+  // div (não <button>): o cartão tem botões dentro (copiar, a dica "?"), e botão dentro de botão é HTML inválido
+  return (
+    <div role="option" tabIndex={0} aria-selected={ativo} className={`cr-imovel clicavel${ativo ? " ativo" : ""}`} onClick={onClick}
+      onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onClick(); } }}>
+      {conteudo}
+    </div>
+  );
 }

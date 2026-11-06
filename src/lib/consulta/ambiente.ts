@@ -42,7 +42,7 @@ export interface Clima {
   chuva30dMm: number;
   tempMediaC: number | null;
   /** chuva por mês (AAAA-MM), do mais antigo ao mais recente */
-  meses: { mes: string; chuvaMm: number }[];
+  meses: { mes: string; chuvaMm: number; /** o mês tem 27 dias ou mais de dados (os das pontas da janela, não) */ inteiro?: boolean }[];
   maisChuvoso: { mes: string; chuvaMm: number } | null;
   maisSeco: { mes: string; chuvaMm: number } | null;
   /** altitude do ponto no modelo, m */
@@ -67,9 +67,11 @@ export function lerClima(j: { elevation?: number; daily?: { time?: string[]; pre
   const soma = (xs: number[]) => xs.reduce((s, v) => s + v, 0);
   const porMes = new Map<string, number>();
   for (const x of dias) porMes.set(x.d.slice(0, 7), (porMes.get(x.d.slice(0, 7)) ?? 0) + (x.p as number));
-  const meses = [...porMes.entries()].map(([mes, chuvaMm]) => ({ mes, chuvaMm: Math.round(chuvaMm * 10) / 10 }));
-  // mês cortado nas pontas (começo/fim do período) não vale para "mais seco"
-  const inteiros = meses.filter((m) => dias.filter((x) => x.d.startsWith(m.mes)).length >= 27);
+  // mês cortado nas pontas (começo/fim do período) não vale para "mais seco" nem entra nas barras
+  const meses = [...porMes.entries()].map(([mes, chuvaMm]) => ({
+    mes, chuvaMm: Math.round(chuvaMm * 10) / 10, inteiro: dias.filter((x) => x.d.startsWith(mes)).length >= 27,
+  }));
+  const inteiros = meses.filter((m) => m.inteiro);
   const temps = dias.map((x) => x.t).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
   const ordenados = [...inteiros].sort((a, b) => b.chuvaMm - a.chuvaMm);
   return {

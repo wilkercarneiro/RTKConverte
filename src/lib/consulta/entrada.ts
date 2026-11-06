@@ -78,13 +78,21 @@ function parDecimal(a: number, b: number): { lon: number; lat: number; aviso?: s
 /** Grau decimal com hemisfério opcional: "-12.4, -41.2", "12,4 S; 41,2 W", "S 12.4 O 41.2". */
 function lerDecimal(t: string): { lon: number; lat: number; aviso?: string } | null {
   if (/[°º'′"″]/.test(t)) return null;
-  const s = t.replace(/\s+e\s+/g, " ").replace(/\b(lat(itude)?|lon(gitude)?|lng)\b\s*[:=]?/gi, " ");
-  // números com ponto ou vírgula decimal (a vírgula entre números com espaço depois é separador)
-  const toks = [...s.matchAll(/([NSEWOL])?\s*(-?\d+(?:[.,]\d+)?)\s*([NSEWOL](?![a-z]))?/gi)];
+  const s = t
+    // a altitude do GPS/da planilha não é coordenada: "alt 500", "altitude: 512,3 m", "elev 500"
+    .replace(/\b(alt(itude)?|elev(a[cç][aã]o)?|h)\b\s*[:=]?\s*-?\d+(?:[.,]\d+)?\s*m?\b/gi, " ")
+    .replace(/\s+e\s+/g, " ").replace(/\b(lat(itude)?|lon(gitude)?|lng)\b\s*[:=]?/gi, " ");
+  // o hemisfério vem ANTES ("S12.4 W41.2") ou DEPOIS ("12.4 S 41.2 W") dos dois números: lê de um jeito
+  // só, senão a letra do segundo número vira sufixo do primeiro
+  const prefixo = /^\s*[NSEWOL](?![a-z])/i.test(s);
+  const re = prefixo
+    ? /(?<![a-z])([NSEWOL])?\s*(-?\d+(?:[.,]\d+)?)/gi
+    : /()(-?\d+(?:[.,]\d+)?)\s*([NSEWOL](?![a-z]))?/gi;
+  const toks = [...s.matchAll(re)];
   if (toks.length !== 2) return null;
   const val = toks.map((m) => {
     const v = num(m[2]);
-    const h = (m[1] ?? m[3] ?? "").toUpperCase();
+    const h = (m[1] || m[3] || "").toUpperCase();
     return { v: h === "S" || h === "W" || h === "O" ? -Math.abs(v) : h ? Math.abs(v) : v, h };
   });
   // só número inteiro "grande" não é grau (UTM)
@@ -140,8 +148,11 @@ function lerGms(t: string): { lon: number; lat: number; aviso?: string } | null 
 
 /** UTM: E de 6 dígitos, N de 7 e o fuso (18 a 25, com ou sem a letra da banda). */
 function lerUtm(t: string): Entrada | null {
-  // "8.628.000" → "8628000" (só com dois ou mais grupos: "260.000" pode ser decimal)
-  const s = t.replace(/\d{1,3}(?:\.\d{3}){2,}/g, (m) => m.replace(/\./g, ""));
+  // formato brasileiro com ponto de milhar e vírgula decimal: "8.628.000,00" e "260.000,00" → "8628000.00"
+  // e "8.628.000" → "8628000" (sem a vírgula, só com dois ou mais grupos: "260.000" pode ser decimal)
+  const s = t
+    .replace(/\b\d{1,3}(?:\.\d{3})+,\d+/g, (m) => m.replace(/\./g, "").replace(",", "."))
+    .replace(/\d{1,3}(?:\.\d{3}){2,}/g, (m) => m.replace(/\./g, ""));
   const nums = [...s.matchAll(/\d+(?:[.,]\d+)?/g)].map((m) => ({ txt: m[0], v: num(m[0]), i: m.index ?? 0 }));
   const e = nums.find((x) => x.v >= 100_000 && x.v < 1_000_000);
   const n = nums.find((x) => x.v >= 1_000_000 && x.v <= 10_000_000);
@@ -216,6 +227,10 @@ export function interpretarEntrada(texto: string): Entrada {
     return { tipo: "invalida", motivo: "Parece um código do CAR, mas está incompleto: são a UF, os 7 dígitos do município e 32 letras/números (ex.: BA-2919306-4185CFD2…)." };
   }
   if (UUID.test(t)) return { tipo: "sigef", codigo: t.toLowerCase(), descricao: "Código de parcela do SIGEF" };
+  // UTM antes do SNCR: "260000 8628000" (E e N sem o fuso, como vem da planilha de campo) tem 13 dígitos
+  // sem os espaços, igual ao código do SNCR — e é muito mais comum
+  const utm = lerUtm(t);
+  if (utm) return utm;
   const semEspaco = t.replace(/[\s.\-/]/g, "");
   if (/^\d{13}$/.test(semEspaco) || /^\d{3}\.?\d{3}\.?\d{3}\.?\d{3}-?\d$/.test(t)) {
     return { tipo: "invalida", motivo: "Código do SNCR/CCIR: ainda não há base pública aberta para buscar por ele. Use o código do CAR, uma coordenada ou envie o arquivo do imóvel." };
@@ -223,8 +238,6 @@ export function interpretarEntrada(texto: string): Entrada {
   if (/matr[ií]cula/i.test(t)) {
     return { tipo: "invalida", motivo: "A matrícula só é consultada no cartório (ONR, pago). Use o código do CAR, uma coordenada ou envie o arquivo do imóvel." };
   }
-  const utm = lerUtm(t);
-  if (utm) return utm;
   const gms = lerGms(t);
   if (gms) return { tipo: "coordenada", ...gms, origem: "gms", descricao: `Coordenada em GMS → ${descreverPonto(gms.lon, gms.lat)}` };
   const dec = lerDecimal(t);

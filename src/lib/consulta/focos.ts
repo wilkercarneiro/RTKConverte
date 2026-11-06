@@ -21,6 +21,8 @@ export interface FocosDoImovel {
   referenciaDentro: number;
   referenciaPerto: number;
   ultimo: string | null;
+  /** o INPE tinha mais focos na região do que a consulta trouxe: os de dentro podem ter ficado de fora */
+  cortada?: boolean;
 }
 
 /** A caixa e a data de 12 meses atrás que a tela manda para a função. */
@@ -29,7 +31,7 @@ export function pedidoFocos(aneis: LonLat[][], agora = new Date(), raioM = RAIO_
   return { caixa: caixaComMargem(aneis, raioM + 150), desde };
 }
 
-export function classificarFocos(r: { todos: Foco[]; referencia: Foco[] }, aneis: LonLat[][], desde: string, raioM = RAIO_FOCOS_M): FocosDoImovel {
+export function classificarFocos(r: { todos: Foco[]; referencia: Foco[]; cortada?: boolean }, aneis: LonLat[][], desde: string, raioM = RAIO_FOCOS_M): FocosDoImovel {
   const fuso = fusoDaArea(aneis);
   const medir = (fs: Foco[]) => fs.map((f) => ({ ...f, distanciaM: distanciaAoImovelM([f.lon, f.lat], aneis, fuso) })).filter((f) => f.distanciaM <= raioM);
   const todos = medir(r.todos), ref = medir(r.referencia);
@@ -39,6 +41,7 @@ export function classificarFocos(r: { todos: Foco[]; referencia: Foco[] }, aneis
     referenciaDentro: ref.filter((f) => f.distanciaM === 0).length,
     referenciaPerto: ref.filter((f) => f.distanciaM > 0).length,
     ultimo: todos.map((f) => f.quando).sort().pop() ?? null,
+    cortada: !!r.cortada,
   };
 }
 
@@ -46,6 +49,13 @@ const dataBr = (iso: string) => iso.slice(0, 10).split("-").reverse().join("/");
 
 /** A frase do cartão: "Nenhum foco nos últimos 12 meses" / "3 focos dentro do imóvel · 7 a até 1 km · último em 21/06/2026". */
 export function textoFocos(f: FocosDoImovel): string {
+  if (f.cortada) {
+    // resposta incompleta: "nenhum foco dentro" não pode ser afirmado
+    const achados = f.dentro.length
+      ? `${f.dentro.length} ${f.dentro.length === 1 ? "foco" : "focos"} dentro do imóvel (pode haver mais)`
+      : "Não deu para confirmar se houve foco dentro do imóvel";
+    return `${achados} · o INPE tem mais focos nesta região do que a consulta consegue trazer de uma vez`;
+  }
   if (!f.dentro.length && !f.perto.length) return `Nenhum foco de queimada nos últimos 12 meses, dentro do imóvel nem a até ${f.raioM / 1000} km`;
   const p: string[] = [];
   if (f.dentro.length) p.push(`${f.dentro.length} ${f.dentro.length === 1 ? "foco" : "focos"} dentro do imóvel`);

@@ -5,14 +5,20 @@
 --    Guarda o que foi consultado (texto digitado, rótulo, área, geometria),
 --    a frase do resultado e o resultado compacto (JSON, sem as geometrias
 --    grandes das bases públicas). É dela que a função analise-imovel tira os
---    dados do laudo: a IA só vê o que está aqui.
+--    dados do laudo: a IA só vê resultado.para_laudo (os fatos com a fonte).
+--    Se a tela regrava resultado/geometria de uma consulta que já tem laudo
+--    (ex.: "tentar de novo" numa fonte), o laudo é apagado no mesmo UPDATE:
+--    o laudo guardado sempre corresponde aos dados guardados.
 --    RLS por escritório (escritorio_atual(), como servicos/clientes da 0020):
 --    cada empresa só vê, grava e apaga as próprias. O escritório é preenchido
 --    no INSERT (preencher_escritorio, 0020) e o autor é sempre quem insere.
 --    As colunas do laudo (laudo, laudo_modelo, laudo_em, laudo_custo_usd) só a
 --    service_role grava — a tela não escreve laudo nem "zera" o limite.
--- 2. Limite de laudos: a função conta laudo_em nas últimas 24 h da empresa
---    (índice parcial abaixo); padrão 20 por dia (LAUDOS_LIMITE_DIARIO).
+-- 2. Limite de laudos: a função conta as chamadas aprovadas em chamadas_ia
+--    (nome_arquivo = 'laudo:consulta-imovel') nas últimas 24 h da empresa —
+--    tabela que a tela não insere, altera nem apaga (0035). Assim refazer o
+--    laudo conta de novo, e apagar a consulta não devolve laudo à conta.
+--    Padrão 20 por dia (LAUDOS_LIMITE_DIARIO).
 -- 3. sigef_por_codigo(p_codigo): a parcela certificada pelo código (UUID do
 --    SIGEF), com a mesma visibilidade da sigef_consultar (0030): a oficial e o
 --    CSV da própria empresa; a oculta, nunca.
@@ -54,7 +60,9 @@ drop trigger if exists analises_imovel_escritorio on analises_imovel;
 create trigger analises_imovel_escritorio before insert on analises_imovel
   for each row execute function preencher_escritorio();
 
--- o autor é quem insere (não dá para gravar em nome de outro membro)
+-- o autor é quem insere (não dá para gravar em nome de outro membro); e o
+-- laudo não sobrevive a dados trocados pela tela depois dele (o laudo "por IA"
+-- não sai com um resultado diferente daquele com que foi escrito)
 create or replace function analises_imovel_autor()
 returns trigger
 language plpgsql
@@ -63,6 +71,14 @@ as $$
 begin
   if tg_op = 'INSERT' and auth.uid() is not null then
     new.user_id := auth.uid();
+  end if;
+  if tg_op = 'UPDATE' and current_user in ('authenticated', 'anon')
+     and old.laudo is not null
+     and (new.resultado is distinct from old.resultado or new.geometria is distinct from old.geometria) then
+    new.laudo := null;
+    new.laudo_modelo := null;
+    new.laudo_em := null;
+    new.laudo_custo_usd := null;
   end if;
   new.updated_at := now();
   return new;

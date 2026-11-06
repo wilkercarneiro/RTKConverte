@@ -71,15 +71,22 @@ export interface FontesConsulta {
 // Histórico: banco (0045); sem a tabela ainda, só neste navegador
 // ---------------------------------------------------------------------------
 
-const CHAVE_LOCAL = "vertces.consultas";
 const tabelaAusente = (e: { code?: string; message?: string } | null) =>
   !!e && (e.code === "42P01" || e.code === "PGRST205" || /could not find the table|relation .* does not exist/i.test(e.message ?? ""));
 
-function lerLocal(): RegistroConsulta[] {
-  try { return JSON.parse(localStorage.getItem(CHAVE_LOCAL) ?? "[]") as RegistroConsulta[]; } catch { return []; }
+/** A chave do histórico local é por pessoa: duas contas no mesmo navegador não veem as consultas uma da outra. */
+async function chaveLocal(): Promise<string> {
+  let quem = "anonimo";
+  try { quem = (await supabase.auth.getSession()).data.session?.user.id ?? "anonimo"; } catch { /* sem sessão */ }
+  return `vertces.consultas:${quem}`;
 }
-function gravarLocal(xs: RegistroConsulta[]) {
-  try { localStorage.setItem(CHAVE_LOCAL, JSON.stringify(xs.slice(0, 12))); } catch { /* cheio ou bloqueado: segue sem histórico */ }
+async function lerLocal(): Promise<RegistroConsulta[]> {
+  const chave = await chaveLocal();
+  try { return JSON.parse(localStorage.getItem(chave) ?? "[]") as RegistroConsulta[]; } catch { return []; }
+}
+async function gravarLocal(xs: RegistroConsulta[]) {
+  const chave = await chaveLocal();
+  try { localStorage.setItem(chave, JSON.stringify(xs.slice(0, 12))); } catch { /* cheio ou bloqueado: segue sem histórico */ }
 }
 
 const COLUNAS = "id, created_at, entrada, tipo_entrada, rotulo, codigo, uf, municipio, area_ha, geometria, resumo, tom, resultado, laudo, laudo_modelo, laudo_em";
@@ -108,20 +115,27 @@ const historicoReal: FontesConsulta["historico"] = {
       uf: r.uf && /^[A-Z]{2}$/.test(r.uf) ? r.uf : null, municipio: r.municipio?.slice(0, 120) ?? null,
       area_ha: r.areaHa, geometria: r.geometria, resumo: r.resumo?.slice(0, 600) ?? null, tom: r.tom === "neutro" ? null : r.tom, resultado: r.resultado ?? {},
     };
-    const q = id
-      ? supabase.from("analises_imovel").update({ rotulo: linha.rotulo, resumo: linha.resumo, tom: linha.tom, resultado: linha.resultado, area_ha: linha.area_ha, uf: linha.uf, municipio: linha.municipio }).eq("id", id).select("id").maybeSingle()
-      : supabase.from("analises_imovel").insert(linha).select("id").single();
-    const { data, error } = await q;
-    if (tabelaAusente(error) || erroColunaAusente(error, "resultado")) {
+    const local = async () => {
       const novo: RegistroConsulta = { ...r, id: id ?? `local-${Date.now()}`, criado: new Date().toISOString(), laudo: null };
-      gravarLocal([novo, ...lerLocal().filter((x) => x.id !== novo.id)]);
+      await gravarLocal([novo, ...(await lerLocal()).filter((x) => x.id !== novo.id)]);
       return null;
+    };
+    if (id) {
+      const { data, error } = await supabase.from("analises_imovel")
+        .update({ rotulo: linha.rotulo, resumo: linha.resumo, tom: linha.tom, resultado: linha.resultado, area_ha: linha.area_ha, uf: linha.uf, municipio: linha.municipio })
+        .eq("id", id).select("id").maybeSingle();
+      if (tabelaAusente(error) || erroColunaAusente(error, "resultado")) return local();
+      if (error) throw new Error(error.message);
+      if (data) return (data as { id: string }).id;
+      // a linha sumiu (alguém tirou da lista enquanto a análise rodava): grava de novo, com id novo
     }
+    const { data, error } = await supabase.from("analises_imovel").insert(linha).select("id").single();
+    if (tabelaAusente(error) || erroColunaAusente(error, "resultado")) return local();
     if (error) throw new Error(error.message);
-    return (data as { id: string } | null)?.id ?? id ?? null;
+    return (data as { id: string } | null)?.id ?? null;
   },
   async apagar(id) {
-    if (id.startsWith("local-")) { gravarLocal(lerLocal().filter((x) => x.id !== id)); return; }
+    if (id.startsWith("local-")) { await gravarLocal((await lerLocal()).filter((x) => x.id !== id)); return; }
     const { error } = await supabase.from("analises_imovel").delete().eq("id", id);
     if (error && !tabelaAusente(error)) throw new Error(error.message);
   },
@@ -152,14 +166,27 @@ export const fontesReais: FontesConsulta = {
   async carNoPonto(lon, lat, uf) {
     const ufs = uf ? [uf] : ufsCandidatas(lon, lat);
     if (!ufs.length) return [];
-    const listas = await Promise.all(ufs.map((u) => carNoPonto(lon, lat, u)));
-    return listas.flat();
+    // sem a UF, pergunta a todas as candidatas: uma fora do ar não derruba a consulta das outras
+    const r = await Promise.allSettled(ufs.map((u) => carNoPonto(lon, lat, u)));
+    if (r.every((x) => x.status === "rejected")) throw (r[0] as PromiseRejectedResult).reason;
+    return r.flatMap((x) => (x.status === "fulfilled" ? x.value : []));
   },
   async carNaArea(aneis, uf, proprio) {
-    const u = uf ?? (proprio?.slice(0, 2) || null);
-    if (!u) throw new Error("falta a UF para buscar o CAR");
-    const { imoveis, cortada } = await carNaCaixa(caixaComMargem(aneis, 100), u);
-    return { itens: carSobreAArea(aneis, imoveis, proprio), cortada };
+    const caixa = caixaComMargem(aneis, 100);
+    // a área pode cruzar a divisa de estados: procura em todas as UFs que a caixa toca (o SICAR é um
+    // servidor por UF), começando pela do imóvel
+    const [o, s, l, n] = caixa;
+    const ufs = [...new Set([uf, proprio?.slice(0, 2) || null, ...[[o, s], [l, s], [l, n], [o, n], [(o + l) / 2, (s + n) / 2]].flatMap(([x, y]) => ufsCandidatas(x, y))]
+      .filter((u): u is string => !!u && /^[A-Z]{2}$/.test(u)))];
+    if (!ufs.length) throw new Error("falta a UF para buscar o CAR");
+    const r = await Promise.allSettled(ufs.map((u) => carNaCaixa(caixa, u)));
+    if (r.every((x) => x.status === "rejected")) throw (r[0] as PromiseRejectedResult).reason;
+    const imoveis = r.flatMap((x) => (x.status === "fulfilled" ? x.value.imoveis : []));
+    const falhas = r.flatMap((x, i) => (x.status === "rejected" ? [`CAR de ${ufs[i]} (SICAR) não respondeu`] : []));
+    const cortada = r.some((x) => x.status === "fulfilled" && x.value.cortada);
+    // o mesmo imóvel pode vir de duas UFs vizinhas (caixas que se sobrepõem): fica uma vez
+    const unicos = [...new Map(imoveis.map((im) => [im.codigo ?? im.id, im])).values()];
+    return { itens: carSobreAArea(aneis, unicos, proprio), cortada, ...(falhas.length ? { falhas } : {}) };
   },
   async sigefPorCodigo(codigo) {
     const { data, error } = await supabase.rpc("sigef_por_codigo", { p_codigo: codigo });
@@ -185,7 +212,7 @@ export const fontesReais: FontesConsulta = {
   bioma: (lon, lat) => consultarBioma(lon, lat),
   async focos(aneis) {
     const { caixa, desde } = pedidoFocos(aneis);
-    const r = await chamarFuncao<{ todos: Foco[]; referencia: Foco[] }>("analise-imovel", { acao: "focos", caixa, desde });
+    const r = await chamarFuncao<{ todos: Foco[]; referencia: Foco[]; cortada?: boolean }>("analise-imovel", { acao: "focos", caixa, desde });
     return classificarFocos(r, aneis, desde);
   },
   async laudo(analiseId, refazer) {

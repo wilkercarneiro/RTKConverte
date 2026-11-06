@@ -62,12 +62,49 @@ select pg_temp.ok(pg_temp.afetadas($$update analises_imovel set resumo = 'intrus
 reset role;
 
 -- ---------------------------------------------------------------- a função (service_role) grava o laudo
+-- o limite é a MESMA conta da função analise-imovel: chamadas aprovadas em chamadas_ia nas últimas 24 h
+create function pg_temp.laudos_hoje(esc uuid) returns bigint language sql as $$
+  select count(*) from chamadas_ia where escritorio_id = esc and nome_arquivo = 'laudo:consulta-imovel' and aprovada
+     and created_at > now() - interval '24 hours'
+$$;
 set role service_role;
+insert into chamadas_ia (escritorio_id, user_id, nome_arquivo, modelo, tentativa, aprovada, motivo)
+values (:'esc_a', :'ua', 'laudo:consulta-imovel', 'teste', 1, true, 'laudo');
 update analises_imovel set laudo = '1. Identificação', laudo_em = now(), laudo_modelo = 'teste' where rotulo = 'CAR BA-2919306';
 reset role;
-select pg_temp.ok((select count(*) from analises_imovel where escritorio_id = :'esc_a' and laudo_em > now() - interval '1 day') = 1,
-                  'o laudo conta no limite diário da empresa');
+select pg_temp.ok(pg_temp.laudos_hoje(:'esc_a') = 1, 'o laudo conta no limite diário da empresa');
 select pg_temp.ok((select user_id from analises_imovel where rotulo = 'CAR BA-2919306') = :'ua', 'gravar o laudo não troca o autor');
+
+-- refazer o laudo na mesma consulta (a mesma linha é sobrescrita) conta de novo
+set role service_role;
+insert into chamadas_ia (escritorio_id, user_id, nome_arquivo, modelo, tentativa, aprovada, motivo)
+values (:'esc_a', :'ua', 'laudo:consulta-imovel', 'teste', 1, true, 'laudo');
+update analises_imovel set laudo = '1. Identificação (refeito)', laudo_em = now() where rotulo = 'CAR BA-2919306';
+reset role;
+select pg_temp.ok(pg_temp.laudos_hoje(:'esc_a') = 2, 'refazer o laudo conta de novo no limite');
+select pg_temp.ok((select count(*) from analises_imovel where escritorio_id = :'esc_a' and laudo_em is not null) = 1,
+                  '(a contagem antiga, por laudo_em, daria 1: era burlável)');
+
+-- ---------------------------------------------------------------- a tela não mexe no limite nem no laudo
+select set_config('request.jwt.claim.sub', :'ua', false);
+set role authenticated;
+select pg_temp.ok(pg_temp.afetadas($$update analises_imovel set resumo = 'Nenhuma restrição', tom = 'ok' where rotulo = 'CAR BA-2919306'$$) = 1,
+                  'a tela muda o resumo');
+reset role;
+select pg_temp.ok((select laudo from analises_imovel where rotulo = 'CAR BA-2919306') is not null, 'mudar só o resumo mantém o laudo');
+set role authenticated;
+select pg_temp.ok(pg_temp.afetadas($$update analises_imovel set resultado = '{"imovel": {}, "forjado": true}' where rotulo = 'CAR BA-2919306'$$) = 1,
+                  'a tela regrava o resultado (tentar de novo uma fonte)');
+reset role;
+select pg_temp.ok((select laudo is null and laudo_em is null and laudo_modelo is null from analises_imovel where rotulo = 'CAR BA-2919306'),
+                  'resultado trocado pela tela apaga o laudo: o laudo nunca sai com dados diferentes dos dele');
+set role authenticated;
+select pg_temp.ok(pg_temp.recusa($$delete from chamadas_ia$$) and pg_temp.recusa($$update chamadas_ia set aprovada = false$$)
+                  and pg_temp.recusa($$insert into chamadas_ia (escritorio_id, modelo, tentativa) values (escritorio_atual(), 'x', 1)$$),
+                  'a tela não apaga, altera nem insere em chamadas_ia');
+select pg_temp.ok(pg_temp.afetadas($$delete from analises_imovel where rotulo = 'CAR BA-2919306'$$) = 1, 'a empresa apaga a própria consulta');
+reset role;
+select pg_temp.ok(pg_temp.laudos_hoje(:'esc_a') = 2, 'apagar a consulta com laudo NÃO devolve o laudo para a conta');
 
 -- anônimo não vê nada
 set role anon;

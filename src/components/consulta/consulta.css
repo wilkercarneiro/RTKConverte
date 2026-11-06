@@ -69,6 +69,7 @@ button.cb-alt.ativo:hover:not(:disabled) { background: var(--floresta); color: #
   background: var(--card); border-radius: 14px; padding: 8px 10px; box-shadow: var(--anel-alto); white-space: nowrap; }
 .cm-desenho .cm-conta { font-size: 12.5px; color: var(--texto-2); padding: 0 6px; font-variant-numeric: tabular-nums; }
 .cm-desenho button { height: 34px; }
+.cm-desenho .cm-conta.cruza { color: var(--perigo, #DC2626); font-weight: 600; }
 
 /* ---------- cartões do painel ---------- */
 .cp-bloco { background: var(--card); border-radius: var(--raio-cartao); box-shadow: var(--anel); padding: 16px 18px; display: grid; gap: 12px; min-width: 0; }
@@ -99,13 +100,16 @@ button.ci-exemplo code { background: none; padding: 0; font-size: 11.5px; }
 .cb-fontes li { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--texto-2); }
 .cb-fontes li.ok { color: var(--texto); }
 .cb-fontes li.falhou { color: var(--alerta-escuro); }
+.ca-cartao p.falhou { color: var(--alerta-escuro); }
 .cb-fontes .marca { width: 18px; text-align: center; font-weight: 700; }
 .cb-fontes li.ok .marca { color: var(--primaria); }
 
 /* resultados */
 .cr-lista { display: grid; gap: 8px; }
 .cr-imovel { display: grid; gap: 4px; padding: 11px 13px; border-radius: 13px; border: 1.5px solid var(--borda); background: var(--card); cursor: pointer; text-align: left; height: auto; font-weight: 400; color: var(--texto); }
-button.cr-imovel:hover:not(:disabled) { border-color: var(--primaria); color: var(--texto); }
+.cr-imovel.clicavel:hover { border-color: var(--primaria); color: var(--texto); }
+.cr-imovel.clicavel:focus-visible { outline: 2px solid var(--primaria); outline-offset: 2px; }
+div.cr-imovel:not(.clicavel) { cursor: default; }
 .cr-imovel.ativo { border-color: var(--floresta); box-shadow: 0 0 0 3px var(--primaria-clara); }
 .cr-topo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .cr-selo { font: 700 10.5px var(--mono); text-transform: uppercase; letter-spacing: .03em; padding: 3px 7px; border-radius: 6px; white-space: nowrap; }
@@ -230,7 +234,7 @@ button.ca-tentar { height: 26px; padding: 0 10px; font-size: 12px; }
   .ci-recente { grid-template-columns: 10px minmax(0, 1fr) auto; }
   .ci-recente .ci-quando { display: none; }
 }
-.cr-copiar { margin-left: 8px; font: 500 12px var(--fonte); color: var(--primaria); cursor: pointer; }
-.cr-copiar:hover { text-decoration: underline; color: var(--floresta); }
+button.cr-copiar { margin-left: 8px; font: 500 12px var(--fonte); color: var(--primaria); cursor: pointer; background: none; border: 0; padding: 0; height: auto; min-height: 0; box-shadow: none; vertical-align: baseline; }
+button.cr-copiar:hover:not(:disabled) { text-decoration: underline; color: var(--floresta); background: none; }
 /* laboratório: faixa que diz de onde vêm os dados */
 .lab-faixa { font-size: 12.5px; color: var(--alerta-escuro); background: var(--alerta-claro); border-radius: 10px; padding: 7px 12px; }

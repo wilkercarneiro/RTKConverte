@@ -3,7 +3,7 @@
 import JSZip from "jszip";
 import { lerKml } from "../car/kml.ts";
 import { lerGpx } from "../car/gpx.ts";
-import { contornosExternos, semFecho } from "./geometria.ts";
+import { autointersecta, contornosExternos, semFecho, textoCruzamento } from "./geometria.ts";
 import type { LonLat } from "./geometria.ts";
 import type { ImovelEncontrado } from "./tipos.ts";
 
@@ -71,6 +71,13 @@ export function areaDoArquivo(nome: string, texto: string): { imovel: ImovelEnco
   }
   const { aneis, furos } = contornosExternos(poligonos);
   if (!aneis.length) throw new Error("O arquivo não tem um polígono com 3 vértices ou mais.");
+  // lados que se cruzam: a área sai sem sentido (e iria assim para a análise, o PDF e o serviço de CAR)
+  for (const [i, a] of aneis.entries()) {
+    const par = autointersecta(a);
+    if (par) {
+      throw new Error(`os lados do polígono${aneis.length > 1 ? ` (parte ${i + 1})` : ""} se cruzam — ${textoCruzamento(par, a.length)}. A área calculada não teria sentido. Corrija a ordem dos vértices no arquivo (no Google Earth ou no CAD) e envie de novo.`);
+    }
+  }
   if (furos) avisos.push(`${furos} furo(s) no polígono: a área usa o contorno externo.`);
   return {
     imovel: {

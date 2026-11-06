@@ -56,6 +56,38 @@ export function medir(aneis: LonLat[][]): Medidas {
   return { fuso, areaM2: areaUtmM2(utm), perimetroM, vertices: v.reduce((s, a) => s + a.length, 0), partes: v.length };
 }
 
+/**
+ * Os lados do anel se cruzam? (gravata-borboleta: 4 cliques fora de ordem, ou um KML com vértice
+ * trocado — a fórmula de Gauss dá uma área sem sentido). Testa cada par de lados NÃO vizinhos, em
+ * UTM. Devolve os índices dos dois lados que se cruzam (o lado i vai do vértice i ao i+1), ou null.
+ */
+export function autointersecta(anel: LonLat[], fuso?: number): [number, number] | null {
+  const a = semFecho(anel);
+  const n = a.length;
+  if (n < 4) return null;
+  const f = fuso ?? fusoDaArea([a]);
+  const u = a.map((p) => paraUtm(p, f));
+  const lado = (p: Pt, q: Pt, r: Pt) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  // tolerância de 1 mm² na orientação: vértice em cima de um lado conta como toque, não cruzamento
+  const sinal = (v: number) => (Math.abs(v) < 1e-6 ? 0 : v > 0 ? 1 : -1);
+  for (let i = 0; i < n; i++) {
+    const p1 = u[i], p2 = u[(i + 1) % n];
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue; // o último lado encosta no primeiro
+      const q1 = u[j], q2 = u[(j + 1) % n];
+      const d1 = sinal(lado(q1, q2, p1)), d2 = sinal(lado(q1, q2, p2)), d3 = sinal(lado(p1, p2, q1)), d4 = sinal(lado(p1, p2, q2));
+      if (d1 * d2 < 0 && d3 * d4 < 0) return [i, j];
+    }
+  }
+  return null;
+}
+
+/** "lado V2–V3 com o lado V4–V1" (os vértices numerados como na tela, a partir de 1). */
+export function textoCruzamento(par: [number, number], n: number): string {
+  const v = (i: number) => `V${(i % n) + 1}`;
+  return `o lado ${v(par[0])}–${v(par[0] + 1)} cruza o lado ${v(par[1])}–${v(par[1] + 1)}`;
+}
+
 /** Ponto dentro de polígonos [externo, ...furos] (em grau: para "dentro/fora" a projeção não muda nada). */
 export function pontoEmPoligonos(p: LonLat, poligonos: LonLat[][][]): boolean {
   return poligonos.some((pol) => {

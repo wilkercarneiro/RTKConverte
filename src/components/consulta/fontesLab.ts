@@ -32,7 +32,7 @@ interface Fixture {
 export const FIXTURE = JSON.parse(fixtureBruta) as Fixture;
 export const AGORA = new Date(FIXTURE.agora);
 
-export type EstadoLab = "normal" | "carregando" | "analisando" | "fora" | "erro" | "semhistorico" | "historico-erro";
+export type EstadoLab = "normal" | "carregando" | "analisando" | "fora" | "erro" | "semhistorico" | "historico-erro" | "cortada";
 
 const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nunca = <T>() => new Promise<T>(() => {});
@@ -107,6 +107,8 @@ export function fontesDoLaboratorio(estado: EstadoLab): FontesConsulta {
   const fora = estado === "fora";
   const travar = estado === "carregando";
   const analisando = estado === "analisando";
+  // região em queimada / muito CAR: o INPE e o SICAR respondem, mas cortados (nunca vira "nenhum foco" verde)
+  const cortada = estado === "cortada";
   const foraDoAr = async () => { await espera(900); throw new Error("servidor fora do ar ou inacessível"); };
   const registros: RegistroConsulta[] = [];
   let seq = 0;
@@ -130,7 +132,7 @@ export function fontesDoLaboratorio(estado: EstadoLab): FontesConsulta {
       const todos = await cars();
       const cx = caixaComMargem(aneis, 100);
       const naCaixa = todos.filter((x) => x.aneis.flat().some((p) => p[0] >= cx[0] && p[0] <= cx[2] && p[1] >= cx[1] && p[1] <= cx[3]));
-      return { itens: carSobreAArea(aneis, naCaixa, proprio), cortada: false };
+      return { itens: carSobreAArea(aneis, naCaixa, proprio), cortada, ...(cortada ? { falhas: ["CAR de MG (SICAR) não respondeu"] } : {}) };
     },
     async sigefPorCodigo(codigo) {
       if (travar) return nunca();
@@ -176,7 +178,7 @@ export function fontesDoLaboratorio(estado: EstadoLab): FontesConsulta {
       if (analisando) return nunca();
       if (fora) { await espera(1200); throw new Error("o INPE não respondeu a tempo"); }
       await espera(900);
-      return classificarFocos(FIXTURE.focos, aneis, new Date(AGORA.getTime() - 365 * 864e5).toISOString().slice(0, 10));
+      return classificarFocos({ ...FIXTURE.focos, cortada }, aneis, new Date(AGORA.getTime() - 365 * 864e5).toISOString().slice(0, 10));
     },
     async laudo(id) {
       await espera(1800);

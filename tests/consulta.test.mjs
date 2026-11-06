@@ -15,16 +15,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { interpretarEntrada, normalizarCodigoCar } from "../src/lib/consulta/entrada.ts";
 import { carNoPonto, carNaCaixa, carSobreAArea, imovelDoCar, ufsCandidatas } from "../src/lib/consulta/car.ts";
-import { consultarClima, consultarSolo, consultarBioma, consultarMunicipio, lerSolo, reservaLegalDe } from "../src/lib/consulta/ambiente.ts";
+import { consultarClima, consultarSolo, consultarBioma, consultarMunicipio, lerClima, lerSolo, reservaLegalDe } from "../src/lib/consulta/ambiente.ts";
 import { classificarFocos, pedidoFocos, textoFocos } from "../src/lib/consulta/focos.ts";
 import { areaDoArquivo } from "../src/lib/consulta/arquivo.ts";
-import { caixaComMargem, centroDe, medir } from "../src/lib/consulta/geometria.ts";
-import { analiseVazia, compactarAnalise, dadosParaLaudo, fraseDaAnalise } from "../src/lib/consulta/analise.ts";
+import { autointersecta, caixaComMargem, centroDe, medir, textoCruzamento } from "../src/lib/consulta/geometria.ts";
+import { analiseVazia, compactarAnalise, dadosParaLaudo, fraseDaAnalise, resultadoParaGravar } from "../src/lib/consulta/analise.ts";
 import { dadosDoPdf, resumoEmTexto, restricoesVazias } from "../src/lib/consulta/relatorio.ts";
 import { sigefDaArea } from "../src/lib/consulta/sigef_imovel.ts";
 import { consultarRestricoes } from "../src/lib/restricoes.ts";
 import { gerarPdfRestricoes } from "../src/lib/restricoes_pdf.ts";
-import { HOSTS_PONTE, camadasFocos, lerFocos, limparLaudo, montarPedidoLaudo, urlFocos, validarCaixa, validarDesde, escreverLaudo } from "../supabase/functions/analise-imovel/logica.ts";
+import { FOCOS_POR_PAGINA, HOSTS_PONTE, PAGINAS_FOCOS, buscarFocos, camadasFocos, dadosDoLaudo, lerFocos, limparLaudo, montarPedidoLaudo, paginaCheia, urlFocos, validarCaixa, validarDesde, escreverLaudo } from "../supabase/functions/analise-imovel/logica.ts";
 
 const FX = JSON.parse(fs.readFileSync(new URL("./fixtures/consulta/lencois.json", import.meta.url), "utf8"));
 const AGORA = new Date(FX.agora);
@@ -42,7 +42,9 @@ test("entrada: código do CAR, com e sem os pontos do recibo", () => {
 });
 
 test("entrada: decimal, GMS e UTM caem no mesmo ponto", () => {
-  for (const t of ["-12.40, -41.20", "-12,40 -41,20", "-12,40, -41,20", "12.4 S 41.2 W", "12°24'00\"S 41°12'00\"W", "S 12°24' W 41°12'", "-12 24 00 -41 12 00", "12°24'S e 41°12'O", "-41.2 -12.4"]) {
+  for (const t of ["-12.40, -41.20", "-12,40 -41,20", "-12,40, -41,20", "12.4 S 41.2 W", "12°24'00\"S 41°12'00\"W", "S 12°24' W 41°12'", "-12 24 00 -41 12 00", "12°24'S e 41°12'O", "-41.2 -12.4",
+    // hemisfério antes do número (a letra do 2º não vira sufixo do 1º) e a altitude do GPS no fim
+    "S12.4 W41.2", "S 12.4, W 41.2", "-12.4 -41.2 alt 500", "-12,4; -41,2; altitude: 512,3 m"]) {
     const e = interpretarEntrada(t);
     assert.equal(e.tipo, "coordenada", t);
     assert.ok(Math.abs(e.lat + 12.4) < 1e-9 && Math.abs(e.lon + 41.2) < 1e-9, `${t} → ${e.lat},${e.lon}`);
@@ -51,6 +53,15 @@ test("entrada: decimal, GMS e UTM caem no mesmo ponto", () => {
   assert.equal(u.tipo, "coordenada"); assert.ok(Math.abs(u.lat + 12.402) < 1e-3 && Math.abs(u.lon + 41.2075) < 1e-3);
   assert.equal(interpretarEntrada("E 260000 N 8628000 fuso 24").tipo, "coordenada");
   assert.equal(interpretarEntrada("260000.50 8628000.25").tipo, "utm_sem_fuso", "sem fuso pergunta, não chuta");
+  // E e N sem fuso, como vêm da planilha de campo: 13 dígitos sem os espaços, mas NÃO é SNCR
+  const sf = interpretarEntrada("260000 8628000");
+  assert.equal(sf.tipo, "utm_sem_fuso", JSON.stringify(sf));
+  assert.equal(sf.e, 260000); assert.equal(sf.n, 8628000);
+  // formato brasileiro: ponto de milhar e vírgula decimal
+  const br = interpretarEntrada("260.000,00 8.628.000,00 24S");
+  assert.equal(br.tipo, "coordenada", JSON.stringify(br));
+  assert.ok(Math.abs(br.lat - u.lat) < 1e-9 && Math.abs(br.lon - u.lon) < 1e-9);
+  assert.equal(interpretarEntrada("E 260.000,50 N 8.628.000,25").tipo, "utm_sem_fuso");
   assert.match(interpretarEntrada("E 260000 N 8628000 fuso 18").aviso ?? "", /fora do Brasil/, "fuso errado joga para fora do país");
 });
 
@@ -60,6 +71,7 @@ test("entrada: Google Maps (marcador vale mais que a vista), link curto e SNCR e
   assert.equal(interpretarEntrada("https://www.google.com/maps?q=-12.4,-41.2").lon, -41.2);
   assert.match(interpretarEntrada("https://maps.app.goo.gl/abc123").motivo, /Link curto/);
   assert.match(interpretarEntrada("123.456.789.012-3").motivo, /SNCR/);
+  assert.match(interpretarEntrada("1234567890123").motivo, /SNCR/);
   assert.equal(interpretarEntrada("a1b2c3d4-0000-4000-8000-1234567890ab").tipo, "sigef");
   assert.equal(interpretarEntrada("").tipo, "vazio");
 });
@@ -199,7 +211,21 @@ test("frase: fonte fora do ar nunca vira 'nenhuma restrição' verde", async () 
 
 test("laudo: só os dados coletados, com a fonte e a natureza de cada uma", async () => {
   const a = await analiseDeLencois({ falhar: ["solo"] });
-  const d = dadosParaLaudo(a);
+  // o MESMO caminho da produção: a tela grava resultadoParaGravar(analise) em analises_imovel.resultado
+  // (passando pelo JSON do banco), e a função manda à IA só dadosDoLaudo(linha.resultado)
+  const gravado = JSON.parse(JSON.stringify(resultadoParaGravar(a)));
+  const d = dadosDoLaudo(gravado);
+  assert.ok(d, "o resultado gravado leva o para_laudo");
+  assert.deepEqual(d, JSON.parse(JSON.stringify(dadosParaLaudo(a))), "o para_laudo é o dadosParaLaudo da análise");
+  assert.equal(dadosDoLaudo(compactarAnalise(a)), null, "consulta antiga (sem para_laudo) é recusada, não vai inteira para a IA");
+  assert.equal(dadosDoLaudo(null), null);
+  const ped0 = montarPedidoLaudo(d);
+  assert.ok(!/"sobreposta"|"coordinates"/.test(ped0.entrada), "nenhuma geometria vai para a IA");
+  assert.ok(ped0.entrada.length < 12_000, `pedido de ${ped0.entrada.length} caracteres`);
+  // toda seção com dado diz a fonte
+  for (const k of ["identificacao", "restricoes", "sigef", "car_sobre_a_area", "focos_de_queimada", "clima", "bioma", "municipio"]) {
+    assert.ok(/"fonte(_geral)?":"/.test(JSON.stringify(d[k])), `${k} sem fonte`);
+  }
   assert.equal(d.identificacao.natureza, "CAR — declarado pelo proprietário");
   assert.equal(d.identificacao.area_calculada_ha, "743,8531");
   assert.deepEqual(d.solo, { situacao: "não respondeu", motivo: "servidor fora do ar ou inacessível" });
@@ -248,6 +274,73 @@ test("arquivo: KML, GeoJSON (em grau) e GeoJSON em UTM recusado", () => {
   assert.equal(gj.imovel.furos, 1);
   assert.throws(() => areaDoArquivo("u.geojson", JSON.stringify({ type: "Polygon", coordinates: [[[260000, 8628000], [261000, 8628000], [261000, 8629000], [260000, 8628000]]] })), /metros/);
   assert.throws(() => areaDoArquivo("x.geojson", "{oops"), /GeoJSON válido/);
+  // gravata-borboleta no arquivo: recusada, dizendo onde cruza
+  const gravata = JSON.stringify({ type: "Polygon", coordinates: [[[-41.2, -12.4], [-41.19, -12.41], [-41.19, -12.4], [-41.2, -12.41], [-41.2, -12.4]]] });
+  assert.throws(() => areaDoArquivo("g.geojson", gravata), /se cruzam — o lado V1–V2 cruza o lado V3–V4/);
+});
+
+test("desenho: lados que se cruzam (gravata-borboleta) são detectados; o quadrado não", () => {
+  const quadrado = [[-41.2, -12.4], [-41.19, -12.4], [-41.19, -12.41], [-41.2, -12.41]];
+  const gravata = [[-41.2, -12.4], [-41.19, -12.41], [-41.19, -12.4], [-41.2, -12.41]];
+  assert.equal(autointersecta(quadrado), null);
+  assert.deepEqual(autointersecta(gravata), [0, 2]);
+  assert.match(textoCruzamento([0, 2], 4), /V1–V2 cruza o lado V3–V4/);
+  // a área da gravata não tem sentido (é por isso que não deixa fechar)
+  assert.ok(medir([gravata]).areaM2 < medir([quadrado]).areaM2 / 1000, `${medir([gravata]).areaM2} × ${medir([quadrado]).areaM2}`);
+  // triângulo, côncavo em "L" e vértice encostado no lado: não é cruzamento
+  assert.equal(autointersecta(quadrado.slice(0, 3)), null);
+  assert.equal(autointersecta([[-41.2, -12.4], [-41.18, -12.4], [-41.18, -12.405], [-41.19, -12.405], [-41.19, -12.41], [-41.2, -12.41]]), null);
+  assert.equal(autointersecta([...quadrado, [-41.2, -12.4]]), null, "anel com o fecho repetido");
+  // 5 vértices com o último clique voltando por dentro
+  assert.ok(autointersecta([...quadrado, [-41.185, -12.405]]));
+});
+
+test("focos: resposta cortada do INPE nunca vira 'nenhum foco' verde", async () => {
+  const [im] = await carNoPonto(-41.2, -12.4, "BA", { fetch: replay });
+  const f = classificarFocos({ todos: [], referencia: [], cortada: true }, im.aneis, "2025-11-06");
+  assert.equal(f.cortada, true);
+  assert.match(textoFocos(f), /^Não deu para confirmar se houve foco dentro do imóvel/);
+  const a = await analiseDeLencois();
+  a.focos = { estado: "ok", dados: f };
+  const fr = fraseDaAnalise(a);
+  assert.ok(fr.pendentes.some((x) => /focos de queimada \(INPE\) com resposta incompleta/.test(x)));
+  assert.match(dadosParaLaudo(a).focos_de_queimada.resposta_incompleta, /não afirmar/);
+  // e o CAR cortado em 50, ou uma UF da divisa fora do ar, também vão para os pendentes
+  a.car = { estado: "ok", dados: { ...a.car.dados, cortada: true, falhas: ["CAR de MG (SICAR) não respondeu"] } };
+  const fc = fraseDaAnalise(a);
+  assert.ok(fc.pendentes.some((x) => /CAR com resposta cortada/.test(x)));
+  assert.ok(fc.pendentes.includes("CAR de MG (SICAR) não respondeu"));
+});
+
+test("ponte do INPE: pagina e marca 'cortada' quando a última página ainda vem cheia", async () => {
+  const foco = (i) => ({ type: "Feature", geometry: { type: "Point", coordinates: [-41.2 + i * 1e-4, -12.4] }, properties: { data_hora_gmt: "2026-08-01T10:00:00Z", satelite: "S" } });
+  const pagina = (n, total) => JSON.stringify({ type: "FeatureCollection", numberMatched: total, features: Array.from({ length: n }, (_, i) => foco(i)) });
+  const urls = [];
+  // camada do ano atual com 2.500 focos (2 páginas), as outras vazias
+  const f1 = async (u) => {
+    urls.push(String(u));
+    const q = new URL(String(u)).searchParams;
+    if (!/ano_atual/.test(q.get("typeNames"))) return new Response(pagina(0, 0));
+    const ini = Number(q.get("startIndex") ?? 0);
+    return new Response(ini === 0 ? pagina(FOCOS_POR_PAGINA, 2500) : pagina(500, 2500));
+  };
+  const r1 = await buscarFocos([-41.3, -12.5, -41.1, -12.3], "2025-11-06", f1, AGORA);
+  assert.equal(r1.cortada, false, "2.500 cabem em 2 páginas");
+  assert.ok(urls.some((u) => /startIndex=2000/.test(u)));
+  // região em queimada: toda página volta cheia → cortada
+  const f2 = async (u) => new Response(/ano_atual/.test(new URL(String(u)).searchParams.get("typeNames")) ? pagina(FOCOS_POR_PAGINA, 99_999) : pagina(0, 0));
+  const r2 = await buscarFocos([-41.3, -12.5, -41.1, -12.3], "2025-11-06", f2, AGORA);
+  assert.equal(r2.cortada, true);
+  assert.equal(paginaCheia({ features: [1, 2] }, 2), true, "sem numberMatched, página cheia = pode haver mais");
+  assert.equal(paginaCheia({ features: [1], numberMatched: 1 }, 2), false);
+  assert.ok(PAGINAS_FOCOS >= 2);
+});
+
+test("clima: as barras não mostram o mês cortado da ponta como se fosse seco", async () => {
+  const dias = [];
+  for (let d = new Date("2025-11-27T00:00:00Z"); d <= new Date("2026-02-03T00:00:00Z"); d = new Date(d.getTime() + 864e5)) dias.push(d.toISOString().slice(0, 10));
+  const c = lerClima({ daily: { time: dias, precipitation_sum: dias.map(() => 5), temperature_2m_mean: dias.map(() => 25) } });
+  assert.deepEqual(c.meses.map((m) => [m.mes, m.inteiro]), [["2025-11", false], ["2025-12", true], ["2026-01", true], ["2026-02", false]]);
 });
 
 test("só os hosts das bases públicas foram chamados", () => {

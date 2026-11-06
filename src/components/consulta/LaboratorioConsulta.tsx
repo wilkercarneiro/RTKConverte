@@ -9,6 +9,7 @@
 //   #/lab/consulta?estado=analisando&q=…    a análise não termina (cartões carregando)
 //   #/lab/consulta?estado=fora&q=…          SICAR/SoilGrids/INPE fora do ar
 //   #/lab/consulta?estado=erro&q=BA-…       o SICAR não responde a busca pelo código
+//   #/lab/consulta?estado=cortada&q=…       INPE e SICAR com resposta cortada (e uma UF da divisa fora)
 //   #/lab/consulta?q=-12.43,-41.25          ponto sem imóvel (nada encontrado)
 //   #/lab/consulta?estado=historico-erro    as consultas recentes não carregam
 //   sem-casca: a tela pura, sem o menu do sistema

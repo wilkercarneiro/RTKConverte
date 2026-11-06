@@ -50,12 +50,18 @@ export function camadasFocos(desde: string, agora = new Date(), conjunto: "todos
   return out;
 }
 
-export function urlFocos(camada: string, caixa: Caixa, max = 2000): string {
+/** Feições por página do WFS e páginas por camada: até 6.000 focos por camada; passou disso, a resposta é "cortada". */
+export const FOCOS_POR_PAGINA = 2000;
+export const PAGINAS_FOCOS = 3;
+
+export function urlFocos(camada: string, caixa: Caixa, max = FOCOS_POR_PAGINA, inicio = 0): string {
   if (!/^dados_abertos:focos_(ano_atual|\d{4})_br_(todosats|satref)$/.test(camada)) throw new Error("Camada de focos fora da lista.");
+  if (!Number.isInteger(inicio) || inicio < 0 || !Number.isInteger(max) || max < 1 || max > FOCOS_POR_PAGINA) throw new Error("Página de focos inválida.");
   const [o, s, l, n] = caixa;
   // WFS 2.0 com o CRS em URN: a caixa vai em lat,lon (a ordem do EPSG:4326)
   const q = new URLSearchParams({
     service: "WFS", version: "2.0.0", request: "GetFeature", typeNames: camada, outputFormat: "application/json", count: String(max),
+    ...(inicio ? { startIndex: String(inicio) } : {}),
     srsName: "urn:ogc:def:crs:EPSG::4326", bbox: `${s},${o},${n},${l},urn:ogc:def:crs:EPSG::4326`,
     propertyName: "data_hora_gmt,satelite,municipio,frp,geometria",
   });
@@ -92,37 +98,85 @@ export function lerFocos(j: unknown, desde: string): Foco[] {
   return out.sort((a, b) => (a.quando < b.quando ? 1 : -1));
 }
 
-/** Busca os focos em todas as camadas do período (as duas listas: todos os satélites e o de referência). */
-export async function buscarFocos(caixa: Caixa, desde: string, f: typeof fetch, agora = new Date(), timeoutMs = 25_000): Promise<{ todos: Foco[]; referencia: Foco[] }> {
+/** A página veio cheia (ou o servidor diz que há mais do que mandou)? Então pode haver mais focos. */
+export function paginaCheia(j: unknown, max: number, inicio = 0): boolean {
+  const fc = j as { features?: unknown[]; numberMatched?: unknown; totalFeatures?: unknown };
+  const n = Array.isArray(fc?.features) ? fc.features.length : 0;
+  // numberMatched "unknown" (GeoServer sem contagem) não é número: cai no "página cheia"
+  const total = Number(fc?.numberMatched ?? fc?.totalFeatures);
+  if (Number.isFinite(total) && total >= 0) return total > inicio + n;
+  return n >= max;
+}
+
+/**
+ * Busca os focos em todas as camadas do período (as duas listas: todos os satélites e o de
+ * referência), página por página (até PAGINAS_FOCOS). O GeoServer não devolve por proximidade:
+ * se a última página ainda veio cheia, os focos de dentro do imóvel podem ter ficado de fora —
+ * aí `cortada` = true, e a tela trata como fonte incompleta (nunca como "nenhum foco").
+ */
+export async function buscarFocos(caixa: Caixa, desde: string, f: typeof fetch, agora = new Date(), timeoutMs = 25_000): Promise<{ todos: Foco[]; referencia: Foco[]; cortada: boolean }> {
+  let cortada = false;
+  const pagina = async (camada: string, inicio: number) => {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const r = await f(urlFocos(camada, caixa, FOCOS_POR_PAGINA, inicio), { signal: ctl.signal });
+      if (!r.ok) throw new Error(`INPE respondeu ${r.status}`);
+      const texto = await r.text();
+      let j: unknown;
+      try { j = JSON.parse(texto); } catch { throw new Error("INPE: resposta inesperada"); }
+      return { focos: lerFocos(j, desde), cheia: paginaCheia(j, FOCOS_POR_PAGINA, inicio) };
+    } catch (e) {
+      throw new Error(ctl.signal.aborted ? "o INPE não respondeu a tempo" : e instanceof Error ? e.message : String(e));
+    } finally {
+      clearTimeout(t);
+    }
+  };
   const pegar = async (conjunto: "todosats" | "satref") => {
     const listas = await Promise.all(camadasFocos(desde, agora, conjunto).map(async (camada) => {
-      const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), timeoutMs);
-      try {
-        const r = await f(urlFocos(camada, caixa), { signal: ctl.signal });
-        if (!r.ok) throw new Error(`INPE respondeu ${r.status}`);
-        const texto = await r.text();
-        let j: unknown;
-        try { j = JSON.parse(texto); } catch { throw new Error("INPE: resposta inesperada"); }
-        return lerFocos(j, desde);
-      } catch (e) {
-        throw new Error(ctl.signal.aborted ? "o INPE não respondeu a tempo" : e instanceof Error ? e.message : String(e));
-      } finally {
-        clearTimeout(t);
+      const out: Foco[] = [];
+      for (let p = 0; p < PAGINAS_FOCOS; p++) {
+        const { focos, cheia } = await pagina(camada, p * FOCOS_POR_PAGINA);
+        out.push(...focos);
+        if (!cheia) return out;
       }
+      cortada = true;
+      return out;
     }));
-    return listas.flat().sort((a, b) => (a.quando < b.quando ? 1 : -1));
+    // sem repetir entre páginas (mesmo lugar, hora e satélite)
+    const vistos = new Set<string>();
+    return listas.flat().filter((x) => {
+      const k = `${x.lon.toFixed(5)}|${x.lat.toFixed(5)}|${x.quando.slice(0, 16)}|${x.satelite ?? ""}`;
+      if (vistos.has(k)) return false;
+      vistos.add(k);
+      return true;
+    }).sort((a, b) => (a.quando < b.quando ? 1 : -1));
   };
   const [todos, referencia] = await Promise.all([pegar("todosats"), pegar("satref")]);
-  return { todos, referencia };
+  return { todos, referencia, cortada };
 }
 
 // ---------------------------------------------------------------------------
 // Laudo por IA
 // ---------------------------------------------------------------------------
 
-/** Laudos por empresa em 24 h (contados em analises_imovel.laudo_em). */
+/** Laudos por empresa em 24 h (contados em chamadas_ia, nome_arquivo = NOME_CHAMADA_LAUDO, aprovada). */
 export const LIMITE_LAUDOS_DIA = 20;
+export const NOME_CHAMADA_LAUDO = "laudo:consulta-imovel";
+
+/**
+ * O que vai para a IA: `resultado.para_laudo` (dadosParaLaudo, src/lib/consulta/analise.ts), os fatos
+ * com a fonte e a natureza de cada um. null = consulta gravada antes disso (sem para_laudo): a função
+ * recusa em vez de mandar o resultado inteiro (geometria, listas de focos) e torcer pela fonte.
+ */
+export function dadosDoLaudo(resultado: unknown): Record<string, unknown> | null {
+  const p = (resultado as { para_laudo?: unknown } | null)?.para_laudo;
+  if (!p || typeof p !== "object" || Array.isArray(p)) return null;
+  const d = p as Record<string, unknown>;
+  // o mínimo para um parecer: a identificação e a leitura do sistema
+  if (!d.identificacao || !d.leitura_do_sistema) return null;
+  return d;
+}
 export const MODELO_LAUDO_PADRAO = "gpt-6.1-terra";
 export const MAX_DADOS_LAUDO = 60_000;
 

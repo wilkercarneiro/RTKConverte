@@ -38,7 +38,13 @@ export interface CarSobreposto {
   sobreposta: GeoJSON.MultiPolygon | null;
 }
 
-export interface CarDaArea { itens: CarSobreposto[]; cortada: boolean }
+export interface CarDaArea {
+  itens: CarSobreposto[];
+  /** alguma UF devolveu mais de 50 imóveis: pode haver outros CAR sobre a área */
+  cortada: boolean;
+  /** UFs que não responderam (área na divisa de estados): "CAR de MG não respondeu" */
+  falhas?: string[];
+}
 
 export interface Laudo { texto: string; modelo: string | null; quando: string }
 
@@ -142,11 +148,14 @@ export function fraseDaAnalise(a: Analise): Frase {
     for (const c of a.car.dados.itens.filter((x) => x.areaM2 > 0)) {
       avisos.push(`Sobrepõe outro CAR declarado (${c.codigo.slice(0, 17)}…) em ${fmtAreaCurta(c.areaM2)}`);
     }
+    if (a.car.dados.cortada) pendentes.push("CAR com resposta cortada (mais de 50 imóveis declarados por perto)");
+    for (const t of a.car.dados.falhas ?? []) pendentes.push(t);
   } else if (a.car.estado === "falhou") pendentes.push(`${NOME_FONTE.car} não respondeu`);
 
   if (pronta(a.focos)) {
     const f = a.focos.dados;
-    if (f.dentro.length) avisos.push(`${f.dentro.length} ${f.dentro.length === 1 ? "foco de queimada" : "focos de queimada"} dentro do imóvel em 12 meses`);
+    if (f.dentro.length) avisos.push(`${f.dentro.length} ${f.dentro.length === 1 ? "foco de queimada" : "focos de queimada"} dentro do imóvel em 12 meses${f.cortada ? " (pode haver mais)" : ""}`);
+    if (f.cortada) pendentes.push("focos de queimada (INPE) com resposta incompleta");
   } else if (a.focos.estado === "falhou") pendentes.push(`${NOME_FONTE.focos} não respondeu`);
 
   const ordenadas = sobre.sort((x, y) => y.area - x.area);
@@ -214,11 +223,13 @@ export function dadosParaLaudo(a: Analise): Record<string, unknown> {
     car_sobre_a_area: resp(a.car, (c) => ({
       fonte: "SICAR", natureza: "declarações de outros imóveis no CAR",
       resposta_cortada: c.cortada,
+      sem_resposta: c.falhas?.length ? c.falhas : undefined,
       sobrepostos: c.itens.filter((x) => x.areaM2 > 0).map((x) => ({ codigo: x.codigo, situacao: x.situacao, area_sobreposta: fmtHa(x.areaM2), percentual_do_imovel: `${fmtNum(x.pct, 2)}%` })),
       vizinhos_a_menos_de_100m: c.itens.filter((x) => x.areaM2 === 0).length,
     })),
     focos_de_queimada: resp(a.focos, (f) => ({
       fonte: "INPE", periodo_desde: f.desde, resumo: textoFocos(f),
+      resposta_incompleta: f.cortada ? "sim — o INPE tem mais focos na região do que a consulta trouxe; não afirmar que não houve foco dentro" : undefined,
       dentro_todos_os_satelites: f.dentro.length, ate_1km_todos_os_satelites: f.perto.length,
       dentro_satelite_referencia: f.referenciaDentro, ate_1km_satelite_referencia: f.referenciaPerto, ultimo: f.ultimo,
     })),
@@ -252,6 +263,17 @@ export function compactarAnalise(a: Analise): Analise {
     ...a, imovel: im, restricoes: fechar(r), sigef: fechar(s), car: fechar(a.car), focos: fechar(a.focos),
     clima: fechar(a.clima), solo: fechar(a.solo), bioma: fechar(a.bioma), municipio: fechar(a.municipio),
   };
+}
+
+/** O que vai para analises_imovel.resultado: a análise compacta (para reabrir) + `para_laudo`, os
+ *  fatos com a fonte e a natureza de cada um (dadosParaLaudo). A função analise-imovel manda à IA
+ *  SÓ o `para_laudo` — nada de geometria nem lista de focos. */
+export type AnaliseGravada = Analise & { para_laudo: Record<string, unknown> };
+
+export function resultadoParaGravar(a: Analise): AnaliseGravada {
+  const c = compactarAnalise(a);
+  const { para_laudo: _velho, ...resto } = c as AnaliseGravada;
+  return { ...resto, para_laudo: dadosParaLaudo(c) };
 }
 
 /** Todas as fontes já responderam (ou falharam)? */

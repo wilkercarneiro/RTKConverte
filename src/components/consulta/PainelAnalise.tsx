@@ -155,7 +155,7 @@ function CartaoCar({ a, onTentar }: { a: Analise; onTentar: () => void }) {
   const sobre = c.dados.itens.filter((x) => x.areaM2 > 0);
   const viz = c.dados.itens.filter((x) => x.areaM2 === 0);
   return (
-    <Cartao titulo="CAR · declarado" dica={dica} tom={sobre.length ? "aviso" : ""} selo={sobre.length ? { texto: `${sobre.length} sobreposto${sobre.length > 1 ? "s" : ""}`, tom: "aviso" } : { texto: "sem sobreposição", tom: "ok" }}>
+    <Cartao titulo="CAR · declarado" dica={dica} tom={sobre.length ? "aviso" : ""} selo={sobre.length ? { texto: `${sobre.length} sobreposto${sobre.length > 1 ? "s" : ""}`, tom: "aviso" } : c.dados.falhas?.length || c.dados.cortada ? { texto: "resposta incompleta", tom: "aviso" } : { texto: "sem sobreposição", tom: "ok" }}>
       {sobre.length > 0 ? (
         <ul>{sobre.slice(0, 4).map((x) => (
           <li key={x.codigo} className="encosta"><span><b className="mono">{x.codigo.slice(0, 17)}…</b> — {fmtAreaCurta(x.areaM2)} ({fmtNum(x.pct, 2)}%)</span><small>{x.situacao}</small></li>
@@ -163,7 +163,8 @@ function CartaoCar({ a, onTentar }: { a: Analise; onTentar: () => void }) {
       ) : <p className="forte">Nenhum outro CAR declarado sobrepõe a área.</p>}
       {sobre.length > 4 && <p>e mais {sobre.length - 4}.</p>}
       {viz.length > 0 && <p>{viz.length} CAR vizinho{viz.length > 1 ? "s" : ""} a até 100 m, sem sobreposição.</p>}
-      {c.dados.cortada && <p>Há mais imóveis declarados por perto do que os conferidos.</p>}
+      {c.dados.cortada && <p>Há mais imóveis declarados por perto do que os conferidos (a consulta traz até 50 por vez).</p>}
+      {(c.dados.falhas ?? []).map((t) => <p key={t} className="falhou">{t} <button type="button" className="link" onClick={onTentar}>tentar de novo</button></p>)}
     </Cartao>
   );
 }
@@ -174,11 +175,11 @@ function CartaoFocos({ a, onTentar }: { a: Analise; onTentar: () => void }) {
   if (f.estado !== "ok") return <Cartao titulo="Queimadas · 12 meses" dica={dica} selo={seloCarregando} falhou={f.estado === "falhou" ? f.motivo : null} onTentar={onTentar}>{carregandoCartao}</Cartao>;
   const d = f.dados;
   return (
-    <Cartao titulo="Queimadas · 12 meses" dica={dica} tom={d.dentro.length ? "aviso" : ""}
-      selo={d.dentro.length ? { texto: `${d.dentro.length} dentro`, tom: "aviso" } : d.perto.length ? { texto: `${d.perto.length} perto`, tom: "" } : { texto: "nenhum", tom: "ok" }}>
+    <Cartao titulo="Queimadas · 12 meses" dica={dica} tom={d.dentro.length || d.cortada ? "aviso" : ""}
+      selo={d.cortada ? { texto: "resposta incompleta", tom: "aviso" } : d.dentro.length ? { texto: `${d.dentro.length} dentro`, tom: "aviso" } : d.perto.length ? { texto: `${d.perto.length} perto`, tom: "" } : { texto: "nenhum", tom: "ok" }}>
       <p className="forte">{textoFocos(d)}</p>
       {(d.dentro.length > 0 || d.perto.length > 0) && (
-        <p>Satélite de referência: {d.referenciaDentro} dentro · {d.referenciaPerto} a até 1 km. {[...d.dentro, ...d.perto].slice(0, 3).map((x) => `${fmtData(x.quando)} (${x.satelite ?? "satélite"}${x.distanciaM > 0 ? `, a ${fmtDist(x.distanciaM)}` : ", dentro"})`).join(" · ")}</p>
+        <p>{d.cortada ? "Achados até aqui: " : `Satélite de referência: ${d.referenciaDentro} dentro · ${d.referenciaPerto} a até 1 km. `}{[...d.dentro, ...d.perto].slice(0, 3).map((x) => `${fmtData(x.quando)} (${x.satelite ?? "satélite"}${x.distanciaM > 0 ? `, a ${fmtDist(x.distanciaM)}` : ", dentro"})`).join(" · ")}</p>
       )}
     </Cartao>
   );
@@ -211,13 +212,15 @@ function CartaoAmbiente({ a, onTentar }: { a: Analise; onTentar: (k: ChaveFonte)
         </Tile>
         <Tile rotulo="Chuva · 12 meses" r={a.clima} onTentar={() => onTentar("clima")} dica="Open-Meteo, reanálise ERA5 (não é estação). A barra de cada mês é a chuva acumulada.">
           {(c) => {
-            const max = Math.max(1, ...c.meses.map((m) => m.chuvaMm));
+            // só os meses inteiros: a janela de 365 dias corta o primeiro e o último, e um mês de 5 dias pareceria seca
+            const meses = c.meses.filter((m) => m.inteiro !== false).slice(-12);
+            const max = Math.max(1, ...meses.map((m) => m.chuvaMm));
             return (
               <>
                 <b>{fmtNum(c.chuva12mMm, 0)} mm</b>
                 <small>{fmtNum(c.chuva30dMm, 0)} mm nos últimos 30 dias{c.tempMediaC != null ? ` · ${fmtNum(c.tempMediaC, 1)} °C de média` : ""}</small>
-                <div className="ca-barras" aria-hidden>{c.meses.slice(-12).map((m) => <i key={m.mes} className={m.chuvaMm < max * 0.15 ? "seco" : ""} style={{ height: `${Math.max(4, (m.chuvaMm / max) * 100)}%` }} title={`${mesCurto(m.mes)}: ${fmtNum(m.chuvaMm, 0)} mm`} />)}</div>
-                <div className="ca-barras-meses" aria-hidden>{c.meses.slice(-12).map((m) => <span key={m.mes}>{mesCurto(m.mes).charAt(0)}</span>)}</div>
+                <div className="ca-barras" aria-hidden>{meses.map((m) => <i key={m.mes} className={m.chuvaMm < max * 0.15 ? "seco" : ""} style={{ height: `${Math.max(4, (m.chuvaMm / max) * 100)}%` }} title={`${mesCurto(m.mes)}: ${fmtNum(m.chuvaMm, 0)} mm`} />)}</div>
+                <div className="ca-barras-meses" aria-hidden>{meses.map((m) => <span key={m.mes}>{mesCurto(m.mes).charAt(0)}</span>)}</div>
               </>
             );
           }}
