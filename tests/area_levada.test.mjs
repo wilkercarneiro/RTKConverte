@@ -17,6 +17,7 @@ import { carNoPonto } from "../src/lib/consulta/car.ts";
 import { fmtHa, maiorAnel, medir } from "../src/lib/consulta/geometria.ts";
 import { calcularCar, projetoNovo } from "../src/lib/car/motor.ts";
 import { textosDaAreaLevada } from "../src/lib/car/area_levada.ts";
+import { imovelDaAreaRecebida, origemParaOCar } from "../src/lib/consulta/levada.ts";
 
 const vert = ([lon, lat], i) => ({ lon, lat, precisao: 3, t: i, modo: "ponto" });
 
@@ -58,4 +59,32 @@ test("área de várias partes → CAR: diz quanto ficou de fora", () => {
   const total = medir([grande, pequena]).areaM2;
   const t = textosDaAreaLevada(grande, calcularCar(projetoNovo("I", grande, [])).area.imovel, { areaOrigemM2: total, partes: 2 });
   assert.match(t.linhaPartes, /^Levada a maior parte: 120,\d\d ha de 125,\d\d ha\. O CAR é um polígono só; a outra parte \([\d,]+ ha\) ficou de fora\.$/);
+});
+
+test("Campo → Consulta → CAR → Voltar → CAR (duas vezes): a frase é a do caminho direto e nada se acumula", () => {
+  const agora = new Date(2026, 10, 6, 15, 0);
+  const m = { ...novaMedicao(new Date(2026, 10, 6, 14, 32)), nome: "Pasto da sede", fechada: true, vertices: CANTOS_EXEMPLO.map(vert) };
+  const direto = areaDaMedicao(m, agora);
+  assert.match(direto.frase, /^Área medida no campo hoje às 14:32 \(GPS do celular, ±3(,0)? m\)$/);
+  // Campo → Consulta
+  let vinda = direto;
+  for (let volta = 0; volta < 3; volta++) {
+    const im = imovelDaAreaRecebida(vinda, "vinda:t");
+    assert.equal(im.fonte, "campo");
+    assert.equal(im.situacao, direto.origem, `volta ${volta}: a linha do cartão não acumula sufixo`);
+    // Consulta → CAR: a mesma origem e a mesma frase do caminho direto
+    const paraCar = { ...vinda, ...origemParaOCar(im), volta: { rotulo: "a Consulta", hash: "#/consulta", reenviar: true } };
+    assert.equal(paraCar.origem, direto.origem);
+    assert.equal(paraCar.frase, direto.frase);
+    assert.doesNotMatch(paraCar.origem, /consultada no Vertces/);
+    // CAR → "← Voltar para a Consulta" (reenviar): manda a mesma área de volta
+    vinda = { ...paraCar, volta: undefined };
+  }
+});
+
+test("a Consulta repassa ao CAR a origem do CAR/SIGEF/arquivo como antes", () => {
+  const base = { id: "x", titulo: "Gleba", aneis: [], poligonos: [], furos: 0, areaDeclaradaHa: null, municipio: null, uf: null, atualizacao: null, detalhes: [] };
+  assert.deepEqual(origemParaOCar({ ...base, fonte: "car", codigo: "BA-1", situacao: "Ativo" }), { origem: "CAR BA-1 (declarado no SICAR, ativo)" });
+  assert.deepEqual(origemParaOCar({ ...base, fonte: "sigef", codigo: "abc", situacao: null }), { origem: "parcela certificada abc (SIGEF)" });
+  assert.deepEqual(origemParaOCar({ ...base, fonte: "desenho", codigo: null, situacao: null }), { origem: "Gleba (Consultar imóvel)" });
 });

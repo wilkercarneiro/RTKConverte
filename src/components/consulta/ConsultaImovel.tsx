@@ -28,6 +28,7 @@ import { fontesQueEsperavamUf, montarTarefas } from "../../lib/consulta/tarefas.
 import type { Tarefas } from "../../lib/consulta/tarefas.ts";
 import type { FontesConsulta, RegistroConsulta, TipoEntrada } from "../../lib/consulta/fontes.ts";
 import type { ImovelEncontrado, Resposta } from "../../lib/consulta/tipos.ts";
+import { imovelDaAreaRecebida, origemParaOCar } from "../../lib/consulta/levada.ts";
 import type { Municipio } from "../../lib/consulta/ambiente.ts";
 import { MapaInterativo } from "../MapaInterativo";
 import type { AlvoClique, InfoClique, PontoMapa } from "../MapaInterativo";
@@ -503,10 +504,8 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     transferirArea({
       nome: im.fonte === "car" ? (mun?.nome ? `Imóvel em ${mun.nome}` : "Imóvel") : im.titulo,
       perimetro: anel, nomes: im.aneis.length === 1 ? im.nomes : undefined,
-      origem: im.fonte === "car" ? `CAR ${im.codigo} (declarado no SICAR${im.situacao ? `, ${im.situacao.toLowerCase()}` : ""})`
-        : im.fonte === "sigef" ? `parcela certificada ${im.codigo} (SIGEF)`
-          // a medição de campo segue dizendo o que é (GPS do celular, a precisão): o CAR mostra isso
-          : im.fonte === "campo" && im.situacao ? `${im.situacao}, consultada no Vertces` : `${im.titulo} (Consultar imóvel)`,
+      // a medição de campo segue com a origem e a frase dela: o CAR diz o mesmo que no caminho direto do Campo
+      ...origemParaOCar(im),
       uf: mun?.uf ?? im.uf ?? null, municipio: mun?.nome ?? im.municipio ?? null,
       // a área que a Consulta mostrou (todas as partes): o CAR diz o que ficou de fora
       areaOrigemM2: medir(im.aneis).areaM2, partes: im.aneis.length,
@@ -603,14 +602,9 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     iniciou.current = true;
     const vinda = pegarAreaTransferida();
     if (vinda) {
-      const campo = /campo/i.test(vinda.origem);
-      const im: ImovelEncontrado = {
-        id: `vinda:${Date.now()}`, fonte: campo ? "campo" : "arquivo", codigo: null, titulo: vinda.nome || "Área recebida",
-        aneis: [vinda.perimetro], poligonos: [[vinda.perimetro]], furos: 0, nomes: vinda.nomes, areaDeclaradaHa: null,
-        municipio: vinda.municipio ?? null, uf: vinda.uf ?? null, atualizacao: null, situacao: vinda.origem, detalhes: [],
-      };
+      const im = imovelDaAreaRecebida(vinda);
       // a origem já vai no selo do cartão (situacao): sem repetir numa linha "Área trazida de"
-      mostrar({ texto: vinda.origem, tipo: campo ? "campo" : "arquivo", rotulo: im.titulo }, [im]);
+      mostrar({ texto: vinda.origem, tipo: im.fonte === "campo" ? "campo" : "arquivo", rotulo: im.titulo }, [im]);
       return;
     }
     const q = inicial ?? new URLSearchParams(location.hash.split("?")[1] ?? "").get("q");
@@ -953,7 +947,7 @@ function CartaoImovel({ im, ativo, onClick, varios }: { im: ImovelEncontrado; at
         )}
       </span>
       <span className="cr-area">
-        <b>{fmtAreaCurta(m.areaM2)}</b>
+        <b>{im.fonte === "campo" ? fmtHa(m.areaM2) : fmtAreaCurta(m.areaM2)}</b>
         <span>calculada{im.areaDeclaradaHa != null ? ` · ${im.fonte === "sigef" ? "certificada" : "declarada"} ${im.areaDeclaradaHa.toLocaleString("pt-BR", { maximumFractionDigits: 4 })} ha` : ""}{dif && <span className="dif"> ({dif})</span>}</span>
         <Dica>Área calculada pelo Vertces em UTM SIRGAS 2000, fuso {m.fuso}S (fórmula de Gauss) — a mesma conta de todo o sistema. {m.vertices} vértices{m.partes > 1 ? ` em ${m.partes} partes` : ""}{im.furos ? `; ${im.furos} furo(s) não entram (vale o contorno externo)` : ""}.</Dica>
       </span>

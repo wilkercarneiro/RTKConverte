@@ -30,6 +30,8 @@ export interface ImovelEncontrado {
   detalhes: string[];
   /** nome de cada vértice, quando a área veio de arquivo de pontos */
   nomes?: (string | null)[];
+  /** veio de outra ferramenta (Medir no campo, arquivo): a origem e a frase como chegaram, repassadas iguais ao CAR */
+  levada?: { origem: string; frase?: string };
   car?: { status: string; statusRotulo: string; condicao: string | null; tipo: string; tipoRotulo: string | null; modulosFiscais: number | null };
 }
 
