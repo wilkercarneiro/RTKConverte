@@ -31,6 +31,7 @@ button.imgdata-botao:hover:not(:disabled) { background: var(--primaria-clara); c
   font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--primaria-escura); background: var(--primaria-clara);
   border-radius: 999px; padding: 2px 8px; white-space: nowrap;
 }
+.imgdata-contagem.erro { color: var(--alerta-escuro); background: var(--alerta-claro); }
 .imgdata-v { font-size: 10px; opacity: .6; }
 .imgdata-girando {
   width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--borda-forte); border-top-color: var(--primaria);
@@ -69,6 +70,9 @@ button.imgdata-link {
   color: var(--primaria-escura); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; cursor: pointer;
 }
 button.imgdata-link:hover:not(:disabled) { background: none; color: var(--floresta); border: 0; }
+a.imgdata-link { font-weight: 700; color: var(--primaria-escura); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+a.imgdata-link:hover { color: var(--floresta); }
+.imgdata-marco.ok button.imgdata-link, .imgdata-marco a.imgdata-link { color: inherit; }
 button.imgdata-tocar {
   flex: none; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; font-size: 12.5px;
   background: var(--floresta); border-color: var(--floresta); color: #fff;
@@ -96,7 +100,7 @@ button.imgdata-item.ativo, button.imgdata-item.ativo:hover:not(:disabled) { back
 .imgdata-mini img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .imgdata-mini.atual { background: linear-gradient(135deg, #2b4a3b, #12201A); }
 .imgdata-item-texto { display: grid; gap: 2px; min-width: 0; }
-.imgdata-item-texto b { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.imgdata-item-texto b { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .imgdata-item-texto small { font-size: 12px; color: var(--texto-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .imgdata-item-texto small.pendente { color: var(--texto-3); font-style: italic; }
 .imgdata-idade { font-size: 11.5px; color: var(--texto-3); white-space: nowrap; }

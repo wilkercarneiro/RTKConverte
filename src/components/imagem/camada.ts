@@ -122,6 +122,7 @@ export async function capturarComCarimbo(mapa: MapaGl, linhas: string[]): Promis
   const g = out.getContext("2d")!;
   g.drawImage(canvasMapa, 0, 0);
   desenharRotulos(mapa, g, canvasMapa.width);
+  desenharEscalaENorte(mapa, g, canvasMapa.width, canvasMapa.height);
   g.fillStyle = "#0E3B2B";
   g.fillRect(0, canvasMapa.height, out.width, alturaFaixa);
   g.textBaseline = "top";
@@ -131,6 +132,62 @@ export async function capturarComCarimbo(mapa: MapaGl, linhas: string[]): Promis
     g.fillText(l, pad, canvasMapa.height + pad + i * Math.round(fonte * 1.45), out.width - pad * 2);
   });
   return new Promise((ok, falha) => out.toBlob((b) => (b ? ok(b) : falha(new Error("o navegador não gerou o PNG"))), "image/png"));
+}
+
+/** Comprimento "redondo" (1, 2 ou 5 × 10ⁿ metros) que cabe em `max` metros. */
+export function comprimentoRedondo(max: number): number {
+  if (!(max > 0)) return 0;
+  const p = 10 ** Math.floor(Math.log10(max));
+  return [5, 2, 1].map((k) => k * p).find((v) => v <= max) ?? p;
+}
+
+/**
+ * Barra de escala (canto de baixo, à esquerda) e seta do norte (canto de cima,
+ * à direita), desenhadas no PNG: a figura entra no laudo sem retoque. A escala
+ * é medida no centro da vista (com o mapa inclinado em 3D ela só vale ali).
+ */
+function desenharEscalaENorte(mapa: MapaGl, g: CanvasRenderingContext2D, w: number, h: number): void {
+  const canvas = mapa.getCanvas();
+  const cssW = canvas.clientWidth || w;
+  const k = w / cssW; // px do canvas por px do mapa
+  // metros por px do mapa no centro (Web Mercator, tiles de 512 do MapLibre)
+  const lat = mapa.getCenter().lat;
+  const mPorPx = (40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** mapa.getZoom());
+  const escala = Math.max(1, w / 1100);
+  const metros = comprimentoRedondo(mPorPx * (w * 0.18) / k);
+  if (metros > 0) {
+    const px = (metros / mPorPx) * k;
+    const x0 = Math.round(16 * escala), y0 = h - Math.round(18 * escala);
+    const alt = Math.round(6 * escala);
+    const texto = metros >= 1000 ? `${String(metros / 1000).replace(".", ",")} km` : `${metros} m`;
+    g.save();
+    g.fillStyle = "rgba(255,255,255,0.88)";
+    g.font = `700 ${Math.round(12 * escala)}px Figtree, system-ui, sans-serif`;
+    const tw = g.measureText(texto).width;
+    const pad = Math.round(6 * escala);
+    g.fillRect(x0 - pad, y0 - alt - Math.round(18 * escala), Math.max(px, tw) + pad * 2, alt + Math.round(18 * escala) + pad);
+    // barra em dois tons (metade escura, metade clara), como nas plantas
+    g.fillStyle = "#0E3B2B"; g.fillRect(x0, y0 - alt, px / 2, alt);
+    g.fillStyle = "#ffffff"; g.fillRect(x0 + px / 2, y0 - alt, px / 2, alt);
+    g.strokeStyle = "#0E3B2B"; g.lineWidth = Math.max(1, escala); g.strokeRect(x0, y0 - alt, px, alt);
+    g.fillStyle = "#0E3B2B"; g.textBaseline = "bottom";
+    g.fillText(texto, x0, y0 - alt - Math.round(3 * escala));
+    g.restore();
+  }
+  // seta do norte, girada com o mapa
+  const r = Math.round(18 * escala);
+  const cx = w - Math.round(16 * escala) - r, cy = Math.round(16 * escala) + r;
+  g.save();
+  g.fillStyle = "rgba(255,255,255,0.88)";
+  g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+  g.translate(cx, cy);
+  g.rotate((-mapa.getBearing() * Math.PI) / 180);
+  g.fillStyle = "#0E3B2B";
+  g.beginPath(); g.moveTo(0, -r * 0.78); g.lineTo(r * 0.36, r * 0.1); g.lineTo(0, -r * 0.08); g.lineTo(-r * 0.36, r * 0.1); g.closePath(); g.fill();
+  g.font = `800 ${Math.round(r * 0.62)}px Figtree, system-ui, sans-serif`;
+  g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillText("N", 0, r * 0.48);
+  g.restore();
 }
 
 /** Redesenha no canvas os rótulos dos marcadores visíveis (M-01…, nome da parcela). */

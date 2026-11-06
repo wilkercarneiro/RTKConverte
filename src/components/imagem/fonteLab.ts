@@ -159,5 +159,11 @@ export function fonteLaboratorio(cenario: CenarioLab): FonteWayback {
     modeloTile: (release) => `vertces-lab://${release}/{z}/{y}/{x}`,
     urlTile: (release, t) => miniatura(VERSOES[indice(release)]?.estagio ?? 0, t),
     urlTileAtual: (t) => miniatura(4, t),
+    // o mapa base de hoje é a mesma foto da versão mais nova (como na Esri real)
+    async bytesAtual(_t, sinal) {
+      await espera(lento / 3, sinal);
+      if (cenario === "vazio") return null;
+      return new TextEncoder().encode("estagio-4").buffer as ArrayBuffer;
+    },
   };
 }

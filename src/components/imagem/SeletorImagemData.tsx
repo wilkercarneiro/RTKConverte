@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Map as MapaGl } from "maplibre-gl";
 import {
-  anoImagem, aoTrocarFonte, citacao, dataBr, detalheImagem, fonteEmUso, gms, idade, imagensDoLugar, PRIMEIRO_ANO,
+  anoImagem, aoTrocarFonte, citacao, citacaoAtual, dataBr, detalheImagem, fonteEmUso, gms, idade, imagensDoLugar, PRIMEIRO_ANO,
   rotuloImagem, tileDoPonto,
 } from "../../lib/imagem_data";
 import type { ImagemLocal, Progresso, ResultadoLugar } from "../../lib/imagem_data";
@@ -22,8 +22,11 @@ import { aplicarImagem, baixarBlob, capturarComCarimbo, esperarOcioso } from "./
 import { CortinaComparacao } from "./CortinaComparacao";
 import "./imagem.css";
 
-/** Marco do Código Florestal para área rural consolidada (Lei 12.651/2012, art. 3º, IV). */
+/** Marco do Código Florestal para área rural consolidada (Lei 12.651/2012, art. 3º, IV: ocupação PREEXISTENTE a esta data). */
 const MARCO_2008 = "2008-07-22";
+
+/** Landsat de 1984 até hoje no ponto (Google Earth Timelapse): a prova de 2008 que o acervo da Esri não tem. */
+const urlTimelapse = (lon: number, lat: number) => `https://earthengine.google.com/timelapse#v=${lat.toFixed(5)},${lon.toFixed(5)},13,latLng`;
 const ATUAL = "atual";
 
 interface Props {
@@ -144,9 +147,16 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
   }
 
   const resultado = estado.t === "pronto" ? estado.r : estado.t === "carregando" ? estado.parcial : null;
-  const imagens = useMemo(() => resultado?.imagens ?? [], [resultado]);
+  const todas = useMemo(() => resultado?.imagens ?? [], [resultado]);
+  // A foto do mapa base de hoje, quando o tile é idêntico ao de uma versão: a
+  // "Atual" ganha a data dela e some da lista como item repetido.
+  const fotoHoje = resultado?.atualIgual != null ? todas.find((i) => i.release === resultado.atualIgual) ?? null : null;
+  // as datas para ESCOLHER (a de hoje é o item "Atual")
+  const imagens = useMemo(() => (fotoHoje ? todas.filter((i) => i !== fotoHoje) : todas), [todas, fotoHoje]);
   const atual = escolha == null ? null : imagens.find((i) => i.release === escolha || i.versoes.some((v) => v.release === escolha)) ?? null;
   const pos = atual ? imagens.indexOf(atual) : -1;
+  /** o que está no mapa agora: a data escolhida ou, sem escolha, a foto de hoje (se confirmada) */
+  const exibida = atual ?? fotoHoje;
 
   // ---- aplicar no mapa ---------------------------------------------------------
   const modeloDe = useCallback((valor: string) => (valor === ATUAL ? null : fonte.modeloTile(Number(valor))), [fonte]);
@@ -244,21 +254,22 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
   }
   async function baixar() {
     const [lon, lat] = ponto();
-    const titulo = atual
-      ? `Imagem de satélite de ${rotuloImagem(atual)}${atual.captura ? ` (${detalheImagem(atual)})` : ""}`
-      : "Imagem de satélite atual (Esri World Imagery)";
+    const e = exibida;
+    const titulo = e
+      ? `Imagem de satélite de ${rotuloImagem(e)}${e.captura ? ` (${detalheImagem(e)})` : ""}${e === fotoHoje ? " · a mesma do mapa de hoje" : ""}`
+      : "Imagem de satélite atual (Esri World Imagery; data da foto não confirmada)";
     const agora = new Date();
     const linhas = [
       titulo,
-      atual
-        ? `Fonte: Esri World Imagery Wayback, versão ${atual.versao.identificador || atual.release} (publicada em ${dataBr(atual.versao.data)})`
+      e
+        ? `Fonte: Esri World Imagery Wayback, versão ${e.versao.identificador || e.release} (publicada em ${dataBr(e.versao.data)})`
         : "Fonte: Esri World Imagery (mapa base de hoje)",
-      `Ponto: ${gms(lat, "lat")}, ${gms(lon, "lon")} · gerado no Vertces em ${agora.toLocaleDateString("pt-BR")} às ${agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
+      `Ponto: ${gms(lat, "lat")}, ${gms(lon, "lon")} (WGS 84) · gerado no Vertces em ${agora.toLocaleDateString("pt-BR")} às ${agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
     ];
     setBaixando(true);
     try {
       const blob = await capturarComCarimbo(mapa!, linhas);
-      const nome = atual ? `imagem-${(atual.captura?.data ?? atual.versao.data)}.png` : `imagem-atual-${hoje}.png`;
+      const nome = e ? `imagem-${(e.captura?.data ?? e.versao.data)}.png` : `imagem-atual-${hoje}.png`;
       baixarBlob(blob, nome);
       avisar("ok", "Imagem baixada com a data e a fonte no rodapé.");
     } catch (e) {
@@ -269,9 +280,9 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
     }
   }
   async function copiar() {
-    if (!atual) return;
     const [lon, lat] = ponto();
-    const ok = await copiarTexto(citacao(atual, lon, lat));
+    const z = lugar?.z ?? Math.round(mapa!.getZoom());
+    const ok = await copiarTexto(exibida ? citacao(exibida, lon, lat, hoje, z) : citacaoAtual(lon, lat, hoje));
     avisar(ok ? "ok" : "erro", ok ? "Fonte copiada. Cole no laudo, no memorial ou na declaração do CAR." : "O navegador não deixou copiar.");
   }
 
@@ -280,10 +291,15 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
   const nDatas = imagens.length;
   const maisAntiga = imagens.length ? imagens[imagens.length - 1] : null;
   const anoMaisAntigo = maisAntiga ? anoImagem(maisAntiga) : null;
-  const antesDoMarco = imagens.find((i) => i.captura && i.captura.data <= MARCO_2008);
+  const antesDoMarco = todas.find((i) => i.captura && i.captura.data < MARCO_2008);
   const datasPendentes = resultado?.datasPendentes ?? 0;
-  const semDataExata = imagens.filter((i) => !i.captura);
-  const opcoes = [{ valor: ATUAL, rotulo: "Atual (hoje)" }, ...imagens.map((i) => ({ valor: String(i.release), rotulo: rotuloImagem(i) }))];
+  const semDataExata = todas.filter((i) => !i.captura);
+  const nFotos = todas.length;
+  const opcoes = [
+    { valor: ATUAL, rotulo: fotoHoje ? `Atual · ${rotuloImagem(fotoHoje)}` : "Atual (hoje)" },
+    ...imagens.map((i) => ({ valor: String(i.release), rotulo: rotuloImagem(i) })),
+  ];
+  const [lonP, latP] = lugar ? [lugar.lon, lugar.lat] : [mapa.getCenter().lng, mapa.getCenter().lat];
 
   const pilula = (
     <div className={`imgdata-pilula${atual ? " com-data" : ""}`}>
@@ -300,10 +316,13 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
         title="Ver a imagem de satélite de outras datas">
         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2M3.5 12a8.5 8.5 0 1 0 2.5-6M3 4v4h4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
         <span className="imgdata-botao-texto">
-          {atual ? <><small>{atual.captura ? "Imagem de" : "Imagem"}</small><b>{rotuloImagem(atual)}</b></> : <><small>Imagem</small><b>atual</b></>}
+          {atual ? <><small>{atual.captura ? "Imagem de" : "Imagem"}</small><b>{rotuloImagem(atual)}</b></>
+            : fotoHoje ? <><small>Imagem atual · de</small><b>{rotuloImagem(fotoHoje)}</b></>
+              : <><small>Imagem</small><b>atual</b></>}
         </span>
-        {!atual && nDatas > 1 && <em className="imgdata-contagem">{nDatas} datas</em>}
+        {!atual && nFotos > 1 && <em className="imgdata-contagem">{nFotos} datas</em>}
         {!atual && carregando && <i className="imgdata-girando" aria-label="procurando datas" />}
+        {estado.t === "erro" && <em className="imgdata-contagem erro" title={estado.msg}>sem datas</em>}
         <span className="imgdata-v" aria-hidden="true">▾</span>
       </button>
       {atual && !tocando && (
@@ -335,12 +354,12 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
           <p>{estado.msg}</p>
           <button type="button" onClick={() => setTentativa((n) => n + 1)}>Tentar de novo</button>
         </div>
-      ) : estado.t === "pronto" && !nDatas ? (
+      ) : estado.t === "pronto" && !nFotos ? (
         <div className="imgdata-estado">
           <b>Sem imagem antiga deste lugar</b>
           <p>O acervo da Esri não tem outras fotos aqui. Fica a imagem de hoje.</p>
         </div>
-      ) : !nDatas ? (
+      ) : !nFotos ? (
         <div className="imgdata-estado carregando" aria-busy="true" aria-live="polite">
           <p>
             {estado.t === "carregando" && estado.prog?.etapa === "mudancas"
@@ -355,9 +374,9 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
         <>
           <div className="imgdata-resumo">
             <p>
-              <b>{nDatas === 1 ? "1 foto" : `${nDatas} fotos diferentes`}{datasPendentes > 0 ? " até agora" : ""}</b>
+              <b>{nFotos === 1 ? "1 foto" : `${nFotos} fotos diferentes`}{datasPendentes > 0 ? " até agora" : ""}</b>
               {resultado ? ` em ${resultado.totalVersoes} versões do acervo` : ""}
-              {maisAntiga && nDatas > 1 ? (
+              {maisAntiga && nFotos > 1 ? (
                 <>
                   {". A mais antiga: "}
                   <button type="button" className="imgdata-link" onClick={() => escolher(maisAntiga, true)}
@@ -365,7 +384,7 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
                 </>
               ) : anoMaisAntigo ? `, de ${anoMaisAntigo}.` : "."}
             </p>
-            {nDatas > 1 && (
+            {nDatas >= 1 && (
               <button type="button" className="imgdata-tocar" onClick={() => { setAberto(false); setTocando(true); }}
                 title="Passa as fotos da mais antiga até hoje, no mapa">
                 <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1.5v9l7.5-4.5z" fill="currentColor" /></svg>
@@ -380,8 +399,10 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
                   {fonte.urlTileAtual && resultado ? <img src={fonte.urlTileAtual(resultado.tile)} alt="" loading="lazy" /> : null}
                 </span>
                 <span className="imgdata-item-texto">
-                  <b>Atual</b>
-                  <small>mapa base de hoje</small>
+                  <b>{fotoHoje ? <>Atual · {rotuloImagem(fotoHoje)}</> : "Atual"}</b>
+                  <small className={fotoHoje ? undefined : "pendente"}>
+                    {fotoHoje ? `${detalheImagem(fotoHoje)}${fotoHoje.captura ? ` · ${idade(fotoHoje.captura.data, hoje)}` : ""}` : datasPendentes || carregando ? "mapa base de hoje" : "mapa base de hoje · data não confirmada"}
+                  </small>
                 </span>
               </button>
             </li>
@@ -405,23 +426,34 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
           </ul>
           <p className={`imgdata-marco${antesDoMarco ? " ok" : ""}`}>
             {antesDoMarco
-              ? `Há foto anterior a 22/07/2008 (${rotuloImagem(antesDoMarco)}): serve de prova de área consolidada no CAR.`
+              ? <>Há foto anterior a 22/07/2008 ({rotuloImagem(antesDoMarco)}, no centro da área): pode servir de prova de área consolidada no CAR.{" "}
+                  <button type="button" className="imgdata-link" onClick={() => escolher(antesDoMarco === fotoHoje ? null : antesDoMarco, true)}>Ver no mapa →</button></>
               : datasPendentes
                 ? "Conferindo se há foto anterior a 22/07/2008…"
-                : imagens.some((i) => !i.captura)
+                : semDataExata.length
                   ? `A Esri não informou a data exata ${semDataExata.length === 1 ? `da foto ${rotuloImagem(semDataExata[0])}` : `de ${semDataExata.length} fotos`}: não dá para afirmar se alguma é anterior a 22/07/2008.`
-                  : "Nenhuma foto anterior a 22/07/2008 (marco do CAR) aqui: para área consolidada, junte outra prova."}
+                  : <>Sem foto da Esri anterior a 22/07/2008 (marco do CAR) aqui. Para a área consolidada, veja este ponto nas imagens Landsat (1984 até hoje) e clique em 2008:{" "}
+                      <a className="imgdata-link" href={urlTimelapse(lonP, latP)} target="_blank" rel="noreferrer"
+                        title="Google Earth Timelapse (Landsat), já no ponto do imóvel. Abre numa aba nova.">abrir o Landsat aqui →</a></>}
           </p>
-          {datasPendentes > 0 && <p className="imgdata-nota" aria-live="polite">Lendo a data das outras fotos… a lista se completa sozinha.</p>}
-          {resultado?.lento && !datasPendentes && <p className="imgdata-nota">O acervo da Esri está lento agora: alguma data pode ter ficado de fora. Abra de novo daqui a pouco.</p>}
-          {resultado?.incompleto && <p className="imgdata-nota">Pode haver datas mais antigas: a busca parou no limite{resultado.lento ? " de tempo" : " de consultas"}.</p>}
+          {datasPendentes > 0 && <p className="imgdata-nota" aria-live="polite">Lendo a data {datasPendentes === 1 ? "de mais 1 foto" : `de mais ${datasPendentes} fotos`}… a lista se completa sozinha.</p>}
+          {resultado?.lento && !datasPendentes && <p className="imgdata-nota">O acervo da Esri está lento agora e a data de alguma foto não veio. Abra de novo daqui a pouco.</p>}
+          {resultado?.incompleto && (
+            <p className="imgdata-nota">
+              Pode haver mais datas:{" "}
+              {resultado.corte === "tempo" ? "o acervo demorou e a busca parou no limite de tempo."
+                : resultado.corte === "falha" ? "o acervo falhou em parte das versões."
+                  : "a busca parou no limite de consultas."}{" "}
+              <button type="button" className="imgdata-link" onClick={() => setTentativa((n) => n + 1)}>Procurar de novo</button>
+            </p>
+          )}
         </>
       )}
 
       <footer>
         <button type="button" onClick={abrirComparacao} disabled={!nDatas} title="Duas datas no mesmo mapa, com uma divisa para arrastar">Comparar</button>
         <button type="button" onClick={baixar} disabled={baixando} title="PNG da vista com a data e a fonte no rodapé">{baixando ? "Gerando…" : "Baixar PNG"}</button>
-        <button type="button" onClick={copiar} disabled={!atual} title={atual ? "Texto da fonte para o laudo ou o CAR" : "Escolha uma data para copiar a fonte"}>Copiar fonte</button>
+        <button type="button" onClick={copiar} title={exibida ? `Fonte da imagem de ${rotuloImagem(exibida)} para o laudo ou o CAR` : "Fonte da imagem de hoje (data da foto não confirmada)"}>Copiar fonte</button>
       </footer>
     </div>
   );
@@ -439,6 +471,7 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
           mapa={mapa}
           modeloAntes={modeloDe(comparar.antes)}
           atribuicao={fonte.atribuicao}
+          rotuloFonte={comparar.antes === ATUAL && comparar.depois === ATUAL ? "Imagem: © Esri World Imagery (hoje)" : fonte.atribuicao}
           opcoes={opcoes}
           antes={comparar.antes}
           depois={comparar.depois}

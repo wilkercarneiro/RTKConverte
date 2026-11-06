@@ -176,6 +176,9 @@ export function lerCaptura(json: unknown): Captura | null {
 // Achar as mudanças
 // ---------------------------------------------------------------------------
 
+const abortou = (e: unknown) => e instanceof Error && e.name === "AbortError";
+const estourouPrazo = (e: unknown) => e instanceof Error && e.name === "TimeoutError";
+
 export interface Candidata {
   /** posição na lista de versões (0 = mais nova) */
   indice: number;
@@ -227,14 +230,33 @@ export async function buscarMudancas(
   limite = LIMITE_CONSULTAS,
   /** orçamento de tempo total (ms): estourou, devolve o que achou, marcado incompleto */
   orcamentoMs = ORCAMENTO_HASH_MS,
-): Promise<{ indices: number[]; completo: boolean; consultas: number }> {
-  if (n <= 0) return { indices: [], completo: true, consultas: 0 };
+): Promise<{ indices: number[]; completo: boolean; consultas: number; corte: MotivoCorte | null; falhas: number }> {
+  if (n <= 0) return { indices: [], completo: true, consultas: 0, corte: null, falhas: 0 };
   // memo de promessas: as duas metades andam em paralelo sem pedir o mesmo tile duas vezes
-  const memo = new Map<number, Promise<string | null>>();
+  const memo = new Map<number, Promise<string | null | typeof DESCONHECIDO>>();
   const fim = Date.now() + orcamentoMs;
-  let completo = true;
+  let corte: MotivoCorte | null = null;
+  let falhas = 0;
+  // o tempo é o motivo que mais importa contar ("o acervo está lento")
+  const cortar = (m: MotivoCorte) => { if (!corte || m === "tempo") corte = m; };
+  // Este caminho só roda quando o acervo já está instável: um tile que falha
+  // (503, rede, prazo) não derruba a busca. Tenta mais uma vez (menos no prazo:
+  // não espera outro prazo inteiro) e, se falhar de novo, vira "não sei".
+  // Só o cancelamento do usuário passa adiante — e o mesmo sinal aborta as
+  // requisições de todas as metades, então nada fica órfão.
   const h = (i: number) => {
-    if (!memo.has(i)) memo.set(i, hashDe(i));
+    if (!memo.has(i)) memo.set(i, (async () => {
+      for (let tentativa = 0; ; tentativa++) {
+        try { return await hashDe(i); } catch (e) {
+          if (abortou(e)) throw e;
+          if (tentativa >= 1 || estourouPrazo(e)) {
+            falhas++;
+            if (estourouPrazo(e)) cortar("tempo");
+            return DESCONHECIDO;
+          }
+        }
+      }
+    })());
     return memo.get(i)!;
   };
   // inícios de trecho: 0 e todo i em que hash(i) ≠ hash(i − 1)
@@ -242,19 +264,35 @@ export async function buscarMudancas(
   const dividir = async (a: number, b: number): Promise<void> => {
     if (b - a < 1) return;
     const [ha, hb] = [await h(a), await h(b)];
+    // uma ponta desconhecida: não dá para saber o que mudou neste trecho; segue com o resto
+    if (ha === DESCONHECIDO || hb === DESCONHECIDO) { cortar("falha"); return; }
     if (ha === hb) return;
     if (b - a === 1) { inicios.add(b); return; }
-    if (memo.size >= limite || Date.now() >= fim) { completo = false; inicios.add(b); return; }
-    const m = Math.floor((a + b) / 2);
+    if (memo.size >= limite) { cortar("consultas"); inicios.add(b); return; }
+    if (Date.now() >= fim) { cortar("tempo"); inicios.add(b); return; }
+    // o meio falhou: um vizinho dele serve de meio (o trecho continua sendo dividido)
+    const meio = Math.floor((a + b) / 2);
+    let m = -1;
+    for (const c of [meio, meio + 1, meio - 1]) {
+      if (c <= a || c >= b) continue;
+      if ((await h(c)) !== DESCONHECIDO) { m = c; break; }
+    }
+    // nenhum meio legível: b é foto nova com certeza; o que houver entre a e b fica em aberto
+    if (m < 0) { cortar("falha"); inicios.add(b); return; }
     await Promise.all([dividir(a, m), dividir(m, b)]);
   };
   await dividir(0, n - 1);
   const indices: number[] = [];
   for (const i of [...inicios].sort((x, y) => x - y)) {
-    if ((await h(i)) != null) indices.push(i);
+    const hi = await h(i);
+    if (hi != null && hi !== DESCONHECIDO) indices.push(i);
   }
-  return { indices, completo, consultas: memo.size };
+  return { indices, completo: corte == null, consultas: memo.size, corte, falhas };
 }
+
+/** Por que a busca das mudanças parou antes do fim. */
+export type MotivoCorte = "consultas" | "tempo" | "falha";
+const DESCONHECIDO = Symbol("desconhecido");
 
 /** Junta itens SEGUIDOS em que `igual(anterior, atual)`; cada grupo mantém a ordem. */
 export function agruparSeguidos<T>(itens: T[], igual: (a: T, b: T) => boolean): T[][] {
@@ -309,6 +347,8 @@ export interface FonteWayback {
   urlTile(release: number, t: Tile): string;
   /** miniatura da imagem de hoje (o mapa base), quando houver */
   urlTileAtual?: (t: Tile) => string;
+  /** bytes do tile do mapa base de hoje: igual ao de uma versão = é a mesma foto (dá a data da "atual") */
+  bytesAtual?: (t: Tile, sinal?: AbortSignal) => Promise<ArrayBuffer | null>;
   atribuicao: string;
 }
 
@@ -364,6 +404,8 @@ const json = (url: string, sinal?: AbortSignal): Promise<unknown> =>
     return r.json() as Promise<unknown>;
   });
 
+export const urlTileAtualEsri = (t: Tile) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${t.z}/${t.y}/${t.x}`;
+
 export const fonteEsri: FonteWayback = {
   nome: "esri",
   config: (sinal) => json(URL_CONFIG, sinal),
@@ -376,7 +418,8 @@ export const fonteEsri: FonteWayback = {
   metadados: (v, camada, lon, lat, sinal) => json(urlMetadadosEsri(v.metadados ?? "", camada, lon, lat), sinal),
   modeloTile: modeloTileEsri,
   urlTile: urlTileEsri,
-  urlTileAtual: (t) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${t.z}/${t.y}/${t.x}`,
+  urlTileAtual: urlTileAtualEsri,
+  bytesAtual: (t, sinal) => buscarComPrazo(urlTileAtualEsri(t), sinal, async (r) => (r.ok ? r.arrayBuffer() : null)),
   atribuicao: ATRIBUICAO_WAYBACK,
 };
 
@@ -446,8 +489,12 @@ export interface ResultadoLugar {
   totalVersoes: number;
   /** datas da captura ainda a caminho (a lista já pode ser mostrada) */
   datasPendentes: number;
-  /** o acervo estourou o prazo em alguma consulta: avisar "está lento" */
+  /** por que a busca parou antes do fim (só com incompleto) */
+  corte?: MotivoCorte | null;
+  /** ficou faltando alguma coisa por prazo estourado (não basta ter demorado): avisar "está lento" */
   lento?: boolean;
+  /** release da foto que é a MESMA do mapa base de hoje (tile idêntico); null = não confirmado */
+  atualIgual?: number | null;
 }
 
 export interface Progresso { etapa: "versoes" | "mudancas" | "datas"; feitas: number; total: number }
@@ -462,9 +509,6 @@ async function emParalelo<T, R>(itens: T[], n: number, fn: (x: T, i: number) => 
   await Promise.all(Array.from({ length: Math.min(n, itens.length) }, trabalhador));
   return out;
 }
-
-const abortou = (e: unknown) => e instanceof Error && e.name === "AbortError";
-const estourouPrazo = (e: unknown) => e instanceof Error && e.name === "TimeoutError";
 
 /**
  * As imagens diferentes que o acervo tem para o ponto, com a data da captura.
@@ -496,7 +540,7 @@ export async function imagensDoLugar(
     const { resultado, falhas } = await achar(versoes, t, lon, lat, fonte, limite, { ...opcoes, guardar });
     if (resultado.imagens.length || z <= 13) {
       // só guarda o que veio inteiro: uma data que falhou agora pode vir na próxima
-      if (!falhas && !resultado.incompleto) guardar(resultado);
+      if (!falhas && !resultado.incompleto && !resultado.lento && !resultado.datasPendentes) guardar(resultado);
       return resultado;
     }
     z = Math.max(13, z - 2);
@@ -521,7 +565,7 @@ async function achar(
   },
 ): Promise<{ resultado: ResultadoLugar; falhas: number }> {
   const { sinal, aoProgredir, aoParcial, aoAtualizar, guardar } = opcoes;
-  let lento = false;
+  let corte: MotivoCorte | null = null;
   const hashes = new Map<number, string | null>();
   const hashDe = async (release: number) => {
     if (!hashes.has(release)) {
@@ -545,9 +589,10 @@ async function achar(
     }, limite);
     candidatas = r.candidatas;
     incompleto = !r.completo;
+    if (incompleto) corte = "consultas";
   } catch (e) {
     if (abortou(e)) throw e;
-    if (estourouPrazo(e)) lento = true;
+    // o tilemap demorou ou falhou: isso sozinho não vira aviso (o hash pode achar tudo)
     metodo = "hash";
     let feitas = 0;
     const r = await buscarMudancas(versoes.length, async (i) => {
@@ -559,6 +604,7 @@ async function achar(
       faixa: [i, k + 1 < r.indices.length ? r.indices[k + 1] - 1 : versoes.length - 1] as [number, number],
     }));
     incompleto = !r.completo;
+    corte = r.corte;
   }
 
   // 2. vizinhas com o mesmo tamanho de arquivo: confere o conteúdo (hash)
@@ -570,9 +616,23 @@ async function achar(
     }
   }
 
+  // A foto de hoje (mapa base) é a mesma da versão mais nova? Tile idêntico = sim
+  // (aí a "atual" ganha data e fonte). Corre junto com as datas; falhou = não confirmado.
+  let atualIgual = false;
+  const conferirAtual = (async () => {
+    const c0 = candidatas[0];
+    if (!fonte.bytesAtual || !c0 || c0.faixa[0] !== 0) return;
+    try {
+      const [b, h0] = await Promise.all([fonte.bytesAtual(t, sinal), hashDe(c0.release)]);
+      if (b && b.byteLength && h0 && (await hashDosBytes(b)) === h0) atualIgual = true;
+    } catch { /* não confirmado (o cancelamento aparece nas outras consultas) */ }
+  })();
+
   const capturas: (Captura | null)[] = candidatas.map(() => null);
   // a data de cada candidata já foi resolvida (veio, ou a fonte não tem/falhou)?
   const resolvida: boolean[] = candidatas.map(() => false);
+  // datas que estouraram o prazo e não vieram nem na nova tentativa: isto (e só isto) é "lento"
+  const faltouPorPrazo = new Set<number>();
   const montar = (): ResultadoLugar => {
     // Só entram as candidatas com a data resolvida: a lista CRESCE em ordem
     // conforme as datas chegam, em vez de nascer com 12 linhas fora de ordem
@@ -586,7 +646,13 @@ async function achar(
       tamanho: c.tamanho,
     }] : [])));
     const pendentes = resolvida.filter((x) => !x).length;
-    return { tile: t, imagens: ordenarPorData(imagens), metodo, incompleto, totalVersoes: versoes.length, datasPendentes: pendentes, lento };
+    const ordenadas = ordenarPorData(imagens);
+    // a foto consolidada que contém a versão mais nova do acervo
+    const igual = atualIgual ? ordenadas.find((i) => i.versoes.some((v) => v.release === versoes[0].release))?.release ?? null : null;
+    return {
+      tile: t, imagens: ordenadas, metodo, incompleto, corte: incompleto ? corte : null, totalVersoes: versoes.length,
+      datasPendentes: pendentes, lento: faltouPorPrazo.size > 0 || (incompleto && corte === "tempo"), atualIgual: igual,
+    };
   };
 
   // 3. a data real da captura de cada uma (falha = fica a data da versão, não derruba a lista)
@@ -602,16 +668,21 @@ async function achar(
         try { capturas[k] = lerCaptura(await fonte.metadados(v, camada, lon, lat, sinal)); break; } catch (e) {
           if (abortou(e)) throw e;
           // prazo estourado: não insiste agora (a lista não pode esperar outro prazo inteiro); tenta em segundo plano
-          if (estourouPrazo(e)) { falhas++; lento = true; porPrazo.push(k); break; }
+          if (estourouPrazo(e)) { falhas++; porPrazo.push(k); break; }
           if (tentativa === 1) { falhas++; break; }
         }
       }
     }
-    resolvida[k] = true;
+    // A que estourou o prazo e vai ser pedida de novo fica "a caminho": não entra
+    // como foto à parte ("até 12/10/2016") enquanto a data pode chegar e juntá-la
+    // a outra (contaria uma foto a mais e o aviso de 2008 mudaria sem motivo).
+    if (porPrazo.includes(k) && !aoAtualizar) faltouPorPrazo.add(k);
+    if (!(porPrazo.includes(k) && aoAtualizar)) resolvida[k] = true;
     feitas++;
     aoProgredir?.({ etapa: "datas", feitas, total: candidatas.length });
     if (feitas < candidatas.length) aoParcial?.(montar());
   });
+  await conferirAtual;
   const resultado = montar();
 
   // 4. as datas que estouraram o prazo: mais uma tentativa, sem segurar a lista
@@ -621,12 +692,14 @@ async function achar(
       await emParalelo(porPrazo, 3, async (k) => {
         try {
           const cap = lerCaptura(await fonte.metadados(versoes[candidatas[k].indice], camada, lon, lat, sinal));
-          if (cap) { capturas[k] = cap; veio++; }
-        } catch { /* fica sem a data */ }
+          if (cap) { capturas[k] = cap; veio++; } else faltouPorPrazo.add(k);
+        } catch { faltouPorPrazo.add(k); /* fica sem a data */ }
+        resolvida[k] = true;
       });
-      if (sinal?.aborted || !veio) return;
+      if (sinal?.aborted) return;
       const novo = montar();
-      if (veio === porPrazo.length && falhas === porPrazo.length && !novo.incompleto) guardar?.(novo);
+      // só guarda o que veio inteiro (nada faltando, nada lento)
+      if (veio === porPrazo.length && falhas === porPrazo.length && !novo.incompleto && !novo.lento) guardar?.(novo);
       aoAtualizar(novo);
     })();
   }
@@ -687,10 +760,30 @@ export function gms(v: number, eixo: "lat" | "lon"): string {
   return `${g}°${String(m).padStart(2, "0")}'${s.toFixed(1).replace(".", ",").padStart(4, "0")}" ${h}`;
 }
 
-/** Texto para colar no laudo ou na declaração do CAR. */
-export function citacao(img: ImagemLocal, lon: number, lat: number): string {
+/** Endereço público para conferir a versão no lugar (aplicativo Wayback da Esri). */
+export function urlConferirWayback(release: number, lon: number, lat: number, z = 17): string {
+  return `https://livingatlas.arcgis.com/wayback/#active=${release}&mapCenter=${lon.toFixed(5)}%2C${lat.toFixed(5)}%2C${Math.round(z)}&mode=explore`;
+}
+
+/** Endereço do item World Imagery (o mapa base de hoje) no ArcGIS Online. */
+export const URL_WORLD_IMAGERY = "https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9";
+
+/**
+ * Texto para colar no laudo ou na declaração do CAR (padrão ABNT: fonte,
+ * endereço para conferir, data de acesso; coordenadas com o datum).
+ * `hoje` = AAAA-MM-DD do acesso.
+ */
+export function citacao(img: ImagemLocal, lon: number, lat: number, hoje: string, z = 17): string {
   const foto = img.captura
     ? `imagem de satélite capturada em ${dataBr(img.captura.data)}${img.captura.fornecedor ? ` (${img.captura.fornecedor}${img.captura.resolucaoM ? `, resolução ${String(img.captura.resolucaoM).replace(".", ",")} m` : ""})` : ""}`
     : `imagem de satélite da versão de ${dataBr(img.versao.data)} (data da captura não informada pela fonte)`;
-  return `Fonte: Esri World Imagery Wayback, versão ${img.versao.identificador || img.release} (publicada em ${dataBr(img.versao.data)}), ${foto}. Ponto consultado: ${gms(lat, "lat")}, ${gms(lon, "lon")}.`;
+  return `Fonte: Esri World Imagery Wayback, versão ${img.versao.identificador || img.release} (publicada em ${dataBr(img.versao.data)}), ${foto}. `
+    + `Ponto consultado: ${gms(lat, "lat")}, ${gms(lon, "lon")} (WGS 84). `
+    + `Disponível em: ${urlConferirWayback(img.release, lon, lat, z)}. Acesso em: ${dataBr(hoje)}.`;
+}
+
+/** Citação da imagem de hoje quando não deu para confirmar de que data ela é. */
+export function citacaoAtual(lon: number, lat: number, hoje: string): string {
+  return `Fonte: Esri World Imagery (mapa base atual; data da captura da foto não confirmada). `
+    + `Ponto consultado: ${gms(lat, "lat")}, ${gms(lon, "lon")} (WGS 84). Disponível em: ${URL_WORLD_IMAGERY}. Acesso em: ${dataBr(hoje)}.`;
 }

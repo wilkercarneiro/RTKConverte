@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  agruparSeguidos, buscarComPrazo, buscarMudancas, camadaMetadados, erroPrazo, citacao, consolidar, dataBr, detalheImagem, gms, idade,
+  agruparSeguidos, buscarComPrazo, citacaoAtual, buscarMudancas, camadaMetadados, erroPrazo, citacao, consolidar, dataBr, detalheImagem, gms, idade,
   imagensDoLugar, lerCaptura, lerConfig, lerTilemap, limparCache, ordenarPorData, percorrerVersoes, rotuloImagem, tileDoPonto,
   zoomParaExtensao,
 } from "../src/lib/imagem_data.ts";
@@ -234,10 +234,15 @@ test("textos: data, idade, GMS e citação para o laudo", () => {
   assert.equal(gms(-6.6048, "lat"), `6°36'17,3" S`);
   assert.equal(gms(-51.905, "lon"), `51°54'18,0" W`);
   const img = { release: 1003, versao: VERSOES[3], versoes: [VERSOES[3]], hash: null, tamanho: null, captura: { data: "2020-03-01", fornecedor: "Maxar", resolucaoM: 0.5, precisaoM: null } };
-  const c = citacao(img, -51.905, -6.6048);
+  const c = citacao(img, -51.905, -6.6048, "2026-11-06", 16);
   assert.match(c, /Esri World Imagery Wayback, versão WB_3/);
   assert.match(c, /capturada em 01\/03\/2020 \(Maxar, resolução 0,5 m\)/);
-  assert.match(c, /6°36'17,3" S, 51°54'18,0" W/);
+  assert.match(c, /6°36'17,3" S, 51°54'18,0" W \(WGS 84\)/);
+  assert.match(c, /Disponível em: https:\/\/livingatlas\.arcgis\.com\/wayback\/#active=1003&mapCenter=-51\.90500%2C-6\.60480%2C16/);
+  assert.match(c, /Acesso em: 06\/11\/2026\.$/);
+  const ca = citacaoAtual(-51.905, -6.6048, "2026-11-06");
+  assert.match(ca, /data da captura da foto não confirmada/);
+  assert.match(ca, /\(WGS 84\)\. Disponível em: https:\/\/www\.arcgis\.com\/.+ Acesso em: 06\/11\/2026\./);
 });
 
 test("imagensDoLugar: mostra a lista antes das datas (aoParcial) e ordena pela data da foto no fim", async () => {
@@ -307,16 +312,6 @@ test("buscarMudancas: orçamento de tempo total devolve o que achou, marcado inc
   assert.equal(r.indices[0], 0);
 });
 
-test("imagensDoLugar: tilemap lento (prazo) cai no hash e avisa que o acervo está lento", async () => {
-  limparCache();
-  const f = fonteFalsa();
-  f.tilemap = async () => { throw erroPrazo(); };
-  const r = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f });
-  assert.equal(r.metodo, "hash");
-  assert.equal(r.lento, true);
-  assert.equal(r.imagens.length, 3);
-});
-
 test("imagensDoLugar: dois imóveis no mesmo tile não dividem a data da foto (cache por ponto)", async () => {
   limparCache();
   const f = fonteFalsa();
@@ -343,12 +338,109 @@ test("imagensDoLugar: data que estourou o prazo é pedida de novo em segundo pla
   let aoAtualizar;
   const atualizou = new Promise((ok) => { aoAtualizar = ok; });
   const r = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f, aoAtualizar });
-  const semData = r.imagens.find((x) => !x.captura);
-  assert.ok(semData, "na primeira resposta uma foto ainda sem data");
-  assert.equal(semData.release, 1009);
-  assert.equal(rotuloImagem(semData), "até 01/01/2017");
-  assert.equal(r.lento, true);
+  // rodada 3: a que espera a nova tentativa fica "a caminho", não vira foto à parte "até 01/01/2017"
+  assert.equal(r.datasPendentes, 1);
+  assert.ok(r.imagens.every((x) => x.captura), "nenhuma foto sem data contada como diferente");
+  assert.ok(!r.imagens.some((x) => x.release === 1009));
+  assert.equal(r.lento, false, "ainda não faltou nada: não é aviso");
   const novo = await atualizou;
   assert.ok(novo.imagens.every((x) => x.captura), "a data chegou depois");
   assert.equal(novo.imagens[novo.imagens.length - 1].captura.data, "2014-05-10");
+  assert.equal(novo.datasPendentes, 0);
+  assert.equal(novo.lento, false, "veio tudo: o aviso de lento não fica preso");
+  // e o cache guarda a versão completa, sem o aviso
+  const antes = { ...f.chamadas };
+  const doCache = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f });
+  assert.deepEqual(f.chamadas, antes, "veio do cache");
+  assert.equal(doCache.lento, false);
+  assert.equal(doCache.imagens.length, 3);
+});
+
+// ---- rodada 3 da revisão -------------------------------------------------------
+
+test("imagensDoLugar: tilemap estoura o prazo mas o hash acha tudo → sem aviso de lento, e vai para o cache", async () => {
+  limparCache();
+  const f = fonteFalsa();
+  f.tilemap = async () => { throw erroPrazo(); };
+  const r = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f });
+  assert.equal(r.metodo, "hash");
+  assert.equal(r.lento, false);
+  assert.equal(r.incompleto, false);
+  const n = f.chamadas.bytes;
+  const c = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f });
+  assert.equal(f.chamadas.bytes, n, "guardado");
+  assert.equal(c.lento, false);
+});
+
+test("imagensDoLugar: data que estoura o prazo duas vezes → aviso de lento, e não vai para o cache", async () => {
+  limparCache();
+  const f = fonteFalsa();
+  const meta = f.metadados;
+  f.metadados = async (v, ...a) => { if (v.release === 1009) throw erroPrazo(); return meta(v, ...a); };
+  let aoAtualizar;
+  const atualizou = new Promise((ok) => { aoAtualizar = ok; });
+  await imagensDoLugar(-51.9, -6.6, 15, { fonte: f, aoAtualizar });
+  const novo = await atualizou;
+  assert.equal(novo.lento, true);
+  assert.equal(novo.datasPendentes, 0);
+  const semData = novo.imagens.find((x) => !x.captura);
+  assert.equal(semData?.release, 1009, "depois da nova tentativa ela aparece, honesta: \"até …\"");
+  const m = f.chamadas.meta;
+  await imagensDoLugar(-51.9, -6.6, 15, { fonte: f });
+  assert.ok(f.chamadas.meta > m, "não veio do cache");
+});
+
+test("buscarMudancas: um tile que falha no meio não derruba a busca (fica incompleta, com o resto achado)", async () => {
+  const hashDe = (i) => (i < 5 ? "a" : i < 20 ? "b" : "c");
+  let tentativas9 = 0;
+  const r = await buscarMudancas(40, async (i) => {
+    if (i === 9) { tentativas9++; throw new Error("HTTP 503"); }
+    return hashDe(i);
+  });
+  assert.equal(tentativas9, 2, "tentou de novo uma vez");
+  assert.equal(r.falhas, 1);
+  assert.deepEqual(r.indices, [0, 5, 20], "o vizinho serviu de meio");
+  assert.equal(r.completo, true);
+  // um bloco inteiro caindo: devolve o que achou, marcado incompleto, sem rejeitar
+  const q = await buscarMudancas(40, async (i) => { if (i >= 8 && i <= 12) throw new Error("HTTP 503"); return hashDe(i); });
+  assert.equal(q.completo, false);
+  assert.equal(q.corte, "falha");
+  assert.ok(q.indices.includes(0) && q.indices.includes(20), `achou ${q.indices}`);
+  // o cancelamento do usuário continua passando
+  await assert.rejects(buscarMudancas(40, async () => { const e = new Error("x"); e.name = "AbortError"; throw e; }), { name: "AbortError" });
+});
+
+test("imagensDoLugar: tile 503 no meio da busca por hash → lista parcial, não a tela de erro", async () => {
+  limparCache();
+  const f = fonteFalsa({ tilemapFalha: true });
+  const bytes = f.bytes;
+  f.bytes = async (release, t) => { if (release === 1005) throw new Error("HTTP 503"); return bytes(release, t); };
+  // o tile do meio falhou: um vizinho serve de meio e a busca acha as mesmas 3 fotos
+  const r = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f });
+  assert.equal(r.metodo, "hash");
+  assert.deepEqual(r.imagens.map((x) => x.captura?.data), ["2025-08-09", "2020-03-01", "2014-05-10"]);
+  assert.equal(r.corte, "falha", "a fronteira exata da foto de 2014 ficou em aberto: avisa");
+  // vários tiles caindo seguidos: lista parcial, marcada, em vez da tela de erro
+  limparCache();
+  f.bytes = async (release, t) => { if (release >= 1004 && release <= 1008) throw new Error("HTTP 503"); return bytes(release, t); };
+  const p = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f });
+  assert.ok(p.imagens.length >= 1, `${p.imagens.length} fotos`);
+  assert.equal(p.incompleto, true);
+  assert.equal(p.corte, "falha");
+  assert.equal(p.lento, false, "falhou, não demorou");
+});
+
+test("imagensDoLugar: a imagem de hoje igual à versão mais nova ganha a data dela (atualIgual)", async () => {
+  limparCache();
+  const f = fonteFalsa();
+  f.bytesAtual = async () => new TextEncoder().encode("tile-0").buffer;
+  const r = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f });
+  assert.equal(r.atualIgual, 1000);
+  assert.equal(r.imagens.find((x) => x.release === r.atualIgual).captura.data, "2025-08-09");
+  limparCache();
+  f.bytesAtual = async () => new TextEncoder().encode("outra").buffer;
+  assert.equal((await imagensDoLugar(-51.9, -6.6, 15, { fonte: f })).atualIgual, null, "foto diferente: não confirma");
+  limparCache();
+  f.bytesAtual = async () => { throw new Error("HTTP 500"); };
+  assert.equal((await imagensDoLugar(-51.9, -6.6, 15, { fonte: f })).atualIgual, null, "falhou: não confirma, e não derruba");
 });

@@ -16,11 +16,13 @@ function camera(m: MapaGl) {
   return { center: m.getCenter(), zoom: m.getZoom(), bearing: m.getBearing(), pitch: m.getPitch(), roll: m.getRoll(), elevation: m.getCenterElevation() };
 }
 
-export function CortinaComparacao({ mapa, modeloAntes, atribuicao, opcoes, antes, depois, onAntes, onDepois, onFechar }: {
+export function CortinaComparacao({ mapa, modeloAntes, atribuicao, rotuloFonte, opcoes, antes, depois, onAntes, onDepois, onFechar }: {
   mapa: MapaGl;
   /** imagem da esquerda (null = a base atual) */
   modeloAntes: string | null;
   atribuicao: string;
+  /** de onde vêm as imagens dos dois lados (texto no pé da cortina) */
+  rotuloFonte: string;
   opcoes: OpcaoData[];
   antes: string;
   depois: string;
@@ -171,8 +173,8 @@ export function CortinaComparacao({ mapa, modeloAntes, atribuicao, opcoes, antes
           </select>
         </label>
       </div>
-      <div className="imgdata-cortina-fonte">Imagens: Esri World Imagery Wayback</div>
-      {falhou && <div className="imgdata-cortina-falha" role="status">Este navegador não abriu o segundo mapa da comparação. Use as setas ‹ › para alternar as datas.</div>}
+      <div className="imgdata-cortina-fonte">{rotuloFonte}</div>
+      {falhou && <div className="imgdata-cortina-falha" role="status">Este navegador não abriu o segundo mapa da comparação. Troque a data pela lista “Depois” ou feche a comparação e use as setas ‹ ›.</div>}
     </>,
     container,
   );
