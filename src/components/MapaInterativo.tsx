@@ -10,16 +10,21 @@
 // herdam o CSS da tela. Os dados chegam já em lon/lat (SIRGAS 2000 ≈ WGS84
 // para a escala de um mapa de tela).
 //
+// No canto de cima, o seletor "Imagem: atual ▾" (src/components/imagem) troca a
+// foto de satélite pela de outra data (Esri Wayback) e compara duas datas.
+//
 // Sem WebGL (aceleração gráfica desligada, placa bloqueada, contexto perdido)
 // o MapLibre não nasce: em vez de deixar o erro subir e apagar a tela inteira,
 // o mapa vira um aviso no próprio lugar e o resto da tela segue (ver lib/webgl.ts).
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSource, Map as MapaGl, StyleSpecification } from "maplibre-gl";
 import type { FeatureParcela, LonLat, Sobreposicao } from "../lib/sigef";
 import { fecharAnel } from "../lib/sigef";
 import type { CamadaRestricao } from "../lib/restricoes";
 import { esquecerWebgl, MOTIVO_SEM_WEBGL, webglDisponivel } from "../lib/webgl";
+import { SeletorImagemData } from "./imagem/SeletorImagemData";
+import { zoomParaExtensao } from "../lib/imagem_data";
 
 /** Texto para o usuário a partir do erro do MapLibre. */
 export function motivoDaFalhaDoMapa(e: unknown): string {
@@ -140,6 +145,16 @@ export function MapaInterativo(props: Props) {
   // por que o mapa não está desenhado (null = está); "tentativa" recria o mapa
   const [falha, setFalha] = useState<string | null>(() => (webglDisponivel() ? null : MOTIVO_SEM_WEBGL));
   const [tentativa, setTentativa] = useState(0);
+  // o mapa vivo, para o seletor de imagem por data (src/components/imagem)
+  const [mapaVivo, setMapaVivo] = useState<MapaGl | null>(null);
+  // centro e zoom da área para procurar as datas da imagem: o imóvel, ou os destaques
+  const areaImagem = useMemo(() => {
+    const aneis = (props.aneis.some((a) => a.length >= 3) ? props.aneis : (props.destaques ?? []).map((d) => d.anel)).filter((a) => a.length >= 3);
+    if (!aneis.length) return { centro: null, zoom: 16 };
+    let [o, s, l, n] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const a of aneis) for (const [x, y] of a) { o = Math.min(o, x); s = Math.min(s, y); l = Math.max(l, x); n = Math.max(n, y); }
+    return { centro: [(o + l) / 2, (s + n) / 2] as [number, number], zoom: zoomParaExtensao([o, s, l, n]) };
+  }, [props.aneis, props.destaques]);
 
   // cria o mapa (uma vez por tentativa)
   useEffect(() => {
@@ -218,10 +233,12 @@ export function MapaInterativo(props: Props) {
     mapa.on("load", () => { prontoRef.current = true; aplicar(); });
     mapa.on("zoom", () => ajustarRotulos());
     mapaRef.current = mapa;
+    setMapaVivo(mapa);
     // acesso para testes automatizados (playwright): document.querySelector(".mapa-interativo").__mapa
     (divRef.current as HTMLDivElement & { __mapa?: MapaGl }).__mapa = mapa;
     return () => {
       prontoRef.current = false; mapaRef.current = null; enquadradoRef.current = "";
+      setMapaVivo(null);
       for (const m of marcadoresRef.current) m.remove();
       marcadoresRef.current = [];
       try { mapa.remove(); } catch { /* contexto já perdido */ }
@@ -330,6 +347,7 @@ export function MapaInterativo(props: Props) {
   return (
     <>
       <div ref={divRef} className="mapa-interativo" style={{ height: altura, display: falha ? "none" : undefined }} />
+      {!falha && <SeletorImagemData mapa={mapaVivo} centro={areaImagem.centro} zoom={areaImagem.zoom} />}
       {falha && (
         <div className="mapa-indisponivel" role="status" style={{ minHeight: typeof altura === "number" ? Math.min(altura, 260) : 220 }}>
           <b>Mapa interativo indisponível</b>
