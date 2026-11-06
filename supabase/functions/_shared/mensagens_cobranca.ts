@@ -105,11 +105,16 @@ export function mensagemAcessoSuspenso(o: {
 /** Autocadastro (0040): a conta nasceu e falta o pagamento. Vai para o WhatsApp de quem se cadastrou. */
 export function mensagemCadastroCriado(o: {
   responsavel: string | null; empresa: string; plano: string; periodo: string; valor: number; url: string; login: string; parcelas: number;
+  /** taxa de adesão (0044), somada só ao 1º pagamento */
+  adesao?: number;
 }): string {
+  const adesao = o.adesao && o.adesao > 0
+    ? ` O primeiro pagamento leva também a adesão de ${fmtReais(o.adesao)}, cobrada uma vez só: total de ${fmtReais(o.valor + o.adesao)}.`
+    : "";
   return [
     ola(o.responsavel),
     "",
-    `A conta da ${o.empresa} no Vertces está criada no plano ${o.plano} (${o.periodo}, ${fmtReais(o.valor)}).`,
+    `A conta da ${o.empresa} no Vertces está criada no plano ${o.plano} (${o.periodo}, ${fmtReais(o.valor)}).${adesao}`,
     `Falta só o pagamento para liberar o acesso: entre em ${o.url} com o login ${o.login} e pague por Pix${o.parcelas > 1 ? ` ou no cartão em até ${o.parcelas}x` : " ou cartão"}.`,
     "",
     "Assim que o pagamento confirmar, o acesso é liberado na hora e avisamos por aqui.",
@@ -119,13 +124,14 @@ export function mensagemCadastroCriado(o: {
 /** Autocadastro (0040): aviso para o número do superadmin (chave whatsapp_avisos). */
 export function mensagemNovoCadastro(o: {
   empresa: string; documento: string; responsavel: string; email: string; telefone: string; plano: string; periodo: string; valor: number;
+  adesao?: number;
 }): string {
   return [
     "Novo cadastro pelo site do Vertces 🆕",
     "",
     `${o.empresa} (${o.documento})`,
     `Responsável: ${o.responsavel} · ${o.telefone} · ${o.email}`,
-    `Plano ${o.plano}, ${o.periodo}: ${fmtReais(o.valor)}`,
+    `Plano ${o.plano}, ${o.periodo}: ${fmtReais(o.valor)}${o.adesao && o.adesao > 0 ? ` + adesão ${fmtReais(o.adesao)}` : ""}`,
     "",
     "A conta espera o pagamento (Pix ou cartão) para liberar o acesso.",
   ].join("\n");

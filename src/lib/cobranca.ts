@@ -60,7 +60,7 @@ export interface MinhaCobranca {
   /** já existe assinatura no Asaas */
   assinatura?: boolean;
   regras?: RegrasPagamento;
-  ultimo_pagamento?: { status: string; forma: string | null; parcelas: number | null; valor: number; ciclo: Ciclo | null; criado_em: string } | null;
+  ultimo_pagamento?: { status: string; forma: string | null; parcelas: number | null; valor: number; ciclo: Ciclo | null; adesao?: number | null; criado_em: string } | null;
 }
 
 // ---------------------------------------------------------------- o autocadastro (0040)
@@ -102,6 +102,8 @@ export const criarCadastro = (d: DadosCadastro) =>
 
 export interface ResultadoPagarCadastro {
   forma: "pix" | "cartao"; ciclo: Ciclo; valor: number;
+  /** 0044: a taxa de adesão somada a este 1º pagamento e o valor só do período */
+  adesao?: number; periodo?: number;
   parcelas?: number; parcela?: number; final?: string;
   pix?: Pix | null; link?: string | null; vencimento?: string | null;
   /** pagou (cartão aprovado, ou o Pix de antes já estava pago) */

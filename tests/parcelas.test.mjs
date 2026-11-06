@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   cicloDe, configDasRegras, descricaoDaCompra, economia, escolherParcelas, maxParcelas, normalizarRegras, opcoesDeParcelas,
-  parcelamento, problemaDasRegras, REGRAS_PADRAO, regrasDe, somarMeses, textoParcelas, valorDoPeriodo,
+  parcelamento, problemaDasRegras, REGRAS_PADRAO, regrasDe, somarMeses, TEXTO_ADESAO_PADRAO, textoParcelas, totalComAdesao, valorDoPeriodo,
 } from "../supabase/functions/_shared/parcelas.ts";
 
 const R = REGRAS_PADRAO;
@@ -112,4 +112,26 @@ test("textos e datas: o que a tela e a fatura do Asaas mostram", () => {
   assert.equal(somarMeses("2026-08-31", 6), "2027-02-28");
   assert.equal(somarMeses("2026-01-31", 1), "2026-02-28");
   assert.equal(somarMeses("2026-12-15", 1), "2027-01-15");
+});
+
+test("adesão (0044): padrão R$ 500, somada ao 1º pagamento, gravada e conferida", () => {
+  assert.equal(regrasDe({}).adesao, 500, "sem nada gravado: R$ 500,00");
+  assert.equal(regrasDe({ adesao_valor: "0" }).adesao, 0, "0 = sem adesão");
+  assert.equal(regrasDe({ adesao_valor: "quebrado" }).adesao, 500, "valor quebrado: o padrão");
+  assert.equal(regrasDe({ adesao_valor: "750.5" }).adesao, 750.5);
+  assert.equal(regrasDe({ adesao_texto: "   " }).adesao_texto, TEXTO_ADESAO_PADRAO, "texto vazio: o padrão");
+  const r = normalizarRegras({ adesao: "1200,40", adesao_texto: "  Implantação   e treinamento. " });
+  assert.equal(r.adesao, 1200.4);
+  assert.equal(r.adesao_texto, "Implantação e treinamento.");
+  assert.deepEqual(regrasDe(configDasRegras(r)), r, "ida e volta pelo banco com a adesão");
+  assert.equal(totalComAdesao(3598.8, 500), 4098.8);
+  assert.equal(totalComAdesao(299.9, 0), 299.9);
+  // o 1º pagamento parcela com a adesão junto: anual de R$ 299,90 + R$ 500 em 6x sem juros
+  const p6 = parcelamento(totalComAdesao(3598.8, 500), 6, R);
+  assert.deepEqual([p6.total, p6.juros], [4098.8, false]);
+  assert.match(problemaDasRegras({ ...configDasRegras(R), adesao: "-1" }), /adesão vai de/);
+  assert.match(problemaDasRegras({ ...configDasRegras(R), adesao: "99999" }), /adesão vai de/);
+  assert.match(problemaDasRegras({ ...configDasRegras(R), adesao: "10.555" }), /centavos/);
+  assert.match(problemaDasRegras({ ...configDasRegras(R), adesao_texto: "x".repeat(501) }), /no máximo 500/);
+  assert.match(descricaoDaCompra("Autônomo", "YEARLY", parcelamento(4098.8, 1, R), R, 500), /plano Autônomo \(anual\) \+ adesão de R\$\s500,00 \(uma vez só\)$/);
 });

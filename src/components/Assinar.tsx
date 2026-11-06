@@ -17,12 +17,12 @@ import {
   formatarDocumento, formatarTelefone, problemasDoCadastro, soDigitos,
 } from "../../supabase/functions/_shared/cnpj.ts";
 import {
-  cicloDe, ciclosAtivos, economia, maxParcelas, MESES, NOME_CICLO, valorDoPeriodo,
+  cicloDe, ciclosAtivos, economia, maxParcelas, MESES, NOME_CICLO, totalComAdesao, valorDoPeriodo,
 } from "../../supabase/functions/_shared/parcelas.ts";
 import type { Ciclo } from "../../supabase/functions/_shared/parcelas.ts";
 import { fmtReais } from "../../supabase/functions/_shared/precos.ts";
 import { textoCreditos } from "../../supabase/functions/_shared/mensagens_cobranca.ts";
-import { PagamentoCadastro, pagaPeloSite } from "./PagamentoCadastro";
+import { PagamentoCadastro, pagaPeloSite, ResumoAdesao } from "./PagamentoCadastro";
 import { Dica, Rotulo } from "./ui";
 import { Logo } from "./Logo";
 import "./assinar.css";
@@ -242,7 +242,8 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
         ) : (
           <section>
             <h1>Escolha o plano</h1>
-            <p className="as-sub">Os créditos do plano renovam todo mês. Pague por Pix ou no cartão{maxParcelas(dados.regras, "YEARLY") > 1 ? `, em até ${maxParcelas(dados.regras, "YEARLY")}x no anual` : ""}.</p>
+            <p className="as-sub">Os créditos do plano renovam todo mês. Pague por Pix ou no cartão{maxParcelas(dados.regras, "YEARLY") > 1 ? `, em até ${maxParcelas(dados.regras, "YEARLY")}x no anual` : ""}.
+              {dados.regras.adesao > 0 && <> O primeiro pagamento inclui a taxa de adesão de {fmtReais(dados.regras.adesao)}, cobrada uma vez só.</>}</p>
             {ativos.length > 1 && (
               <div className="as-periodos" role="radiogroup" aria-label="Período" style={{ ["--periodos" as string]: ativos.length } as React.CSSProperties}>
                 {ativos.map((c) => (
@@ -285,9 +286,13 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
                 <span>Plano <b>{escolhido.nome}</b> · {NOME_CICLO[ciclo].toLowerCase()}
                   <Dica>o acesso é liberado quando o pagamento confirmar; no cartão, acima de {dados.regras.parcelas_sem_juros}x há juros de {String(dados.regras.juros_mes).replace(".", ",")}% ao mês, mostrados antes de pagar</Dica>
                 </span>
-                <b>{fmtReais(valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto))}</b>
-                <small>Pix ou cartão{maxParcelas(dados.regras, ciclo) > 1 ? ` em até ${maxParcelas(dados.regras, ciclo)}x` : ""}</small>
+                <b>{fmtReais(totalComAdesao(valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto), dados.regras.adesao))}</b>
+                <small>{dados.regras.adesao > 0 ? "primeiro pagamento, com a adesão · " : ""}Pix ou cartão{maxParcelas(dados.regras, ciclo) > 1 ? ` em até ${maxParcelas(dados.regras, ciclo)}x` : ""}</small>
               </div>
+            )}
+            {escolhido && (
+              <ResumoAdesao plano={escolhido.nome} periodo={NOME_CICLO[ciclo].toLowerCase()} adesao={dados.regras.adesao} texto={dados.regras.adesao_texto}
+                valorPeriodo={valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto)} />
             )}
             {erro && (
               <div className="aviso-erro-pagina" role="alert">

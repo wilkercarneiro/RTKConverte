@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mesmoToken, somarDias, somarMes, tratarAcao, tratarWebhook } from "../supabase/functions/cobranca/fluxos.ts";
 import { JA_EXISTE, tratarPublico } from "../supabase/functions/cobranca/cadastro.ts";
-import { somarMeses } from "../supabase/functions/_shared/parcelas.ts";
+import { parcelamento, regrasDe, somarMeses } from "../supabase/functions/_shared/parcelas.ts";
 import { bandeiraDoNumero, cpfValido, lerValidade, luhnValido, problemasDoCartao } from "../supabase/functions/_shared/cartao.ts";
 import { cotar, faixasEmTexto, minimoDe, problemaDasFaixas } from "../supabase/functions/_shared/precos.ts";
 import { dataBr, mensagemAcessoLiberado, mensagemCobranca, textoCreditos } from "../supabase/functions/_shared/mensagens_cobranca.ts";
@@ -150,6 +150,12 @@ function bancoFalso(cfg = {}) {
     async pagamentoDaCompra(creditoId) { return b.pagamentos.find((x) => x.credito_id === creditoId) ?? null; },
     async cancelarCompra(creditoId, pagamentoId, motivo) { b.cancelados.push({ creditoId, pagamentoId, motivo }); },
     async pagamentosPendentes() { return b.pagamentos.filter((x) => x.asaas_id && ["PENDING", "OVERDUE", "AWAITING_RISK_ANALYSIS"].includes(x.status)); },
+    // 0044: o Pix avulso (período + adesão) em aberto
+    async comprasAvulsasAbertas(esc) {
+      return b.pagamentos.filter((x) => x.escritorio_id === esc && x.finalidade === "mensalidade" && x.forma === "PIX" && Number(x.adesao) > 0
+        && x.asaas_id && ["PENDING", "OVERDUE"].includes(x.status))
+        .map((x) => { x.id ??= `pg_${x.asaas_id}`; return x; });
+    },
     async descricaoCredito() { return "10 créditos de car"; },
     cartoes: {}, recargas: [], reserva: { pode: false, motivo: "desligada" }, atividades: [],
     async detalheCompra(id) { return b.pagamentos.find((x) => x.credito_id === id) ? { automatica: !!b.pagamentos.find((x) => x.credito_id === id).automatica, valor: 50 } : null; },
@@ -748,7 +754,9 @@ test("painel: mostra se a conta do Asaas guarda cartões (tokenização)", async
 // ------------------------------------------------------------------ autocadastro (0040)
 
 const PLANO = { id: "1f0c8a2e-1111-4a1b-9c3d-0123456789ab", nome: "Autônomo", preco_mensal: 299.9, ativo: true, vende_no_site: true };
-const ABERTO = { ...ASAAS_OK, cadastro_aberto: "true" };
+// os cenários de antes da adesão (0044) rodam com ela desligada; a adesão tem os testes dela
+const ABERTO = { ...ASAAS_OK, cadastro_aberto: "true", adesao_valor: "0" };
+const COM_ADESAO = { ...ABERTO, adesao_valor: "500" };
 const DADOS = {
   acao: "cadastro_criar", empresa: "Geo  Lima ", documento: "529.982.247-25", responsavel: "Ana Lima", email: "Ana@GeoLima.test",
   telefone: "(71) 98888-7777", senha: "Senha1234", plano_id: PLANO.id, ciclo: "anual", aceite_termos: true,
@@ -1171,4 +1179,114 @@ test("autocadastro: cadastro antigo sem pagamento com o mesmo documento dá luga
   assert.ok(!c.banco.empresas["esc-velho"], "o cadastro abandonado saiu");
   assert.ok(!c.banco.contas.some((x) => x.id === "user-velho"), "e a conta dele");
   assert.ok(c.banco.contas.some((x) => x.email === DADOS.email.toLowerCase()), "o novo entrou");
+});
+
+// ------------------------------------------------------------------ adesão (0044)
+/** o banco ao aplicar a compra avulsa com adesão: ativa e pede a assinatura das renovações */
+function bancoQueAtivaComAdesao(banco, meses) {
+  return (evento, p) => {
+    if (p.status === "AWAITING_RISK_ANALYSIS") return { acao: "em_analise", escritorio_id: SITE.id };
+    const cob = banco.cobrancas[SITE.id];
+    const pag = banco.pagamentos.find((x) => x.asaas_id === p.id);
+    const primeira = banco.empresas[SITE.id].status === "aguardando_pagamento";
+    banco.empresas[SITE.id].status = "ativo";
+    cob.situacao = "em_dia";
+    // como aplicar_pagamento_asaas: o período do pagamento (o da compra), senão o da empresa
+    const doPagamento = { MONTHLY: 1, SEMIANNUALLY: 6, YEARLY: 12 }[pag?.ciclo ?? ""];
+    cob.proximo_vencimento = somarMeses(p.dueDate, doPagamento ?? meses);
+    const criar = primeira && !p.subscription && Number(pag?.adesao) > 0 && !cob.asaas_assinatura_id;
+    return { acao: primeira ? "ativou" : "renovou", escritorio_id: SITE.id, ...(criar ? { criar_assinatura: true, ciclo: cob.ciclo, proximo_vencimento: cob.proximo_vencimento } : {}) };
+  };
+}
+
+test("adesão no Pix: cobrança avulsa de período + adesão (sem assinatura); de novo reaproveita; outro período troca; paga, nasce a assinatura só com o plano", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento(COM_ADESAO);
+  banco.respostaAplicar = bancoQueAtivaComAdesao(banco, 12);
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "YEARLY" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const pix = posts(asaas, "/payments");
+  assert.equal(pix.length, 1);
+  assert.deepEqual({ b: pix[0].corpo.billingType, v: pix[0].corpo.value, d: pix[0].corpo.dueDate }, { b: "PIX", v: 4098.8, d: "2026-10-30" },
+    "anual R$ 3.598,80 + adesão R$ 500,00");
+  assert.match(pix[0].corpo.description, /plano Autônomo \(anual\) \+ adesão de R\$\s500,00 \(uma vez só\)/);
+  assert.equal(posts(asaas, "/subscriptions").length, 0, "a assinatura só nasce depois de pago");
+  assert.deepEqual({ v: r.corpo.valor, a: r.corpo.adesao, p: r.corpo.periodo, q: r.corpo.pix.payload }, { v: 4098.8, a: 500, p: 3598.8, q: "000201pix" });
+  assert.deepEqual({ f: banco.pagamentos[0].forma, a: banco.pagamentos[0].adesao, v: banco.pagamentos[0].valor }, { f: "PIX", a: 500, v: 4098.8 });
+  assert.equal(banco.cobrancas[SITE.id].valor, 3598.8, "a cobrança da empresa guarda só o plano (é o que renova)");
+
+  const r2 = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "YEARLY" });
+  assert.equal(posts(asaas, "/payments").length, 1, "voltou à tela: o mesmo Pix");
+  assert.equal(r2.corpo.link, r.corpo.link);
+
+  const antigo = banco.pagamentos[0].asaas_id;
+  const r3 = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "MONTHLY" });
+  assert.equal(r3.status, 200, JSON.stringify(r3.corpo));
+  assert.ok(asaas.chamadas.some((c) => c.metodo === "DELETE" && c.caminho === `/payments/${antigo}`), "o Pix anual sai do Asaas");
+  assert.equal(banco.pagamentos[0].status, "DELETED");
+  assert.equal(posts(asaas, "/payments")[1].corpo.value, 799.9, "mensal R$ 299,90 + adesão R$ 500,00");
+
+  // pagou o Pix mensal: a tela confere, a empresa ativa e a assinatura mensal nasce só com o plano
+  asaas.cobrancas.get(banco.pagamentos[1].asaas_id).status = "RECEIVED";
+  const r4 = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "MONTHLY" });
+  assert.equal(r4.corpo.ativou, true, JSON.stringify(r4.corpo));
+  const sub = posts(asaas, "/subscriptions");
+  assert.equal(sub.length, 1);
+  assert.deepEqual({ v: sub[0].corpo.value, c: sub[0].corpo.cycle, d: sub[0].corpo.nextDueDate }, { v: 299.9, c: "MONTHLY", d: "2026-11-30" },
+    "renovação sem adesão, vencendo quando o mês pago acaba");
+});
+
+test("adesão no cartão à vista: cobrança avulsa no cartão; aprovada, ativa e cria a assinatura do período só com o plano", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento(COM_ADESAO);
+  banco.respostaAplicar = bancoQueAtivaComAdesao(banco, 12);
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "cartao", ciclo: "YEARLY", parcelas: 1, cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.ativou, true);
+  const compra = posts(asaas, "/payments");
+  assert.equal(compra.length, 1);
+  assert.deepEqual({ b: compra[0].corpo.billingType, v: compra[0].corpo.value, n: compra[0].corpo.installmentCount }, { b: "CREDIT_CARD", v: 4098.8, n: undefined });
+  assert.equal(banco.pagamentos[0].adesao, 500);
+  const sub = posts(asaas, "/subscriptions");
+  assert.equal(sub.length, 1, "só a das renovações");
+  assert.deepEqual({ b: sub[0].corpo.billingType, v: sub[0].corpo.value, d: sub[0].corpo.nextDueDate }, { b: "UNDEFINED", v: 3598.8, d: "2027-10-30" });
+  assert.equal(r.corpo.valor, 4098.8);
+});
+
+test("adesão parcelada junto com o período: 12x pela Tabela Price sobre período + adesão; mensal só à vista", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento(COM_ADESAO);
+  banco.respostaAplicar = bancoQueAtivaComAdesao(banco, 12);
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "cartao", ciclo: "YEARLY", parcelas: 12, cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const c = posts(asaas, "/payments")[0].corpo;
+  assert.equal(c.installmentCount, 12);
+  const p = parcelamento(4098.8, 12, regrasDe(COM_ADESAO));
+  assert.equal(c.installmentValue, p.parcela, "PMT de R$ 4.098,80 em 12x a 2,99% a.m.");
+  assert.match(c.description, /adesão de R\$\s500,00/);
+  assert.deepEqual({ t: banco.pagamentos[0].valor, a: banco.pagamentos[0].adesao, n: banco.pagamentos[0].parcelas }, { t: p.total, a: 500, n: 12 });
+  assert.equal(posts(asaas, "/subscriptions")[0].corpo.value, 3598.8, "a renovação é só o plano");
+  const m = cenarioPagamento(COM_ADESAO, "MONTHLY", 299.9);
+  const rm = await tratarAcao(m.deps, m.usuario, { acao: "pagar_cadastro", forma: "cartao", ciclo: "MONTHLY", parcelas: 2, cartao: CARTAO, titular: TITULAR });
+  assert.equal(rm.status, 400, "o mensal não parcela, nem com a adesão");
+});
+
+test("adesão no painel: autocadastro_salvar grava valor e texto e confere os limites; o cadastro avisa a adesão no WhatsApp", async () => {
+  const c = cenario({ cfg: ABERTO, superadmin: true });
+  let r = await tratarAcao(c.deps, c.usuario, { acao: "autocadastro_salvar", adesao: 750.5, adesao_texto: "Implantação e treinamento inicial." });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.deepEqual({ v: c.banco.cfg.adesao_valor, t: c.banco.cfg.adesao_texto }, { v: "750.5", t: "Implantação e treinamento inicial." });
+  assert.equal(r.corpo.autocadastro.adesao, 750.5);
+  r = await tratarAcao(c.deps, c.usuario, { acao: "autocadastro_salvar", adesao: -5 });
+  assert.equal(r.status, 400);
+  assert.match(r.corpo.erro, /adesão/);
+  assert.equal(c.banco.cfg.adesao_valor, "750.5", "recusado não grava");
+  r = await tratarAcao(c.deps, c.usuario, { acao: "autocadastro_salvar", adesao: 0 });
+  assert.equal(r.status, 200);
+  assert.equal(c.banco.cfg.adesao_valor, "0", "0 = sem adesão");
+
+  const k = cenarioCadastro({ ...COM_ADESAO, ...ZAP, whatsapp_avisos: "71977776666" });
+  const rc = await tratarPublico(k.deps, "200.1.2.3", DADOS);
+  assert.equal(rc.status, 200, JSON.stringify(rc.corpo));
+  assert.equal(rc.corpo.adesao, 500);
+  const zaps = k.asaas.chamadas.filter((x) => x.whatsapp);
+  assert.match(zaps.find((z) => z.corpo.number === "5571988887777").corpo.text, /adesão de R\$\s500,00, cobrada uma vez só: total de R\$\s4\.098,80/);
+  assert.match(zaps.find((z) => z.corpo.number === "5571977776666").corpo.text, /\+ adesão R\$\s500,00/);
 });

@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { conferirPagamentos, minhaCobranca, pagarCadastro } from "../lib/cobranca";
 import type { Ciclo, MinhaCobranca, ResultadoPagarCadastro } from "../lib/cobranca";
 import {
-  ciclosAtivos, economia, MESES, NOME_CICLO, normalizarRegras, opcoesDeParcelas, valorDoPeriodo,
+  ciclosAtivos, economia, MESES, NOME_CICLO, normalizarRegras, opcoesDeParcelas, totalComAdesao, valorDoPeriodo,
 } from "../../supabase/functions/_shared/parcelas.ts";
 import type { Parcelamento } from "../../supabase/functions/_shared/parcelas.ts";
 import { fmtReais } from "../../supabase/functions/_shared/precos.ts";
@@ -28,6 +28,24 @@ export function pagaPeloSite(c: MinhaCobranca | null | undefined): boolean {
 export function rotuloParcela(p: Parcelamento): string {
   if (p.n === 1) return `1x de ${fmtReais(p.total)} (à vista)`;
   return p.juros ? `${p.n}x de ${fmtReais(p.parcela)} (total ${fmtReais(p.total)})` : `${p.n}x de ${fmtReais(p.parcela)} sem juros`;
+}
+
+/**
+ * A taxa de adesão (0044) explicada: o plano do período, a adesão (uma vez só)
+ * e o total do 1º pagamento, com o texto que o superadmin escreveu no painel.
+ */
+export function ResumoAdesao({ plano, periodo, valorPeriodo, adesao, texto }: {
+  plano: string | null; periodo: string; valorPeriodo: number; adesao: number; texto: string;
+}) {
+  if (!(adesao > 0)) return null;
+  return (
+    <div className="as-adesao" aria-label="Taxa de adesão">
+      <span className="as-adesao-linha"><span>Plano{plano ? ` ${plano}` : ""} ({periodo})</span><b>{fmtReais(valorPeriodo)}</b></span>
+      <span className="as-adesao-linha"><span>Taxa de adesão (pagamento único)</span><b>{fmtReais(adesao)}</b></span>
+      <span className="as-adesao-linha total"><span>Primeiro pagamento</span><b>{fmtReais(totalComAdesao(valorPeriodo, adesao))}</b></span>
+      <p><b>O que é a adesão?</b> {texto} Renovação {periodo}: {fmtReais(valorPeriodo)}.</p>
+    </div>
+  );
 }
 
 type Estado = "escolher" | "pix" | "analise" | "pago";
@@ -54,14 +72,19 @@ export function PagamentoCadastro({ cobranca, vigiar = true, onConfirmado }: {
   const [copiado, setCopiado] = useState(false);
   const [conferindo, setConferindo] = useState(false);
 
-  const total = valorDoPeriodo(mensalidade, ciclo, regras.ciclos[ciclo].desconto);
+  // o período e, só no 1º pagamento, a adesão (0044): o servidor faz a mesma conta
+  const periodo = valorDoPeriodo(mensalidade, ciclo, regras.ciclos[ciclo].desconto);
+  const adesao = regras.adesao;
+  const total = totalComAdesao(periodo, adesao);
   const opcoes = opcoesDeParcelas(total, ciclo, regras);
   const escolhida = opcoes[Math.min(n, opcoes.length) - 1];
   const temJuros = opcoes.some((p) => p.juros);
 
   // Pix gerado antes (voltou à tela): mostra o mesmo, sem criar outro
   useEffect(() => {
-    if (cobranca.situacao === "aguardando" && cobranca.assinatura && cobranca.link && estado === "escolher") void gerarPix(true);
+    // (com adesão o Pix é avulso: não há assinatura, só o link)
+    if (cobranca.situacao === "aguardando" && cobranca.link && estado === "escolher"
+      && (cobranca.assinatura || cobranca.ultimo_pagamento?.forma === "PIX")) void gerarPix(true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // pagou (Pix, ou a análise do cartão aprovou): entra sozinho
@@ -96,7 +119,7 @@ export function PagamentoCadastro({ cobranca, vigiar = true, onConfirmado }: {
   function trocarCiclo(c: Ciclo) {
     if (c === ciclo || gerando) return;
     setCiclo(c);
-    setN((atual) => Math.min(atual, opcoesDeParcelas(valorDoPeriodo(mensalidade, c, regras.ciclos[c].desconto), c, regras).length));
+    setN((atual) => Math.min(atual, opcoesDeParcelas(totalComAdesao(valorDoPeriodo(mensalidade, c, regras.ciclos[c].desconto), adesao), c, regras).length));
     // o Pix gerado era de outro valor
     if (estado === "pix") { setPix(null); setEstado("escolher"); }
     setErro(null);
@@ -169,14 +192,16 @@ export function PagamentoCadastro({ cobranca, vigiar = true, onConfirmado }: {
       )}
       <div className="as-total">
         <span>{cobranca.plano ? <>Plano <b>{cobranca.plano}</b> · </> : null}{NOME_CICLO[ciclo].toLowerCase()}</span>
-        <b>{fmtReais(total)}</b>
+        <b>{fmtReais(periodo)}</b>
         {MESES[ciclo] > 1 && (
           <small>
-            equivale a {fmtReais(total / MESES[ciclo])}/mês
+            equivale a {fmtReais(periodo / MESES[ciclo])}/mês
             {economia(mensalidade, ciclo, regras.ciclos[ciclo].desconto) > 0 && <> · economia de {fmtReais(economia(mensalidade, ciclo, regras.ciclos[ciclo].desconto))}</>}
           </small>
         )}
       </div>
+
+      <ResumoAdesao plano={cobranca.plano ?? null} periodo={NOME_CICLO[ciclo].toLowerCase()} valorPeriodo={periodo} adesao={adesao} texto={regras.adesao_texto} />
 
       <div className="as-formas" role="radiogroup" aria-label="Forma de pagamento">
         <button type="button" role="radio" aria-checked={forma === "pix"} className={`as-forma${forma === "pix" ? " sel" : ""}`} onClick={() => setForma("pix")}>

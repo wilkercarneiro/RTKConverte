@@ -2,6 +2,8 @@
 //   - abrir ou fechar; os períodos à venda e o desconto de cada um; as parcelas
 //     sem juros, o máximo e os juros acima disso; o WhatsApp que recebe "novo
 //     cadastro";
+//   - a taxa de adesão (0044): o valor (0 = sem adesão) e a explicação que a
+//     pessoa lê no cadastro; vai somada só ao 1º pagamento;
 //   - o link de cadastro (geral e um por plano) para copiar, abrir ou mandar.
 // Quem confere e grava é a função `cobranca` (autocadastro_salvar); a conta das
 // parcelas é a mesma da tela de pagamento (_shared/parcelas.ts).
@@ -9,7 +11,8 @@ import { useState } from "react";
 import { salvarAutocadastro } from "../../lib/cobranca";
 import type { Autocadastro as Regras, StatusPagamentos } from "../../lib/cobranca";
 import {
-  CICLOS, maxParcelas, NOME_CICLO, normalizarRegras, parcelamento, problemaDasRegras, valorDoPeriodo,
+  CICLOS, LIMITE_TEXTO_ADESAO, maxParcelas, NOME_CICLO, normalizarRegras, parcelamento, problemaDasRegras, TEXTO_ADESAO_PADRAO,
+  totalComAdesao, valorDoPeriodo,
 } from "../../../supabase/functions/_shared/parcelas.ts";
 import type { Ciclo } from "../../../supabase/functions/_shared/parcelas.ts";
 import { formatarTelefone, soDigitos } from "../../../supabase/functions/_shared/cnpj.ts";
@@ -22,7 +25,11 @@ type Msg = { tipo: "ok" | "erro"; texto: string } | null;
 const num = (v: number) => String(v).replace(".", ",");
 
 export function Autocadastro({ st, d, onSalvo }: { st: StatusPagamentos; d: DadosAdmin | null; onSalvo: (a: Regras) => void }) {
-  const atual = st.autocadastro ?? { ...normalizarRegras({}), whatsapp_avisos: null, parcelado_value: false };
+  // normalizado: um servidor de antes da 0044 não manda a adesão (vale o padrão)
+  const atual = {
+    ...normalizarRegras(st.autocadastro ?? {}),
+    whatsapp_avisos: st.autocadastro?.whatsapp_avisos ?? null, parcelado_value: !!st.autocadastro?.parcelado_value,
+  };
   const [aberto, setAberto] = useState(atual.cadastro_aberto);
   const [semJuros, setSemJuros] = useState(String(atual.parcelas_sem_juros));
   const [max, setMax] = useState(String(atual.parcelas_max));
@@ -30,11 +37,18 @@ export function Autocadastro({ st, d, onSalvo }: { st: StatusPagamentos; d: Dado
   const [ciclos, setCiclos] = useState(() => Object.fromEntries(CICLOS.map((c) => [c, { ativo: atual.ciclos[c].ativo, desconto: num(atual.ciclos[c].desconto) }])) as Record<Ciclo, { ativo: boolean; desconto: string }>);
   const [avisos, setAvisos] = useState(atual.whatsapp_avisos ? formatarTelefone(atual.whatsapp_avisos) : "");
   const [comValue, setComValue] = useState(!!atual.parcelado_value);
+  const [adesao, setAdesao] = useState(num(atual.adesao));
+  const [adesaoTexto, setAdesaoTexto] = useState(atual.adesao_texto);
   const [msg, setMsg] = useState<Msg>(null);
   const [ocupado, setOcupado] = useState(false);
   const [copiado, setCopiado] = useState<string | null>(null);
 
-  const pedido = { cadastro_aberto: aberto, parcelas_sem_juros: semJuros, parcelas_max: max, juros_mes: juros, ciclos };
+  const pedido = {
+    cadastro_aberto: aberto, parcelas_sem_juros: semJuros, parcelas_max: max, juros_mes: juros, ciclos,
+    // "1.500,00" e "500,5" (vírgula = decimal) ou "500.50"; vazio = sem adesão
+    adesao: adesao.trim() === "" ? "0" : adesao.includes(",") ? adesao.trim().replace(/\./g, "").replace(",", ".") : adesao.trim(),
+    adesao_texto: adesaoTexto,
+  };
   const problema = problemaDasRegras(pedido) ?? (soDigitos(avisos) && soDigitos(avisos).length < 10 ? "WhatsApp dos avisos: DDD + número." : null);
   const regras = normalizarRegras(pedido);
   const ciclo = (c: Ciclo, campo: "ativo" | "desconto", v: boolean | string) => setCiclos((x) => ({ ...x, [c]: { ...x[c], [campo]: v } }));
@@ -55,9 +69,11 @@ export function Autocadastro({ st, d, onSalvo }: { st: StatusPagamentos; d: Dado
   const planos = (d?.planos ?? []).filter((p) => p.ativo && p.vende_no_site && Number(p.preco_mensal ?? 0) > 0);
   // um exemplo com o 1º plano: o que a pessoa vê no maior parcelamento do anual
   const exemplo = planos[0] && regras.ciclos.YEARLY.ativo ? (() => {
-    const total = valorDoPeriodo(Number(planos[0].preco_mensal), "YEARLY", regras.ciclos.YEARLY.desconto);
+    const periodo = valorDoPeriodo(Number(planos[0].preco_mensal), "YEARLY", regras.ciclos.YEARLY.desconto);
+    const total = totalComAdesao(periodo, regras.adesao);
     const p = parcelamento(total, maxParcelas(regras, "YEARLY"), regras);
-    return `${planos[0].nome}, anual (${fmtReais(total)}): ${p.n}x de ${fmtReais(p.parcela)}${p.juros ? ` = ${fmtReais(p.total)} com juros` : " sem juros"}`;
+    const conta = regras.adesao > 0 ? `${fmtReais(periodo)} + adesão ${fmtReais(regras.adesao)} = ${fmtReais(total)}` : fmtReais(total);
+    return `${planos[0].nome}, anual (${conta}): ${p.n}x de ${fmtReais(p.parcela)}${p.juros ? ` = ${fmtReais(p.total)} com juros` : " sem juros"}`;
   })() : null;
 
   async function copiarLink(chave: string, link: string) {
@@ -109,6 +125,24 @@ export function Autocadastro({ st, d, onSalvo }: { st: StatusPagamentos; d: Dado
         </label>
       </div>
       {exemplo && !problema && <p className="sub" style={{ margin: "10px 0 0" }}>Exemplo: {exemplo}.</p>}
+
+      <h4 style={{ margin: "18px 0 8px", fontSize: 14 }}>Taxa de adesão<Dica>
+        Cobrada uma vez só, somada ao primeiro pagamento de quem se cadastra pelo link (Pix, cartão à vista ou parcelada junto com o período).
+        As renovações cobram só o plano. Empresas criadas aqui no painel não pagam adesão. Mudar o valor vale para os próximos pagamentos;
+        um Pix já gerado com o valor antigo é trocado quando a pessoa gera de novo.
+      </Dica></h4>
+      <div className="sa-campos">
+        <label><Rotulo dica="em reais; 0 = sem adesão">Valor da adesão (R$)</Rotulo>
+          <input inputMode="decimal" value={adesao} onChange={(e) => setAdesao(e.target.value)} placeholder="500,00" />
+        </label>
+        <label style={{ gridColumn: "span 2" }}><Rotulo dica={`aparece no cadastro e na tela de pagamento, com o valor; até ${LIMITE_TEXTO_ADESAO} caracteres; vazio = o texto padrão`}>O que é a adesão (texto para o cliente)</Rotulo>
+          <textarea rows={3} maxLength={LIMITE_TEXTO_ADESAO} value={adesaoTexto} placeholder={TEXTO_ADESAO_PADRAO}
+            onChange={(e) => setAdesaoTexto(e.target.value)} />
+        </label>
+      </div>
+      {regras.adesao > 0
+        ? <p className="sub" style={{ margin: "8px 0 0" }}>O cliente vê: “Taxa de adesão (pagamento único): {fmtReais(regras.adesao)}. {regras.adesao_texto}”</p>
+        : <p className="sub" style={{ margin: "8px 0 0" }}>Sem adesão: o primeiro pagamento é só o plano.</p>}
 
       <div style={{ marginTop: 16, display: "grid", gap: 8 }}>
         <div className="sa-fatura">
