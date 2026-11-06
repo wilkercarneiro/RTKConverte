@@ -189,6 +189,31 @@ export function desenharMapa(ctx: Ctx, r: ResultadoTerraplanagem, v: Vista, w: n
   ctx.restore();
 }
 
+/**
+ * Sem resultado (o cálculo falhou e não há um anterior): só os pontos do
+ * levantamento e a plataforma tracejada, para dar para ver onde ela está e
+ * trazê-la de volta.
+ */
+export function desenharSoPontos(ctx: Ctx, v: Vista, w: number, h: number, pontos: Pt[], plataforma: Pt[] | null): void {
+  ctx.save();
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "rgba(18, 32, 26, 0.75)";
+  const raio = Math.max(1.4, Math.min(2.6, v.escala * 0.5));
+  for (const p of pontos) {
+    const [x, y] = paraTela(v, p);
+    if (x < -4 || y < -4 || x > w + 4 || y > h + 4) continue;
+    ctx.beginPath(); ctx.arc(x, y, raio, 0, Math.PI * 2); ctx.fill();
+  }
+  if (plataforma && plataforma.length >= 3) {
+    ctx.lineWidth = 2; ctx.strokeStyle = CORES.plataforma; ctx.setLineDash([6, 4]);
+    ctx.fillStyle = "rgba(14, 59, 43, 0.08)";
+    ctx.beginPath();
+    plataforma.forEach((q, i) => { const [x, y] = paraTela(v, q); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /** Escala gráfica (canto inferior esquerdo) e seta do norte (superior direito). */
 export function desenharMoldura(ctx: Ctx, v: Vista, w: number, h: number): void {
   const alvo = 110 / v.escala;

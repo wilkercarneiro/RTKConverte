@@ -41,7 +41,9 @@ test("entrega: com erro não há exportação nem 'pronto'; recalculando também
   assert.equal(comErro.acao, "recuo-automatico");
   // mesmo que a tela ainda tivesse um resultado velho, o erro manda
   assert.equal(estadoDaEntrega({ r, erro: "x", ocupado: false, modo: "retangulo", folga: null }).podeExportar, false);
-  assert.equal(estadoDaEntrega({ r, erro: "x", ocupado: false, modo: "retangulo", folga: null }).acao, "contorno");
+  // retângulo com erro: a ação é trazê-lo para cima dos pontos (rodada 3); KML continua voltando ao contorno
+  assert.equal(estadoDaEntrega({ r, erro: "x", ocupado: false, modo: "retangulo", folga: null }).acao, "trazer");
+  assert.equal(estadoDaEntrega({ r, erro: "x", ocupado: false, modo: "poligono", folga: null }).acao, "contorno");
   assert.equal(estadoDaEntrega({ r, erro: null, ocupado: true, modo: "contorno", folga: null }).podeExportar, false);
   const ok = estadoDaEntrega({ r, erro: null, ocupado: false, modo: "contorno", folga: null });
   assert.deepEqual([ok.podeExportar, ok.tom, ok.acao], [true, "pronto", "pdf"]);

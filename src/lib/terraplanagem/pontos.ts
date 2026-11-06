@@ -94,6 +94,33 @@ const ehZ = (v: number) => v > -100 && v < 6000;
 const ehLat = (v: number) => v >= -35 && v <= 6 && !Number.isInteger(v);
 const ehLon = (v: number) => v >= -75 && v <= -28 && !Number.isInteger(v);
 
+export const MSG_SEM_ALTITUDE = "O arquivo não tem a cota (altitude) dos pontos: muitas cotas 0,000. Exporte o levantamento com a altitude.";
+export const MSG_SEM_DESNIVEL = "Todas as cotas do arquivo são iguais (desnível zero): confira se o levantamento saiu com a altitude dos pontos.";
+
+/**
+ * A regra das cotas 0,000, num lugar só (leitor próprio e leitor universal):
+ * 20% ou mais dos pontos a 0,000 é arquivo sem altitude (recusa); menos que
+ * isso, os zeros são pontos sem altitude medida e saem com aviso. Desnível
+ * menor que 1 cm também avisa (terreno sem cota não pode passar por "pronto").
+ */
+export function filtrarCotasZero<T extends { z: number }>(pontos: T[]): { pontos: T[]; descartados: T[]; avisos: string[]; recusa: string | null } {
+  if (!pontos.length) return { pontos, descartados: [], avisos: [], recusa: null };
+  const zeros = pontos.filter((p) => p.z === 0);
+  if (zeros.length / pontos.length >= 0.2) return { pontos: [], descartados: zeros, avisos: [], recusa: MSG_SEM_ALTITUDE };
+  const fica = zeros.length ? pontos.filter((p) => p.z !== 0) : pontos;
+  const avisos: string[] = [];
+  if (zeros.length) avisos.push(`${zeros.length} ponto(s) com cota 0,000 ficaram de fora: parece altitude que não foi medida.`);
+  if (fica.length >= 3 && desnivelDe(fica) < 0.01) avisos.push(MSG_SEM_DESNIVEL);
+  return { pontos: fica, descartados: zeros, avisos, recusa: null };
+}
+
+/** Diferença entre a maior e a menor cota. */
+export function desnivelDe(pontos: { z: number }[]): number {
+  let a = Infinity, b = -Infinity;
+  for (const p of pontos) { if (p.z < a) a = p.z; if (p.z > b) b = p.z; }
+  return pontos.length ? b - a : 0;
+}
+
 export function lerPontos(texto: string): LeituraPontos {
   const brutas = texto.replace(/^﻿/, "").split(/\r\n|\r|\n/);
   const avisos: string[] = [];
@@ -221,12 +248,11 @@ export function lerPontos(texto: string): LeituraPontos {
   }
 
   // pontos com cota zero quase sempre são "sem cota" (coletora sem altitude)
-  const zeros = pontos.filter((p) => p.z === 0).length;
-  if (zeros && zeros < pontos.length && zeros / pontos.length < 0.2) {
-    avisos.push(`${zeros} ponto(s) com cota 0,000 ficaram de fora: parece altitude que não foi medida.`);
-    for (const p of pontos.filter((q) => q.z === 0)) ignoradas.push({ linha: 0, texto: p.nome, motivo: "cota 0,000" });
-  }
-  const validos = zeros && zeros / pontos.length < 0.2 ? pontos.filter((p) => p.z !== 0) : pontos;
+  const zc = filtrarCotasZero(pontos);
+  if (zc.recusa) return { pontos: [], colunas: "", fuso: null, ignoradas, avisos: [zc.recusa] };
+  for (const p of zc.descartados) ignoradas.push({ linha: 0, texto: p.nome, motivo: "cota 0,000" });
+  avisos.push(...zc.avisos);
+  const validos = zc.pontos;
 
   // ponto muito longe do resto (digitação errada) — avisa, não tira
   if (validos.length >= 10) {

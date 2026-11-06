@@ -10,6 +10,7 @@ import { Calculadora } from "../../lib/terraplanagem/segundo_plano.ts";
 import type { Pt } from "../../lib/terraplanagem/geometria.ts";
 import type { ModoCota, ModoPlataforma, ProjetoTerraplanagem, Retangulo } from "../../lib/terraplanagem/modelo.ts";
 import { lerPoligonoKml } from "../../lib/terraplanagem/entrada.ts";
+import { desnivelDe } from "../../lib/terraplanagem/pontos.ts";
 import { terraplanagemParaDxf, malhaParaCsv, nomeDoArquivo } from "../../lib/terraplanagem/saidas.ts";
 import { estadoDaEntrega, rumo, textoCaminhoes, textoSaldo } from "../../lib/terraplanagem/textos.ts";
 import { pngDoMapa } from "../../lib/terraplanagem/desenho.ts";
@@ -141,11 +142,7 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
   const mudarCota = (p: Partial<ProjetoTerraplanagem["cota"]>) => mudar({ cota: { ...projeto.cota, ...p } });
 
   const pontosXY = useMemo(() => projeto.pontos.map((p) => [p.e, p.n] as Pt), [projeto.pontos]);
-  const desnivel = useMemo(() => {
-    let a = Infinity, b = -Infinity;
-    for (const p of projeto.pontos) { if (p.z < a) a = p.z; if (p.z > b) b = p.z; }
-    return b - a;
-  }, [projeto.pontos]);
+  const desnivel = useMemo(() => desnivelDe(projeto.pontos), [projeto.pontos]);
 
   const retanguloInicial = (): Retangulo => {
     const r = resultado?.retangulo;
@@ -169,6 +166,18 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
     mudarPlat({ modo: "retangulo", retangulo: r });
   };
 
+  /** o retângulo perdido (fora do levantamento) volta para o meio dos pontos, no tamanho que couber */
+  const trazerParaOsPontos = () => {
+    const rr = plat.retangulo;
+    if (!rr || !pontosXY.length) return;
+    const xs = pontosXY.map((p) => p[0]), ys = pontosXY.map((p) => p[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    // cabe na menor dimensão do levantamento com folga para o talude
+    const lado = Math.max(4, Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 0.6);
+    const k = Math.min(1, lado / Math.max(rr.comprimento, rr.largura));
+    mudarPlat({ retangulo: { ...rr, centro: [Math.round(cx * 100) / 100, Math.round(cy * 100) / 100], comprimento: Math.max(2, Math.round(rr.comprimento * k)), largura: Math.max(2, Math.round(rr.largura * k)) } });
+  };
+
   const trocarCota = (m: ModoCota) => {
     if (m === "fixa") mudarCota({ modo: m, valor: projeto.cota.valor ?? (resultado ? Math.round(resultado.cota * 100) / 100 : null) });
     else mudarCota({ modo: m });
@@ -176,9 +185,10 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
 
   const abrirKml = async (f: File) => {
     try {
-      const k = await lerPoligonoKml(f, projeto.fuso);
+      // pontos em UTM (fuso desconhecido): o fuso sai de onde o KML cai sobre eles
+      const k = await lerPoligonoKml(f, projeto.fuso, pontosXY);
       mudar({ fuso: projeto.fuso ?? k.fuso, plataforma: { ...plat, modo: "poligono", poligono: k.utm, nomePoligono: k.nome ?? f.name } });
-      avisar("ok", `Plataforma do KML: ${k.nome ?? f.name}${projeto.fuso ? "" : ` (fuso ${k.fuso})`}.`);
+      avisar("ok", `Plataforma do KML: ${k.nome ?? f.name}${k.fusoDeduzido ? ` (fuso ${k.fuso} deduzido pelos pontos)` : ""}.`);
       if (k.furoIgnorado) avisar("alerta", "O KML tem um furo (área interna): a plataforma usa só o contorno de fora.");
     } catch (e) {
       avisar("erro", e instanceof Error ? e.message : String(e));
@@ -186,7 +196,7 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
   };
 
   const r = resultado;
-  const entrega = estadoDaEntrega({ r, erro, ocupado, modo: plat.modo, folga: plat.folga });
+  const entrega = estadoDaEntrega({ r, erro, ocupado, modo: plat.modo, folga: plat.folga, desnivel });
 
   const baixar = async (tipo: "pdf" | "dxf" | "csv") => {
     // só o resultado que é o do projeto de agora (nunca o de antes de um erro ou no meio do recálculo)
@@ -220,6 +230,7 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
     if (entrega.acao === "pdf") void baixar("pdf");
     else if (entrega.acao === "contorno") mudarPlat({ modo: "contorno" });
     else if (entrega.acao === "recuo-automatico") mudarPlat({ folga: null });
+    else if (entrega.acao === "trazer") trazerParaOsPontos();
   };
 
   const status = gravacao.estado === "salvando" ? "salvando…"
@@ -387,12 +398,12 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
             </div>
             <div className={`tp-kpi saldo${equilibrado ? " equilibrado" : ""}`}>
               <span className="tp-kpi-rot">Saldo</span>
-              <b>{r ? (equilibrado ? "equilibrado" : r.caminhoes.para === "interno" ? "≈ 0" : <>{m3(Math.abs(r.saldo))}<small> m³</small></>) : vazio}</b>
+              <b>{r ? (r.corte < 0.05 && r.aterro < 0.05 ? "zero" : equilibrado ? "equilibrado" : r.caminhoes.para === "interno" ? "≈ 0" : <>{m3(Math.abs(r.saldo))}<small> m³</small></>) : vazio}</b>
               <span className="sub">{incompleto ? "só do trecho dentro do levantamento" : saldoTxt}</span>
             </div>
             <div className="tp-kpi caminhoes">
               <span className="tp-kpi-rot">Caminhões</span>
-              <b>{r ? <>≈ {fmtN(r.caminhoes.quantidade, 0)}</> : vazio}</b>
+              <b>{r ? (r.caminhoes.quantidade === 0 ? "nenhum" : <>≈ {fmtN(r.caminhoes.quantidade, 0)}</>) : vazio}</b>
               <span className="sub">{r ? textoCaminhoes(r, projeto) : ""}</span>
             </div>
             <div className="tp-kpi cota">
@@ -403,7 +414,7 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
           </div>
 
           <div className="tp-mapa-caixa">
-            <MapaTerraplanagem resultado={r ?? (erro ? fundo : null)} desatualizado={!r && !!erro} pontos={pontosXY} focoNaPlataforma={plat.modo !== "contorno"} retangulo={plat.modo === "retangulo" ? plat.retangulo : null}
+            <MapaTerraplanagem resultado={r ?? (erro ? fundo : null)} desatualizado={!r && !!erro} pontos={pontosXY} poligono={plat.modo === "poligono" ? plat.poligono : null} focoNaPlataforma={plat.modo !== "contorno"} retangulo={plat.modo === "retangulo" ? plat.retangulo : null}
               editavel={plat.modo === "retangulo"} ferramenta={ferramenta} onFerramenta={setFerramenta}
               onRetangulo={(rr) => aoRetangulo(rr)} onSecao={(c) => mudar({ secao: { ...projeto.secao, centro: c } })}
               ocupado={ocupado} secaoAtiva={foco} />
@@ -411,7 +422,10 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
               <div className="tp-erro-mapa" role="alert">
                 <b>Não deu para calcular</b>
                 <span>{erro}</span>
-                {plat.modo !== "contorno" && <button type="button" onClick={() => mudarPlat({ modo: "contorno" })}>Voltar ao contorno dos pontos</button>}
+                <span className="tp-erro-acoes">
+                  {plat.modo === "retangulo" && plat.retangulo && <button type="button" className="principal" onClick={trazerParaOsPontos}>Trazer a plataforma para cima dos pontos</button>}
+                  {plat.modo !== "contorno" && <button type="button" onClick={() => mudarPlat({ modo: "contorno" })}>Voltar ao contorno dos pontos</button>}
+                </span>
               </div>
             )}
             {!r && !erro && <div className="tp-carregando-mapa"><span className="spinner" /> Montando o terreno…</div>}

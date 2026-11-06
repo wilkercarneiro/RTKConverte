@@ -714,16 +714,23 @@ export function calcularTerraplanagem(pr: ProjetoTerraplanagem): ResultadoTerrap
   const saldo = av.corte - fc * av.aterro;
   const emp = 1 + pr.fatores.empolamento / 100, cap = pr.fatores.caminhao;
   const relSaldo = Math.abs(saldo) / Math.max(1, av.corte, av.aterro);
+  // volume solto arredondado a 0,1 m³ antes de contar as viagens: o ruído de
+  // ponto flutuante (3e-5 m³) não vira "1 caminhão"
+  const viagens = (v: number) => {
+    const solto = Math.round(v * emp * 10) / 10;
+    return { quantidade: solto < 0.05 ? 0 : Math.ceil(solto / cap - 1e-9), volumeSolto: solto };
+  };
   const caminhoes = relSaldo < 0.01
-    ? { quantidade: Math.ceil((av.corte * emp) / cap - 1e-9), volumeSolto: av.corte * emp, para: "interno" as const }
+    ? { ...viagens(av.corte), para: "interno" as const }
     : saldo > 0
-      ? { quantidade: Math.ceil((saldo * emp) / cap - 1e-9), volumeSolto: saldo * emp, para: "bota-fora" as const }
-      : { quantidade: Math.ceil((-saldo * emp) / cap - 1e-9), volumeSolto: -saldo * emp, para: "emprestimo" as const };
+      ? { ...viagens(saldo), para: "bota-fora" as const }
+      : { ...viagens(-saldo), para: "emprestimo" as const };
 
   return {
     cota: z0, equilibrio,
     corte: av.corte, aterro: av.aterro, saldo,
-    areaCorte: av.areaCorte, areaAterro: av.areaAterro,
+    // terreno já na cota: área de corte/aterro sem volume não é obra
+    areaCorte: av.corte < 0.05 ? 0 : av.areaCorte, areaAterro: av.aterro < 0.05 ? 0 : av.areaAterro,
     areaPlataforma: prep.areaPlataforma,
     perimetroPlataforma: prep.plat.anel.reduce((sm, q, i, a) => sm + dist(q, a[(i + 1) % a.length]), 0),
     caminhoes,
@@ -772,5 +779,8 @@ export function secaoPor(p: Preparo, idx: IndiceTin, z0: number, centro: Pt, gir
 }
 
 export function fmtN(v: number, casas: number): string {
+  // sem "-0,00": o que arredonda para zero sai sem sinal
+  const k = 10 ** casas;
+  if (Math.round(Math.abs(v) * k) === 0) v = 0;
   return v.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
 }

@@ -15,6 +15,8 @@ import { ACEITOS_PONTOS, lerArquivoDePontos, lerCoordenada, lerPoligonoKml, quad
 import type { Pt } from "../../lib/terraplanagem/geometria.ts";
 import type { ProjetoTerraplanagem } from "../../lib/terraplanagem/modelo.ts";
 import { projetoNovo } from "../../lib/terraplanagem/modelo.ts";
+import { Calculadora } from "../../lib/terraplanagem/segundo_plano.ts";
+import { pontosParaFuso } from "../../lib/terraplanagem/entrada.ts";
 import type { Armazenamento, ResumoTerraplanagem } from "../../lib/terraplanagem/persistencia.ts";
 import { armazenamentoConta, armazenamentoLocal } from "../../lib/terraplanagem/persistencia.ts";
 import { Icone, ICONE } from "../Icone";
@@ -40,6 +42,8 @@ const resumoDe = (p: ProjetoTerraplanagem, r: ResultadoTerraplanagem | null): Re
   id: p.id, nome: p.nome, atualizadoEm: p.atualizadoEm, nPontos: p.pontos.length,
   corte: r ? Math.round(r.corte * 10) / 10 : null, aterro: r ? Math.round(r.aterro * 10) / 10 : null, cota: r ? Math.round(r.cota * 1000) / 1000 : null,
 });
+/** Os números do resumo como texto ("" = sem números): para saber se a lista já tem os de agora. */
+const chaveResumo = (x: Pick<ResumoTerraplanagem, "corte" | "aterro" | "cota">) => (x.corte == null ? "" : `${x.corte}|${x.aterro}|${x.cota}`);
 
 export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial = null, emitente: emitenteFixo }: {
   ir: (r: Rota) => void;
@@ -58,7 +62,16 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
   /** a última versão editada ainda não gravada (para gravar ao voltar ou sair da tela) */
   const pendente = useRef<ProjetoTerraplanagem | null>(null);
   const resultado = useRef<ResultadoTerraplanagem | null>(null);
+  /** os números do resultado de agora ("" enquanto calcula ou com erro) */
   const [resumoChave, setResumoChave] = useState("");
+  /** os números que a lista "Projetos recentes" já tem gravados para o projeto aberto */
+  const resumoGravado = useRef("");
+  const aberto = useRef<ProjetoTerraplanagem | null>(projeto);
+  aberto.current = projeto;
+  /** a tela da terraplanagem foi desmontada (trocou de tela pelo menu) */
+  const saiu = useRef(false);
+  /** a lista recarrega quando um resumo terminado em segundo plano chega */
+  const [versaoLista, setVersaoLista] = useState(0);
 
   // quem emite o relatório (razão social da empresa)
   useEffect(() => {
@@ -73,7 +86,9 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
   const salvar = useCallback(async (p: ProjetoTerraplanagem) => {
     setGravacao((g) => ({ ...g, estado: "salvando" }));
     try {
-      const g = await armazenamento.salvar(p, resumoDe(p, resultado.current));
+      const res = resumoDe(p, resultado.current);
+      const g = await armazenamento.salvar(p, res);
+      if (g.naConta || g.noAparelho) resumoGravado.current = chaveResumo(res);
       setGravacao(g.naConta ? { estado: "conta", hora: hora(), motivo: g.motivo }
         : g.noAparelho ? { estado: "aparelho", hora: hora(), motivo: g.motivo }
         : { estado: "falhou", hora: hora(), motivo: g.motivo });
@@ -86,14 +101,35 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
   }, [armazenamento]);
   const salvarRef = useRef(salvar);
   salvarRef.current = salvar;
+  /**
+   * Saiu do projeto no meio do cálculo (celular, levantamento grande): a lista
+   * ficaria sem os números. O cálculo termina aqui, fora da tela, e grava só o
+   * resumo — a não ser que o projeto tenha sido aberto de novo (aí a tela grava).
+   */
+  const completarResumo = useCallback((p: ProjetoTerraplanagem) => {
+    const c = new Calculadora();
+    void c.calcular(p).then(async (r) => {
+      c.encerrar();
+      if (!r?.ok || (!saiu.current && aberto.current?.id === p.id)) return;
+      const g = await armazenamento.salvar(p, resumoDe(p, r.r)).catch(() => null);
+      if (g && (g.naConta || g.noAparelho)) setVersaoLista((v) => v + 1);
+    });
+  }, [armazenamento]);
   /** grava já o que estiver pendente (voltar à lista, sair da tela, fechar a aba) */
   const gravarPendente = useCallback(() => {
-    const p = pendente.current;
-    if (!p || !sujo.current) return;
-    void salvarRef.current(p);
-  }, []);
+    const p = pendente.current ?? aberto.current;
+    if (!p) return;
+    const vaiGravar = !!(pendente.current && sujo.current);
+    if (vaiGravar) void salvarRef.current(pendente.current!);
+    // o cálculo desta versão não terminou: o que vai para a lista sairia sem números
+    if (!resultado.current && (vaiGravar || !resumoGravado.current)) completarResumo(p);
+  }, [completarResumo]);
+  // grava 0,9 s depois da última mudança — e de novo quando os números chegam,
+  // se o que foi gravado ainda não os tinha (o cálculo levou mais que 0,9 s)
   useEffect(() => {
-    if (!projeto || !sujo.current) return;
+    if (!projeto) return;
+    const faltaResumo = resumoChave !== "" && resumoChave !== resumoGravado.current;
+    if (!sujo.current && !faltaResumo) return;
     const t = setTimeout(() => void salvar(projeto), 900);
     return () => clearTimeout(t);
   }, [projeto, resumoChave, salvar]);
@@ -101,7 +137,8 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
   useEffect(() => {
     const sair = () => { const p = pendente.current; if (p && sujo.current) void armazenamentoLocal.salvar(p, resumoDe(p, resultado.current)); };
     addEventListener("pagehide", sair);
-    return () => { removeEventListener("pagehide", sair); gravarPendente(); };
+    saiu.current = false;
+    return () => { removeEventListener("pagehide", sair); saiu.current = true; gravarPendente(); };
   }, [gravarPendente]);
 
   const editar = (p: ProjetoTerraplanagem) => {
@@ -113,6 +150,7 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
 
   const abrirNovo = (p: ProjetoTerraplanagem, avisos: string[]) => {
     resultado.current = null;
+    resumoGravado.current = "";
     setAvisosLeitura(avisos);
     sujo.current = true;
     pendente.current = p;
@@ -127,7 +165,7 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
         key={projeto.id}
         projeto={projeto}
         onProjeto={editar}
-        onResultado={(r) => { resultado.current = r; setResumoChave(r ? `${r.corte.toFixed(1)}|${r.aterro.toFixed(1)}|${r.cota.toFixed(3)}` : ""); }}
+        onResultado={(r) => { resultado.current = r; setResumoChave(r ? chaveResumo(resumoDe(projeto, r)) : ""); }}
         onTrocarPontos={() => { gravarPendente(); setTrocando(true); }}
         gravacao={gravacao}
         avisosLeitura={avisosLeitura}
@@ -144,12 +182,13 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
   }
 
   return (
-    <Inicio armazenamento={armazenamento} trocando={trocando ? projeto : null} onCancelarTroca={() => setTrocando(false)}
-      onAbrir={async (id) => {
+    <Inicio armazenamento={armazenamento} versao={versaoLista} trocando={trocando ? projeto : null} onCancelarTroca={() => setTrocando(false)}
+      onAbrir={async (it) => {
         try {
-          const p = await armazenamento.carregar(id);
-          if (!p) { avisar("erro", "Este projeto não foi encontrado (apagado em outro aparelho?)."); return; }
+          const p = await armazenamento.carregar(it.id);
+          if (!p) { avisar("erro", "Este projeto não está mais na conta: foi apagado em outro aparelho."); setVersaoLista((v) => v + 1); return; }
           sujo.current = false; pendente.current = null; resultado.current = null; setAvisosLeitura([]);
+          resumoGravado.current = p.atualizadoEm === it.atualizadoEm ? chaveResumo(it) : "";
           setGravacao({ estado: "ocioso", hora: null });
           setProjeto(p);
           try { localStorage.setItem(ULTIMO, p.id); } catch { /* sem storage */ }
@@ -157,7 +196,10 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
       }}
       onPontos={(pontos, nome, fonte, fuso, avisos, plataforma) => {
         if (trocando && projeto) {
-          abrirNovo({ ...projeto, pontos, fonte, fuso: projeto.fuso ?? fuso, atualizadoEm: new Date().toISOString(), plataforma: plataforma ?? projeto.plataforma }, avisos);
+          // os pontos novos vêm noutro fuso que o do projeto (a plataforma está no do projeto): vão para o dele
+          const mesmoFuso = projeto.fuso != null && fuso != null && fuso !== projeto.fuso ? pontosParaFuso(pontos, fuso, projeto.fuso) : pontos;
+          const av = mesmoFuso !== pontos ? [...avisos, `Os pontos vieram no fuso ${fuso}; foram passados para o fuso ${projeto.fuso} do projeto, o da plataforma.`] : avisos;
+          abrirNovo({ ...projeto, pontos: mesmoFuso, fonte, fuso: projeto.fuso ?? fuso, atualizadoEm: new Date().toISOString(), plataforma: plataforma ?? projeto.plataforma }, av);
           avisar("ok", `Pontos trocados: ${fmtN(pontos.length, 0)} pontos.`);
           return;
         }
@@ -169,11 +211,13 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
 
 type AoPontos = (pontos: ProjetoTerraplanagem["pontos"], nome: string, fonte: ProjetoTerraplanagem["fonte"], fuso: number | null, avisos: string[], plataforma?: ProjetoTerraplanagem["plataforma"]) => void;
 
-function Inicio({ armazenamento, trocando, onCancelarTroca, onAbrir, onPontos }: {
+function Inicio({ armazenamento, versao, trocando, onCancelarTroca, onAbrir, onPontos }: {
   armazenamento: Armazenamento;
+  /** muda quando a lista precisa recarregar (resumo terminado em segundo plano) */
+  versao: number;
   trocando: ProjetoTerraplanagem | null;
   onCancelarTroca: () => void;
-  onAbrir: (id: string) => void;
+  onAbrir: (it: ResumoTerraplanagem) => void;
   onPontos: AoPontos;
 }) {
   const [lista, setLista] = useState<{ estado: "carregando" } | { estado: "erro"; msg: string } | { estado: "ok"; itens: ResumoTerraplanagem[]; soNoAparelho: boolean; semConexao?: boolean }>({ estado: "carregando" });
@@ -189,6 +233,11 @@ function Inicio({ armazenamento, trocando, onCancelarTroca, onAbrir, onPontos }:
     armazenamento.listar().then((r) => setLista({ estado: "ok", ...r }), (e) => setLista({ estado: "erro", msg: e instanceof Error ? e.message : String(e) }));
   }, [armazenamento]);
   useEffect(() => { carregar(); }, [carregar]);
+  // resumo que chegou depois (sem o esqueleto piscando: só troca a lista)
+  useEffect(() => {
+    if (!versao) return;
+    armazenamento.listar().then((r) => setLista({ estado: "ok", ...r }), () => { /* fica a lista de antes */ });
+  }, [versao, armazenamento]);
 
   const arquivo = async (f: File) => {
     setLendo(true); setFalha(null);
@@ -285,7 +334,7 @@ function Inicio({ armazenamento, trocando, onCancelarTroca, onAbrir, onPontos }:
             <ul className="tp-lista">
               {lista.itens.map((it) => (
                 <li key={it.id}>
-                  <button type="button" className="tp-item" onClick={() => onAbrir(it.id)}>
+                  <button type="button" className="tp-item" onClick={() => onAbrir(it)}>
                     <span className="tp-item-nome">{it.nome}</span>
                     <span className="tp-item-num">
                       {it.corte != null && <span><i className="corte" />corte {fmtN(it.corte, 0)} m³</span>}

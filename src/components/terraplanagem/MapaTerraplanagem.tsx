@@ -9,7 +9,7 @@ import type { Pt } from "../../lib/terraplanagem/geometria.ts";
 import { cantosDoRetangulo, dentro, doAzimute } from "../../lib/terraplanagem/geometria.ts";
 import type { Retangulo } from "../../lib/terraplanagem/modelo.ts";
 import type { Vista } from "../../lib/terraplanagem/desenho.ts";
-import { CORES, desenharMapa, desenharMoldura, enquadrar, paraTela, paraTerreno, telaDaMalha } from "../../lib/terraplanagem/desenho.ts";
+import { CORES, desenharMapa, desenharMoldura, desenharSoPontos, enquadrar, paraTela, paraTerreno, telaDaMalha } from "../../lib/terraplanagem/desenho.ts";
 import { pontoNoElemento, zoomDaPagina } from "../../lib/zoom";
 import { BotaoTelaCheia } from "../TelaCheia";
 import { GiroMapa } from "../ui";
@@ -22,11 +22,13 @@ type Arraste =
   | { tipo: "canto"; oposto: Pt; r: Retangulo }
   | { tipo: "desenho"; ini: Pt; giro: number };
 
-export function MapaTerraplanagem({ resultado, desatualizado = false, pontos, focoNaPlataforma = false, retangulo, editavel, ferramenta, onFerramenta, onRetangulo, onSecao, ocupado, secaoAtiva }: {
+export function MapaTerraplanagem({ resultado, desatualizado = false, pontos, poligono = null, focoNaPlataforma = false, retangulo, editavel, ferramenta, onFerramenta, onRetangulo, onSecao, ocupado, secaoAtiva }: {
   resultado: ResultadoTerraplanagem | null;
   /** o resultado é o último que deu certo (o de agora falhou): só fundo esmaecido, sem leitura de número */
   desatualizado?: boolean;
   pontos: Pt[];
+  /** plataforma do KML: desenhada tracejada quando não há resultado */
+  poligono?: Pt[] | null;
   /** enquadra a plataforma e o talude (retângulo, KML) em vez do levantamento inteiro */
   focoNaPlataforma?: boolean;
   /** retângulo da plataforma (o desenho segue o dedo antes do cálculo voltar) */
@@ -62,9 +64,23 @@ export function MapaTerraplanagem({ resultado, desatualizado = false, pontos, fo
   }, []);
 
   // enquadra quando o terreno muda (outro levantamento) ou o tamanho muda muito
-  const chaveContorno = resultado ? `${resultado.contorno.length}:${resultado.contorno[0]?.join(",")}:${focoNaPlataforma}` : "";
+  // sem resultado nenhum (erro ao abrir): enquadra os pontos e a plataforma, onde ela estiver
+  const cantosSem = !resultado && retangulo && editavel ? cantosDoRetangulo(retangulo.centro, retangulo.largura, retangulo.comprimento, retangulo.giro) : null;
+  const chaveContorno = resultado ? `${resultado.contorno.length}:${resultado.contorno[0]?.join(",")}:${focoNaPlataforma}` : `sem:${pontos.length}:${pontos[0]?.join(",")}`;
   const enquadrarAgora = useCallback((tudo = false) => {
-    if (!resultado || !tam.w || !tam.h) return;
+    if (!tam.w || !tam.h) return;
+    if (!resultado) {
+      if (pontos.length < 1) return;
+      // a plataforma entra no enquadramento só se estiver perto; longe (outro
+      // lugar), os pontos virariam dois pixels — enquadra os pontos, que é para
+      // onde ela tem de voltar ("Trazer a plataforma para cima dos pontos")
+      const plat = cantosSem ?? (!retangulo && poligono ? poligono : []);
+      const lado = (q: Pt[]) => { const xs = q.map((p) => p[0]), ys = q.map((p) => p[1]); return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 1); };
+      const alvo = plat.length && lado([...pontos, ...plat]) < 4 * lado(pontos) ? [...pontos, ...plat] : pontos;
+      vista.current = enquadrar(alvo, tam.w, tam.h, Math.min(48, tam.w * 0.06));
+      redesenhar((n) => n + 1);
+      return;
+    }
     let alvo = resultado.contorno;
     if (focoNaPlataforma && !tudo) {
       // a plataforma, o talude e uma folga de vizinhança (metade do tamanho dela)
@@ -76,7 +92,7 @@ export function MapaTerraplanagem({ resultado, desatualizado = false, pontos, fo
     }
     vista.current = enquadrar(alvo, tam.w, tam.h, Math.min(48, tam.w * 0.06));
     redesenhar((n) => n + 1);
-  }, [resultado, tam.w, tam.h, focoNaPlataforma]);
+  }, [resultado, tam.w, tam.h, focoNaPlataforma, pontos, cantosSem, retangulo, poligono]);
   useEffect(() => { enquadrarAgora(); }, [chaveContorno, tam.w, tam.h]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // desenho
@@ -88,12 +104,13 @@ export function MapaTerraplanagem({ resultado, desatualizado = false, pontos, fo
     const ctx = c.getContext("2d");
     if (!ctx) return;
     ctx.setTransform(k, 0, 0, k, 0, 0);
-    if (!resultado || !v) { ctx.clearRect(0, 0, tam.w, tam.h); return; }
-    desenharMapa(ctx, resultado, v, tam.w, tam.h, pontos, { secaoAtiva }, tela ?? undefined);
+    if (!v) { ctx.clearRect(0, 0, tam.w, tam.h); return; }
+    if (resultado) desenharMapa(ctx, resultado, v, tam.w, tam.h, pontos, { secaoAtiva }, tela ?? undefined);
+    else desenharSoPontos(ctx, v, tam.w, tam.h, pontos, retangulo && editavel ? null : poligono);
     // a plataforma que está sendo arrastada (o cálculo ainda não voltou)
     if (retangulo && editavel) {
       const cantos = cantosDoRetangulo(retangulo.centro, retangulo.largura, retangulo.comprimento, retangulo.giro);
-      const iguais = resultado.plataforma.length === 4 && cantos.every((q) => resultado.plataforma.some((p) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 0.01));
+      const iguais = !!resultado && resultado.plataforma.length === 4 && cantos.every((q) => resultado.plataforma.some((p) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 0.01));
       ctx.save();
       ctx.lineWidth = 2; ctx.strokeStyle = CORES.plataforma; ctx.setLineDash(iguais ? [] : [6, 4]);
       ctx.fillStyle = iguais ? "transparent" : "rgba(14, 59, 43, 0.08)";
