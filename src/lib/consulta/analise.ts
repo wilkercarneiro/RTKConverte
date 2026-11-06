@@ -111,6 +111,8 @@ export function fraseDaAnalise(a: Analise): Frase {
   const avisos: string[] = [];
   const pendentes: string[] = [];
   const tipoCar = a.imovel.car?.tipo ?? "";
+  /** outros CAR declarados que entram na área (m²) */
+  const carSobre: number[] = [];
 
   if (pronta(a.restricoes)) {
     const r = a.restricoes.dados;
@@ -128,7 +130,7 @@ export function fraseDaAnalise(a: Analise): Frase {
           const quanto = it.pct >= 99.995 ? "no imóvel inteiro" : it.areaM2 > 0 ? `em ${fmtAreaCurta(it.areaM2)}` : "com ponto cadastrado dentro";
           const pequena = sobreposicaoPequena(it);
           if (pequena) avisos.push(`A sobreposição com ${minusculas(f.singular)} ${it.nome} é pequena (${fmtAreaCurta(it.areaM2)}, ${fmtNum(it.pct, 2)}% da área): pode ser só a escala da base pública — confira em campo`);
-          sobre.push({ texto: `${artigo(f.singular)} ${minusculas(f.singular)} ${it.nome} ${quanto}`, area: it.areaM2, pequena, curto: `${minusculas(f.singular)} ${it.nome} (${fmtAreaCurta(it.areaM2)}, provável diferença de escala)` });
+          sobre.push({ texto: `${artigo(f.singular)} ${minusculas(f.singular)} ${it.nome} ${quanto}`, area: it.areaM2, pequena, curto: `${artigo(f.singular)} ${minusculas(f.singular)} ${it.nome}` });
         } else {
           avisos.push(`Encosta em ${minusculas(f.singular)} ${it.nome} (a ${fmtDist(it.distanciaM)})`);
         }
@@ -148,6 +150,7 @@ export function fraseDaAnalise(a: Analise): Frase {
   if (pronta(a.car)) {
     for (const c of a.car.dados.itens.filter((x) => x.areaM2 > 0)) {
       avisos.push(`Sobrepõe outro CAR declarado (${c.codigo.slice(0, 17)}…) em ${fmtAreaCurta(c.areaM2)}`);
+      carSobre.push(c.areaM2);
     }
     if (a.car.dados.cortada) pendentes.push("CAR com resposta cortada (mais de 50 imóveis declarados por perto)");
     for (const t of a.car.dados.falhas ?? []) pendentes.push(t);
@@ -162,14 +165,29 @@ export function fraseDaAnalise(a: Analise): Frase {
   const ordenadas = sobre.sort((x, y) => y.area - x.area);
   const detalhe = carregando ? `consultando ${carregando} ${carregando === 1 ? "fonte" : "fontes"}…` : null;
 
+  // A manchete vai pela gravidade: restrição de verdade (ou parcela certificada) > outro CAR
+  // declarado dentro da área > sobreposição pequena, que deve ser só a escala da base pública.
+  // ("Encosta" é só o que fica perto SEM sobrepor: a sobreposição pequena "toca levemente".)
+  const reais = ordenadas.filter((x) => !x.pequena);
+  const pequenas = ordenadas.filter((x) => x.pequena);
+  const textoPequenas = (comEscala: boolean) => pequenas.length === 1
+    ? `${pequenas[0].curto} (${fmtAreaCurta(pequenas[0].area)}${comEscala ? ", provável diferença de escala" : ", escala"})`
+    : `${pequenas.length} áreas (sobreposições pequenas${comEscala ? ", provável diferença de escala" : ""})`;
+  const totalCar = carSobre.reduce((t, x) => t + x, 0);
+  const textoCar = carSobre.length === 1 ? `outro CAR declarado em ${fmtAreaCurta(totalCar)}` : `${carSobre.length} CAR declarados (${fmtAreaCurta(totalCar)} no total)`;
+
   let texto: string, tom: Tom;
-  if (ordenadas.length && ordenadas.every((x) => x.pequena)) {
-    // só sobreposições pequenas em % E em área: provável escala da base, não restrição afirmada
-    texto = `Encosta ${ordenadas.length === 1 ? `em ${ordenadas[0].curto}` : `em ${ordenadas.length} áreas, todas com sobreposição pequena (provável diferença de escala)`}`;
-    tom = "aviso";
-  } else if (ordenadas.length) {
-    texto = `Sobrepõe ${ordenadas[0].texto}${ordenadas.length > 1 ? ` e mais ${ordenadas.length - 1} ${ordenadas.length === 2 ? "área" : "áreas"}` : ""}`;
+  if (reais.length) {
+    const mais = ordenadas.length - 1;
+    texto = `Sobrepõe ${reais[0].texto}${mais > 0 ? ` e mais ${mais} ${mais === 1 ? "área" : "áreas"}` : ""}`;
     tom = "perigo";
+  } else if (carSobre.length) {
+    texto = `Sobrepõe ${textoCar}${pequenas.length ? ` · toca levemente ${textoPequenas(false)}` : ""}`;
+    tom = "alerta";
+  } else if (pequenas.length) {
+    // só sobreposições pequenas em % E em área: provável escala da base, não restrição afirmada
+    texto = `Toca levemente ${textoPequenas(true)}`;
+    tom = "aviso";
   } else if (carregando && a.restricoes.estado === "carregando") {
     texto = "Analisando a área…"; tom = "neutro";
   } else if (pendentes.length) {

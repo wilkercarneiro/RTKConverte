@@ -213,6 +213,17 @@ button.ca-tentar { height: 26px; padding: 0 10px; font-size: 12px; }
 .cbx-menu button:hover:not(:disabled), .cbx-menu button:focus-visible { background: var(--primaria-clara); color: var(--floresta); }
 .cbx-menu small { color: var(--texto-3); font-weight: 400; font-size: 12px; }
 
+/* "Onde fica o imóvel?" (desenhar com o mapa no Brasil inteiro): no meio do mapa */
+.cm-desenho.cm-onde { top: 50%; transform: translate(-50%, -50%); flex-direction: column; align-items: stretch; gap: 8px; white-space: normal;
+  width: min(420px, calc(100% - 24px)); padding: 14px; }
+.cm-onde > b { font-size: 15px; }
+.cm-onde-linha { display: flex; gap: 6px; }
+.cm-onde-linha input { flex: 1 1 auto; min-width: 0; height: 40px; font-size: 16px; }
+.cm-onde-linha button { height: 40px; }
+.cm-onde-erro { font-size: 12px; color: var(--perigo, #DC2626); }
+.cm-onde-acoes { display: flex; flex-wrap: wrap; gap: 6px; }
+.cm-onde-acoes button { height: 36px; }
+
 /* ---------- telas menores ---------- */
 @media (max-width: 1250px) {
   .consulta-corpo { grid-template-columns: minmax(380px, 480px) minmax(0, 1fr); }
@@ -234,7 +245,15 @@ button.ca-tentar { height: 26px; padding: 0 10px; font-size: 12px; }
   .ca-acoes > button { flex: 1 1 auto; }
   .ca-acoes > button.principal { flex-basis: 100%; }
   .ca-acoes .esticar { display: none; }
-  .cm-dica { font-size: 11.5px; top: 8px; max-width: calc(100% - 100px); }
+  /* a instrução numa faixa própria, embaixo: em cima ficam a tela cheia e a pílula da imagem por data */
+  .cm-dica { font-size: 12px; top: auto; bottom: 30px; left: 8px; right: 8px; transform: none; max-width: none; white-space: normal; text-align: center; border-radius: 10px; }
+  /* a barra do desenho cabe no cartão: contagem numa linha, os três botões na outra */
+  .cm-desenho:not(.cm-onde) { left: 8px; right: 8px; transform: none; flex-wrap: wrap; justify-content: center; white-space: normal; gap: 6px; padding: 8px; }
+  /* desenhando, a barra vai para baixo (em cima ficam o zoom e a bússola) e a instrução logo acima dela */
+  .cm-desenho:not(.cm-onde):not(.cm-pergunta) { top: auto; bottom: 28px; }
+  .consulta-mapa.desenhando .cm-dica { bottom: 122px; }
+  .cm-desenho:not(.cm-onde):not(.cm-pergunta) .cm-conta { flex: 1 1 100%; text-align: center; }
+  .cm-desenho:not(.cm-onde):not(.cm-pergunta) button { flex: 1 1 0; min-width: 0; padding: 0 8px; }
   .ci-recente { grid-template-columns: 10px minmax(0, 1fr) auto; }
   .ci-recente .ci-quando { display: none; }
 }

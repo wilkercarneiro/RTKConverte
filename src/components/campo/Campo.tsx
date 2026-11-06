@@ -531,7 +531,6 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   }
 
   const nomeRef = useRef<HTMLInputElement>(null);
-  const renomear = () => { nomeRef.current?.focus(); nomeRef.current?.select(); };
 
   // ------------------------------------------------------------ derivados
   const vertices = useMemo(() => medicao?.vertices ?? [], [medicao]);
@@ -565,7 +564,6 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
       onIrPara={(p) => { setSeguir(false); setVoarPara({ p, k: Date.now() }); }}
       onDesfazer={desfazer} onFechar={fecharArea}
       onRenomear={(nome) => { const m = medicaoRef.current; if (m) mudar(alterar(m, { nome })); }}
-      onBotaoRenomear={renomear}
       onCriarCar={() => { if (medicao) void criarCar(medicao); }}
       onConsultar={() => { if (medicao) void consultar(medicao); }}
       onContinuarMedindo={continuarMedindo}
@@ -711,7 +709,6 @@ interface PropsPainel {
   onDesfazer: () => void;
   onFechar: () => void;
   onRenomear: (nome: string) => void;
-  onBotaoRenomear: () => void;
   onCriarCar: () => void;
   onConsultar: () => void;
   onContinuarMedindo: () => void;
@@ -811,10 +808,10 @@ function PainelControle(p: PropsPainel) {
         <div className="campo-acoes-linha tres">
           <button type="button" className="campo-btn-medio" onClick={p.onConsultar}><Ic d={ICO.lupa} tam={17} />Consultar</button>
           <MenuBaixar medicao={m} className="campo-btn-medio" />
-          <button type="button" className="campo-btn-medio" onClick={p.onBotaoRenomear}>Renomear</button>
+          {/* o campo Nome acima já renomeia: aqui, a ação que faltava à mão */}
+          <button type="button" className="campo-btn-medio campo-btn-quebra" onClick={p.onContinuarMedindo}><Ic d={ICO.andar} tam={16} />Continuar medindo</button>
         </div>
         <div className="campo-acoes-rodape">
-          <button type="button" className="fantasma" onClick={p.onContinuarMedindo}>Continuar medindo</button>
           <button type="button" className="fantasma" onClick={p.onNova}>Nova medição</button>
         </div>
       </div>
@@ -896,7 +893,7 @@ function PainelControle(p: PropsPainel) {
                     <span className="campo-sub">{textoOnde}</span>
                     <IrPara onIr={(lugar) => { p.onIrPara(lugar); p.onDesenhar(); }} principal focar={!ehCelular()} />
                     <div className="campo-acoes-rodape">
-                      <button type="button" className="fantasma" onClick={p.onDesenhar}><Ic d={ICO.mao} tam={16} />O mapa já está no imóvel: desenhar</button>
+                      <button type="button" className="fantasma" onClick={p.onDesenhar}><Ic d={ICO.mao} tam={16} />Desenhar onde o mapa estiver</button>
                       {escritorio && !p.gpsLigado && <button type="button" className="fantasma" onClick={p.onLigarGps}>Usar a localização deste computador</button>}
                     </div>
                     {p.gps.tipo === "erro" && p.gps.erro.tipo === "sem-permissao" && (

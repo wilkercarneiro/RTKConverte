@@ -275,9 +275,10 @@ export function MapaCampo(props: Props) {
       if (enquadrar !== enquadradoRef.current && pts.length >= 2) {
         enquadradoRef.current = enquadrar;
         const b = pts.reduce((bb, p) => bb.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
-        // em cima moram os selos e (no celular) o aviso do GPS: a área não fica embaixo deles
+        // em cima moram os selos e (no celular) o aviso do GPS; embaixo, a pílula da imagem por data
+        // e a escala: a área não fica embaixo deles
         const estreito = m.getContainer().clientWidth < 600;
-        m.fitBounds(b, { padding: { top: estreito ? 128 : 64, bottom: 40, left: 40, right: estreito ? 56 : 64 }, duration: 0, maxZoom: 19 });
+        m.fitBounds(b, { padding: { top: estreito ? 128 : 64, bottom: estreito ? 100 : 72, left: 40, right: estreito ? 56 : 64 }, duration: 0, maxZoom: 19 });
         const c = b.getCenter();
         void garantirImagem([c.lng, c.lat]);
       } else if (enquadrar !== enquadradoRef.current && pts.length === 1) {

@@ -27,7 +27,7 @@ export function LaboratorioConsulta() {
   const estado = (q.get("estado") ?? "normal") as EstadoLab;
   const fontes = useMemo(() => fontesDoLaboratorio(estado), [estado]);
   return (
-    <CascaLab>
+    <CascaLab rota={{ t: "consulta" }} gprol={false}>
       <ConsultaImovel ir={(r) => { const lab = laboratorioDe(r); location.hash = lab ?? rotaParaHash(r); if (lab) location.reload(); }} fontes={fontes} inicial={q.get("q") ?? undefined} atualizarEndereco={false} />
     </CascaLab>
   );

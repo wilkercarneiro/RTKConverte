@@ -768,16 +768,17 @@ export const ROTULO_CLASSE: Record<ClasseRestricao, string> = {
 };
 
 /** A frase de um item ("sobrepõe 12,3456 ha (4,10% do imóvel)" / "a 85 m do perímetro"). */
-export function textoItem(it: ItemRestricao): string {
+/** `fha`: o formato da área (a Consulta usa o curto, "728,89 ha"/"8.540 m²"; o resto do sistema, 4 casas). */
+export function textoItem(it: ItemRestricao, fha: (m2: number) => string = fmtHa): string {
   if (it.classe === "encosta") return `a ${fmtM(it.distanciaM)} do perímetro, sem sobreposição`;
   if (it.pontos.length && it.areaM2 === 0) return "ponto cadastrado dentro do imóvel";
-  if (it.pct >= 99.995) return `o imóvel inteiro está dentro (${fmtHa(it.areaM2)})`;
+  if (it.pct >= 99.995) return `o imóvel inteiro está dentro (${fha(it.areaM2)})`;
   const pequena = sobreposicaoPequena(it) ? " — pequena: pode ser só a diferença de escala da base pública; confira em campo" : "";
-  return `sobrepõe ${fmtHa(it.areaM2)} (${fmtPct(it.pct)} do imóvel)${pequena}`;
+  return `sobrepõe ${fha(it.areaM2)} (${fmtPct(it.pct)} do imóvel)${pequena}`;
 }
 
 /** Uma linha por fonte, para a lista e o PDF. */
-export function textoFonte(f: ResultadoFonte, encostaM: number): string {
+export function textoFonte(f: ResultadoFonte, encostaM: number, fha: (m2: number) => string = fmtHa): string {
   if (f.classe === "nao_consultado") return `não consultado: ${f.motivo ?? "sem resposta"}`;
   if (f.classe === "livre") return `nenhuma área a menos de ${fmtM(encostaM)} do imóvel`;
   if (f.classe === "incompleta") {
@@ -788,7 +789,7 @@ export function textoFonte(f: ResultadoFonte, encostaM: number): string {
   if (s.length) {
     const area = s.reduce((t, i) => t + i.areaM2, 0);
     if (s.every((i) => i.pontos.length && i.areaM2 === 0)) return `${s.length === 1 ? "1 registro" : `${s.length} registros`} dentro do imóvel`;
-    return `${s.length === 1 ? "1 área sobrepõe" : `${s.length} áreas sobrepõem`} o imóvel${area > 0 ? ` (${fmtHa(area)})` : ""}`;
+    return `${s.length === 1 ? "1 área sobrepõe" : `${s.length} áreas sobrepõem`} o imóvel${area > 0 ? ` (${fha(area)})` : ""}`;
   }
   return `${f.itens.length === 1 ? "1 área" : `${f.itens.length} áreas`} a menos de ${fmtM(encostaM)}, sem sobreposição`;
 }

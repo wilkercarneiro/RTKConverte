@@ -193,8 +193,13 @@ test("frase: o CAR de assentamento sobre o próprio PA é identificação; o out
   const a = await analiseDeLencois();
   const f = fraseDaAnalise(a);
   // 2,07 ha e 0,28%: provável escala da base — o topo não grita "Sobrepõe" em vermelho
-  assert.equal(f.tom, "aviso");
-  assert.equal(f.texto, "Encosta em assentamento PA PIABAS (2,07 ha, provável diferença de escala)");
+  // a manchete vai pela gravidade: os 3 CAR declarados dentro da área vêm antes do toque de escala
+  assert.equal(f.tom, "alerta");
+  assert.match(f.texto, /^Sobrepõe 3 CAR declarados \([\d,]+ ha no total\) · toca levemente o assentamento PA PIABAS \(2,07 ha, escala\)$/);
+  // sem os CAR vizinhos, o toque pequeno fica sozinho — e "toca levemente", não "encosta" (encostar é não sobrepor)
+  const semCar = fraseDaAnalise({ ...a, car: { estado: "ok", dados: { itens: [], cortada: false } } });
+  assert.equal(semCar.tom, "aviso");
+  assert.equal(semCar.texto, "Toca levemente o assentamento PA PIABAS (2,07 ha, provável diferença de escala)");
   assert.deepEqual(f.sobreposicoes, ["o assentamento PA PIABAS em 2,07 ha"]);
   assert.match(f.identificacao[0], /PA NOVO HORIZONTE \(98% da área\)/);
   assert.ok(f.avisos.some((x) => /pequena \(2,07 ha, 0,28%/.test(x)));
@@ -219,6 +224,9 @@ test("frase: sobreposição pequena em % mas grande em hectares é restrição (
 
 test("frase: fonte fora do ar nunca vira 'nenhuma restrição' verde", async () => {
   const a = await analiseDeLencois({ falhar: ["restricoes"] });
+  // os CAR vizinhos responderam e sobrepõem: isso continua sendo a manchete
+  assert.match(fraseDaAnalise(a).texto, /^Sobrepõe 3 CAR declarados/);
+  a.car = { estado: "ok", dados: { itens: [], cortada: false } };
   const f = fraseDaAnalise(a);
   assert.notEqual(f.tom, "ok");
   assert.equal(f.texto, "Nenhuma restrição nas bases que responderam");

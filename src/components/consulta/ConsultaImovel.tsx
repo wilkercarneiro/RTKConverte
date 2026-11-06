@@ -37,6 +37,7 @@ import { ICONE } from "../Icone";
 import { BuscaConsulta } from "./BuscaConsulta";
 import { BaixarArea } from "./BaixarArea";
 import { PainelAnalise } from "./PainelAnalise";
+import { lerLugar } from "../../lib/campo/lugar.ts";
 import "./consulta.css";
 
 interface EntradaBusca { texto: string; tipo: TipoEntrada; rotulo: string }
@@ -102,6 +103,10 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   const [desenho, setDesenho] = useState<LonLat[] | null>(null);
   /** clique fora do imóvel com uma análise aberta: pergunta antes de trocar a tela */
   const [pontoPend, setPontoPend] = useState<LonLat | null>(null);
+  /** desenhar sem lugar nenhum no mapa (o Brasil inteiro): primeiro "Onde fica o imóvel?" */
+  const [ondeDesenhar, setOndeDesenhar] = useState(false);
+  /** leva o mapa ao lugar digitado ou ao "Onde estou" do desenho */
+  const [irPara, setIrPara] = useState<{ lonlat: LonLat; zoom: number; chave: number } | null>(null);
   const [historico, setHistorico] = useState<Resposta<RegistroConsulta[]>>({ estado: "carregando" });
   const [arrastando, setArrastando] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
@@ -363,7 +368,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   }
 
   function aoClicarNoMapa(p: LonLat) {
-    if (desenho) { setDesenho([...desenho, p]); return; }
+    if (desenho) { setOndeDesenhar(false); setDesenho([...desenho, p]); return; }
     if (ocupado) return;
     const dentro = imoveis.find((i) => pontoEmPoligonos(p, i.poligonos));
     if (dentro) { setPontoPend(null); selecionar(dentro); return; }
@@ -425,8 +430,9 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
           // a medição de campo segue dizendo o que é (GPS do celular, a precisão): o CAR mostra isso
           : im.fonte === "campo" && im.situacao ? `${im.situacao}, consultada no Vertces` : `${im.titulo} (Consultar imóvel)`,
       uf: mun?.uf ?? im.uf ?? null, municipio: mun?.nome ?? im.municipio ?? null,
+      // a área que a Consulta mostrou (todas as partes): o CAR diz o que ficou de fora
+      areaOrigemM2: medir(im.aneis).areaM2, partes: im.aneis.length,
     });
-    if (im.aneis.length > 1) avisar("alerta", `A área tem ${im.aneis.length} partes: o CAR leva a maior.`);
     ir({ t: "novo", chave: "car" });
   }
 
@@ -455,7 +461,41 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   // ao começar o desenho, o mapa inteiro (com a barra Desfazer / Fechar a área) entra na vista
   const mapaCaixaRef = useRef<HTMLDivElement>(null);
   function rolarMapaParaVista() {
-    requestAnimationFrame(() => { try { mapaCaixaRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch { /* navegador antigo */ } });
+    // no celular o mapa fica abaixo da busca: "nearest" achava que já estava à vista e não rolava
+    const celular = typeof window !== "undefined" && window.matchMedia?.("(max-width: 900px)").matches;
+    requestAnimationFrame(() => {
+      const el = mapaCaixaRef.current;
+      if (!el) return;
+      try {
+        if (!celular) { el.scrollIntoView({ block: "nearest", behavior: "smooth" }); return; }
+        // o alto do mapa logo abaixo da barra fixa do celular (com ela por cima, a tela cheia e a imagem por data sumiam)
+        const topo = Math.max(0, document.querySelector<HTMLElement>(".tr-topo")?.getBoundingClientRect().bottom ?? 0);
+        window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - topo - 8), behavior: "smooth" });
+      } catch { /* navegador antigo */ }
+    });
+  }
+
+  /** Começa o desenho. Sem nada no mapa (o Brasil inteiro), pergunta onde fica o imóvel antes. */
+  function comecarDesenho() {
+    setPontoPend(null);
+    setDesenho([]);
+    const temLugar = !!sel || imoveis.length > 0 || (busca.fase !== "ocioso" && !!busca.ponto) || !!irPara;
+    setOndeDesenhar(!temLugar);
+    rolarMapaParaVista();
+  }
+  function irParaDesenho(p: LonLat) {
+    setIrPara({ lonlat: p, zoom: 16, chave: Date.now() });
+    setOndeDesenhar(false);
+  }
+  function ondeEstouDesenho() {
+    if (!("geolocation" in navigator)) { avisar("erro", "Este navegador não dá a localização. Cole a coordenada ou o link do imóvel."); return; }
+    navigator.geolocation.getCurrentPosition(
+      (p) => irParaDesenho([p.coords.longitude, p.coords.latitude]),
+      (e) => avisar("erro", e.code === e.PERMISSION_DENIED
+        ? "O navegador bloqueou a localização. Libere em Configurações do site → Localização, ou cole a coordenada."
+        : "Não deu para pegar a localização agora. Cole a coordenada ou o link do imóvel."),
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 30_000 },
+    );
   }
 
   // ------------------------------------------------------------- ao abrir
@@ -472,7 +512,8 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
         aneis: [vinda.perimetro], poligonos: [[vinda.perimetro]], furos: 0, nomes: vinda.nomes, areaDeclaradaHa: null,
         municipio: vinda.municipio ?? null, uf: vinda.uf ?? null, atualizacao: null, situacao: vinda.origem, detalhes: [],
       };
-      mostrar({ texto: vinda.origem, tipo: campo ? "campo" : "arquivo", rotulo: im.titulo }, [im], { avisos: [`Área trazida de: ${vinda.origem}.`] });
+      // a origem já vai no selo do cartão (situacao): sem repetir numa linha "Área trazida de"
+      mostrar({ texto: vinda.origem, tipo: campo ? "campo" : "arquivo", rotulo: im.titulo }, [im]);
       return;
     }
     const q = inicial ?? new URLSearchParams(location.hash.split("?")[1] ?? "").get("q");
@@ -554,7 +595,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     <div className="pagina consulta" {...soltar}>
       <CabecalhoPagina olho="Ferramentas" titulo={<>Consultar imóvel<Dica>CAR, SIGEF, restrições (TI, UC, assentamento, quilombola, embargo, fronteira, área militar, sítio arqueológico), focos de queimada, bioma, solo e chuva de qualquer lugar — sem abrir serviço e sem gastar crédito. O resultado vira serviço de CAR com um clique e sai em PDF, KML, SHP, DXF…</Dica></>} />
       <BuscaConsulta texto={texto} onTexto={setTexto} onConsultar={(e, t) => void consultar(e, t)} onArquivo={(f) => void abrirArquivo(f)}
-        desenhando={!!desenho} onDesenhar={() => { if (desenho) setDesenho(null); else { setPontoPend(null); setDesenho([]); rolarMapaParaVista(); } }}
+        desenhando={!!desenho} onDesenhar={() => { if (desenho) setDesenho(null); else comecarDesenho(); }}
         onLocalizacao={ondeEstou} ocupado={ocupado} foco={busca.fase === "ocioso"} />
 
       <div className="consulta-corpo">
@@ -571,7 +612,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
           {busca.fase === "resultado" && (
             <>
               <Resultados busca={busca} selId={selId} onSelecionar={selecionar}
-                onDesenhar={() => { setDesenho([]); rolarMapaParaVista(); }}
+                onDesenhar={comecarDesenho}
                 onEntorno={analisarEntorno} onTentar={() => consultarTexto(busca.entrada.texto)} />
               {imAtual && (
                 <div className="ca-acoes">
@@ -596,8 +637,8 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
         <div ref={mapaCaixaRef} className={`consulta-mapa${desenho ? " desenhando" : " clicavel"}`} data-tela-cheia="">
           <BotaoTelaCheia className="mapa-cert-tela-cheia" />
           <MapaInterativo aneis={mapa.aneis} pontos={mapa.pontos} parcelas={mapa.parcelas} destaques={mapa.destaques} restricoes={mapa.camadas}
-            sobreposicoes={mapa.sobreposicoes} altura={560} aoClicar={aoClicarNoMapa} semMapa="a consulta, a análise e o PDF funcionam sem ele" />
-          <span className="cm-dica" aria-hidden>{dicaMapa}</span>
+            sobreposicoes={mapa.sobreposicoes} altura={560} aoClicar={aoClicarNoMapa} irPara={irPara} semMapa="a consulta, a análise e o PDF funcionam sem ele" />
+          {!(desenho && ondeDesenhar) && <span className="cm-dica" aria-hidden>{dicaMapa}</span>}
           {legenda.length > 0 && (
             <div className="cm-legenda" aria-label="Legenda do mapa">
               {legenda.map((l) => <span key={l.rotulo}><i className={l.ponto ? "ponto" : ""} style={{ borderColor: l.cor === "#FFFFFF" ? "#33453C" : l.cor, background: l.ponto ? l.cor : `${l.cor}33` }} />{l.rotulo}</span>)}
@@ -610,7 +651,10 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
               <button type="button" className="principal" autoFocus onClick={() => consultarAqui(pontoPend)}>Consultar o ponto</button>
             </div>
           )}
-          {desenho && (
+          {desenho && ondeDesenhar && (
+            <LugarDoDesenho onIr={irParaDesenho} onOndeEstou={ondeEstouDesenho} onAqui={() => setOndeDesenhar(false)} onCancelar={() => { setOndeDesenhar(false); setDesenho(null); }} />
+          )}
+          {desenho && !ondeDesenhar && (
             <div className="cm-desenho" role="toolbar" aria-label="Desenho da área">
               {cruzamento
                 ? <span className="cm-conta cruza" role="alert" title={`No desenho, ${textoCruzamento(cruzamento, desenho.length, "P")}${soFecho ? " (o lado de fechamento ainda é provisório)" : ""}.`}>{avisoCruza}</span>
@@ -630,6 +674,29 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
 }
 
 // ---------------------------------------------------------------------------
+
+/** "Onde fica o imóvel?" antes de desenhar com o mapa no Brasil inteiro (como o Medir no campo). */
+function LugarDoDesenho({ onIr, onOndeEstou, onAqui, onCancelar }: { onIr: (p: LonLat) => void; onOndeEstou: () => void; onAqui: () => void; onCancelar: () => void }) {
+  const [t, setT] = useState("");
+  const [erro, setErro] = useState(false);
+  const ir = () => { const p = lerLugar(t); setErro(!p); if (p) onIr(p); };
+  return (
+    <div className="cm-desenho cm-onde" role="dialog" aria-label="Onde fica o imóvel?">
+      <b>Onde fica o imóvel?</b>
+      <form className="cm-onde-linha" onSubmit={(e) => { e.preventDefault(); ir(); }}>
+        <input value={t} onChange={(e) => { setT(e.target.value); setErro(false); }} placeholder="Coordenada, UTM ou link do Google Maps"
+          aria-label="Coordenada, UTM ou link do Google Maps" aria-invalid={erro || undefined} autoComplete="off" />
+        <button type="submit" className="principal" disabled={!t.trim()}>Ir</button>
+      </form>
+      {erro && <span className="cm-onde-erro" role="alert">Não entendi esse lugar. Cole a coordenada (lat, lon), a UTM com o fuso ou o link do Google Maps.</span>}
+      <div className="cm-onde-acoes">
+        <button type="button" onClick={onOndeEstou}>Onde estou</button>
+        <button type="button" className="fantasma" onClick={onAqui}>Desenhar onde o mapa estiver</button>
+        <button type="button" className="fantasma" onClick={onCancelar}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
 
 function Inicio({ historico, onExemplo, onAbrir, onApagar, onTentar }: {
   historico: Resposta<RegistroConsulta[]>;

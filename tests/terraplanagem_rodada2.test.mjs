@@ -46,7 +46,8 @@ test("entrega: com erro não há exportação nem 'pronto'; recalculando também
   assert.equal(estadoDaEntrega({ r, erro: "x", ocupado: false, modo: "poligono", folga: null }).acao, "contorno");
   assert.equal(estadoDaEntrega({ r, erro: null, ocupado: true, modo: "contorno", folga: null }).podeExportar, false);
   const ok = estadoDaEntrega({ r, erro: null, ocupado: false, modo: "contorno", folga: null });
-  assert.deepEqual([ok.podeExportar, ok.tom, ok.acao], [true, "pronto", "pdf"]);
+  // pronto: o PDF fica só no botão do alto (o cartão não repete o botão)
+  assert.deepEqual([ok.podeExportar, ok.tom, ok.acao], [true, "pronto", null]);
 });
 
 test("recuo de 500 m: o motor lança erro do usuário (a tela limpa o resultado)", () => {

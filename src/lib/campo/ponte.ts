@@ -28,5 +28,8 @@ export function areaDaMedicao(m: Medicao, agora: Date = new Date()): AreaTransfe
     perimetro: m.vertices.map((v) => [v.lon, v.lat]),
     nomes: m.vertices.map((_, i) => `P${i + 1}`),
     origem: origemDaMedicao(m, agora),
+    // a área que o Campo mostrou: o CAR mostra a mesma (princípio 4)
+    areaOrigemM2: medir(m.vertices).areaM2,
+    partes: 1,
   };
 }

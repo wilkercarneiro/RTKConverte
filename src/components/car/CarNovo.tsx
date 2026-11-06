@@ -17,6 +17,8 @@ import { Icone, ICONE } from "../Icone";
 import { Dica, Passos } from "../ui";
 import { ehAceiteGeral, textoSemCredito } from "../../lib/creditos";
 import { pegarAreaTransferida } from "../../lib/area_transferida";
+import { textosDaAreaLevada } from "../../lib/car/area_levada.ts";
+import { consultarMunicipio } from "../../lib/consulta/ambiente.ts";
 import "./car.css";
 
 async function textoDoArquivo(f: File): Promise<string> {
@@ -28,7 +30,7 @@ async function textoDoArquivo(f: File): Promise<string> {
 }
 
 /** O que foi lido: o perímetro e, no GPX de pontos, os pontos para ligar/desligar. */
-interface Lido { arquivo: string; kml: KmlLido; pontos: PontoGps[] | null; /** veio de uma ferramenta (Consultar imóvel, Medir no campo), não de arquivo */ origem?: string }
+interface Lido { arquivo: string; kml: KmlLido; pontos: PontoGps[] | null; /** veio de uma ferramenta (Consultar imóvel, Medir no campo), não de arquivo */ origem?: string; /** a área e as partes que a origem mostrou */ levada?: { areaOrigemM2?: number; partes?: number } }
 
 export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = false, onCriado, onVoltar, voltarPara = "o Início" }: {
   definicao: DefinicaoServico;
@@ -49,6 +51,10 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
   const [nome, setNome] = useState("");
   const [uf, setUf] = useState(() => lembrar("uf") ?? "");
   const [municipio, setMunicipio] = useState("");
+  /** UF e município vieram do IBGE pelo lugar da área (diz embaixo do campo) */
+  const [municipioAuto, setMunicipioAuto] = useState(false);
+  /** a pessoa já escolheu UF/município: a resposta do IBGE não passa por cima */
+  const mexeuNoLocal = useRef(false);
   const [erro, setErro] = useState<string | null>(null);
   const [criando, setCriando] = useState(false);
   // os créditos de CAR acabaram entre abrir a tela e criar: o banco pede o aceite
@@ -61,11 +67,24 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
     const a = pegarAreaTransferida();
     if (!a) return;
     const nomeArq = `${(a.nome || "area").normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\w-]+/g, "_").slice(0, 60) || "area"}.kml`;
-    setLido({ arquivo: nomeArq, kml: { nome: a.nome, perimetro: a.perimetro, nomes: a.nomes, rios: [], avisos: [] }, pontos: null, origem: a.origem });
+    setLido({ arquivo: nomeArq, kml: { nome: a.nome, perimetro: a.perimetro, nomes: a.nomes, rios: [], avisos: [] }, pontos: null, origem: a.origem,
+      levada: { areaOrigemM2: a.areaOrigemM2, partes: a.partes } });
     setFora(new Set());
     setNome(a.nome);
     if (a.uf) { setUf(a.uf); guardar("uf", a.uf); }
     if (a.municipio) setMunicipio(a.municipio);
+    if (a.uf && a.municipio) return;
+    // a medição de campo não sabe onde está: o IBGE diz (a mesma consulta do "Município" da Consulta).
+    // Só preenche o que a pessoa ainda não escreveu; sem internet, os campos ficam como estão.
+    const n = a.perimetro.length;
+    const lon = a.perimetro.reduce((t, p) => t + p[0], 0) / n, lat = a.perimetro.reduce((t, p) => t + p[1], 0) / n;
+    // (sem cancelar na limpeza: no StrictMode a 2ª passada não acha mais a área e não refaz a busca)
+    consultarMunicipio(lon, lat, { timeoutMs: 8_000 }).then((m) => {
+      if (mexeuNoLocal.current || !m?.nome || !/^[A-Z]{2}$/.test(m.uf)) return;
+      setUf(m.uf); guardar("uf", m.uf);
+      setMunicipio(m.nome);
+      setMunicipioAuto(true);
+    }).catch(() => { /* sem IBGE: a pessoa preenche */ });
   }, []);
 
   async function ler(f: File) {
@@ -106,6 +125,7 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
     const tela = (p: [number, number]) => xy(p).map((v) => v.toFixed(1)).join(",");
     return {
       pr, area: res.area.imovel,
+      levada: lido.origem ? textosDaAreaLevada(entrada.perimetro, res.area.imovel, lido.levada) : null,
       d: "M" + pts.map(tela).join("L") + "Z",
       rios: pr.rios.map((r) => "M" + r.linha.map((g) => tela(res.plano.para(g))).join("L")),
       pontos: (lido.pontos ?? []).map((p) => ({ nome: p.nome, xy: xy(res.plano.para([p.lon, p.lat])) })),
@@ -192,9 +212,11 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
               ))}
             </svg>
             <div className="car-novo-dados">
-              <p><b>{fmtHa(previa.area)}</b> · {fmtNum(previa.area, 2)} m² · {entrada.perimetro.length} vértices
+              <p><b>{fmtHa(previa.levada?.areaM2 ?? previa.area)}</b> · {fmtNum(previa.levada?.areaM2 ?? previa.area, 2)} m² · {entrada.perimetro.length} vértices
                 {entrada.rios.length > 0 && <> · {entrada.rios.length} rio(s) no arquivo</>}</p>
-              {lido.origem && <p className="car-dica" role="note" style={{ color: "var(--floresta)", fontWeight: 600 }}>Área de {lido.origem}. Confira o perímetro antes de seguir: a reserva legal e a APP são marcadas na próxima etapa.</p>}
+              {lido.origem && <p className="car-dica" role="note" style={{ color: "var(--floresta)", fontWeight: 600 }}>Área de {lido.origem}, a mesma área que você viu lá. Confira o perímetro antes de seguir: a reserva legal e a APP são marcadas na próxima etapa.</p>}
+              {previa.levada?.linhaPartes && <p className="car-dica" role="note">⚠ {previa.levada.linhaPartes}</p>}
+              {previa.levada?.linhaCar && <p className="car-dica">{previa.levada.linhaCar}</p>}
               {entrada.avisos.map((a) => <p key={a} className="car-dica">⚠ {a}</p>)}
               {lido.pontos && <p className="car-dica">Clique num ponto do desenho para tirá-lo do perímetro (a sede, um ponto de outro dia) ou pô-lo de volta.</p>}
               <label className="car-campo">
@@ -204,16 +226,17 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
               <div className="car-novo-local">
                 <label className="car-campo car-campo-uf">
                   <span>UF <small className="sub">opcional</small></span>
-                  <select value={uf} onChange={(e) => { setUf(e.target.value); guardar("uf", e.target.value); }}>
+                  <select value={uf} onChange={(e) => { mexeuNoLocal.current = true; setUf(e.target.value); guardar("uf", e.target.value); setMunicipioAuto(false); }}>
                     <option value="">—</option>
                     {UFS.map((u) => <option key={u}>{u}</option>)}
                   </select>
                 </label>
                 <label className="car-campo car-campo-municipio">
                   <span>Município <small className="sub">opcional</small></span>
-                  <input value={municipio} onChange={(e) => setMunicipio(e.target.value)} />
+                  <input value={municipio} onChange={(e) => { mexeuNoLocal.current = true; setMunicipio(e.target.value); setMunicipioAuto(false); }} />
                 </label>
               </div>
+              {municipioAuto && <small className="sub">UF e município achados pelo lugar da área (IBGE). Pode trocar.</small>}
               <button className="principal" disabled={criando} onClick={() => criar()}>
                 {criando ? "Criando o serviço…" : "Criar o serviço e marcar a reserva →"}
               </button>

@@ -74,5 +74,6 @@ export function estadoDaEntrega(o: {
       acao: null, rotuloAcao: null,
     };
   }
-  return { podeExportar: true, tom: "pronto", titulo: "Pronto para o cliente", detalhe: "Relatório em PDF com os números, o mapa, as duas seções e o método.", acao: "pdf", rotuloAcao: "Baixar relatório" };
+  // pronto: o botão "Relatório em PDF" do alto já é a ação (o cartão não repete um segundo botão)
+  return { podeExportar: true, tom: "pronto", titulo: "Pronto para o cliente", detalhe: "Os números fecham. No alto: o Relatório em PDF (números, mapa, as duas seções e o método), o DXF para o CAD e o CSV da malha.", acao: null, rotuloAcao: null };
 }

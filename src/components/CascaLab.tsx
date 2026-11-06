@@ -5,13 +5,18 @@
 // conectada, como a D'Prol) vem junto; "sem-gprol" tira.
 import type { ReactNode } from "react";
 import { AppShell } from "./AppShell";
+import type { Rota } from "../lib/rota";
 import "./gprol/gprol.css";
 
-export function CascaLab({ children }: { children: ReactNode }) {
+/**
+ * `rota`: a tela que a casca finge ser (o ícone aceso do trilho); padrão, um serviço.
+ * `gprol`: a faixa do GPROL — só faz sentido dentro de serviço (as ferramentas, como a Consulta, passam false).
+ */
+export function CascaLab({ children, rota = { t: "servico", id: "lab" }, gprol = true }: { children: ReactNode; rota?: Rota; gprol?: boolean }) {
   if (location.hash.includes("sem-casca")) return <>{children}</>;
   return (
-    <AppShell rota={{ t: "servico", id: "lab" }} ir={() => {}} usuario={{ nome: "Laboratório", papel: "Dono" }}>
-      {!location.hash.includes("sem-gprol") && (
+    <AppShell rota={rota} ir={() => {}} usuario={{ nome: "Laboratório", papel: "Dono" }}>
+      {gprol && !location.hash.includes("sem-gprol") && (
         <div className="gp-faixa gp-servico gp-discreta">
           <span className="gp-marca">GPROL</span>
           <span className="gp-texto">Vai para o GPROL ao gerar os primeiros documentos.</span>

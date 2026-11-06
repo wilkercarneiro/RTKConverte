@@ -104,11 +104,11 @@ function CartaoRestricoes({ a, onTentar }: { a: Analise; onTentar: () => void })
           {comAlgo.flatMap((x) => x.itens.length
             ? x.itens.map((it) => (
               <li key={`${x.tipo}:${it.id}`} className={propria(x.tipo, it.pct) ? "ident" : it.classe === "sobrepoe" && !sobreposicaoPequena(it) ? "sobre" : "encosta"}>
-                <span><b>{x.singular}</b> · {it.nome} — {propria(x.tipo, it.pct) ? `é a própria área (${textoItem(it)}): o CAR é ${a.imovel.car?.tipo === "AST" ? "de assentamento" : "de povo tradicional"}` : textoItem(it)}</span>
+                <span><b>{x.singular}</b> · {it.nome} — {propria(x.tipo, it.pct) ? `é a própria área, ${textoItem(it, fmtAreaCurta)}; o CAR é ${a.imovel.car?.tipo === "AST" ? "de assentamento" : "de povo tradicional"}` : textoItem(it, fmtAreaCurta)}</span>
                 {it.detalhes.length > 0 && <small>{it.detalhes.join(" · ")}</small>}
               </li>
             ))
-            : [<li key={x.tipo} className="encosta"><span><b>{x.singular}</b> ({x.orgao}) — {textoFonte(x, r.dados.encostaM)}</span>{x.motivo && <small>{x.motivo}</small>}</li>])}
+            : [<li key={x.tipo} className="encosta"><span><b>{x.singular}</b> ({x.orgao}) — {textoFonte(x, r.dados.encostaM, fmtAreaCurta)}</span>{x.motivo && <small>{x.motivo}</small>}</li>])}
         </ul>
       )}
       {livres.length > 0 && (

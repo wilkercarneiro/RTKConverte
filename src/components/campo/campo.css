@@ -157,6 +157,8 @@ button.campo-btn-grande.fechar { background: var(--floresta); border-color: var(
 button.campo-btn-grande.fechar:hover:not(:disabled) { background: #0A2C20; color: #fff; border-color: #0A2C20; }
 button.campo-btn-grande.principal { height: 58px; font-size: 15.5px; }
 .campo-btn-medio { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 46px; border-radius: 12px; font-size: 14px; white-space: nowrap; padding: 0 8px; }
+.campo-btn-medio.campo-btn-quebra { white-space: normal; line-height: 1.12; text-align: left; font-size: 13.5px; }
+.campo-btn-quebra > svg { flex: none; }
 .campo-largo { width: 100%; }
 
 .campo-estado { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--texto-2); line-height: 1.35; }
@@ -272,4 +274,10 @@ button.campo-item:hover:not(:disabled) { border-color: var(--primaria); color: v
 @media (max-width: 900px) {
   .campo-mapa .imgdata-controle { top: 170px; bottom: 48px; }
   .campo-mapa .imgdata-cortina-barra { bottom: 48px; }
+}
+/* no celular, fechado, o laboratório vira uma pílula na borda direita, no meio da altura:
+   não cobre os botões do alto da tela do Campo (só o lab tem esta faixa) */
+@media (max-width: 600px) {
+  .campo-lab:not([open]) { top: 42%; left: auto; right: 6px; transform: none; width: auto; opacity: .88; }
+  .campo-lab:not([open]) > summary { padding: 6px 10px; font-size: 11.5px; }
 }

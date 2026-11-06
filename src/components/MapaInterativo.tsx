@@ -63,6 +63,8 @@ interface Props {
   semMapa?: string;
   /** clique no mapa (sem arrastar), em lon/lat — a Consultar imóvel consulta o ponto ou desenha */
   aoClicar?: (lonlat: LonLat) => void;
+  /** leva o mapa a um lugar (a Consulta, antes de desenhar: "Onde fica o imóvel?"); troque a `chave` para ir de novo */
+  irPara?: { lonlat: LonLat; zoom?: number; chave: string | number } | null;
 }
 
 const VAZIO: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -333,7 +335,9 @@ export function MapaInterativo(props: Props) {
     if (chave !== enquadradoRef.current) {
       enquadradoRef.current = chave;
       const b = limites(alvo);
-      if (b) mapa.fitBounds(b, { padding: 48, duration: 0, maxZoom: 18 });
+      // em cima, a pílula da imagem por data (canto superior esquerdo): o enquadramento desce
+      // para ela não cobrir o rótulo do vértice mais ao norte
+      if (b) mapa.fitBounds(b, { padding: { top: 88, bottom: 48, left: 48, right: 48 }, duration: 0, maxZoom: 18 });
     }
     if (foco) {
       const s = (sobreposicoes ?? []).find((x) => x.codigo === foco);
@@ -343,6 +347,12 @@ export function MapaInterativo(props: Props) {
       }
     }
   }
+
+  const irPara = props.irPara;
+  useEffect(() => {
+    if (!irPara || !mapaVivo) return;
+    try { mapaVivo.jumpTo({ center: irPara.lonlat, zoom: irPara.zoom ?? 16 }); } catch { /* mapa sendo recriado */ }
+  }, [irPara?.chave, mapaVivo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { aplicar(); }, [props.aneis, props.pontos, props.parcelas, props.sobreposicoes, props.destaques, props.restricoes, props.foco, props.cor]); // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -21,6 +21,11 @@ export interface AreaTransferida {
   origem: string;
   uf?: string | null;
   municipio?: string | null;
+  /** a área que a tela de origem MOSTROU (todas as partes, motor único): o CarNovo
+   *  confronta com o perímetro que chegou e diz o que ficou de fora */
+  areaOrigemM2?: number;
+  /** quantas partes a área tinha na origem (o CAR leva só a maior) */
+  partes?: number;
 }
 
 const CHAVE = "vertces.area-transferida";
