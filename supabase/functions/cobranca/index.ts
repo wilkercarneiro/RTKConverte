@@ -208,6 +208,13 @@ function banco(svc: Svc): Banco {
     async removerEmpresa(escritorioId) {
       falhou(await svc.from("escritorios").delete().eq("id", escritorioId), "empresa");
     },
+    async comprasAvulsasAbertas(escritorioId) {
+      const r = await svc.from("pagamentos").select("id, asaas_id, valor, ciclo, link")
+        .eq("escritorio_id", escritorioId).eq("finalidade", "mensalidade").eq("forma", "PIX").gt("adesao", 0)
+        .not("asaas_id", "is", null).in("status", ["PENDING", "OVERDUE"]).order("criado_em", { ascending: false }).limit(10);
+      falhou(r, "pagamentos");
+      return (r.data ?? []) as { id: string; asaas_id: string; valor: number; ciclo: string | null; link: string | null }[];
+    },
     async cadastrosAbandonados(documento, email, horas) {
       const antes = new Date(Date.now() - horas * 3600_000).toISOString();
       const base = () => svc.from("escritorios").select("id").eq("origem", "site").eq("status", "aguardando_pagamento").lt("created_at", antes).limit(3);

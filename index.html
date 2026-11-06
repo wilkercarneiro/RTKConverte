@@ -24,10 +24,11 @@
       })();
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Vertces — georreferenciamento do levantamento à certificação</title>
-    <meta name="description" content="Sistema web para escritórios de georreferenciamento: do TXT do receptor GNSS saem memorial descritivo, planilha SIGEF, planta A1/A3 com malha UTM e as peças técnicas. Loteamento, maquete 3D, divisão em partes iguais e CAR." />
+    <title>Vertces — sistema de georreferenciamento do TXT ao SIGEF</title>
+    <meta name="description" content="Sistema web de georreferenciamento: do TXT do receptor GNSS saem memorial descritivo, planilha SIGEF, planta A1/A3 e peças técnicas. Loteamento 3D e CAR." />
     <meta name="theme-color" content="#0E3B2B" />
-    <meta name="robots" content="index, follow" />
+    <meta name="msvalidate.01" content="38C66977841E628B555FDB27805E4405" />
+    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large" />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="pt_BR" />
     <meta property="og:site_name" content="Vertces" />
@@ -45,7 +46,11 @@
     <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/src/site/site.css" />
     <script type="application/ld+json">
-      {"@context":"https://schema.org","@type":"SoftwareApplication","name":"Vertces","applicationCategory":"BusinessApplication","operatingSystem":"Web","inLanguage":"pt-BR","description":"Sistema web de georreferenciamento: memorial descritivo, planilha SIGEF, planta com malha UTM, peças técnicas, loteamento com maquete 3D, divisão em partes iguais e CAR."}
+      {"@context":"https://schema.org","@graph":[
+        {"@type":"Organization","@id":"https://vertces.com.br/#org","name":"Vertces","url":"https://vertces.com.br/","logo":{"@type":"ImageObject","url":"https://vertces.com.br/favicon.svg"},"description":"Sistema web brasileiro de georreferenciamento de imóveis rurais, desenvolvido pela equipe da D'Prol.","areaServed":{"@type":"Country","name":"Brasil"},"knowsAbout":["Georreferenciamento de imóveis rurais","SIGEF","Certificação no INCRA","Memorial descritivo","Planilha ODS do SIGEF","Loteamento","Lei 6.766/1979","Cadastro Ambiental Rural (CAR)","SIRGAS 2000","UTM"]},
+        {"@type":"WebSite","@id":"https://vertces.com.br/#site","url":"https://vertces.com.br/","name":"Vertces","inLanguage":"pt-BR","publisher":{"@id":"https://vertces.com.br/#org"}},
+        {"@type":"SoftwareApplication","@id":"https://vertces.com.br/#software","name":"Vertces","url":"https://vertces.com.br/","applicationCategory":"BusinessApplication","applicationSubCategory":"Georreferenciamento e topografia","operatingSystem":"Web (navegador)","inLanguage":"pt-BR","publisher":{"@id":"https://vertces.com.br/#org"},"description":"Sistema web de georreferenciamento: do TXT do receptor GNSS saem memorial descritivo, planilha SIGEF (ODS), planta A1/A3 com malha UTM e as peças técnicas. Também faz loteamento com maquete 3D, divisão em partes iguais, desmembramento, análise de restrições e CAR.","featureList":["Leitura do TXT/CSV do receptor GNSS/RTK","Memorial descritivo e memorial tabular","Planilha SIGEF (ODS) com avisos de consistência","Planta A1 e A3 em PDF com malha UTM","Cartas de anuência, declarações e requerimento","Conferência de sobreposição com parcelas certificadas do SIGEF","Peças a partir do PDF do SIGEF","Divisão em partes iguais e desmembramento","Loteamento com três propostas, prancheta e maquete 3D","CAR: reserva legal, APP e shapefiles para o SICAR","Análise de restrições do imóvel","Exportação KML, KMZ, DXF, SHP, GPX, GeoJSON"]}
+      ]}
     </script>
   </head>
   <body>
@@ -95,6 +100,7 @@
           <a href="#sigef" data-cap="sigef">SIGEF</a>
           <a href="#documentos" data-cap="documentos">Documentos</a>
           <a href="#duvidas" data-cap="duvidas">Dúvidas</a>
+          <a href="/blog/">Blog</a>
         </nav>
         <a class="bt bt-p bt-topo" href="#contato">Agendar demonstração</a>
         <button class="menu-bt" type="button" aria-expanded="false" aria-controls="menu-cel" data-menu>
@@ -110,6 +116,7 @@
         <a href="#car">CAR</a>
         <a href="#documentos">Documentos</a>
         <a href="#duvidas">Dúvidas</a>
+        <a href="/blog/">Blog</a>
         <a class="bt bt-p" href="#contato">Agendar uma demonstração</a>
       </nav>
     </header>
@@ -737,7 +744,7 @@
           <div class="w rod-in">
             <a class="logo" href="#inicio" aria-label="Vertces — voltar ao início"><svg viewBox="0 0 28 28" aria-hidden="true"><use href="#marca" /></svg><span>Vertces</span></a>
             <p>Georreferenciamento do levantamento à certificação.</p>
-            <nav aria-label="Documentos legais"><a href="/app/#/termos">Termos de uso</a><a href="/app/#/privacidade">Privacidade</a></nav>
+            <nav aria-label="Conteúdo e documentos legais"><a href="/blog/">Blog</a><a href="/blog/georreferenciamento-o-que-e/">O que é georreferenciamento</a><a href="/app/#/termos">Termos de uso</a><a href="/app/#/privacidade">Privacidade</a></nav>
             <p class="rod-c">© <span data-ano>2026</span> Vertces</p>
           </div>
         </footer>

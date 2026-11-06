@@ -38,7 +38,7 @@ import {
 import type { CarteiraDoPlano } from "../_shared/mensagens_cobranca.ts";
 import {
   cicloDe, configDasRegras, descricaoDaCompra, escolherParcelas, maxParcelas, MESES, NOME_CICLO, normalizarRegras,
-  problemaDasRegras, regrasDe, somarMeses, valorDoPeriodo,
+  parcelamento, problemaDasRegras, regrasDe, somarMeses, totalComAdesao, valorDoPeriodo,
 } from "../_shared/parcelas.ts";
 import type { Ciclo, Parcelamento, RegrasPagamento } from "../_shared/parcelas.ts";
 import { MUITAS_CHAMADAS } from "../_shared/limite.ts";
@@ -131,6 +131,11 @@ export interface Banco {
    * documento ou o e-mail de outra pessoa o prenderia para sempre).
    */
   cadastrosAbandonados?(documento: string, email: string, horas: number): Promise<{ escritorioId: string; contas: string[] }[]>;
+  /**
+   * O Pix avulso do 1º pagamento com adesão (0044) ainda em aberto: pagamentos
+   * 'mensalidade' com adesão, no Pix, PENDING/OVERDUE.
+   */
+  comprasAvulsasAbertas?(escritorioId: string): Promise<{ id: string; asaas_id: string; valor: number; ciclo: string | null; link: string | null }[]>;
 }
 
 export interface CartaoSalvo {
@@ -519,6 +524,8 @@ async function autocadastroSalvar(d: Deps, cfg: Record<string, string>, b: Recor
     parcelas_max: b.parcelas_max ?? atual.parcelas_max,
     juros_mes: b.juros_mes ?? atual.juros_mes,
     ciclos: b.ciclos ?? atual.ciclos,
+    adesao: b.adesao ?? atual.adesao,
+    adesao_texto: b.adesao_texto ?? atual.adesao_texto,
   };
   const problema = problemaDasRegras(pedido);
   if (problema) throw new ErroUsuario(problema);
@@ -1072,6 +1079,10 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
   const mensalidade = Number(e.mensalidade ?? 0);
   if (!(mensalidade > 0)) throw new ErroUsuario("O plano desta conta está sem mensalidade. Fale com o suporte.", 409);
   const valor = valorDoPeriodo(mensalidade, ciclo, regras.ciclos[ciclo].desconto);
+  // a adesão (0044) vem junto do 1º pagamento: uma compra avulsa (período + adesão)
+  // e a assinatura das renovações nasce depois de pago, só com o plano
+  const adesao = regras.adesao;
+  const total = totalComAdesao(valor, adesao);
   // dois cartões aprovados cobrariam duas vezes: o que está em análise decide primeiro
   const pendentesAntes = await d.banco.pagamentosPendentes(e.id);
   if (pendentesAntes.some((p) => p.status === "AWAITING_RISK_ANALYSIS")) {
@@ -1082,9 +1093,13 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
     throw new ErroUsuario("Há uma compra no cartão desta conta esperando a resposta do Asaas. Aguarde alguns minutos ou fale com o suporte antes de pagar de novo.", 409);
   }
 
-  if (b.forma === "pix") return await pagarCadastroPix(d, cfg, asaas, e, ciclo, valor);
+  if (b.forma === "pix") {
+    return adesao > 0
+      ? await pagarCadastroPixComAdesao(d, cfg, asaas, e, ciclo, valor, adesao)
+      : await pagarCadastroPix(d, cfg, asaas, e, ciclo, valor);
+  }
   if (b.forma !== "cartao") throw new ErroUsuario("Escolha Pix ou cartão.");
-  const p = escolherParcelas(valor, ciclo, b.parcelas ?? 1, regras);
+  const p = escolherParcelas(total, ciclo, b.parcelas ?? 1, regras);
   if (!p) throw new ErroUsuario(`No período ${NOME_CICLO[ciclo].toLowerCase()}, o cartão aceita de 1 a ${maxParcelas(regras, ciclo)} parcela(s).`);
   const cartao = (b.cartao ?? {}) as CartaoDigitado;
   const titular = (b.titular ?? {}) as TitularDigitado;
@@ -1094,12 +1109,57 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
   // a tentativa anterior (o Pix gerado antes): paga, vale ela; senão sai, para não cobrar duas vezes
   const jaPaga = await limparTentativa(d, cfg, asaas, e);
   if (jaPaga) return ok({ forma: "pix", ciclo: cicloDe(e.cobranca?.ciclo) ?? ciclo, ...jaPaga });
-  if (p.n === 1) {
+  if (p.n === 1 && !(adesao > 0)) {
     await d.banco.salvarCobranca(e.id, { ciclo, valor });
     const r = await cadastrarCartao(d, cfg, asaas, u, e.id, cartao, titular);
     return ok({ forma: "cartao", ciclo, valor, parcelas: 1, parcela: valor, final: r.final, pago: r.pagas > 0, ativou: r.ativou, em_analise: r.emAnalise });
   }
-  return await pagarCadastroParcelado(d, cfg, asaas, u, e, ciclo, p, regras, cartao, titular);
+  return await pagarCadastroParcelado(d, cfg, asaas, u, e, ciclo, p, regras, cartao, titular, adesao);
+}
+
+/**
+ * O Pix do 1º pagamento com adesão (0044): uma cobrança avulsa de período +
+ * adesão (a assinatura não tem como cobrar a adesão só na 1ª fatura). Paga, o
+ * banco devolve criar_assinatura e a assinatura das renovações nasce vencendo
+ * quando o período pago acaba, só com o valor do plano.
+ */
+async function pagarCadastroPixComAdesao(d: Deps, cfg: Record<string, string>, asaas: ClienteAsaas, e: EmpresaCobranca,
+  ciclo: Ciclo, valor: number, adesao: number): Promise<Resposta> {
+  const total = totalComAdesao(valor, adesao);
+  const base = { forma: "pix", ciclo, valor: total, periodo: valor, adesao };
+  // o mesmo Pix já gerado (mesmo período e mesmo total): devolve ele, sem criar outro
+  const abertas = (await d.banco.comprasAvulsasAbertas?.(e.id)) ?? [];
+  const mesma = abertas.find((a) => (cicloDe(a.ciclo) ?? "MONTHLY") === ciclo && Number(a.valor) === total);
+  if (mesma && !e.cobranca?.asaas_assinatura_id) {
+    const cob = await asaas.cobranca(mesma.asaas_id);
+    if (cobrancaPaga(cob.status)) {
+      const r = await aplicarEAvisar(d, cfg, "CONFERENCIA", cob);
+      return ok({ ...base, ja_pago: true, pago: true, ativou: r.acao === "ativou" });
+    }
+    if (!cob.deleted && pendente(cob)) {
+      return ok({ ...base, link: cob.invoiceUrl ?? mesma.link ?? null, vencimento: cob.dueDate, pix: await asaas.pix(cob.id).catch(() => null) });
+    }
+  }
+  const jaPaga = await limparTentativa(d, cfg, asaas, e);
+  if (jaPaga) return ok({ forma: "pix", ciclo: cicloDe(e.cobranca?.ciclo) ?? ciclo, ...jaPaga });
+  const cliente = await garantirCliente(d, asaas, e.id);
+  const hoje = d.hoje();
+  const cob = await asaas.criarCobranca({
+    customer: cliente, billingType: "PIX", value: total, dueDate: hoje,
+    description: descricaoDaCompra(e.plano, ciclo, parcelamento(total, 1, regrasDe(cfg)), regrasDe(cfg), adesao),
+    externalReference: e.id,
+  });
+  await d.banco.inserirPagamento({
+    escritorio_id: e.id, finalidade: "mensalidade", asaas_id: cob.id, valor: total, status: cob.status || "PENDING", forma: "PIX",
+    link: cob.invoiceUrl ?? null, vencimento: cob.dueDate || hoje, parcelas: 1, ciclo, adesao,
+  });
+  await d.banco.salvarCobranca(e.id, {
+    asaas_cliente_id: cliente, valor, ciclo, situacao: "aguardando", link_pagamento: cob.invoiceUrl ?? null, proximo_vencimento: cob.dueDate || hoje,
+  });
+  // o mês do crédito começa no dia do pagamento
+  await d.banco.atualizarEmpresa(e.id, { dia_renovacao: Number(hoje.slice(8, 10)) });
+  const pix = await asaas.pix(cob.id).catch(() => null);
+  return ok({ ...base, link: cob.invoiceUrl ?? null, vencimento: cob.dueDate || hoje, pix });
 }
 
 /**
@@ -1109,6 +1169,20 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
  */
 async function limparTentativa(d: Deps, cfg: Record<string, string>, asaas: ClienteAsaas, e: EmpresaCobranca):
   Promise<{ ja_pago: true; pago: true; ativou: boolean; valor: number } | null> {
+  // o Pix avulso (período + adesão, 0044) de uma tentativa anterior: pago vale; senão sai
+  for (const a of (await d.banco.comprasAvulsasAbertas?.(e.id)) ?? []) {
+    let cob: CobrancaAsaas | null = null;
+    try { cob = await asaas.cobranca(a.asaas_id); } catch (x) { if (!(x instanceof ErroAsaas && x.status === 404)) throw x; }
+    if (cob && !cob.deleted && cobrancaPaga(cob.status)) {
+      const r = await aplicarEAvisar(d, cfg, "CONFERENCIA", cob);
+      return { ja_pago: true, pago: true, ativou: r.acao === "ativou", valor: Number(a.valor ?? cob.value ?? 0) };
+    }
+    if (cob && !cob.deleted) {
+      try { await asaas.removerCobranca(a.asaas_id); } catch (x) { if (!(x instanceof ErroAsaas && x.status === 404)) throw x; }
+    }
+    await d.banco.atualizarPagamento(a.id, { status: "DELETED" });
+    await d.banco.salvarCobranca(e.id, { link_pagamento: null });
+  }
   const sub = e.cobranca?.asaas_assinatura_id;
   if (!sub) return null;
   const cobs = await asaas.cobrancasDaAssinatura(sub);
@@ -1168,18 +1242,22 @@ async function pagarCadastroPix(d: Deps, cfg: Record<string, string>, asaas: Cli
 }
 
 async function pagarCadastroParcelado(d: Deps, cfg: Record<string, string>, asaas: ClienteAsaas, u: Usuario, e: EmpresaCobranca,
-  ciclo: Ciclo, p: Parcelamento, regras: RegrasPagamento, cartao: CartaoDigitado, titular: TitularDigitado): Promise<Resposta> {
+  ciclo: Ciclo, p: Parcelamento, regras: RegrasPagamento, cartao: CartaoDigitado, titular: TitularDigitado, adesao = 0): Promise<Resposta> {
   const hoje = d.hoje();
   const ip = ipDe(u);
   const dados = paraAsaas(cartao, titular, hoje);
   const cliente = await garantirCliente(d, asaas, e.id);
+  const descricao = descricaoDaCompra(e.plano, ciclo, p, regras, adesao);
   let cob: CobrancaAsaas;
   try {
-    cob = await cobrarParcelado(d, cfg, asaas, {
-      customer: cliente, dueDate: hoje, installmentCount: p.n,
-      ...(p.juros ? { installmentValue: p.parcela } : { totalValue: p.total }),
-      description: descricaoDaCompra(e.plano, ciclo, p, regras), externalReference: e.id, remoteIp: ip, ...dados,
-    }, p.parcela);
+    // 1x só acontece aqui com adesão (0044): uma cobrança avulsa no cartão, à vista
+    cob = p.n === 1
+      ? await asaas.cobrarNoCartao({ customer: cliente, value: p.total, dueDate: hoje, description: descricao, externalReference: e.id, remoteIp: ip, ...dados })
+      : await cobrarParcelado(d, cfg, asaas, {
+        customer: cliente, dueDate: hoje, installmentCount: p.n,
+        ...(p.juros ? { installmentValue: p.parcela } : { totalValue: p.total }),
+        description: descricao, externalReference: e.id, remoteIp: ip, ...dados,
+      }, p.parcela);
   } catch (x) { throw cartaoRecusado(x); }
   // nem pago nem em análise: não fica uma compra em aberto que o Asaas ainda
   // poderia cobrar enquanto a pessoa paga de outro jeito — cancela e diz
@@ -1195,12 +1273,13 @@ async function pagarCadastroParcelado(d: Deps, cfg: Record<string, string>, asaa
   await d.banco.inserirPagamento({
     escritorio_id: e.id, finalidade: "mensalidade", asaas_id: cob.id, valor: p.total, status: cob.status || "PENDING", forma: "CREDIT_CARD",
     link: cob.invoiceUrl ?? null, vencimento: cob.dueDate || hoje, parcelas: p.n, asaas_parcelamento: cob.installment ?? null, ciclo,
+    ...(adesao > 0 ? { adesao } : {}),
   });
   await d.banco.salvarCobranca(e.id, { asaas_cliente_id: cliente, valor: valorDoPeriodo(Number(e.mensalidade ?? 0), ciclo, regras.ciclos[ciclo].desconto), ciclo, situacao: "aguardando", link_pagamento: null });
   await d.banco.atualizarEmpresa(e.id, { dia_renovacao: Number(hoje.slice(8, 10)) });
   const final = dados.creditCard.number.slice(-4);
   await d.banco.atividade(e.id, "pagamento.parcelado", `${p.n}x (${NOME_CICLO[ciclo].toLowerCase()}) no cartão final ${final}`, u.id).catch(() => {});
-  const base = { forma: "cartao", ciclo, valor: p.total, parcelas: p.n, parcela: p.parcela, final };
+  const base = { forma: "cartao", ciclo, valor: p.total, parcelas: p.n, parcela: p.parcela, final, ...(adesao > 0 ? { adesao } : {}) };
   if (cobrancaPaga(cob.status)) {
     const r = await aplicarEAvisar(d, cfg, "CONFERENCIA", cob);
     return ok({ ...base, pago: true, ativou: r.acao === "ativou", assinatura: r.assinatura ?? null });

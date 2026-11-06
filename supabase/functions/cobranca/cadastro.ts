@@ -71,6 +71,10 @@ async function liberarAbandonados(d: Deps, cfg: Record<string, string>, document
       if (sub && asaas) {
         try { await asaas.removerAssinatura(sub); } catch (x) { if (!(x instanceof ErroAsaas && x.status === 404)) throw x; }
       }
+      // o Pix avulso com a adesão (0044) também sai
+      for (const a of (asaas && d.banco.comprasAvulsasAbertas ? await d.banco.comprasAvulsasAbertas(v.escritorioId) : [])) {
+        try { await asaas!.removerCobranca(a.asaas_id); } catch (x) { if (!(x instanceof ErroAsaas && x.status === 404)) throw x; }
+      }
       await d.banco.removerEmpresa(v.escritorioId);
       for (const c of v.contas) await d.banco.removerConta(c).catch(() => {});
       await d.banco.atividade(v.escritorioId, "empresa.cadastro_abandonado_removido", `${HORAS_ABANDONO} h sem pagamento`, null).catch(() => {});
@@ -152,25 +156,25 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
     throw e;
   }
   await d.banco.atividade(escId, "empresa.cadastro_site", `${plano.nome} · ${NOME_CICLO[ciclo].toLowerCase()}`, conta.id).catch(() => {});
-  const whatsapp = await avisarCadastro(d, cfg, { ...f, plano: plano.nome, ciclo, valor, parcelas: maxParcelas(regras, ciclo) });
-  return ok({ escritorio_id: escId, login: f.email, ciclo, valor, whatsapp });
+  const whatsapp = await avisarCadastro(d, cfg, { ...f, plano: plano.nome, ciclo, valor, adesao: regras.adesao, parcelas: maxParcelas(regras, ciclo) });
+  return ok({ escritorio_id: escId, login: f.email, ciclo, valor, adesao: regras.adesao, whatsapp });
 }
 
 /** "Cadastro criado, falta o pagamento" para a pessoa e, se houver, o aviso para o superadmin. Nunca derruba o cadastro. */
 async function avisarCadastro(d: Deps, cfg: Record<string, string>, c: {
-  empresa: string; documento: string; responsavel: string; email: string; telefone: string; plano: string; ciclo: Ciclo; valor: number; parcelas: number;
+  empresa: string; documento: string; responsavel: string; email: string; telefone: string; plano: string; ciclo: Ciclo; valor: number; adesao: number; parcelas: number;
 }): Promise<boolean> {
   const zap = zapDe(cfg);
   if (!zap) return false;
   const periodo = NOME_CICLO[c.ciclo].toLowerCase();
   const [pessoa] = await Promise.all([
     enviarWhatsApp(zap, c.telefone, mensagemCadastroCriado({
-      responsavel: c.responsavel, empresa: c.empresa, plano: c.plano, periodo, valor: c.valor, url: urlApp(cfg), login: c.email, parcelas: c.parcelas,
+      responsavel: c.responsavel, empresa: c.empresa, plano: c.plano, periodo, valor: c.valor, adesao: c.adesao, url: urlApp(cfg), login: c.email, parcelas: c.parcelas,
     }), d.fetch).catch(() => ({ ok: false as const })),
     cfg.whatsapp_avisos
       ? enviarWhatsApp(zap, cfg.whatsapp_avisos, mensagemNovoCadastro({
         empresa: c.empresa, documento: formatarDocumento(c.documento), responsavel: c.responsavel, email: c.email,
-        telefone: formatarTelefone(c.telefone), plano: c.plano, periodo, valor: c.valor,
+        telefone: formatarTelefone(c.telefone), plano: c.plano, periodo, valor: c.valor, adesao: c.adesao,
       }), d.fetch).catch(() => null)
       : Promise.resolve(null),
   ]);

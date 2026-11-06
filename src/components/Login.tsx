@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { supabase } from "../lib/supabase";
-import { planosDoCadastro } from "../lib/cobranca";
 import { Logo } from "./Logo";
 import { TERMOS_PUBLICADOS } from "../lib/config";
 
@@ -24,9 +23,9 @@ export function Login({ onOk }: { onOk: () => void }) {
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
-  // o link "Assine" só aparece com o autocadastro aberto no painel (0040)
-  const [cadastroAberto, setCadastroAberto] = useState(false);
-  useEffect(() => { planosDoCadastro().then((d) => setCadastroAberto(d.aberto && d.planos.length > 0)).catch(() => null); }, []);
+  // Sem "Assine" aqui (decisão do Wilker, 06/11/2026): o cadastro é feito
+  // depois da reunião, pelo link que a equipe envia (/cadastro/?plano=…).
+  // Quem chega sozinho é levado à demonstração.
 
   async function entrar(e: React.FormEvent) {
     e.preventDefault();
@@ -64,7 +63,7 @@ export function Login({ onOk }: { onOk: () => void }) {
       <div className="login-form">
         <div className="login-box">
           <h2>Entrar</h2>
-          <p>{cadastroAberto ? <>Ainda não tem conta? <a href="#/assinar">Assine o Vertces</a></> : "Use o e-mail e a senha da sua conta no Vertces."}</p>
+          <p>Ainda não tem conta? <a href="/#contato">Agende uma demonstração</a></p>
           <form onSubmit={entrar}>
             <label>E-mail<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="username" /></label>
             <label>Senha<input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} required autoComplete="current-password" /></label>

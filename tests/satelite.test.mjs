@@ -44,7 +44,7 @@ test("URL do Mapbox: estilo, overlay por anel, auto, @2x, token e tamanho da URL
   assert.throws(() => urlImagemSatelite([[[-39, -11], [-39, -11.1]]], { token: "t" }), /3 vértices/);
 });
 
-import { garantirImagemSatelite } from "../supabase/functions/_shared/satelite.ts";
+import { caixaConfere, caixaDosAneis, garantirImagemSatelite } from "../supabase/functions/_shared/satelite.ts";
 
 /** Storage de mentira: um mapa caminho → bytes. */
 function storageFalso(inicial = {}) {
@@ -60,8 +60,14 @@ function storageFalso(inicial = {}) {
 }
 const anel = [[-39.0, -11.0], [-39.01, -11.0], [-39.01, -11.01]];
 
-test("garantir: a imagem guardada em entrada/ vale, sem chamar o Mapbox", async () => {
-  const st = storageFalso({ "sid/entrada/satelite.jpg": new Uint8Array([1, 2, 3]) });
+const caixaJson = (c) => new TextEncoder().encode(JSON.stringify({ caixa: c }));
+const mapboxFalso = (bytes = [9, 9]) => async () => new Response(new Uint8Array(bytes), { status: 200, headers: { "content-type": "image/jpeg" } });
+
+test("garantir: a imagem guardada DESTE contorno vale, sem chamar o Mapbox", async () => {
+  const st = storageFalso({
+    "sid/entrada/satelite.jpg": new Uint8Array([1, 2, 3]),
+    "sid/entrada/satelite.caixa.json": caixaJson(caixaDosAneis([anel])),
+  });
   const fetchOriginal = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error("não devia buscar"); };
   try {
@@ -70,6 +76,63 @@ test("garantir: a imagem guardada em entrada/ vale, sem chamar o Mapbox", async 
     assert.equal(r.imagem.tipo, "jpg");
     assert.deepEqual([...r.imagem.bytes], [1, 2, 3]);
   } finally { globalThis.fetch = fetchOriginal; }
+});
+
+test("garantir: imagem guardada de OUTRO lugar (GMS no fuso errado, 6° a oeste) é refeita — FAZENDA SALGADINHO", async () => {
+  const outroLugar = anel.map(([lon, lat]) => [lon - 6, lat]);
+  const st = storageFalso({
+    "sid/entrada/satelite.jpg": new Uint8Array([1, 2, 3]),
+    "sid/entrada/satelite.caixa.json": caixaJson(caixaDosAneis([outroLugar])),
+  });
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = mapboxFalso();
+  try {
+    const r = await garantirImagemSatelite(st, "sid", "satelite", [anel], "tok", "Planta");
+    assert.equal(r.aviso, null);
+    assert.deepEqual([...r.imagem.bytes], [9, 9]);
+    // a caixa nova fica guardada: a próxima geração não busca de novo
+    const salva = JSON.parse(new TextDecoder().decode(st.arquivos.get("sid/entrada/satelite.caixa.json"))).caixa;
+    assert.ok(caixaConfere(salva, caixaDosAneis([anel])));
+  } finally { globalThis.fetch = fetchOriginal; }
+});
+
+test("garantir: imagem antiga, sem caixa, é renovada uma vez; se o Mapbox falhar ela serve de reserva, avisada", async () => {
+  const st = storageFalso({ "sid/entrada/satelite.jpg": new Uint8Array([1, 2, 3]) });
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = async () => new Response("erro", { status: 500 });
+  try {
+    const r = await garantirImagemSatelite(st, "sid", "satelite", [anel], "tok", "Planta");
+    assert.deepEqual([...r.imagem.bytes], [1, 2, 3]);
+    assert.match(r.aviso, /não pôde ser renovada.*confira/);
+    globalThis.fetch = mapboxFalso([7]);
+    const r2 = await garantirImagemSatelite(st, "sid", "satelite", [anel], "tok", "Planta");
+    assert.equal(r2.aviso, null);
+    assert.deepEqual([...r2.imagem.bytes], [7]);
+  } finally { globalThis.fetch = fetchOriginal; }
+});
+
+test("garantir: imagem comprovadamente de outro contorno nunca vai para a planta, nem quando o Mapbox falha", async () => {
+  const st = storageFalso({
+    "sid/entrada/satelite.jpg": new Uint8Array([1, 2, 3]),
+    "sid/entrada/satelite.caixa.json": caixaJson([-45.1, -11.1, -45.0, -11.0]),
+  });
+  const r = await garantirImagemSatelite(st, "sid", "satelite", [anel], undefined, "Planta");
+  assert.equal(r.imagem, null);
+  assert.match(r.aviso, /MAPBOX_TOKEN/);
+});
+
+test("caixaConfere: centímetros não renovam; dezenas de metros sim; lixo nunca confere", () => {
+  const c = caixaDosAneis([anel]); // ~1,1 km
+  assert.ok(caixaConfere(c.map((x) => x + 1e-6), c));        // ~0,1 m
+  assert.ok(!caixaConfere(c.map((x, i) => i === 0 ? x - 5e-4 : x), c)); // ~55 m num lado (> 2% de 1,1 km)
+  assert.ok(!caixaConfere(null, c));
+  assert.ok(!caixaConfere([1, 2, 3], c));
+  assert.ok(!caixaConfere(["a", 2, 3, 4], c));
+  // imóvel pequeno: folga mínima de ~5 m
+  const peq = [[-39, -11], [-39.0005, -11], [-39.0005, -11.0005]];
+  const cp = caixaDosAneis([peq]);
+  assert.ok(caixaConfere(cp.map((x) => x + 3e-5), cp));
+  assert.ok(!caixaConfere(cp.map((x) => x + 1e-4), cp));
 });
 
 test("garantir: sem imagem guardada busca no Mapbox e guarda para a próxima", async () => {
