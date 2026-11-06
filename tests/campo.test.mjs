@@ -40,7 +40,7 @@ const proj = (de, para, c) => proj4lib(de, para, c);
 const desloc = (o, x, y) => deslocar(o, x, y);
 const vert = ([lon, lat], extra = {}) => ({ lon, lat, precisao: 3, t: 0, modo: "caminhar", ...extra });
 const leit = ([lon, lat], precisao = 3, t = 0) => ({ lon, lat, precisao, t });
-const ORIGEM = [-41.3921, -12.5634];
+const ORIGEM = [-39.1262, -12.6915];
 const OP = OPCOES_PADRAO;
 
 // ---------------------------------------------------------------- motor único
@@ -63,8 +63,8 @@ test("dois vértices: perímetro é a distância; um vértice: tudo zero", () =>
   const a = vert(ORIGEM), b = vert(desloc(ORIGEM, 30, 40));
   const md = medir([a, b]);
   assert.equal(md.areaM2, 0);
-  // 50 m no chão × o fator de escala do UTM a 2,4° do meridiano central (k ≈ 1,0004)
-  assert.ok(Math.abs(md.perimetroM - 50 * 1.00043) < 0.01, `perímetro ${md.perimetroM}`);
+  // 50 m no chão × o fator de escala do UTM (perto do meridiano central, k ≈ 0,9996)
+  assert.ok(Math.abs(md.perimetroM - 50) / 50 < 0.0006, `perímetro ${md.perimetroM}`);
   assert.ok(Math.abs(distanciaM(a, b) - 50) < 0.001, "plano tangente no elipsoide");
   assert.deepEqual([medir([a]).areaM2, medir([a]).perimetroM, medir([]).n], [0, 0, 0]);
 });
@@ -395,4 +395,19 @@ test("simulador: toca o trajeto em ordem, piora o sinal, para no fim", () => {
   const n = lidas.length;
   sim.avancar(1);
   assert.equal(lidas.length, n, "parado de ouvir, não recebe mais");
+});
+
+// ---------------------------------------------------------------- Ir para (sem GPS)
+test("Ir para: decimal, GMS e link do Google Maps", async () => {
+  const { lerLugar } = await import("../src/lib/campo/lugar.ts");
+  const perto = (p, lon, lat) => p && Math.abs(p[0] - lon) < 1e-4 && Math.abs(p[1] - lat) < 1e-4;
+  assert.ok(perto(lerLugar("-12.6915, -39.1262"), -39.1262, -12.6915));
+  assert.ok(perto(lerLugar("-12,6915 -39,1262"), -39.1262, -12.6915));
+  assert.ok(perto(lerLugar("-39.1262, -12.6915"), -39.1262, -12.6915), "lon, lat trocado é desvirado");
+  assert.ok(perto(lerLugar(`12°41'29.4"S 39°07'34.3"W`), -39.12619, -12.69150));
+  assert.ok(perto(lerLugar(`39°07'34,3" O 12°41'29,4" S`), -39.12619, -12.69150));
+  assert.ok(perto(lerLugar("https://www.google.com/maps/@-12.6915,-39.1262,17z"), -39.1262, -12.6915));
+  assert.ok(perto(lerLugar("https://maps.google.com/?q=-12.6915,-39.1262"), -39.1262, -12.6915));
+  assert.ok(perto(lerLugar("https://www.google.com/maps/place/X/@-12.7,-39.1,15z/data=!3d-12.6915!4d-39.1262"), -39.1262, -12.6915));
+  for (const ruim of ["", "fazenda boa vista", "100, 200", "0, 0", "https://www.google.com/maps/search/fazenda"]) assert.equal(lerLugar(ruim), null, ruim);
 });

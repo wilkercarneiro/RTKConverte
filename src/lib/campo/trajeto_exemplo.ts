@@ -1,5 +1,5 @@
 // Trajeto de GPS de exemplo (laboratório #/lab/campo e testes): a volta a pé
-// num pasto de ~2,6 ha perto de Lençóis/BA, como um celular gravaria.
+// num pasto de ~2,6 ha em Cruz das Almas/BA (com uma mata no 4º lado), como um celular gravaria.
 //
 // Gerado de forma determinística (semente fixa) a cada carga — os mesmos
 // números sempre:
@@ -11,7 +11,7 @@
 //   • termina parado perto do ponto de partida (bom para o Marcar ponto aqui).
 import type { Leitura, LonLat } from "./tipos.ts";
 
-const ORIGEM: LonLat = [-41.3921, -12.5634];
+const ORIGEM: LonLat = [-39.1262, -12.6915];
 const R = 6371008.8, RAD = Math.PI / 180;
 const K = Math.cos(ORIGEM[1] * RAD);
 const paraLonLat = (x: number, y: number): LonLat => [ORIGEM[0] + x / (R * RAD * K), ORIGEM[1] + y / (R * RAD)];
