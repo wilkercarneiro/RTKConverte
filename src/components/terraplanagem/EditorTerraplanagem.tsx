@@ -263,6 +263,8 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
 
       <div className="tp-trabalho" data-tela-cheia>
         <aside className="tp-painel" aria-label="Dados do projeto">
+          {/* no computador só esta parte rola; o "Pronto para o cliente" fica embaixo dela, sem cobrir nada */}
+          <div className="tp-painel-rola">
           {[...avisosLeitura, ...(r?.avisos ?? [])].map((a) => <p key={a} className="tp-aviso" role="note">{a}</p>)}
 
           <Passo n={1} titulo="Pontos com cota" resumo={<button type="button" className="link" onClick={onTrocarPontos}>trocar</button>}
@@ -368,6 +370,7 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
                 </label>
               </div>
             </Secao>
+          </div>
           </div>
 
           <ProximaAcao acao={{
