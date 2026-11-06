@@ -26,6 +26,21 @@ export interface AreaTransferida {
   areaOrigemM2?: number;
   /** quantas partes a área tinha na origem (o CAR leva só a maior) */
   partes?: number;
+  /** a frase que a tela de entrada mostra sobre a área ("Área medida no campo hoje às 14:32 (GPS do celular, ±3,3 m)") */
+  frase?: string;
+  /** o "← Voltar" da tela de entrada leva de volta à ferramenta de origem, não ao Início */
+  volta?: VoltaDaArea;
+}
+
+export interface VoltaDaArea {
+  /** "a Consulta", "Pasto da sede" — o texto do "← Voltar para …" */
+  rotulo: string;
+  /** endereço da ferramenta (#/consulta?q=…, #/campo) */
+  hash: string;
+  /** a ferramenta só reabre a área se ela for mandada de novo (área de arquivo/desenho na Consulta) */
+  reenviar?: boolean;
+  /** a medição do Campo que reabre ao voltar */
+  medicaoId?: string;
 }
 
 const CHAVE = "vertces.area-transferida";

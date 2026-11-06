@@ -21,6 +21,33 @@ export function origemDaMedicao(m: Medicao, agora: Date = new Date()): string {
   return `Medição de campo de ${quando(m.criadaEm, agora)} · ${gps}`;
 }
 
+/** "hoje às 14:32", "ontem às 09:10", "em 02/11 às 15:42" */
+export function quandoComAs(iso: string, agora: Date = new Date()): string {
+  const q = quando(iso, agora);
+  return q.replace(/^(hoje|ontem) (\d)/, "$1 às $2").replace(/^(\d\d\/\d\d(?:\/\d{4})?) (\d)/, "em $1 às $2");
+}
+
+/** "Área medida no campo hoje às 14:32 (GPS do celular, ±3,3 m)" — a frase do CAR novo. */
+export function fraseDaMedicao(m: Medicao, agora: Date = new Date()): string {
+  const { precisaoMediaM } = medir(m.vertices);
+  return precisaoMediaM == null
+    ? `Área desenhada à mão no Medir no campo ${quandoComAs(m.criadaEm, agora)}`
+    : `Área medida no campo ${quandoComAs(m.criadaEm, agora)} (GPS do celular, ${textoPrecisao(precisaoMediaM)})`;
+}
+
+// "← Voltar para <medição>" do CAR novo: o Campo reabre ESTA medição. sessionStorage
+// (some com a aba); lida sem apagar no render e apagada depois de montar (StrictMode).
+const CHAVE_ABRIR = "vertces.campo.abrir";
+export function pedirAbrirMedicao(id: string): void {
+  try { sessionStorage.setItem(CHAVE_ABRIR, id); } catch { /* sem storage: o Campo abre como sempre */ }
+}
+export function medicaoPedida(): string | null {
+  try { return sessionStorage.getItem(CHAVE_ABRIR); } catch { return null; }
+}
+export function esquecerMedicaoPedida(): void {
+  try { sessionStorage.removeItem(CHAVE_ABRIR); } catch { /* sem storage */ }
+}
+
 /** A medição no formato que as telas de entrada aceitam. Os vértices vão como P1, P2… */
 export function areaDaMedicao(m: Medicao, agora: Date = new Date()): AreaTransferida {
   return {
@@ -31,5 +58,7 @@ export function areaDaMedicao(m: Medicao, agora: Date = new Date()): AreaTransfe
     // a área que o Campo mostrou: o CAR mostra a mesma (princípio 4)
     areaOrigemM2: medir(m.vertices).areaM2,
     partes: 1,
+    frase: fraseDaMedicao(m, agora),
+    volta: { rotulo: m.nome, hash: "#/campo", medicaoId: m.id },
   };
 }

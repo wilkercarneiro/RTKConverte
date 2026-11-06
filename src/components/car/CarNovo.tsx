@@ -16,7 +16,10 @@ import { criarServicoCar } from "../../lib/car/persistencia.ts";
 import { Icone, ICONE } from "../Icone";
 import { Dica, Passos } from "../ui";
 import { ehAceiteGeral, textoSemCredito } from "../../lib/creditos";
-import { pegarAreaTransferida } from "../../lib/area_transferida";
+import { pegarAreaTransferida, transferirArea } from "../../lib/area_transferida";
+import type { AreaTransferida } from "../../lib/area_transferida";
+import { pedirAbrirMedicao } from "../../lib/campo/ponte.ts";
+import { hashNoLaboratorio } from "../../lib/laboratorio_destino";
 import { textosDaAreaLevada } from "../../lib/car/area_levada.ts";
 import { consultarMunicipio } from "../../lib/consulta/ambiente.ts";
 import "./car.css";
@@ -30,7 +33,7 @@ async function textoDoArquivo(f: File): Promise<string> {
 }
 
 /** O que foi lido: o perímetro e, no GPX de pontos, os pontos para ligar/desligar. */
-interface Lido { arquivo: string; kml: KmlLido; pontos: PontoGps[] | null; /** veio de uma ferramenta (Consultar imóvel, Medir no campo), não de arquivo */ origem?: string; /** a área e as partes que a origem mostrou */ levada?: { areaOrigemM2?: number; partes?: number } }
+interface Lido { arquivo: string; kml: KmlLido; pontos: PontoGps[] | null; /** veio de uma ferramenta (Consultar imóvel, Medir no campo), não de arquivo */ origem?: string; /** a área e as partes que a origem mostrou */ levada?: { areaOrigemM2?: number; partes?: number }; /** a frase da origem ("Área medida no campo hoje às 14:32 (GPS do celular, ±3,3 m)") */ frase?: string }
 
 export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = false, onCriado, onVoltar, voltarPara = "o Início" }: {
   definicao: DefinicaoServico;
@@ -59,6 +62,8 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
   const [criando, setCriando] = useState(false);
   // os créditos de CAR acabaram entre abrir a tela e criar: o banco pede o aceite
   const [pedeAceite, setPedeAceite] = useState(false);
+  /** a área veio de uma ferramenta: o "← Voltar" volta para ela (a Consulta, a medição do Campo) */
+  const [veio, setVeio] = useState<AreaTransferida | null>(null);
 
   // área levada de uma ferramenta (Consultar imóvel, Medir no campo): já abre
   // com o perímetro, como se o KML tivesse sido enviado. pegarAreaTransferida()
@@ -68,7 +73,8 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
     if (!a) return;
     const nomeArq = `${(a.nome || "area").normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\w-]+/g, "_").slice(0, 60) || "area"}.kml`;
     setLido({ arquivo: nomeArq, kml: { nome: a.nome, perimetro: a.perimetro, nomes: a.nomes, rios: [], avisos: [] }, pontos: null, origem: a.origem,
-      levada: { areaOrigemM2: a.areaOrigemM2, partes: a.partes } });
+      levada: { areaOrigemM2: a.areaOrigemM2, partes: a.partes }, frase: a.frase });
+    if (a.volta) setVeio(a);
     setFora(new Set());
     setNome(a.nome);
     if (a.uf) { setUf(a.uf); guardar("uf", a.uf); }
@@ -143,6 +149,18 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
     setFora(f);
   }
 
+  /** "← Voltar para a Consulta" / "← Voltar para Pasto da sede": a ferramenta reabre com a mesma área */
+  function voltarParaOrigem() {
+    const v = veio?.volta;
+    if (!v) { onVoltar?.(); return; }
+    if (v.reenviar) transferirArea({ ...veio, volta: undefined });
+    if (v.medicaoId) pedirAbrirMedicao(v.medicaoId);
+    const lab = hashNoLaboratorio(v.hash);
+    // no laboratório troca o endereço SEM o hashchange (a tela montaria antes do reload e gastaria o pedido)
+    if (lab) { history.replaceState(null, "", lab); location.reload(); return; }
+    location.hash = v.hash;
+  }
+
   async function criar(comGeral = usarCreditoGeral) {
     if (!lido || !previa) return;
     setCriando(true);
@@ -171,7 +189,9 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
         { rotulo: "Shapefiles", estado: "futura" },
       ]} />
       <div className="upload-card">
-        {onVoltar && <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
+        {veio?.volta
+          ? <button className="fantasma voltar-para" onClick={voltarParaOrigem}>← Voltar para {veio.volta.rotulo}</button>
+          : onVoltar && <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
         <div>
           <h2>{definicao.titulo}<Dica>{definicao.resumo}</Dica></h2>
         </div>
@@ -212,11 +232,13 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
               ))}
             </svg>
             <div className="car-novo-dados">
-              <p><b>{fmtHa(previa.levada?.areaM2 ?? previa.area)}</b> · {fmtNum(previa.levada?.areaM2 ?? previa.area, 2)} m² · {entrada.perimetro.length} vértices
+              <p className="car-novo-area"><b>{fmtHa(previa.levada?.areaM2 ?? previa.area)}</b>
+                {/* a nota da projeção do módulo do CAR é explicação: vai para o "?" do número */}
+                {previa.levada?.linhaCar && <Dica>{previa.levada.linhaCar} A área de cabeça é a do sistema inteiro (UTM no fuso do lugar, fórmula de Gauss).</Dica>}
+                {" "}· {fmtNum(previa.levada?.areaM2 ?? previa.area, 2)} m² · {entrada.perimetro.length} vértices
                 {entrada.rios.length > 0 && <> · {entrada.rios.length} rio(s) no arquivo</>}</p>
-              {lido.origem && <p className="car-dica" role="note" style={{ color: "var(--floresta)", fontWeight: 600 }}>Área de {lido.origem}, a mesma área que você viu lá. Confira o perímetro antes de seguir: a reserva legal e a APP são marcadas na próxima etapa.</p>}
+              {lido.origem && <p className="car-dica car-novo-veio" role="note">{lido.frase ?? `Área de ${lido.origem}`} — a mesma que você viu lá.</p>}
               {previa.levada?.linhaPartes && <p className="car-dica" role="note">⚠ {previa.levada.linhaPartes}</p>}
-              {previa.levada?.linhaCar && <p className="car-dica">{previa.levada.linhaCar}</p>}
               {entrada.avisos.map((a) => <p key={a} className="car-dica">⚠ {a}</p>)}
               {lido.pontos && <p className="car-dica">Clique num ponto do desenho para tirá-lo do perímetro (a sede, um ponto de outro dia) ou pô-lo de volta.</p>}
               <label className="car-campo">

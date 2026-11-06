@@ -125,3 +125,7 @@
 .car-novo-previa .car-ponto text { font: 600 10px var(--fonte); fill: #12201A; paint-order: stroke; stroke: #F6F7F4; stroke-width: 3px; }
 .car-novo-previa .car-ponto.fora circle { fill: #fff; stroke: #B5B5B5; }
 .car-novo-previa .car-ponto.fora text { fill: #9A9A9A; text-decoration: line-through; }
+
+/* área levada de uma ferramenta: a frase da origem em destaque; a nota da projeção no "?" do número */
+.car-novo-area { display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; }
+.car-novo-dados p.car-novo-veio { color: var(--floresta); font-weight: 600; }

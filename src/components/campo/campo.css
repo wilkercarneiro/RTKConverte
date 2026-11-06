@@ -281,3 +281,16 @@ button.campo-item:hover:not(:disabled) { border-color: var(--primaria); color: v
   .campo-lab:not([open]) { top: 42%; left: auto; right: 6px; transform: none; width: auto; opacity: .88; }
   .campo-lab:not([open]) > summary { padding: 6px 10px; font-size: 11.5px; }
 }
+
+/* ---- "Limpar vértices em linha reta" (acabamento 1, 06/11) ---- */
+.campo-limpar { display: grid; gap: 10px; padding: 12px; border-radius: 12px; background: #EEF8F2; border: 1px solid #BFE3CD; }
+.campo-limpar-texto { display: grid; gap: 4px; }
+.campo-limpar-texto > b { display: inline-flex; align-items: center; gap: 2px; font-size: 14px; color: var(--floresta); }
+.campo-limpar-num { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13px; color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.campo-limpar-num s { color: var(--texto-3); }
+.campo-limpar-num b { color: var(--texto); }
+button.campo-limpar-sim { background: var(--floresta); color: #fff; border-color: var(--floresta); }
+button.campo-limpar-sim:hover:not(:disabled) { background: var(--primaria-escura, #0E3B2B); color: #fff; border-color: var(--primaria-escura, #0E3B2B); }
+.campo-limpo { margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 10px; background: #EEF8F2; font-size: 13px; color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.campo-limpo b { color: var(--floresta); }
+.campo-limpo button.link { font-weight: 600; white-space: nowrap; }

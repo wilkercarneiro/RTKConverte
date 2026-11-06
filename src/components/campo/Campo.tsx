@@ -23,7 +23,7 @@ import { combinarLeituras, leituraUtil, verticeAoCaminhar, verticeDoPonto } from
 import type { PontoCombinado } from "../../lib/campo/motor.ts";
 import { fonteDoNavegador } from "../../lib/campo/gps.ts";
 import type { ErroGps, FonteGps } from "../../lib/campo/gps.ts";
-import { areaDaMedicao } from "../../lib/campo/ponte.ts";
+import { areaDaMedicao, esquecerMedicaoPedida, medicaoPedida } from "../../lib/campo/ponte.ts";
 import { enviarPendentes } from "../../lib/campo/fila.ts";
 import type { Fila } from "../../lib/campo/fila.ts";
 import { pedirArmazenamentoPersistente, registrarTela, usuarioAtual } from "../../lib/campo/envio.ts";
@@ -32,6 +32,8 @@ import { ErroConta, LIMITE_LISTA } from "../../lib/campo/repositorio.ts";
 import type { RepositorioMedicoes, TipoErroConta } from "../../lib/campo/repositorio.ts";
 import { repositorioSupabase } from "../../lib/campo/conta.ts";
 import { conferirAjuste, LIMITES_OPCOES, OPCOES_PADRAO, opcoesValidas } from "../../lib/campo/tipos.ts";
+import { limparLinhaReta, valeLimpar } from "../../lib/campo/simplificar.ts";
+import type { Limpeza } from "../../lib/campo/simplificar.ts";
 import type { Leitura, LonLat, Medicao, OpcoesCampo, VerticeCampo } from "../../lib/campo/tipos.ts";
 import { avisar, confirmar, Dica, EstadoErro, EstadoVazio, Esqueleto, Gaveta, Rotulo } from "../ui";
 import { MapaCampo } from "./MapaCampo";
@@ -43,6 +45,8 @@ import "./campo.css";
 
 export interface PropsCampo {
   ir: (r: Rota) => void;
+  /** abre esta medição quando a lista da conta chegar (o "← Voltar" do CAR, se ela não está no aparelho) */
+  abrirId?: string;
   /** de onde vêm as posições (padrão: o GPS do aparelho; o laboratório passa o simulador) */
   fonte?: FonteGps;
   /** liga o GPS ao abrir (padrão: sim no celular; no computador espera o botão) */
@@ -116,9 +120,16 @@ export function Campo(props: PropsCampo) {
     const base = armazemPadrao();
     return base && usuario ? armazemDoUsuario(base, usuario) : null;
   }, [doUsuario, props.armazem, usuario]);
+  // "← Voltar para <medição>" do CAR novo: reabre a medição pedida (se ela está neste aparelho)
+  const [pedida] = useState(() => medicaoPedida());
+  useEffect(() => { if (pedida) esquecerMedicaoPedida(); }, [pedida]);
+  const abrirPedida = useMemo(() => {
+    if (props.abrir || !pedida || !arm) return undefined;
+    return lerAparelho(arm).registros[pedida]?.medicao ?? undefined;
+  }, [props.abrir, pedida, arm]);
   // a sessão sai do aparelho em milissegundos: espera para não abrir o aparelho errado
   if (doUsuario && usuario === undefined) return <div className="campo tela-cheia" data-tela-cheia aria-busy="true" />;
-  return <CampoTela key={usuario ?? "-"} {...props} armazem={arm} />;
+  return <CampoTela key={usuario ?? "-"} {...props} abrir={props.abrir ?? abrirPedida} abrirId={!props.abrir && !abrirPedida && pedida ? pedida : undefined} armazem={arm} />;
 }
 
 function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
@@ -305,6 +316,14 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
     }
   }, [repo, persistir, mostrar]);
   useEffect(() => { void carregarConta(); }, [carregarConta]);
+  // o "← Voltar para <medição>" do CAR: a medição não estava no aparelho, mas está na conta
+  const abriuPedida = useRef(false);
+  useEffect(() => {
+    if (abriuPedida.current || !props.abrirId || conta.estado !== "ok") return;
+    abriuPedida.current = true;
+    const m = conta.itens.find((x) => x.id === props.abrirId);
+    if (m && !medicaoRef.current) abrirMedicao(m);
+  }, [conta, props.abrirId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [envio, setEnvio] = useState<{ estado: EstadoEnvio; hora: string | null }>({ estado: "ocioso", hora: null });
   const travadoRef = useRef(false); // sem a 0047 no banco: não adianta tentar até recarregar
@@ -541,6 +560,32 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   // aberta: só o caminho feito (o lado de fecho por cima do caminho dava alarme falso)
   const fechadaAgora = !!medicao?.fechada;
   const cruza = useMemo(() => vertices.length >= 4 && contornoSeCruza(vertices, fechadaAgora), [vertices, fechadaAgora]);
+
+  // "Limpar vértices em linha reta": fechada a área andada (Caminhar), a cerca reta não precisa de um vértice a cada 5 m
+  const [semLimpeza, setSemLimpeza] = useState<ReadonlySet<string>>(() => new Set());
+  const [limpou, setLimpou] = useState<{ id: string; antes: VerticeCampo[]; l: Limpeza } | null>(null);
+  const limpeza = useMemo(() => {
+    if (!medicao?.fechada || semLimpeza.has(medicao.id) || limpou?.id === medicao.id) return null;
+    if (!medicao.vertices.some((v) => v.modo === "caminhar")) return null;
+    const l = limparLinhaReta(medicao.vertices);
+    return valeLimpar(l) ? l : null;
+  }, [medicao, semLimpeza, limpou]);
+  function aplicarLimpeza() {
+    const m = medicaoRef.current;
+    if (!m || !limpeza) return;
+    setLimpou({ id: m.id, antes: m.vertices, l: limpeza });
+    mudar(alterar(m, { vertices: limpeza.vertices }));
+    agendarEnvio(400);
+  }
+  function desfazerLimpeza() {
+    const m = medicaoRef.current;
+    if (!m || !limpou || limpou.id !== m.id) return;
+    mudar(alterar(m, { vertices: limpou.antes }));
+    setLimpou(null);
+    setSemLimpeza((s) => new Set(s).add(m.id));
+    agendarEnvio(400);
+  }
+  const limpezaFeita = limpou && medicao?.fechada && limpou.id === medicao.id ? limpou.l : null;
   const registroAtual = medicao ? aparelho.registros[medicao.id] : undefined;
   const sinalFraco = !!leitura && !leituraUtil(leitura, opcoes.limitePrecisaoM);
   const estreita = useEstreita();
@@ -549,6 +594,8 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   const painel = (
     <PainelControle
       medicao={medicao} oferta={oferta} md={md} cruza={cruza}
+      limpeza={limpeza} limpezaFeita={limpezaFeita} onLimpar={aplicarLimpeza} onDesfazerLimpeza={desfazerLimpeza}
+      onDispensarLimpeza={() => { const id = medicaoRef.current?.id; if (id) setSemLimpeza((s) => new Set(s).add(id)); }}
       gps={gps} gpsLigado={gpsLigado} leitura={leitura} sinalFraco={sinalFraco}
       caminhando={caminhando} desenhando={desenhando} marcando={marcando} pontoRuim={pontoRuim}
       opcoes={opcoes} acordada={acordada} nomeRef={nomeRef}
@@ -681,6 +728,13 @@ interface PropsPainel {
   oferta: Medicao | null;
   md: ReturnType<typeof medir>;
   cruza: boolean;
+  /** oferta de "Limpar vértices em linha reta" (área fechada andando) */
+  limpeza: Limpeza | null;
+  /** a limpeza aplicada agora (com o Desfazer) */
+  limpezaFeita: Limpeza | null;
+  onLimpar: () => void;
+  onDesfazerLimpeza: () => void;
+  onDispensarLimpeza: () => void;
   gps: EstadoGps;
   gpsLigado: boolean;
   leitura: Leitura | null;
@@ -768,6 +822,34 @@ function Numeros({ md, aberta }: { md: ReturnType<typeof medir>; aberta: boolean
   );
 }
 
+/** "121 → 28 vértices · 2,7511 → 2,7546 ha": a cerca reta com um vértice só em cada canto/curva. */
+function OfertaLimpeza({ l, onLimpar, onDispensar }: { l: Limpeza; onLimpar: () => void; onDispensar: () => void }) {
+  const dif = l.areaDepoisM2 - l.areaAntesM2;
+  const pct = l.areaAntesM2 > 0 ? (Math.abs(dif) / l.areaAntesM2) * 100 : 0;
+  return (
+    <div className="campo-limpar" role="region" aria-label="Limpar vértices em linha reta">
+      <div className="campo-limpar-texto">
+        <b>Limpar vértices em linha reta
+          <Dica>
+            Andando, o celular pôs um vértice a cada poucos metros. Na cerca reta, os do meio sobram: saem os que ficam a menos de{" "}
+            {textoDistancia(l.toleranciaM)} da linha entre os vizinhos (Douglas–Peucker em UTM, da ordem da precisão do GPS). Os pontos que você marcou
+            parado ou tocou no mapa ficam sempre. A área muda {textoM2(Math.abs(dif))} ({pct.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%)
+            {l.incertezaM2 != null ? `, bem menos que a incerteza do próprio GPS (±${textoM2(l.incertezaM2)})` : ""}.
+          </Dica>
+        </b>
+        <span className="campo-limpar-num">
+          <span><s>{l.antes}</s> → <b>{l.depois}</b> vértices</span>
+          <span>{textoHa(l.areaAntesM2)} → <b>{textoHa(l.areaDepoisM2)}</b></span>
+        </span>
+      </div>
+      <div className="campo-acoes-linha">
+        <button type="button" className="campo-btn-medio campo-limpar-sim" onClick={onLimpar}>Limpar</button>
+        <button type="button" className="campo-btn-medio" onClick={onDispensar}>Deixar como está</button>
+      </div>
+    </div>
+  );
+}
+
 function PainelControle(p: PropsPainel) {
   const m = p.medicao;
 
@@ -802,6 +884,13 @@ function PainelControle(p: PropsPainel) {
           {p.md.precisaoMediaM == null ? "Desenhada à mão" : `Precisão média ${textoPrecisao(p.md.precisaoMediaM)}`} · medida {quando(m.criadaEm)} · fuso {p.md.fuso}
         </p>
         {p.cruza && <p className="campo-alerta" role="alert">O contorno se cruza: a área pode estar errada. Use "Continuar medindo" e desfaça os vértices do cruzamento.</p>}
+        {p.limpeza && <OfertaLimpeza l={p.limpeza} onLimpar={p.onLimpar} onDispensar={p.onDispensarLimpeza} />}
+        {p.limpezaFeita && (
+          <p className="campo-limpo" role="status">
+            <span><b>Cerca limpa:</b> {p.limpezaFeita.antes} → {p.limpezaFeita.depois} vértices · {textoHa(p.limpezaFeita.areaDepoisM2)}</span>
+            <button type="button" className="link" onClick={p.onDesfazerLimpeza}>Desfazer</button>
+          </p>
+        )}
         <button type="button" className="principal campo-btn-grande campo-largo" onClick={p.onCriarCar}>
           <Ic d={ICO.car} />Criar serviço de CAR com esta área
         </button>

@@ -17,8 +17,9 @@ import { Campo } from "./Campo";
 import { rotaParaHash } from "../../lib/rota";
 import type { Rota } from "../../lib/rota";
 import { pegarAreaTransferida } from "../../lib/area_transferida";
+import { medicaoPedida } from "../../lib/campo/ponte.ts";
 import { laboratorioDe } from "../../lib/laboratorio_destino";
-import { CHAVE_APARELHO, gravarAparelho, guardarMedicao, novoId } from "../../lib/campo/aparelho.ts";
+import { CHAVE_APARELHO, gravarAparelho, guardarMedicao, lerAparelho, novoId } from "../../lib/campo/aparelho.ts";
 import type { Armazem } from "../../lib/campo/aparelho.ts";
 import { criarSimulador, fonteComErro } from "../../lib/campo/gps.ts";
 import type { FonteGps } from "../../lib/campo/gps.ts";
@@ -65,6 +66,12 @@ function medicoesDaConta(): Medicao[] {
 }
 
 function prepararCena(cena: Cena): { abrir?: Medicao; inicioTrajeto: number; conta?: Medicao[] } {
+  // voltando do CAR ("← Voltar para <medição>"): o aparelho do laboratório fica como estava, para a medição reabrir
+  // (a conta de mentira nasce de novo a cada carga: leva junto as medições do aparelho, senão a sincronia as daria por excluídas)
+  if (medicaoPedida()) {
+    const doAparelho = Object.values(lerAparelho(armazemLab).registros).map((r) => r.medicao);
+    return { inicioTrajeto: TRAJETO_EXEMPLO.length - 1, conta: [...doAparelho, ...medicoesDaConta()] };
+  }
   try {
     for (const k of Object.keys(localStorage)) if (k.startsWith("lab:")) localStorage.removeItem(k);
   } catch { /* sem storage */ }
