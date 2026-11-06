@@ -32,7 +32,7 @@ import { ErroConta, LIMITE_LISTA } from "../../lib/campo/repositorio.ts";
 import type { RepositorioMedicoes, TipoErroConta } from "../../lib/campo/repositorio.ts";
 import { repositorioSupabase } from "../../lib/campo/conta.ts";
 import { conferirAjuste, LIMITES_OPCOES, OPCOES_PADRAO, opcoesValidas } from "../../lib/campo/tipos.ts";
-import { limparLinhaReta, valeLimpar } from "../../lib/campo/simplificar.ts";
+import { limpezaAindaVale, limparLinhaReta, valeLimpar } from "../../lib/campo/simplificar.ts";
 import type { Limpeza } from "../../lib/campo/simplificar.ts";
 import type { Leitura, LonLat, Medicao, OpcoesCampo, VerticeCampo } from "../../lib/campo/tipos.ts";
 import { avisar, confirmar, Dica, EstadoErro, EstadoVazio, Esqueleto, Gaveta, Rotulo } from "../ui";
@@ -475,6 +475,8 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   function continuarMedindo() {
     const m = medicaoRef.current;
     if (!m) return;
+    // reaberta, a limpeza feita deixa de valer: o Desfazer dela jogaria fora o que for editado agora
+    setLimpou(null);
     mudar(alterar(m, { fechada: false }));
   }
 
@@ -564,12 +566,14 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   // "Limpar vértices em linha reta": fechada a área andada (Caminhar), a cerca reta não precisa de um vértice a cada 5 m
   const [semLimpeza, setSemLimpeza] = useState<ReadonlySet<string>>(() => new Set());
   const [limpou, setLimpou] = useState<{ id: string; antes: VerticeCampo[]; l: Limpeza } | null>(null);
+  // a limpeza feita só vale enquanto o contorno for exatamente o que ela deixou
+  const limpezaFeita = limpou && medicao?.fechada && limpou.id === medicao.id && limpezaAindaVale(limpou.l, medicao.vertices) ? limpou.l : null;
   const limpeza = useMemo(() => {
-    if (!medicao?.fechada || semLimpeza.has(medicao.id) || limpou?.id === medicao.id) return null;
+    if (!medicao?.fechada || semLimpeza.has(medicao.id) || limpezaFeita) return null;
     if (!medicao.vertices.some((v) => v.modo === "caminhar")) return null;
     const l = limparLinhaReta(medicao.vertices);
     return valeLimpar(l) ? l : null;
-  }, [medicao, semLimpeza, limpou]);
+  }, [medicao, semLimpeza, limpezaFeita]);
   function aplicarLimpeza() {
     const m = medicaoRef.current;
     if (!m || !limpeza) return;
@@ -579,13 +583,12 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   }
   function desfazerLimpeza() {
     const m = medicaoRef.current;
-    if (!m || !limpou || limpou.id !== m.id) return;
+    if (!m || !limpou || limpou.id !== m.id || !limpezaAindaVale(limpou.l, m.vertices)) { setLimpou(null); return; }
     mudar(alterar(m, { vertices: limpou.antes }));
     setLimpou(null);
     setSemLimpeza((s) => new Set(s).add(m.id));
     agendarEnvio(400);
   }
-  const limpezaFeita = limpou && medicao?.fechada && limpou.id === medicao.id ? limpou.l : null;
   const registroAtual = medicao ? aparelho.registros[medicao.id] : undefined;
   const sinalFraco = !!leitura && !leituraUtil(leitura, opcoes.limitePrecisaoM);
   const estreita = useEstreita();

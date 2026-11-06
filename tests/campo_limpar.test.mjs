@@ -11,7 +11,7 @@ import { verticeAoCaminhar } from "../src/lib/campo/motor.ts";
 import { TRAJETO_EXEMPLO } from "../src/lib/campo/trajeto_exemplo.ts";
 import { OPCOES_PADRAO } from "../src/lib/campo/tipos.ts";
 import { deslocar, medir } from "../src/lib/campo/geometria.ts";
-import { limparLinhaReta, toleranciaPadrao, valeLimpar } from "../src/lib/campo/simplificar.ts";
+import { limpezaAindaVale, limparLinhaReta, toleranciaPadrao, valeLimpar } from "../src/lib/campo/simplificar.ts";
 
 const ORIGEM = [-41.39, -12.56];
 const v = (p, modo = "caminhar", precisao = 2) => ({ lon: p[0], lat: p[1], precisao, t: 0, modo });
@@ -37,10 +37,11 @@ test("trajeto do laboratório: 121 vértices do Caminhar viram poucos, e a área
   const tol = toleranciaPadrao(vs);
   assert.ok(tol >= 0.5 && tol <= 1.5, `tolerância ${tol} m (cerca de 1 m)`);
   const l = limparLinhaReta(vs);
-  assert.ok(l.depois <= 30 && l.depois >= 4, `${l.antes} → ${l.depois}`);
+  // 2ª passada: os quase em linha dos lados compridos também saem (era 121 → 28)
+  assert.ok(l.depois <= 20 && l.depois >= 4, `${l.antes} → ${l.depois}`);
   assert.ok(valeLimpar(l));
   const dif = Math.abs(l.areaDepoisM2 - l.areaAntesM2);
-  assert.ok(dif / l.areaAntesM2 < 0.003, `área mudou ${dif.toFixed(1)} m² (${((dif / l.areaAntesM2) * 100).toFixed(2)}%)`);
+  assert.ok(dif / l.areaAntesM2 <= 0.0015, `área mudou ${dif.toFixed(1)} m² (${((dif / l.areaAntesM2) * 100).toFixed(2)}%)`);
   assert.ok(l.incertezaM2 > dif * 10, `a diferença (${dif.toFixed(0)} m²) fica muito abaixo da incerteza do GPS (${l.incertezaM2.toFixed(0)} m²)`);
   // os vértices que ficam são os medidos (nenhum inventado), na mesma ordem
   let j = 0;
@@ -78,4 +79,16 @@ test("nunca menos de 3 vértices; poucos vértices ou tolerância inválida não
   const mao = quadradoAndado(100, 5).map((x) => ({ ...x, precisao: null }));
   assert.equal(limparLinhaReta(mao, 1).incertezaM2, null);
   assert.equal(medir(limparLinhaReta(mao, 1).vertices).n, 4);
+});
+
+test("limpar → Continuar medindo → editar → fechar: o aviso e o Desfazer da limpeza caducam", () => {
+  const vs = quadradoAndado(100, 5);
+  const l = limparLinhaReta(vs, 1);
+  assert.ok(limpezaAindaVale(l, l.vertices), "logo depois de limpar, vale");
+  assert.ok(limpezaAindaVale(l, l.vertices.map((x) => ({ ...x }))), "mesmos vértices em outra cópia (vindo do aparelho), vale");
+  // reabriu e desfez o último vértice
+  assert.equal(limpezaAindaVale(l, l.vertices.slice(0, -1)), false);
+  // reabriu, desfez e pôs outro no lugar
+  const trocado = [...l.vertices.slice(0, -1), v(deslocar(ORIGEM, -3, 90))];
+  assert.equal(limpezaAindaVale(l, trocado), false);
 });
