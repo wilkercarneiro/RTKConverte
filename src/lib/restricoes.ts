@@ -680,6 +680,37 @@ export async function consultarRestricoes(aneis: LonLat[][], opcoes: OpcoesRestr
   return { ...base, fuso, areaImovelM2, fontes: await Promise.all(fontes.map(consultarFonte)) };
 }
 
+/**
+ * O mesmo cruzamento da análise, para qualquer área que não venha das bases de
+ * restrição (o CAR do vizinho, uma parcela): a área em comum com o imóvel, em
+ * UTM no fuso dele (o do centro, como em consultarRestricoes), e a distância
+ * quando não sobrepõe. `poligonos`: cada um é [externo, ...furos], lon/lat.
+ * Usado pela Consultar imóvel (src/lib/consulta) — o mesmo motor, a mesma área.
+ */
+export function cruzarComImovel(aneis: LonLat[][], poligonos: LonLat[][][], opcoes: { fuso?: number | null } = {}): {
+  fuso: number; areaImovelM2: number; areaM2: number; pct: number; distanciaM: number; sobreposta: GeoJSON.MultiPolygon | null;
+} {
+  const validos = aneis.map(semFechoLL).filter((a) => a.length >= 3);
+  const todos = validos.flat();
+  if (!todos.length) return { fuso: opcoes.fuso ?? 24, areaImovelM2: 0, areaM2: 0, pct: 0, distanciaM: Infinity, sobreposta: null };
+  const lon0 = todos.reduce((s, p) => s + p[0], 0) / todos.length;
+  const fuso = opcoes.fuso && opcoes.fuso >= 18 && opcoes.fuso <= 25 ? opcoes.fuso : fusoDoLon(lon0);
+  const P = plano(fuso, validos[0][0]);
+  const imovelUtm = validos.map((a) => a.map(P.ida));
+  const imovel = imovelUtm.map((a) => paraPoligono([a]));
+  const areaImovelM2 = areaUtmM2(imovelUtm);
+  const outros = poligonos.map((pol) => pol.map(semFechoLL).filter((a) => a.length >= 3)).filter((pol) => pol.length)
+    .map((pol) => paraPoligono(pol.map((a) => a.map(P.ida))));
+  if (!outros.length) return { fuso, areaImovelM2, areaM2: 0, pct: 0, distanciaM: Infinity, sobreposta: null };
+  const sobre = intersecao(imovel, outros);
+  const area = sobre.reduce((s, p) => s + areaPoligono(p), 0);
+  if (area >= AREA_MINIMA_M2) {
+    return { fuso, areaImovelM2, areaM2: area, pct: areaImovelM2 > 0 ? Math.min(100, (area / areaImovelM2) * 100) : 0, distanciaM: 0, sobreposta: multiPoligono(sobre, P) };
+  }
+  const d = Math.min(...outros.flatMap((pg) => [pg.ext, ...pg.furos]).flatMap((a) => imovelUtm.map((im) => distAneis(im, a))));
+  return { fuso, areaImovelM2, areaM2: 0, pct: 0, distanciaM: Math.round(d * 10) / 10, sobreposta: null };
+}
+
 function semFechoLL(a: LonLat[]): LonLat[] {
   const b = a.filter((p) => Number.isFinite(p?.[0]) && Number.isFinite(p?.[1]));
   return b.length > 1 && b[0][0] === b[b.length - 1][0] && b[0][1] === b[b.length - 1][1] ? b.slice(0, -1) : b;

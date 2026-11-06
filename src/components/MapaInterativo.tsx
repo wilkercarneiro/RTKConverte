@@ -56,6 +56,8 @@ interface Props {
   cor?: string;
   /** o que o usuário pode usar no lugar, quando o mapa não abre (ex.: "use Satélite ou Esquema, acima") */
   semMapa?: string;
+  /** clique no mapa (sem arrastar), em lon/lat — a Consultar imóvel consulta o ponto ou desenha */
+  aoClicar?: (lonlat: LonLat) => void;
 }
 
 const VAZIO: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -212,6 +214,7 @@ export function MapaInterativo(props: Props) {
       mapa.on("mousemove", camada, mostrarRestricao);
       mapa.on("mouseleave", camada, esconder);
     }
+    mapa.on("click", (e) => propsRef.current.aoClicar?.([e.lngLat.lng, e.lngLat.lat]));
     mapa.on("load", () => { prontoRef.current = true; aplicar(); });
     mapa.on("zoom", () => ajustarRotulos());
     mapaRef.current = mapa;

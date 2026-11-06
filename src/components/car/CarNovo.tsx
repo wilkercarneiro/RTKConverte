@@ -1,7 +1,7 @@
 // Entrada do CAR: o KML/KMZ da área total do imóvel ou o GPX do GPS de mão
 // (pontos de passagem marcados na divisa, ou a trilha andada). Não passa pelo
 // parse-txt — o serviço nasce aqui, com o projeto já gravado.
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import { UFS } from "../../lib/domains";
 import { guardar, lembrar } from "../../lib/ux";
@@ -16,6 +16,7 @@ import { criarServicoCar } from "../../lib/car/persistencia.ts";
 import { Icone, ICONE } from "../Icone";
 import { Dica, Passos } from "../ui";
 import { ehAceiteGeral, textoSemCredito } from "../../lib/creditos";
+import { pegarAreaTransferida } from "../../lib/area_transferida";
 import "./car.css";
 
 async function textoDoArquivo(f: File): Promise<string> {
@@ -27,7 +28,7 @@ async function textoDoArquivo(f: File): Promise<string> {
 }
 
 /** O que foi lido: o perímetro e, no GPX de pontos, os pontos para ligar/desligar. */
-interface Lido { arquivo: string; kml: KmlLido; pontos: PontoGps[] | null }
+interface Lido { arquivo: string; kml: KmlLido; pontos: PontoGps[] | null; /** veio de uma ferramenta (Consultar imóvel, Medir no campo), não de arquivo */ origem?: string }
 
 export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = false, onCriado, onVoltar, voltarPara = "o Início" }: {
   definicao: DefinicaoServico;
@@ -52,6 +53,20 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
   const [criando, setCriando] = useState(false);
   // os créditos de CAR acabaram entre abrir a tela e criar: o banco pede o aceite
   const [pedeAceite, setPedeAceite] = useState(false);
+
+  // área levada de uma ferramenta (Consultar imóvel, Medir no campo): já abre
+  // com o perímetro, como se o KML tivesse sido enviado. pegarAreaTransferida()
+  // lê e apaga: no StrictMode a 2ª passada do efeito acha nada e não mexe.
+  useEffect(() => {
+    const a = pegarAreaTransferida();
+    if (!a) return;
+    const nomeArq = `${(a.nome || "area").normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\w-]+/g, "_").slice(0, 60) || "area"}.kml`;
+    setLido({ arquivo: nomeArq, kml: { nome: a.nome, perimetro: a.perimetro, nomes: a.nomes, rios: [], avisos: [] }, pontos: null, origem: a.origem });
+    setFora(new Set());
+    setNome(a.nome);
+    if (a.uf) { setUf(a.uf); guardar("uf", a.uf); }
+    if (a.municipio) setMunicipio(a.municipio);
+  }, []);
 
   async function ler(f: File) {
     setErro(null);
@@ -151,7 +166,7 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inputRef.current?.click(); } }}
         >
           {lido ? (
-            <><b>{lido.arquivo}</b><span>clique ou arraste outro arquivo para trocar</span></>
+            <><b>{lido.origem ? "Área já carregada" : lido.arquivo}</b><span>{lido.origem ? "clique ou arraste um KML/GPX para trocar" : "clique ou arraste outro arquivo para trocar"}</span></>
           ) : (
             <>
               <Icone d={ICONE.upload} size={36} traco={1.6} />
@@ -179,6 +194,7 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
             <div className="car-novo-dados">
               <p><b>{fmtHa(previa.area)}</b> · {fmtNum(previa.area, 2)} m² · {entrada.perimetro.length} vértices
                 {entrada.rios.length > 0 && <> · {entrada.rios.length} rio(s) no arquivo</>}</p>
+              {lido.origem && <p className="car-dica" role="note" style={{ color: "var(--floresta)", fontWeight: 600 }}>Área de {lido.origem}. Confira o perímetro antes de seguir: a reserva legal e a APP são marcadas na próxima etapa.</p>}
               {entrada.avisos.map((a) => <p key={a} className="car-dica">⚠ {a}</p>)}
               {lido.pontos && <p className="car-dica">Clique num ponto do desenho para tirá-lo do perímetro (a sede, um ponto de outro dia) ou pô-lo de volta.</p>}
               <label className="car-campo">
