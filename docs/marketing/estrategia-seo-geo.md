@@ -74,7 +74,10 @@ O que já está no conteúdo e no código:
 
 O que só dá para fazer fora do site (as IAs confiam em menções de terceiros):
 
-- **Google Search Console e Bing Webmaster Tools:** cadastrar `vertces.com.br`, enviar o sitemap e pedir a indexação do blog. O Bing alimenta o ChatGPT e o Copilot. *Precisa do login do Wilker.*
+- **Google Search Console e Bing Webmaster Tools: feito em 06/11/2026** na conta wilkercarneiro16@gmail.com.
+  - **Google:** propriedade `https://vertces.com.br/`, verificada pelo arquivo `public/googlec5bffa1cf8db7a2a.html`; não remova esse arquivo. O sitemap foi processado com 37 páginas. Pedimos indexação de `/`, `/blog/`, `/blog/vertces-sistema-de-georreferenciamento/`, `/blog/melhor-software-de-georreferenciamento/` e `/blog/georreferenciamento-o-que-e/`.
+  - **Bing:** o site foi importado do Search Console, com acesso só de leitura concedido ao Bing. Antes disso, o arquivo `BingSiteAuth.xml` e a metatag `msvalidate.01` foram recusados pelo verificador; os dois continuam no site como reserva. O teste ao vivo da home deu "URL can be indexed by Bing". O sitemap foi reenviado e a indexação da home foi pedida.
+  - **Bing, relatório "AI Performance":** acompanhar as citações no Copilot e no Bing.
 - **Perfil da Empresa no Google** (D'Prol/Vertces), com link para o site.
 - **YouTube:** os 22 tutoriais já existem em `public/tutoriais`. Publicados num canal, com título igual à palavra-chave do post e link para ele, viram a segunda maior fonte das IAs e do Google.
 - **Menções em sites do setor:** MundoGEO (artigo ou webinar), fóruns e grupos de agrimensura, associações (IBAPE, sindicatos de agrimensores, CREA regional), universidades (curso de agrimensura).
