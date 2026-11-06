@@ -88,9 +88,16 @@ insert into medicoes_campo (id, nome, atualizado_em) values ('66666666-6666-4666
 select pg_temp.ok((select atualizado_em <= now() + interval '5 minutes' from medicoes_campo where id = '66666666-6666-4666-8666-666666666666'),
                   'atualizado_em do futuro fica limitado a now() + 5 min (insert)');
 delete from medicoes_campo where id = '66666666-6666-4666-8666-666666666666';
+-- comportamento aceito do limite: uma edição com o relógio certo (now()) logo depois da versão do
+-- futuro (cortada para now() + 5 min) é mais velha que ela e é descartada — por até 5 min, não para sempre
+update medicoes_campo set nome = 'Editada com o relógio certo', atualizado_em = now() where id = '11111111-1111-4111-8111-111111111111';
+select pg_temp.ok((select nome from medicoes_campo where id = '11111111-1111-4111-8111-111111111111') = 'Celular com a hora errada',
+                  'edição com now() dentro dos 5 min da versão do futuro é descartada (aceito: a trava dura no máximo 5 min)');
+-- passados os 5 min (aqui: o relógio do escritório em now() + 6 min, que o gatilho corta para + 5 min
+-- e empata com a versão do futuro), a edição passa: empate não é "mais velha"
 update medicoes_campo set nome = 'Renomeada depois', atualizado_em = now() + interval '6 minutes' where id = '11111111-1111-4111-8111-111111111111';
 select pg_temp.ok((select nome from medicoes_campo where id = '11111111-1111-4111-8111-111111111111') = 'Renomeada depois',
-                  'edição seguinte do escritório passa (não fica travada pela versão do futuro)');
+                  'edição no limite (+5 min, empatada com a versão do futuro) passa: a versão do futuro não trava para sempre');
 
 -- ---------------------------------------------------------------- como outra empresa
 reset role;
