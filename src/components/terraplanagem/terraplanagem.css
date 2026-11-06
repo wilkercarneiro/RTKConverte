@@ -135,7 +135,7 @@ button.tp-item:hover:not(:disabled) { background: #F4F7F5; color: var(--texto); 
 .tp-legenda i.faixa { width: 14px; height: 9px; border-radius: 2px; }
 .tp-legenda i.faixa.corte { background: linear-gradient(90deg, #FCDED4, #A01C12); }
 .tp-legenda i.faixa.aterro { background: linear-gradient(90deg, #D6E4FD, #1A40C4); }
-.tp-legenda i.linha { width: 16px; height: 0; border-top: 2px solid; }
+.tp-legenda i.linha { width: 18px; height: 0; border-top: 2.5px solid; }
 .tp-legenda i.linha.plataforma { border-top: 2.5px solid #0E3B2B; }
 .tp-legenda i.linha.crista { border-top: 2px dashed #B42318; }
 .tp-legenda i.linha.pe { border-top: 2px dashed #1D4ED8; }
@@ -196,7 +196,9 @@ button.tp-item:hover:not(:disabled) { background: #F4F7F5; color: var(--texto); 
   .tp-topo { padding: 12px 16px; }
   .tp-nome { font-size: 19px; }
   .tp-topo-acoes { width: 100%; }
+  .tp-topo-acoes { flex-wrap: wrap; }
   .tp-topo-acoes button { flex: 1 1 0; justify-content: center; }
+  .tp-topo-acoes button.principal { flex-basis: 100%; order: -1; }
   .tp-trabalho { display: flex; flex-direction: column; }
   .tp-centro { display: contents; }
   .tp-kpis { order: 1; padding: 12px 16px 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }

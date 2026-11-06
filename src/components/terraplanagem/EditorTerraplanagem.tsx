@@ -219,6 +219,9 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
           <button type="button" disabled={!r || !!baixando} onClick={() => baixar("csv")} title="Cada nó da malha: E, N, terreno, projeto, corte e aterro (abre no Excel)">
             {baixando === "csv" ? <span className="spinner" /> : null}CSV da malha
           </button>
+          <button type="button" className="principal" disabled={!r || !!baixando} onClick={() => baixar("pdf")} title="Relatório para o cliente: números, mapa, seções e método">
+            {baixando === "pdf" ? <span className="spinner" /> : null}Relatório em PDF
+          </button>
         </div>
       </header>
 
