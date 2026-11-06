@@ -175,6 +175,13 @@ button.tp-item:hover:not(:disabled) { background: #F4F7F5; color: var(--texto); 
 @media (min-width: 901px) {
   .tp-tela > .tp-trabalho { flex: 1 1 0; min-height: 560px; }
   .tp-trabalho.em-tela-cheia { display: grid; }
+  /* "Pronto para o cliente" (o "e agora?") à vista sem rolar, em 1366×768 também: a faixa fica presa
+     no pé do painel enquanto ele rola, e volta ao lugar dela no fim da lista */
+  .tp-painel { padding-bottom: 0; }
+  .tp-painel .proxima-acao { position: sticky; bottom: 0; z-index: 2; margin-top: auto; padding: 11px 14px; gap: 10px;
+    box-shadow: 0 -10px 14px -6px var(--bg); border-radius: var(--raio) var(--raio) 0 0; }
+  .tp-painel .proxima-acao .pa-detalhe { font-size: 12.5px; line-height: 1.35; }
+  .tp-painel::after { content: ""; flex: none; height: 4px; }
 }
 @media (max-width: 1250px) and (min-width: 901px) {
   .tp-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
@@ -206,8 +213,10 @@ button.tp-item:hover:not(:disabled) { background: #F4F7F5; color: var(--texto); 
   .tp-kpi, .tp-kpi.corte, .tp-kpi.aterro { grid-column: auto; }
   .tp-kpi.cota { grid-column: 1 / -1; }
   .tp-mapa-caixa { order: 2; margin: 0 16px; flex: none; height: min(62vh, 440px); min-height: 320px; }
-  .tp-painel { order: 3; padding: 4px 16px 0; overflow: visible; }
-  .tp-secoes { order: 4; padding: 0 16px 24px; grid-template-columns: minmax(0, 1fr); }
+  /* o mesmo vão (12 px) entre todos os cartões, do "Pronto para o cliente" ao perfil também */
+  .tp-painel { order: 3; padding: 4px 16px 12px; overflow: visible; }
+  .tp-painel .proxima-acao { margin-top: 0; }
+  .tp-secoes { order: 4; padding: 0 16px 24px; grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .tp-secoes-reset { top: -20px; right: 22px; }
   .tp-mapa-ferramentas { max-width: calc(100% - 20px); }
   .tp-mapa-ferramentas button { height: 30px; padding: 0 10px; font-size: 12px; }
