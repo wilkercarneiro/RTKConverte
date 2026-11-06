@@ -38,6 +38,23 @@ drop trigger if exists terraplanagens_preencher_escritorio on terraplanagens;
 create trigger terraplanagens_preencher_escritorio before insert on terraplanagens
   for each row execute function preencher_escritorio();
 
+-- o autor é quem grava: o cliente não escolhe o criado_por (como a 0045 faz com o user_id)
+create or replace function terraplanagens_autor()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if auth.uid() is not null then
+    new.criado_por := auth.uid();
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists terraplanagens_autor on terraplanagens;
+create trigger terraplanagens_autor before insert on terraplanagens
+  for each row execute function terraplanagens_autor();
+
 -- o escritório e o autor não mudam depois de criado
 create or replace function terraplanagens_proteger()
 returns trigger
@@ -62,4 +79,7 @@ create policy terraplanagens_do_escritorio on terraplanagens for all to authenti
   using (escritorio_id = escritorio_atual())
   with check (escritorio_id = escritorio_atual());
 
+-- o Supabase dá tudo ao anon por padrão nas tabelas novas: aqui só quem está logado
+revoke all on terraplanagens from public, anon;
 grant select, insert, update, delete on terraplanagens to authenticated;
+grant all on terraplanagens to service_role;

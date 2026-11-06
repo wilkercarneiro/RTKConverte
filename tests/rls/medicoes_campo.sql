@@ -52,6 +52,10 @@ select pg_temp.ok((select escritorio_id from medicoes_campo where id = '11111111
                   'o escritório vem do banco (gatilho preencher_escritorio)');
 select pg_temp.ok((select criado_por from medicoes_campo where id = '11111111-1111-4111-8111-111111111111') = :'ua',
                   'criado_por é quem gravou');
+insert into medicoes_campo (id, nome, criado_por) values ('55555555-5555-4555-8555-555555555555', 'Autor forjado', :'ub');
+select pg_temp.ok((select criado_por from medicoes_campo where id = '55555555-5555-4555-8555-555555555555') = :'ua',
+                  'o cliente não escolhe o criado_por (o gatilho põe quem gravou)');
+delete from medicoes_campo where id = '55555555-5555-4555-8555-555555555555';
 select pg_temp.ok(pg_temp.recusa(format(
   'insert into medicoes_campo (id, escritorio_id, nome) values (%L, %L, %L)', '22222222-2222-4222-8222-222222222222', :'esc_b', 'intrusa')),
   'não grava medição com o escritório de outra empresa');

@@ -46,6 +46,23 @@ drop trigger if exists medicoes_campo_preencher_escritorio on medicoes_campo;
 create trigger medicoes_campo_preencher_escritorio before insert on medicoes_campo
   for each row execute function preencher_escritorio();
 
+-- o autor é quem grava: o cliente não escolhe o criado_por (como a 0045 faz com o user_id)
+create or replace function medicoes_campo_autor()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if auth.uid() is not null then
+    new.criado_por := auth.uid();
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists medicoes_campo_autor on medicoes_campo;
+create trigger medicoes_campo_autor before insert on medicoes_campo
+  for each row execute function medicoes_campo_autor();
+
 -- quem criou não muda; o escritório não muda; versão velha não sobrescreve a nova
 create or replace function medicoes_campo_mais_nova()
 returns trigger

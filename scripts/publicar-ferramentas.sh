@@ -84,7 +84,8 @@ fi
 
 # ------------------------------------------------------------ 2. testes
 passo "2. Testes do repositório"
-roda node --test tests/consulta.test.mjs
+# todos: as ferramentas mexem em código compartilhado (restrições, PDF, satélite)
+npm test >"$PACOTE/testes.log" 2>&1 && echo "   npm test: tudo passou ($(grep -E "^# pass" "$PACOTE/testes.log"))" || { echo "   npm test FALHOU:"; grep -E "^not ok|^# (pass|fail)" "$PACOTE/testes.log" | head -20; exit 1; }
 
 # ------------------------------------------------------------ 3. backups
 passo "3. Backups ($BKB, $BKF)"
@@ -163,8 +164,10 @@ await t("analise-imovel focos sem login (401)", `${U}/functions/v1/analise-imove
 await t("analise-imovel laudo sem login (401)", `${U}/functions/v1/analise-imovel`, { method: "POST", body: JSON.stringify({ acao: "laudo", analise_id: "00000000-0000-0000-0000-000000000000" }) });
 await t("analises_imovel anônimo (vazio ou 401)", `${U}/rest/v1/analises_imovel?select=id&limit=1`);
 await t("sigef_por_codigo anônimo (negado)", `${U}/rest/v1/rpc/sigef_por_codigo`, { method: "POST", body: JSON.stringify({ p_codigo: "8b68c253-6175-49b8-b3df-c3d602d22701" }) });
+await t("terraplanagens anônimo (vazio ou 401)", `${U}/rest/v1/terraplanagens?select=id&limit=1`);
+await t("medicoes_campo anônimo (vazio ou 401)", `${U}/rest/v1/medicoes_campo?select=id&limit=1`);
 JS
 else
-  echo "   [simulação] analise-imovel sem login → 401 \"Sessão inválida\" (do código, não 503 BOOT_ERROR); analises_imovel anônimo → vazio/401; sigef_por_codigo anônimo → negado"
+  echo "   [simulação] analise-imovel sem login → 401 \"Sessão inválida\" (do código, não 503 BOOT_ERROR); analises_imovel, terraplanagens e medicoes_campo anônimos → vazio/401; sigef_por_codigo anônimo → negado"
 fi
 echo; $EXEC && echo "Publicado. Backups: $BKB / $BKF. Agora: push da main (site)." || echo "Simulação concluída. Rode com --executar para publicar (só com o aval do Wilker)."

@@ -27,7 +27,10 @@ end $$;
 select id as esc_a from escritorios where modelos_compartilhados order by id limit 1 \gset
 select id as sa from servicos where escritorio_id = :'esc_a' order by id limit 1 \gset
 select m.user_id as ub, m.escritorio_id as esc_b from membros_escritorio m
- where m.escritorio_id <> :'esc_a' and m.papel = 'dono' order by m.user_id limit 1 \gset
+ where m.escritorio_id <> :'esc_a' and m.papel = 'dono'
+   -- com serviço: a empresa do teste da adesão (0044) não tem nenhum
+   and exists (select 1 from servicos s where s.escritorio_id = m.escritorio_id)
+ order by m.user_id limit 1 \gset
 select id as sb from servicos where escritorio_id = :'esc_b' order by id limit 1 \gset
 
 select pg_temp.ok(exists (select 1 from information_schema.columns where table_name = 'servicos' and column_name = 'monografia'),
