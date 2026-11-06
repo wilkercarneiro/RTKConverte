@@ -38,6 +38,14 @@ passo() { echo; echo "==> $*"; }
 roda() { if $EXEC; then "$@"; else echo "   [simulação] $*"; fi; }
 ANON="$( { grep -E '^VITE_SUPABASE_ANON_KEY=' .env 2>/dev/null || true; } | head -1 | cut -d= -f2- | tr -d '"\r')"
 
+# a fumaça (passo 6) usa a URL e a chave anon: sem elas, os testes de 401 dariam falso resultado
+if $EXEC && { [ -z "$ANON" ] || [ -z "$HOST" ]; }; then
+  echo "PAREI: VITE_SUPABASE_ANON_KEY (ou a URL) vazia — não há .env em $(pwd)."
+  echo "Rode a partir de D:/RTKConverte, que tem o .env:  cd D:/RTKConverte && bash scripts/publicar-ferramentas.sh --executar"
+  exit 1
+fi
+[ -z "$ANON" ] && echo "(aviso: sem VITE_SUPABASE_ANON_KEY no .env daqui — em --executar o script para; rode a partir de D:/RTKConverte, que tem o .env)"
+
 # pelo NOME, não pelo número: a numeração do plano (0044–0046) não vale mais — a 0044 da main é a
 # adesão (já publicada em 06/11) e o Campo virou 0047. Cada nome é também a tabela que a migração cria:
 # se ela já existe na VPS, a migração é recusada (não reaplica nada que já está no ar).
@@ -85,7 +93,16 @@ fi
 # ------------------------------------------------------------ 2. testes
 passo "2. Testes do repositório"
 # todos: as ferramentas mexem em código compartilhado (restrições, PDF, satélite)
-npm test >"$PACOTE/testes.log" 2>&1 && echo "   npm test: tudo passou ($(grep -E "^# pass" "$PACOTE/testes.log"))" || { echo "   npm test FALHOU:"; grep -E "^not ok|^# (pass|fail)" "$PACOTE/testes.log" | head -20; exit 1; }
+# reporter TAP (o padrão do node 24 é o "spec": "ℹ pass 1002", sem "# pass"): o resumo sai em "# pass N"/"# fail N"
+# e, numa falha, a lista dos "not ok" mostra QUAL teste caiu
+RESUMO() { grep -E "^# (tests|pass|fail|skipped) " "$PACOTE/testes.log" | sed 's/^# //' | paste -sd' ' -; }
+if node --test --test-reporter=tap tests/*.test.mjs >"$PACOTE/testes.log" 2>&1; then
+  echo "   testes: tudo passou ($(RESUMO))"
+else
+  echo "   testes FALHARAM ($(RESUMO)):"
+  grep -E "^ *not ok " "$PACOTE/testes.log" | sed -E 's/^ */   /' | head -20
+  exit 1
+fi
 
 # ------------------------------------------------------------ 3. backups
 passo "3. Backups ($BKB, $BKF)"

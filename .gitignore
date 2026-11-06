@@ -20,3 +20,6 @@ scripts/maquete-arvores/.modelos/
 
 # pacotes gerados para publicar (scripts/empacotar-entregar.mjs)
 /build/
+
+# lockfile gerado pelo deno ao testar uma função localmente (não vai para o Git)
+supabase/functions/**/deno.lock
