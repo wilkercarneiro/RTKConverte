@@ -140,6 +140,11 @@ São quatro frentes. Cada uma resolve um problema real do agrimensor ou do escri
    - CSV da malha.
 7. **Gravação:** tabela da migração **0046_terraplanagens** (RLS por escritório), com autossalvamento (`useAutosave`) e a lista "Projetos recentes".
 
+**Decisões da implementação (rodada 3 da revisão):**
+- *Autossalvamento sem `useAutosave`.* O hook compara `JSON.stringify` do valor a cada render; com um levantamento de milhares de pontos isso serializa megabytes a cada tecla. Ele também engole o erro (vira só "não salvo"), e a terraplanagem precisa dizer onde gravou (conta, aparelho, nenhum e por quê) e regravar o resumo quando os números chegam depois do cálculo. A tela usa um temporizador de 0,9 s com o mesmo comportamento visível ("salvando…", "salvo na conta às…"), grava na hora ao sair, e as gravações na conta vão em fila (a última versão vence).
+- *DXF sem `src/lib/exportar`.* O escritor de lá desenha feições 2D (polígono, linha, vértice com rótulo). A terraplanagem precisa de polilinhas 3D com a cota em cada vértice (curvas, crista, pé, isolinhas) e de camadas próprias; por isso tem um escritor R12 pequeno em `src/lib/terraplanagem/saidas.ts`, no mesmo formato (AC1009, UTM). As curvas vêm de `src/lib/relevo`.
+- *"Vira um serviço com um clique" fica fora da Terraplanagem nesta entrega.* A plataforma não é uma área a georreferenciar (é um projeto de obra dentro do imóvel). Decidir com o integrador se ela entra como anexo de um serviço existente.
+
 **Método:** malha regular (passo automático pela densidade dos pontos) interpolada por TIN, que é a triangulação dos pontos do levantamento. Os volumes são calculados por prisma em cada célula, com corte parcial nas bordas, e a cota de equilíbrio é achada por bisseção. Os testes cobrem a geometria: caixa conhecida, plano inclinado, pirâmide e conferência de que o volume não muda ao girar os pontos.
 
 **Laboratório:** `#/lab/terraplanagem`, com um levantamento de exemplo (fixture) de cerca de 300 pontos num terreno com declive.
