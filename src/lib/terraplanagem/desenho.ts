@@ -43,10 +43,23 @@ export function imagemDaMalha(r: ResultadoTerraplanagem): ImageData {
     return v === v ? v : terreno[j * nx + i];
   };
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-    const k = j * nx + i, o = ((ny - 1 - j) * nx + i) * 4;
+    const o = ((ny - 1 - j) * nx + i) * 4;
+    // fora do levantamento: a cor do nó válido mais perto na linha (o desenho é
+    // recortado pelo contorno; sem isto, a suavização escurecia a borda)
+    let k = j * nx + i;
+    if (!(terreno[k] === terreno[k])) {
+      let achou = -1;
+      for (let s = 1; s < nx && achou < 0; s++) {
+        if (i - s >= 0 && terreno[k - s] === terreno[k - s]) achou = k - s;
+        else if (i + s < nx && terreno[k + s] === terreno[k + s]) achou = k + s;
+      }
+      if (achou < 0) { d[o + 3] = 0; continue; }
+      k = achou;
+    }
     const t = terreno[k];
-    if (!(t === t)) { d[o + 3] = 0; continue; }
-    const dzx = (at(i + 1, j) - at(i - 1, j)) / (2 * passo), dzy = (at(i, j + 1) - at(i, j - 1)) / (2 * passo);
+    const ic = k % nx;
+    const g = (a: number, b: number) => { const v = (a - b) / (2 * passo); return v === v ? v : 0; };
+    const dzx = g(at(ic + 1, j), at(ic - 1, j)), dzy = g(at(ic, j + 1), at(ic, j - 1));
     // normal (−dzx, −dzy, 1) · luz (−1, 1, 1.4) normalizada
     const nl = Math.hypot(dzx, dzy, 1), luz = Math.hypot(1, 1, 1.4);
     const sombra = Math.max(0, Math.min(1, ((dzx - dzy + 1.4) / (nl * luz)) * 1.0));
@@ -85,17 +98,29 @@ export interface OpcoesDesenho {
   moldura?: boolean;
 }
 
-export function desenharMapa(ctx: Ctx, r: ResultadoTerraplanagem, v: Vista, w: number, h: number, pontos: Pt[], op: OpcoesDesenho = {}): void {
-  ctx.save();
-  ctx.clearRect(0, 0, w, h);
-  // malha
+/** A malha pronta para desenhar (guarde entre um quadro e outro: só muda com o resultado). */
+export function telaDaMalha(r: ResultadoTerraplanagem): CanvasImageSource {
   const img = imagemDaMalha(r);
   const tela = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(img.width, img.height) : Object.assign(document.createElement("canvas"), { width: img.width, height: img.height });
   (tela.getContext("2d") as Ctx).putImageData(img, 0, 0);
+  return tela as CanvasImageSource;
+}
+
+export function desenharMapa(ctx: Ctx, r: ResultadoTerraplanagem, v: Vista, w: number, h: number, pontos: Pt[], op: OpcoesDesenho = {}, telaPronta?: CanvasImageSource): void {
+  ctx.save();
+  ctx.clearRect(0, 0, w, h);
+  // malha
+  const tela = telaPronta ?? telaDaMalha(r);
   const { e0, n0, passo, nx, ny } = r.malha;
   const [px0, py0] = paraTela(v, [e0 - passo / 2, n0 + (ny - 0.5) * passo]);
   ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(tela as CanvasImageSource, px0, py0, nx * passo * v.escala, ny * passo * v.escala);
+  ctx.save();
+  ctx.beginPath();
+  r.contorno.forEach((p, i) => { const [x, y] = paraTela(v, p); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+  ctx.closePath();
+  ctx.clip();
+  ctx.drawImage(tela, px0, py0, nx * passo * v.escala, ny * passo * v.escala);
+  ctx.restore();
 
   const linha = (pts: Pt[], fechada = false) => {
     if (pts.length < 2) return;
@@ -170,12 +195,13 @@ export function desenharMoldura(ctx: Ctx, v: Vista, w: number, h: number): void 
   const nice = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find((x) => x >= alvo * 0.6) ?? 1000;
   const L = nice * v.escala;
   ctx.save();
+  const x0 = w - L - 66;
   ctx.fillStyle = "rgba(255,255,255,0.85)";
-  ctx.fillRect(10, h - 34, L + 52, 24);
+  ctx.fillRect(x0 - 8, h - 34, L + 60, 24);
   ctx.strokeStyle = "#12201A"; ctx.lineWidth = 2; ctx.setLineDash([]);
-  ctx.beginPath(); ctx.moveTo(18, h - 16); ctx.lineTo(18 + L, h - 16); ctx.moveTo(18, h - 21); ctx.lineTo(18, h - 11); ctx.moveTo(18 + L, h - 21); ctx.lineTo(18 + L, h - 11); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x0, h - 16); ctx.lineTo(x0 + L, h - 16); ctx.moveTo(x0, h - 21); ctx.lineTo(x0, h - 11); ctx.moveTo(x0 + L, h - 21); ctx.lineTo(x0 + L, h - 11); ctx.stroke();
   ctx.fillStyle = "#12201A"; ctx.font = "600 11px Figtree, system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
-  ctx.fillText(`${nice} m`, 24 + L, h - 16);
+  ctx.fillText(`${nice} m`, x0 + L + 6, h - 16);
   // norte
   const x = w - 24, y = 22;
   ctx.beginPath(); ctx.moveTo(x, y - 12); ctx.lineTo(x + 7, y + 8); ctx.lineTo(x, y + 4); ctx.lineTo(x - 7, y + 8); ctx.closePath(); ctx.fill();

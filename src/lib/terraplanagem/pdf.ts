@@ -8,7 +8,7 @@ import { textoWinAnsi } from "../../../supabase/functions/_shared/texto.ts";
 import type { ResultadoTerraplanagem, Secao } from "./calculo.ts";
 import { fmtN } from "./calculo.ts";
 import type { ProjetoTerraplanagem } from "./modelo.ts";
-import { textoCaminhoes, textoSaldo } from "./textos.ts";
+import { rumo, textoCaminhoes, textoSaldo } from "./textos.ts";
 
 const T = (s: string) => textoWinAnsi(s);
 const A4: [number, number] = [595.28, 841.89];
@@ -79,7 +79,7 @@ export async function gerarPdfTerraplanagem(r: ResultadoTerraplanagem, pr: Proje
     { rot: "CORTE", val: m3(r.corte), sub: `em ${m2(r.areaCorte)}`, cor: CORTE },
     { rot: "ATERRO", val: m3(r.aterro), sub: `em ${m2(r.areaAterro)}`, cor: ATERRO },
     { rot: "SALDO", val: Math.abs(r.saldo) < Math.max(1, r.corte) * 0.01 ? "equilibrado" : m3(Math.abs(r.saldo)), sub: textoSaldo(r), cor: VERDE },
-    { rot: "CAMINHÕES (APROX.)", val: `${r.caminhoes.quantidade}`, sub: textoCaminhoes(r, pr, true), cor: OURO },
+    { rot: "CAMINHÕES (APROX.)", val: fmtN(r.caminhoes.quantidade, 0), sub: textoCaminhoes(r, pr, true), cor: OURO },
   ];
   const wc = (L - 3 * 8) / 4, hc = 62;
   garantir(hc + 10);
@@ -187,10 +187,6 @@ export async function gerarPdfTerraplanagem(r: ResultadoTerraplanagem, pr: Proje
   return doc.save();
 }
 
-export function rumo(az: number): string {
-  const n = ["norte", "nordeste", "leste", "sudeste", "sul", "sudoeste", "oeste", "noroeste"];
-  return n[Math.round((((az % 360) + 360) % 360) / 45) % 8];
-}
 
 /** Croqui vetorial (sem a imagem): contorno e plataforma. */
 function croqui(page: PDFPage, r: ResultadoTerraplanagem, q: { x: number; y: number; w: number; h: number }) {
@@ -247,5 +243,6 @@ export function desenharSecao(page: PDFPage, s: Secao, q: { x: number; y: number
   page.drawText(T(s.nome), { x: q.x + ex + 3, y: q.y + q.h - 14, size: 9, font: fonte, color: OURO });
   page.drawText(T(`${s.nome}'`), { x: q.x + ex + W - 12, y: q.y + q.h - 14, size: 9, font: fonte, color: OURO });
   const exag = (W / smax) / (Hh / (zmax - zmin));
-  page.drawText(T(`distância (m) · cota (m) · exagero vertical ${fmtN(1 / exag, 1)}×`), { x: q.x + ex + W - 170, y: q.y + 6, size: 6.5, font: fonte, color: COR_SUB });
+  const legenda = T(`distância (m) · cota (m) · exagero vertical ${fmtN(1 / exag, 1)}×`);
+  page.drawText(legenda, { x: q.x + q.w - fonte.widthOfTextAtSize(legenda, 7) - 6, y: q.y + q.h + 6, size: 7, font: fonte, color: COR_SUB });
 }

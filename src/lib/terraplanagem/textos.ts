@@ -3,6 +3,12 @@ import type { ResultadoTerraplanagem } from "./calculo.ts";
 import { fmtN } from "./calculo.ts";
 import type { ProjetoTerraplanagem } from "./modelo.ts";
 
+/** Rumo do azimute (para onde a água escorre). */
+export function rumo(az: number): string {
+  const n = ["norte", "nordeste", "leste", "sudeste", "sul", "sudoeste", "oeste", "noroeste"];
+  return n[Math.round((((az % 360) + 360) % 360) / 45) % 8];
+}
+
 const m3 = (v: number) => `${fmtN(v, v >= 100 ? 0 : 1)} m³`;
 
 /** O que fazer com o saldo: equilibrado, sobra para bota-fora ou falta (empréstimo). */

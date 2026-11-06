@@ -32,7 +32,7 @@ type Papel = "nome" | "e" | "n" | "z" | "lat" | "lon" | "desc";
 const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 
 const CABECALHO: [Papel, RegExp][] = [
-  ["nome", /^(nome|ponto|pt|pto|id|n[ºo°]?|num(ero)?|estaca|name|point)$/],
+  ["nome", /^(nome|ponto|pt|pto|id|n[ºo°]|num(ero)?|estaca|name|point)$/],
   ["e", /^(e|este|leste|x|coord_?e|east(ing)?|e\s*\(m\)|x\s*\(m\))$/],
   ["n", /^(n|norte|y|coord_?n|north(ing)?|n\s*\(m\)|y\s*\(m\))$/],
   ["z", /^(z|h|cota|alt(itude)?|elev(acao|ation)?|cota\s*\(m\)|z\s*\(m\)|h\s*\(m\)|altura|rn)$/],
@@ -135,7 +135,8 @@ export function lerPontos(texto: string): LeituraPontos {
       const ref = Math.max(m.e ?? -1, m.n ?? -1, m.lat ?? -1, m.lon ?? -1);
       const cands = livres().filter((i) => frac(i, (v) => Number.isFinite(v) && ehZ(v)) > 0.6);
       const depois = cands.filter((i) => i > ref);
-      const z = (depois.length ? depois : cands)[0];
+      // só depois das coordenadas: antes delas vem o nome (que também é número pequeno)
+      const z = ref >= 0 ? depois[0] : cands[0];
       if (z !== undefined) m.z = z;
     }
     if (m.nome === undefined) {

@@ -81,7 +81,7 @@ export function lerCoordenada(texto: string): [number, number] | null {
   }
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
   // no Brasil a latitude vai de +5 a −34 e a longitude de −28 a −74: invertidas, desinverte
-  if (lat < -40 && lon > -40 && lon < 6) [lat, lon] = [lon, lat];
+  if (lat < -34 && lon >= -34 && lon <= 6) [lat, lon] = [lon, lat];
   return [lon, lat];
 }
 
