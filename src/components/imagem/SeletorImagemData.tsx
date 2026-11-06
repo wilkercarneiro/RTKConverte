@@ -320,7 +320,7 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2M3.5 12a8.5 8.5 0 1 0 2.5-6M3 4v4h4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
         <span className="imgdata-botao-texto">
           {atual ? <><small>{atual.captura ? "Imagem de" : "Imagem"}</small><b>{rotuloImagem(atual)}</b></>
-            : fotoHoje ? <><small>{velha ? "Mais recente disponível ·" : "Imagem atual · de"}</small><b>{rotuloImagem(fotoHoje)}</b></>
+            : fotoHoje ? <><small>{velha ? <><span className="rot-longo">Mais recente disponível ·</span><span className="rot-curto">Mais recente:</span></> : "Imagem atual · de"}</small><b>{rotuloImagem(fotoHoje)}</b></>
               : <><small>Imagem</small><b>atual</b></>}
         </span>
         {!atual && nFotos > 1 && <em className="imgdata-contagem">{nFotos} datas</em>}

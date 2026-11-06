@@ -195,7 +195,7 @@ button.imgdata-cortina-fechar:hover:not(:disabled) { background: #fff; color: va
 .imgdata-pilula.velha .imgdata-botao-texto small { opacity: .9; }
 .imgdata-item-texto b.velha, .imgdata-item-texto small.velha { color: var(--alerta-escuro); }
 /* rótulos curtos do pé do painel ("PNG", "Fonte"): só no celular */
-.imgdata-painel .rot-curto { display: none; }
+.imgdata-painel .rot-curto, .imgdata-botao-texto .rot-curto { display: none; }
 
 @media (max-width: 600px) {
   /* no celular o painel abre como folha de baixo, na largura da tela: o mapa fica à vista em cima */
@@ -208,8 +208,8 @@ button.imgdata-cortina-fechar:hover:not(:disabled) { background: #fff; color: va
   .imgdata-painel::before { content: ""; flex: none; align-self: center; width: 40px; height: 4px; margin-top: 8px; border-radius: 99px; background: var(--borda-forte); }
   /* o controle (z-index 3) é o contexto de empilhamento do painel: aberto, ele sobe acima da folha do Campo e da página */
   .imgdata-controle:has(> .imgdata-painel) { z-index: 95; }
-  .imgdata-painel .rot-longo { display: none; }
-  .imgdata-painel .rot-curto { display: inline; }
+  .imgdata-painel .rot-longo, .imgdata-botao-texto .rot-longo { display: none; }
+  .imgdata-painel .rot-curto, .imgdata-botao-texto .rot-curto { display: inline; }
   .imgdata-painel > footer button { min-height: 40px; font-size: 13.5px; font-weight: 600; }
 }
 @keyframes imgdata-sobe { from { transform: translateY(24px); opacity: .4; } to { transform: none; opacity: 1; } }
