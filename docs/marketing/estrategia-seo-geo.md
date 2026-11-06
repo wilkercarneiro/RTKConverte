@@ -56,7 +56,7 @@ Já estava certo: HTML estático (os robôs leem sem JS), canonical, OG/Twitter,
 
 Ficou pendente no site (decisão do Wilker):
 
-- **FAQ e texto de acesso da landing desatualizados.** "Quanto custa? O valor é definido em reunião", "Como recebo o acesso? Depois da demonstração…" e "As contas são criadas pela nossa equipe" contradizem o autocadastro com planos aberto desde 05/11. Decidir se a landing passa a mostrar "Assinar" e os planos, ou se continua só com a demonstração.
+- **Contratação só pela demonstração (decisão do Wilker, 06/11/2026).** O cadastro é feito depois da reunião. O link `/cadastro/` continua funcionando para a equipe enviar ao cliente, mas não aparece clicável em nenhum lugar público (landing, blog, `llms.txt`, tela de login), e o `robots.txt` o mantém fora do Google. O FAQ da landing ("valor definido em reunião", "acesso depois da demonstração") está certo.
 - **Imagem OG por post.** Hoje todos usam `/site/og.png`. Uma imagem por post melhora o clique no WhatsApp e no LinkedIn.
 - **Autor com credencial (E-E-A-T).** Os posts saem como "Equipe Vertces". Um responsável técnico com nome, CREA e foto como revisor dos guias técnicos aumenta a confiança do Google e das IAs. Precisa do nome e do aceite de quem assina.
 - **Termos e privacidade** estão em `/app/#/…` (rota por hash), que o Google não indexa. Se quiser essas páginas no Google, viram páginas estáticas.

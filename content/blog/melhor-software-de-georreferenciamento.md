@@ -15,7 +15,7 @@
     { "p": "Qual software o INCRA exige?", "r": "Nenhum. O INCRA exige o resultado no padrão do SIGEF e das normas técnicas, não um programa específico. Qualquer ferramenta serve se a planilha e as precisões estiverem corretas." },
     { "p": "Sistema web funciona sem internet?", "r": "Não. Sistema web precisa de conexão para abrir e salvar. Em troca, não exige instalação, roda em qualquer computador e mantém os dados num lugar só para a equipe." },
     { "p": "O software garante a certificação no SIGEF?", "r": "Nenhum software garante. Um bom sistema confere e avisa antes do envio, mas quem certifica é o INCRA e quem registra é o cartório." },
-    { "p": "Dá para testar antes de assinar?", "r": "No Vertces, sim: você pode assinar pelo site ou agendar uma demonstração com um levantamento seu em vertces.com.br/#contato." }
+    { "p": "Dá para testar antes de assinar?", "r": "No Vertces, sim: na demonstração mostramos o sistema funcionando com um levantamento seu, e o cadastro vem depois dela. Agende em vertces.com.br/#contato." }
   ],
   "fontes": [
     { "titulo": "INCRA: Certificação de Imóvel Rural (SIGEF e Manual Técnico, 2ª edição)", "url": "https://www.gov.br/incra/pt-br/assuntos/governanca-fundiaria/certificacao-imoveis" },

@@ -61,7 +61,7 @@ As IAs (ChatGPT, Gemini, Perplexity, AI Overviews do Google) citam trechos que r
 - Proibido: "no mundo de hoje", "revolucionário", "transformar a forma como", "descubra", "mergulhe", "jornada", "game changer", "solução completa e inovadora", emoji, exclamação em série, travessão longo como muleta (use vírgula, dois-pontos ou ponto).
 - Sem superlativo vazio. "O melhor sistema" só com o motivo do lado (o que ele faz que os outros não fazem).
 - **Nunca prometa aprovação no SIGEF, prazo do INCRA ou do cartório.** O Vertces confere e avisa; quem certifica é o INCRA e quem registra é o cartório.
-- **Sem preço do Vertces** (planos e valores estão no sistema e mudam). Pode dizer que há planos para autônomo, escritório e empresa, e que dá para assinar pelo site ou agendar uma demonstração.
+- **Sem preço do Vertces** (planos e valores estão no sistema e mudam). Pode dizer que há planos para autônomo, escritório e empresa, e que o caminho é agendar uma demonstração: o acesso é liberado depois dela, pelo link de cadastro que a equipe envia. **Nunca** mande o leitor se cadastrar sozinho nem ponha link para /cadastro/ (decisão do Wilker, 06/11/2026).
 - Exemplos com nomes fictícios (Sítio Boa Esperança, Fazenda Santa Luzia, VRTX-M-0001). Nunca cliente real.
 - Não fale mal de concorrente pelo nome. Compare categorias (planilha + CAD, plugin de QGIS, programa de desktop, sistema web).
 
@@ -87,7 +87,7 @@ Sistema web (navegador, sem instalar), para escritórios de georreferenciamento,
 
 **CAR:** KML ou GPX da área → reserva legal, APP de rios, área produtiva e vegetação nativa, em shapefiles SIRGAS 2000 prontos para o SICAR.
 
-**Escritório:** cadastro de clientes, imóveis e confrontantes reaproveitados; equipe com vários operadores, cada um com seu acesso; auditoria (quem criou e quem alterou); dados de cada escritório isolados no banco; integração com o CRM GPROL (pedido vendido vira serviço, o card anda sozinho no funil); tutoriais em vídeo dentro do sistema; planos com créditos por serviço; assinatura pelo site (Pix ou cartão) ou demonstração.
+**Escritório:** cadastro de clientes, imóveis e confrontantes reaproveitados; equipe com vários operadores, cada um com seu acesso; auditoria (quem criou e quem alterou); dados de cada escritório isolados no banco; integração com o CRM GPROL (pedido vendido vira serviço, o card anda sozinho no funil); tutoriais em vídeo dentro do sistema; planos com créditos por serviço; contratação pela demonstração (o link de cadastro é enviado pela equipe depois da reunião).
 
 **Não afirme** (não existe ou não está confirmado): protocolo automático no SIGEF, assinatura digital ICP-Brasil, app de celular para campo, ortomosaico de drone, integração com cartório, cálculo de ITR, preço, número de clientes, "aprovação garantida".
 

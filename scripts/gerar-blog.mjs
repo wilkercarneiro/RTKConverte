@@ -186,7 +186,7 @@ const cta = `<aside class="cta" aria-label="Conheça o Vertces">
   <p class="cta-k">Vertces</p>
   <p class="cta-t">Do TXT do levantamento ao processo pronto para o SIGEF e o cartório.</p>
   <p class="cta-d">Memorial, planilha ODS, planta A1/A3 e as peças técnicas com o logo do seu escritório, conferindo a sobreposição com os vizinhos certificados antes de protocolar. Sistema web, sem instalar nada.</p>
-  <p class="cta-b"><a class="bt bt-p" href="/#contato">Agendar uma demonstração</a><a class="bt bt-s" href="/cadastro/">Assinar pelo site</a></p>
+  <p class="cta-b"><a class="bt bt-p" href="/#contato">Agendar uma demonstração</a><a class="bt bt-s" href="/#como">Ver como funciona</a></p>
 </aside>`;
 
 function cartao(p) {
@@ -334,7 +334,7 @@ function llms(posts) {
     if (!ps.length) return "";
     return `## Blog: ${c.nome}\n\n${ps.map((p) => `- [${p.titulo}](${SITE}${urlPost(p.slug)}): ${p.resumo}`).join("\n")}\n`;
   }).join("\n");
-  return `# Vertces\n\n> Sistema web brasileiro de georreferenciamento de imóveis rurais: do TXT do receptor GNSS ao memorial descritivo, planilha SIGEF (ODS), planta e peças técnicas, com loteamento, maquete 3D, divisão em partes iguais e CAR.\n\n${SOBRE}\n\nPúblico: escritórios de georreferenciamento, agrimensores, topógrafos e engenheiros credenciados no INCRA. Quem certifica o imóvel é o INCRA (SIGEF) e quem registra é o cartório; o Vertces prepara e confere as peças.\n\n## Produto\n\n- [Página inicial](${SITE}/): visão geral, serviços, documentos e perguntas frequentes.\n- [Como funciona](${SITE}/#como): três passos, do arquivo bruto aos documentos.\n- [Serviços](${SITE}/#servicos): serviço completo, conferência de área, glebas, divisão em partes iguais, loteamento, maquete 3D, CAR e peças a partir do PDF do SIGEF.\n- [Agendar demonstração](${SITE}/#contato): contato comercial.\n- [Assinar](${SITE}/cadastro/): assinatura pelo site, com plano e período.\n\n${porCat}\n## Opcional\n\n- [Texto completo de todos os artigos](${SITE}/llms-full.txt)\n- [Mapa do site](${SITE}/sitemap.xml)\n`;
+  return `# Vertces\n\n> Sistema web brasileiro de georreferenciamento de imóveis rurais: do TXT do receptor GNSS ao memorial descritivo, planilha SIGEF (ODS), planta e peças técnicas, com loteamento, maquete 3D, divisão em partes iguais e CAR.\n\n${SOBRE}\n\nPúblico: escritórios de georreferenciamento, agrimensores, topógrafos e engenheiros credenciados no INCRA. Quem certifica o imóvel é o INCRA (SIGEF) e quem registra é o cartório; o Vertces prepara e confere as peças.\n\n## Produto\n\n- [Página inicial](${SITE}/): visão geral, serviços, documentos e perguntas frequentes.\n- [Como funciona](${SITE}/#como): três passos, do arquivo bruto aos documentos.\n- [Serviços](${SITE}/#servicos): serviço completo, conferência de área, glebas, divisão em partes iguais, loteamento, maquete 3D, CAR e peças a partir do PDF do SIGEF.\n- [Agendar demonstração](${SITE}/#contato): como contratar. O acesso é liberado depois da demonstração, pelo link de cadastro que a equipe envia.\n\n${porCat}\n## Opcional\n\n- [Texto completo de todos os artigos](${SITE}/llms-full.txt)\n- [Mapa do site](${SITE}/sitemap.xml)\n`;
 }
 
 function llmsFull(posts) {

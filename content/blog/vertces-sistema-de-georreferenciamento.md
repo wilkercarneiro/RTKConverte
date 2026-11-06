@@ -95,10 +95,11 @@ O Vertces não protocola no SIGEF e não garante aprovação. Ele confere e avis
 
 ## Como começar a usar o Vertces?
 
-Há dois caminhos para começar:
+O caminho para começar tem três passos:
 
-1. **Assinar pelo site.** Em [vertces.com.br/cadastro](/cadastro/), escolha o plano, crie a conta do escritório e pague por Pix ou cartão.
-2. **Agendar uma demonstração.** Em [vertces.com.br/#contato](/#contato), peça para ver o sistema com um levantamento seu.
+1. **Agende uma demonstração.** Em [vertces.com.br/#contato](/#contato), deixe o contato. A equipe chama no WhatsApp para marcar o horário.
+2. **Veja o sistema com um levantamento seu.** Na reunião, mostramos o Vertces funcionando, entendemos a rotina do escritório e definimos o plano.
+3. **Receba o link de cadastro.** Depois da reunião, a equipe envia o link para criar a conta do escritório e fazer o pagamento.
 
 Depois de criar a conta, a configuração é feita uma vez só, em **Configurações**: dados da empresa e logo, responsáveis técnicos, credenciados com o prefixo e os contadores de vértices M, P e V, e, se quiser, os modelos DOCX do escritório. Para pôr colegas no mesmo escritório, adicione o e-mail de cada um em **Configurações → Equipe**.
 
