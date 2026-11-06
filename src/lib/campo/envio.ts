@@ -8,7 +8,7 @@ import { supabase } from "../supabase";
 import { armazemDoUsuario, gravarAparelho, lerAparelho, paraEnviar } from "./aparelho.ts";
 import type { Armazem } from "./aparelho.ts";
 import { repositorioSupabase } from "./conta.ts";
-import { enviarPendentes } from "./fila.ts";
+import { enviarPendentes, filaViva } from "./fila.ts";
 import type { Fila, ResultadoFila } from "./fila.ts";
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,11 @@ export async function aparelhoDaSessao(): Promise<Armazem | null> {
 
 let filaDaTela: (() => Fila) | null = null;
 
-/** O #/campo aberto: a fila passa a ser a da tela (o estado dela na memória). */
+/**
+ * O #/campo aberto: a fila passa a ser a da tela (o estado dela na memória).
+ * Vale também para a rodada que a casca já tinha começado (filaViva): dali em
+ * diante ela grava pela tela, e a tela não passa por cima do que a casca fez.
+ */
 export function registrarTela(f: () => Fila): () => void {
   filaDaTela = f;
   return () => { if (filaDaTela === f) filaDaTela = null; };
@@ -63,5 +67,6 @@ export async function enviarMedicoesPendentes(): Promise<ResultadoFila | null> {
   const arm = await aparelhoDaSessao();
   if (!arm) return null;
   if (!Object.values(lerAparelho(arm).registros).some(paraEnviar)) return null;
-  return enviarPendentes({ repo: repositorioSupabase(), ler: () => lerAparelho(arm), gravar: (e) => { gravarAparelho(arm, e); } });
+  const doAparelho: Fila = { repo: repositorioSupabase(), ler: () => lerAparelho(arm), gravar: (e) => { gravarAparelho(arm, e); } };
+  return enviarPendentes(filaViva(doAparelho, () => filaDaTela?.() ?? null));
 }

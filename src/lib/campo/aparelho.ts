@@ -25,6 +25,8 @@ export interface RegistroLocal {
   enviadaVersao: string | null;
   /** a conta recusou esta medição (é de outra empresa): não tenta mais enviar */
   recusada?: boolean;
+  /** cópia feita porque a conta recusou o id original: se também for recusada, para de tentar */
+  copiaPorRecusa?: boolean;
 }
 
 export interface EstadoAparelho {
@@ -69,7 +71,7 @@ export function lerAparelho(arm: Armazem | null): EstadoAparelho {
     const registros: Record<string, RegistroLocal> = {};
     for (const r of Object.values(bruto.registros ?? {})) {
       const m = medicaoValida((r as RegistroLocal)?.medicao);
-      if (m) registros[m.id] = { medicao: m, enviadaVersao: typeof r?.enviadaVersao === "string" ? r.enviadaVersao : null, ...(r?.recusada === true ? { recusada: true } : {}) };
+      if (m) registros[m.id] = { medicao: m, enviadaVersao: typeof r?.enviadaVersao === "string" ? r.enviadaVersao : null, ...(r?.recusada === true ? { recusada: true } : {}), ...(r?.copiaPorRecusa === true ? { copiaPorRecusa: true } : {}) };
     }
     const atualId = typeof bruto.atualId === "string" && registros[bruto.atualId] ? bruto.atualId : null;
     return { atualId, registros };
@@ -110,7 +112,7 @@ export function guardarMedicao(e: EstadoAparelho, m: Medicao, atual: boolean, da
   const enviadaVersao = daConta ? m.atualizadaEm : antes?.enviadaVersao ?? null;
   return {
     atualId: atual ? m.id : e.atualId === m.id ? null : e.atualId,
-    registros: { ...e.registros, [m.id]: { medicao: m, enviadaVersao, ...(antes?.recusada ? { recusada: true } : {}) } },
+    registros: { ...e.registros, [m.id]: { medicao: m, enviadaVersao, ...(antes?.recusada ? { recusada: true } : {}), ...(antes?.copiaPorRecusa ? { copiaPorRecusa: true } : {}) } },
   };
 }
 
@@ -148,6 +150,35 @@ export function juntarListas(aparelho: EstadoAparelho, conta: Medicao[]): ItemLi
     porId.set(r.medicao.id, { medicao: r.medicao, onde: pendente(r) && !(naConta && naConta.medicao.atualizadaEm === r.medicao.atualizadaEm) ? "aparelho" : "conta" });
   }
   return [...porId.values()].sort((a, b) => b.medicao.atualizadaEm.localeCompare(a.medicao.atualizadaEm));
+}
+
+/** O retrato das já enviadas (id → versão) no instante em que a listagem da conta foi pedida. */
+export function enviadasAgora(e: EstadoAparelho): Map<string, string> {
+  const r = new Map<string, string>();
+  for (const x of Object.values(e.registros)) if (!pendente(x)) r.set(x.medicao.id, x.medicao.atualizadaEm);
+  return r;
+}
+
+/**
+ * As medições que foram excluídas na conta por outro aparelho (o computador do
+ * escritório): já estavam enviadas ANTES de a listagem ser pedida (`antes`,
+ * de enviadasAgora), não mudaram desde então e não vieram na listagem. Sem
+ * isso o celular mostrava "na conta" o que não existe mais, e mexer nela a
+ * recriava. A listagem traz só as `limite` mais novas: abaixo da última da
+ * lista não dá para saber, então fica. A em andamento (atualId) também fica.
+ */
+export function excluidasNaConta(e: EstadoAparelho, conta: Medicao[], antes: Map<string, string>, limite: number): string[] {
+  const naConta = new Set(conta.map((m) => m.id));
+  const corte = conta.length >= limite ? conta.reduce((a, m) => (m.atualizadaEm < a ? m.atualizadaEm : a), conta[0]?.atualizadaEm ?? "") : "";
+  const r: string[] = [];
+  for (const x of Object.values(e.registros)) {
+    const id = x.medicao.id;
+    if (naConta.has(id) || id === e.atualId || pendente(x)) continue;
+    if (antes.get(id) !== x.medicao.atualizadaEm) continue; // enviada depois de pedir a lista: a lista não podia ter
+    if (corte && x.medicao.atualizadaEm <= corte) continue;
+    r.push(id);
+  }
+  return r;
 }
 
 // ---------------------------------------------------------------------------

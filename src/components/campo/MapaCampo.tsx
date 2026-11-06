@@ -47,17 +47,64 @@ interface Props {
 const VAZIO: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 const COR = { boa: "#22C55E", media: "#F59E0B", ruim: "#EF4444", mao: "#FFFFFF" };
 
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
+const NIVEL_MAX = 18;
+const fonteEsri = (maxzoom: number) => ({
+  type: "raster" as const,
+  tiles: [`${ESRI}/tile/{z}/{y}/{x}`],
+  tileSize: 256, maxzoom, attribution: ATRIBUICAO,
+});
+
+/** O ladrilho (x, y) do ponto no nível z (Web Mercator). */
+function ladrilho([lon, lat]: LonLat, z: number): [number, number] {
+  const n = 2 ** z, r = (lat * Math.PI) / 180;
+  return [Math.floor(((lon + 180) / 360) * n), Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n)];
+}
+
+const cacheNivel = new Map<string, Promise<number | null>>();
+/**
+ * O nível mais fundo em que a Esri TEM imagem neste ponto. Ela devolve uma
+ * imagem cinza "Map data not yet available" (e não um erro) onde o nível não
+ * existe, então o maxzoom fixo não ajudava: no interior o 17/18 às vezes falta.
+ * O tilemap da própria Esri diz se o nível existe (data [1]). null = não deu
+ * para saber (sem internet): fica como está.
+ */
+export function nivelComImagem(p: LonLat): Promise<number | null> {
+  const [cx, cy] = ladrilho(p, 13);
+  const chave = `${cx}/${cy}`;
+  const ja = cacheNivel.get(chave);
+  if (ja) return ja;
+  const consulta = (async () => {
+    try {
+      const niveis = [NIVEL_MAX, 17, 16, 15, 14];
+      const tem = await Promise.all(niveis.map(async (z) => {
+        const [x, y] = ladrilho(p, z);
+        const ctl = new AbortController();
+        const t = setTimeout(() => ctl.abort(), 4000);
+        try {
+          const r = await fetch(`${ESRI}/tilemap/${z}/${y}/${x}/1/1`, { signal: ctl.signal });
+          const j = (await r.json()) as { data?: number[] };
+          return j?.data?.[0] === 1;
+        } finally { clearTimeout(t); }
+      }));
+      const i = tem.indexOf(true);
+      return i < 0 ? 13 : niveis[i];
+    } catch {
+      cacheNivel.delete(chave);
+      return null;
+    }
+  })();
+  cacheNivel.set(chave, consulta);
+  return consulta;
+}
+
 function estilo(): StyleSpecification {
   return {
     version: 8,
     sources: {
-      esri: {
-        type: "raster",
-        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-        // no interior a Esri quase nunca tem o nível 19 ("Map data not yet available"):
-        // do 18 em diante a imagem é ampliada, nunca some
-        tileSize: 256, maxzoom: 18, attribution: ATRIBUICAO,
-      },
+      // o nível mais fundo com imagem é conferido no lugar (nivelComImagem): dali em
+      // diante a imagem é ampliada, nunca vira o cinza "Map data not yet available"
+      esri: fonteEsri(NIVEL_MAX),
       area: { type: "geojson", data: VAZIO },
       linha: { type: "geojson", data: VAZIO },
       fecho: { type: "geojson", data: VAZIO },
@@ -97,6 +144,7 @@ export function MapaCampo(props: Props) {
   const arrastaveisRef = useRef<maplibregl.Marker[]>([]);
   const enquadradoRef = useRef("");
   const primeiroFixRef = useRef(true);
+  const nivelRef = useRef(NIVEL_MAX);
   const [mapa, setMapa] = useState<MapaGl | null>(null);
   const [falha, setFalha] = useState<string | null>(() => (webglDisponivel() ? null : MOTIVO_SEM_WEBGL));
   const [tentativa, setTentativa] = useState(0);
@@ -132,6 +180,13 @@ export function MapaCampo(props: Props) {
       propsRef.current.onToque([e.lngLat.lng, e.lngLat.lat]);
     });
     m.on("load", () => { prontoRef.current = true; desenhar(); posicionar(); });
+    // andou o mapa para outro lugar bem perto do chão: confere a imagem de lá
+    let esperaNivel: ReturnType<typeof setTimeout> | null = null;
+    m.on("moveend", () => {
+      if (esperaNivel) clearTimeout(esperaNivel);
+      if (m.getZoom() < 14) return;
+      esperaNivel = setTimeout(() => { const c = m.getCenter(); void garantirImagem([c.lng, c.lat]); }, 350);
+    });
     mapaRef.current = m;
     setMapa(m);
     (divRef.current as HTMLDivElement & { __mapa?: MapaGl }).__mapa = m;
@@ -145,6 +200,23 @@ export function MapaCampo(props: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [falha, tentativa]);
+
+  /** Confere a imagem no ponto e ajusta o nível da fonte (amplia a partir do mais fundo que existe). */
+  async function garantirImagem(p: LonLat): Promise<number | null> {
+    const z = await nivelComImagem(p);
+    const m = mapaRef.current;
+    if (z == null || !m || !prontoRef.current || z === nivelRef.current) return z;
+    try {
+      nivelRef.current = z;
+      m.removeLayer("satelite");
+      m.removeSource("esri");
+      m.addSource("esri", fonteEsri(z));
+      m.addLayer({ id: "satelite", type: "raster", source: "esri" }, "area-fill");
+    } catch (e) {
+      console.warn("[campo] não deu para trocar o nível da imagem:", e);
+    }
+    return z;
+  }
 
   function desenhar() {
     const m = mapaRef.current;
@@ -203,9 +275,12 @@ export function MapaCampo(props: Props) {
         // em cima moram os selos e (no celular) o aviso do GPS: a área não fica embaixo deles
         const estreito = m.getContainer().clientWidth < 600;
         m.fitBounds(b, { padding: { top: estreito ? 128 : 64, bottom: 40, left: 40, right: estreito ? 56 : 64 }, duration: 0, maxZoom: 19 });
+        const c = b.getCenter();
+        void garantirImagem([c.lng, c.lat]);
       } else if (enquadrar !== enquadradoRef.current && pts.length === 1) {
         enquadradoRef.current = enquadrar;
-        m.jumpTo({ center: pts[0], zoom: Math.max(m.getZoom(), 18) });
+        // desenhando à mão o mapa NÃO pula para o 1º vértice: o próximo toque é no lugar que a pessoa está vendo
+        if (!desenhando) { m.jumpTo({ center: pts[0], zoom: Math.max(m.getZoom(), 17) }); void garantirImagem(pts[0]); }
       }
     } catch (e) {
       console.warn("[campo] mapa não desenhado:", e);
@@ -233,7 +308,11 @@ export function MapaCampo(props: Props) {
       ? { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [circuloLonLat(p, Math.min(posicao.precisao, 5000))] } }
       : VAZIO);
     if (seguir) {
-      if (primeiroFixRef.current) { primeiroFixRef.current = false; m.jumpTo({ center: p, zoom: Math.max(m.getZoom(), 17.5) }); }
+      if (primeiroFixRef.current) {
+        primeiroFixRef.current = false;
+        m.jumpTo({ center: p, zoom: Math.max(m.getZoom(), 17) });
+        void garantirImagem(p);
+      }
       else m.easeTo({ center: p, duration: 400 });
     }
   }
@@ -242,8 +321,21 @@ export function MapaCampo(props: Props) {
   useEffect(() => { posicionar(); }, [props.posicao, props.seguir]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const m = mapaRef.current, v = props.voarPara;
-    if (m && v) m.flyTo({ center: v.p, zoom: 17, duration: 900 });
-  }, [props.voarPara]);
+    if (!m || !v) return;
+    // voa já (não espera a rede) e, sabendo o nível com imagem, para um nível acima dele
+    // (ampliado ainda nítido); sem resposta, 16, que a Esri tem em quase todo o Brasil
+    m.flyTo({ center: v.p, zoom: 16, duration: 900 });
+    let vivo = true;
+    let espera: ReturnType<typeof setTimeout> | null = null;
+    void garantirImagem(v.p).then((z) => {
+      if (!vivo || mapaRef.current !== m || z == null) return;
+      const alvo = Math.min(17, z + 1);
+      if (alvo <= 16) return;
+      // depois do voo (900 ms), aproxima mais um nível onde há imagem
+      espera = setTimeout(() => { if (vivo && mapaRef.current === m) m.easeTo({ center: v.p, zoom: alvo, duration: 500 }); }, 950);
+    });
+    return () => { vivo = false; if (espera) clearTimeout(espera); };
+  }, [props.voarPara]); // eslint-disable-line react-hooks/exhaustive-deps
   // o mapa se mede de novo quando o painel muda de tamanho (celular girando, tela cheia)
   useEffect(() => {
     const el = divRef.current;

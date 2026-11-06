@@ -89,8 +89,15 @@ export function medir(vertices: VerticeCampo[]): Medidas {
   return { n, fuso, areaM2, perimetroM, precisaoMediaM, precisaoPiorM };
 }
 
-/** O contorno fechado cruza a si mesmo? (lados não vizinhos que se cortam) */
-export function contornoSeCruza(vertices: { lon: number; lat: number }[]): boolean {
+/**
+ * O contorno cruza a si mesmo? (lados não vizinhos que se cortam)
+ *
+ * `fechado = false` (a medição ainda aberta, andando pela cerca): só o caminho
+ * feito, SEM o lado de fecho (último → P1). Andando quase em linha reta pela
+ * primeira cerca, esse lado de fecho fica por cima do próprio caminho com a
+ * oscilação do GPS e dava alarme falso de "cruzando" nos primeiros 100 m.
+ */
+export function contornoSeCruza(vertices: { lon: number; lat: number }[], fechado = true): boolean {
   const n = vertices.length;
   if (n < 4) return false;
   const o = vertices[0];
@@ -101,14 +108,25 @@ export function contornoSeCruza(vertices: { lon: number; lat: number }[]): boole
     const d1 = lado(a, b, c), d2 = lado(a, b, d), d3 = lado(c, d, a), d4 = lado(c, d, b);
     return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
   };
-  for (let i = 0; i < n; i++) {
+  const lados = fechado ? n : n - 1;
+  for (let i = 0; i < lados; i++) {
     const a = p[i], b = p[(i + 1) % n];
-    for (let j = i + 2; j < n; j++) {
-      if (i === 0 && j === n - 1) continue; // lados vizinhos pelo fecho
+    for (let j = i + 2; j < lados; j++) {
+      if (fechado && i === 0 && j === n - 1) continue; // lados vizinhos pelo fecho
       if (corta(a, b, p[j], p[(j + 1) % n])) return true;
     }
   }
   return false;
+}
+
+/**
+ * A área "fechando agora" já quer dizer alguma coisa? Andando em linha reta, a
+ * área do fecho é uma lasca (0,0014 ha) que só confunde. Vale quando a área
+ * passa de 1% do perímetro² (um retângulo de 1 × 100 já chega perto disso;
+ * um quadrado dá 6,25%).
+ */
+export function areaSignificativa(md: { n: number; areaM2: number; perimetroM: number }): boolean {
+  return md.n >= 3 && md.areaM2 > 0 && md.areaM2 >= 0.01 * md.perimetroM * md.perimetroM;
 }
 
 /** Círculo (anel lon/lat fechado) de raio em metros: o círculo de precisão do ponto azul. */

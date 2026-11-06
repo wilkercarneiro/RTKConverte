@@ -78,7 +78,7 @@ São quatro frentes. Cada uma resolve um problema real do agrimensor ou do escri
   - **Desfazer**, **Pausar** e **Fechar a área**.
 - **Tela acordada** (Wake Lock, quando o aparelho permite).
 - **Não perde nada:** cada vértice é gravado na hora no aparelho (IndexedDB/localStorage). Se a página fechar, ao voltar aparece "Continuar a medição de hoje 14:32 (23 vértices)?".
-- **Salvar na conta:** tabela da migração **0044_medicoes_campo** (RLS por escritório). Assim a medição aparece no computador do escritório e entra na lista "Medições salvas".
+- **Salvar na conta:** tabela da migração **0047_medicoes_campo** (a 0044 já é a da adesão) (RLS por escritório). Assim a medição aparece no computador do escritório e entra na lista "Medições salvas".
 - **Depois de fechar a área:**
   - **Criar serviço de CAR com esta área** (`transferirArea`);
   - **Consultar/analisar** (abre `#/consulta` já com a área);
@@ -147,7 +147,7 @@ São quatro frentes. Cada uma resolve um problema real do agrimensor ou do escri
 
 | O quê | Arquivo | Para quê |
 |---|---|---|
-| Migração 0044 | `supabase/migrations/0044_medicoes_campo.sql` | medições do campo |
+| Migração 0047 | `supabase/migrations/0047_medicoes_campo.sql` | medições do campo |
 | Migração 0045 | `supabase/migrations/0045_analises_imovel.sql` | histórico de consultas + laudos + limite |
 | Migração 0046 | `supabase/migrations/0046_terraplanagens.sql` | projetos de terraplanagem |
 | Função nova | `supabase/functions/analise-imovel` | `focos` (ponte para o INPE, só hosts da lista) e `laudo` (IA) |

@@ -27,6 +27,9 @@ export class ErroConta extends Error {
   }
 }
 
+/** Quantas medições a listagem da conta traz (as mais novas). */
+export const LIMITE_LISTA = 100;
+
 export interface RepositorioMedicoes {
   /** as medições da empresa, mais novas primeiro */
   listar(): Promise<Medicao[]>;

@@ -14,6 +14,9 @@
 @media (max-width: 900px) {
   .campo { display: flex; flex-direction: column; height: calc(var(--vh-d) - 58px); overflow: hidden; }
   .campo.em-tela-cheia { height: auto; }
+  /* a página não rola: a área de conteúdo tem a altura da tela menos o topo (58 px),
+     senão a min-height da tela inteira somava com o topo e o polegar arrastava tudo 58 px */
+  .app-conteudo:has(> .campo) { min-height: 0; height: calc(var(--vh-d) - 58px); padding: 0; overflow: hidden; }
 }
 .campo-palco { position: relative; display: flex; flex-direction: column; min-height: 0; min-width: 0; flex: 1 1 auto; }
 
@@ -252,3 +255,11 @@ button.campo-item:hover:not(:disabled) { border-color: var(--primaria); color: v
 .campo-lab-cenas a { color: #93C5FD; }
 .campo-lab-cenas a[aria-current] { color: #fff; font-weight: 700; text-decoration: underline; }
 @media (max-width: 900px) { .campo-lab { top: 64px; } }
+
+/* sem GPS: "Onde fica o imóvel?" primeiro */
+.campo-onde { display: flex; flex-direction: column; gap: 8px; }
+.campo-onde .campo-acoes-rodape button { display: inline-flex; align-items: center; gap: 6px; }
+.campo-como { font-size: 12.5px; color: var(--texto-2); }
+.campo-como summary { cursor: pointer; color: var(--texto-2); }
+.campo-como p { margin: 6px 0 0; line-height: 1.45; }
+@media (max-width: 900px) { .campo-so-largo { display: none; } }

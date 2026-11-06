@@ -3,7 +3,7 @@
 // deixa ver e gravar as da própria empresa — a tela nunca manda escritorio_id.
 import { supabase } from "../supabase";
 import { medicaoValida } from "./aparelho.ts";
-import { ErroConta, linhaDaMedicao } from "./repositorio.ts";
+import { ErroConta, LIMITE_LISTA, linhaDaMedicao } from "./repositorio.ts";
 import type { RepositorioMedicoes } from "./repositorio.ts";
 import type { Medicao } from "./tipos.ts";
 
@@ -29,7 +29,7 @@ export function repositorioSupabase(): RepositorioMedicoes {
       const { data, error } = await supabase.from(TABELA)
         .select("id, nome, vertices, fechada, criado_em, atualizado_em")
         .order("atualizado_em", { ascending: false })
-        .limit(100);
+        .limit(LIMITE_LISTA);
       if (error) throw erroDe(error);
       return (data ?? [])
         .map((l) => medicaoValida({ id: l.id, nome: l.nome, vertices: l.vertices, fechada: l.fechada, criadaEm: l.criado_em, atualizadaEm: l.atualizado_em }))

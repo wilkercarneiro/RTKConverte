@@ -14,11 +14,11 @@ import type { ReactNode } from "react";
 import type { Rota } from "../../lib/rota";
 import { transferirArea } from "../../lib/area_transferida";
 import {
-  alterar, armazemDoUsuario, gravarAparelho, guardarMedicao, juntarListas, lerAparelho, novaMedicao, paraEnviar,
+  alterar, armazemDoUsuario, enviadasAgora, excluidasNaConta, gravarAparelho, guardarMedicao, juntarListas, lerAparelho, novaMedicao, paraEnviar,
   pendente, quando, removerMedicao, textoRetomada, textoUltimoVertice, textoVertices,
 } from "../../lib/campo/aparelho.ts";
 import type { Armazem, EstadoAparelho, ItemLista } from "../../lib/campo/aparelho.ts";
-import { classePrecisao, contornoSeCruza, medir, textoDistancia, textoHa, textoM2, textoPrecisao } from "../../lib/campo/geometria.ts";
+import { areaSignificativa, classePrecisao, contornoSeCruza, medir, textoDistancia, textoHa, textoM2, textoPrecisao } from "../../lib/campo/geometria.ts";
 import { combinarLeituras, leituraUtil, verticeAoCaminhar, verticeDoPonto } from "../../lib/campo/motor.ts";
 import type { PontoCombinado } from "../../lib/campo/motor.ts";
 import { fonteDoNavegador } from "../../lib/campo/gps.ts";
@@ -28,7 +28,7 @@ import { enviarPendentes } from "../../lib/campo/fila.ts";
 import type { Fila } from "../../lib/campo/fila.ts";
 import { pedirArmazenamentoPersistente, registrarTela, usuarioAtual } from "../../lib/campo/envio.ts";
 import { lerLugar } from "../../lib/campo/lugar.ts";
-import { ErroConta } from "../../lib/campo/repositorio.ts";
+import { ErroConta, LIMITE_LISTA } from "../../lib/campo/repositorio.ts";
 import type { RepositorioMedicoes, TipoErroConta } from "../../lib/campo/repositorio.ts";
 import { repositorioSupabase } from "../../lib/campo/conta.ts";
 import { conferirAjuste, LIMITES_OPCOES, OPCOES_PADRAO, opcoesValidas } from "../../lib/campo/tipos.ts";
@@ -280,13 +280,23 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   const carregarConta = useCallback(async () => {
     setConta((c) => ({ ...c, estado: "carregando" }));
     try {
+      const antes = enviadasAgora(aparelhoRef.current);
       const itens = await repo.listar();
+      // excluída na conta por outro aparelho (o computador do escritório): sai deste também,
+      // senão a lista mostra "na conta" o que não existe mais e mexer nela a recriava
+      const sumiram = excluidasNaConta(aparelhoRef.current, itens, antes, LIMITE_LISTA);
+      if (sumiram.length) {
+        let e = aparelhoRef.current;
+        for (const id of sumiram) e = removerMedicao(e, id);
+        persistir(e);
+        if (medicaoRef.current && sumiram.includes(medicaoRef.current.id)) mostrar(null);
+      }
       setConta({ estado: "ok", itens });
     } catch (e) {
       const erro = e instanceof ErroConta ? e : new ErroConta("outro", e instanceof Error ? e.message : String(e));
       setConta({ estado: "erro", itens: [], erro });
     }
-  }, [repo]);
+  }, [repo, persistir, mostrar]);
   useEffect(() => { void carregarConta(); }, [carregarConta]);
 
   const [envio, setEnvio] = useState<{ estado: EstadoEnvio; hora: string | null }>({ estado: "ocioso", hora: null });
@@ -314,12 +324,14 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
     setEnvio((e) => ({ ...e, estado: "enviando" }));
     const r = await enviarPendentes(filaRef.current());
     if (r.parou === "sem-tabela") travadoRef.current = true;
-    for (const { copia: c } of r.copias) {
-      avisar("alerta", `A conta já tinha uma versão mais nova desta medição (mexida em outro aparelho). A deste aparelho foi guardada à parte como "${c.nome}".`);
+    for (const { copia: c, motivo } of r.copias) {
+      avisar("alerta", motivo === "outra-conta"
+        ? `Esta medição tinha ido para a conta de outra empresa. Ela foi enviada para a sua como "${c.nome}".`
+        : `A conta já tinha uma versão mais nova desta medição (mexida em outro aparelho). A deste aparelho foi guardada à parte como "${c.nome}".`);
     }
     if (r.recusadas.length) {
       const um = r.recusadas.length === 1;
-      avisar("erro", `${um ? `"${r.recusadas[0].nome}" é` : `${r.recusadas.length} medições são`} de outra conta e não ${um ? "sobe" : "sobem"} para a sua. ${um ? "Continua" : "Continuam"} só neste aparelho.`);
+      avisar("erro", `A conta não deixou gravar ${um ? `"${r.recusadas[0].nome}"` : `${r.recusadas.length} medições`}. ${um ? "Continua" : "Continuam"} neste aparelho: use Baixar (KML) para não depender dele.`);
     }
     if (r.parou) { const tipo = r.parou; setEnvio((x) => ({ ...x, estado: tipo })); }
     else if (r.falhas) setEnvio((x) => ({ ...x, estado: "outro" }));
@@ -328,20 +340,36 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   };
 
   // ao abrir, quando a internet volta e de tempos em tempos: o que ficou no aparelho sobe
+  const real = !props.repositorio; // o laboratório usa a conta de mentira: não toma a fila da casca
   useEffect(() => {
-    const solta = registrarTela(() => filaRef.current());
+    // A casca (AppShell) pode ter começado a enviar antes de esta tela abrir (ela é
+    // carregada depois): o que a casca já gravou no aparelho vem para a memória da
+    // tela ANTES de a tela assumir a fila, para o próximo vértice não passar por cima.
+    if (real && arm && !avisouGravacao.current) {
+      const disco = lerAparelho(arm);
+      if (JSON.stringify(disco) !== JSON.stringify(aparelhoRef.current)) {
+        aparelhoRef.current = disco; setAparelho(disco);
+        const daCasca = disco.atualId ? disco.registros[disco.atualId].medicao : null;
+        const m = medicaoRef.current;
+        if (m && !disco.registros[m.id]) mostrar(daCasca);
+        setOferta((o) => (!o || disco.registros[o.id] ? o : daCasca && daCasca.vertices.length && !daCasca.fechada ? daCasca : null));
+      }
+    }
+    const solta = real ? registrarTela(() => filaRef.current()) : () => {};
     agendarEnvio(600);
     const online = () => agendarEnvio(300);
-    // a aba vai sumir (trocou de app, fechou): envia já, sem esperar o tempo
-    const agora = () => { if (timerEnvio.current) { clearTimeout(timerEnvio.current); timerEnvio.current = null; } void enviarRef.current(); };
-    const vis = () => { if (document.visibilityState === "hidden") agora(); else agendarEnvio(300); };
+    // a aba vai sumir (trocou de app, apagou a tela): tenta enviar já. Se o navegador
+    // cortar a requisição, nada se perde: está no aparelho e sobe na próxima abertura.
+    const vis = () => {
+      if (document.visibilityState !== "hidden") { agendarEnvio(300); return; }
+      if (timerEnvio.current) { clearTimeout(timerEnvio.current); timerEnvio.current = null; }
+      void enviarRef.current();
+    };
     addEventListener("online", online);
-    addEventListener("pagehide", agora);
     document.addEventListener("visibilitychange", vis);
     const t = setInterval(() => agendarEnvio(0), 30_000);
     return () => {
       removeEventListener("online", online);
-      removeEventListener("pagehide", agora);
       document.removeEventListener("visibilitychange", vis);
       clearInterval(t);
       solta();
@@ -349,7 +377,7 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
       if (timerEnvio.current) { clearTimeout(timerEnvio.current); timerEnvio.current = null; }
       if (!travadoRef.current && Object.values(aparelhoRef.current.registros).some(paraEnviar)) void enviarPendentes(filaRef.current());
     };
-  }, [agendarEnvio, repo]);
+  }, [agendarEnvio, repo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const lista: ItemLista[] = useMemo(
     () => juntarListas(aparelho, conta.itens).filter((i) => i.medicao.vertices.length > 0),
@@ -474,11 +502,22 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
     avisar("ok", `"${m.nome}" foi excluída.`);
   }
 
-  function criarCar(m: Medicao) {
+  /** Contorno cruzado (gravata): a área de Gauss sai errada. Pergunta antes de levar adiante. */
+  async function levarMesmoCruzado(m: Medicao): Promise<boolean> {
+    if (!contornoSeCruza(m.vertices, true)) return true;
+    return confirmar({
+      titulo: "O contorno se cruza",
+      texto: `Com as linhas cruzadas, a área de ${textoHa(medir(m.vertices).areaM2)} pode estar errada. Para corrigir, toque em "Continuar medindo" e desfaça os vértices do cruzamento.`,
+      confirmar: "Levar assim mesmo",
+    });
+  }
+  async function criarCar(m: Medicao) {
+    if (!(await levarMesmoCruzado(m))) return;
     transferirArea(areaDaMedicao(m));
     ir({ t: "novo", chave: "car" });
   }
-  function consultar(m: Medicao) {
+  async function consultar(m: Medicao) {
+    if (!(await levarMesmoCruzado(m))) return;
     // o mesmo canal do CAR: a Consulta lê com pegarAreaTransferida() e marca a fonte "Medição de campo"
     transferirArea(areaDaMedicao(m));
     ir({ t: "consulta" });
@@ -493,7 +532,9 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   const verticesMapa = !medicao && oferta ? oferta.vertices : vertices;
   useEffect(() => { if (oferta && !medicao) { setSeguir(false); setEnquadrar(`${oferta.id}:oferta`); } }, [oferta, medicao]);
   const md = useMemo(() => medir(vertices), [vertices]);
-  const cruza = useMemo(() => vertices.length >= 4 && contornoSeCruza(vertices), [vertices]);
+  // aberta: só o caminho feito (o lado de fecho por cima do caminho dava alarme falso)
+  const fechadaAgora = !!medicao?.fechada;
+  const cruza = useMemo(() => vertices.length >= 4 && contornoSeCruza(vertices, fechadaAgora), [vertices, fechadaAgora]);
   const registroAtual = medicao ? aparelho.registros[medicao.id] : undefined;
   const sinalFraco = !!leitura && !leituraUtil(leitura, opcoes.limitePrecisaoM);
   const estreita = useEstreita();
@@ -518,8 +559,8 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
       onDesfazer={desfazer} onFechar={fecharArea}
       onRenomear={(nome) => { const m = medicaoRef.current; if (m) mudar(alterar(m, { nome })); }}
       onBotaoRenomear={renomear}
-      onCriarCar={() => medicao && criarCar(medicao)}
-      onConsultar={() => medicao && consultar(medicao)}
+      onCriarCar={() => { if (medicao) void criarCar(medicao); }}
+      onConsultar={() => { if (medicao) void consultar(medicao); }}
       onContinuarMedindo={continuarMedindo}
       onNova={novaMedicaoLimpa}
     />
@@ -613,8 +654,10 @@ function SeloGps({ gps, leitura, descansa }: { gps: EstadoGps; leitura: Leitura 
   if (gps.tipo === "desligado") return <span className="campo-gps-selo desligado">GPS desligado</span>;
   if (gps.tipo === "procurando") return <span className="campo-gps-selo procurando"><i aria-hidden="true" />Procurando o GPS…</span>;
   if (gps.tipo === "erro" && (gps.erro.tipo !== "sem-sinal" || !leitura)) {
-    const t = gps.erro.tipo === "sem-permissao" ? "Localização bloqueada" : gps.erro.tipo === "indisponivel" ? "Sem GPS aqui" : "Sem sinal do GPS";
-    return <span className="campo-gps-selo ruim" title={gps.erro.mensagem}>{t}</span>;
+    // computador sem GPS é o normal (desenho à mão), não erro: selo neutro
+    if (gps.erro.tipo === "indisponivel") return <span className="campo-gps-selo desligado" title={gps.erro.mensagem}>Sem GPS<span className="campo-so-largo"> · desenho à mão</span></span>;
+    const t = gps.erro.tipo === "sem-permissao" ? "GPS bloqueado" : "Sem sinal do GPS";
+    return <span className={`campo-gps-selo ${gps.erro.tipo === "sem-permissao" ? "media" : "ruim"}`} title={gps.erro.mensagem}>{t}</span>;
   }
   const p = leitura?.precisao ?? null;
   return (
@@ -683,7 +726,7 @@ const ICO = {
 };
 
 /** "Ir para": sem GPS, o mapa chega ao imóvel por coordenada ou link do Google Maps. */
-function IrPara({ onIr }: { onIr: (p: LonLat) => void }) {
+function IrPara({ onIr, principal = false, focar = false }: { onIr: (p: LonLat) => void; principal?: boolean; focar?: boolean }) {
   const [texto, setTexto] = useState("");
   const [erro, setErro] = useState(false);
   const ir = () => {
@@ -694,11 +737,11 @@ function IrPara({ onIr }: { onIr: (p: LonLat) => void }) {
   return (
     <form className="campo-ir" onSubmit={(e) => { e.preventDefault(); ir(); }}>
       <label className="campo-ir-campo">
-        <Rotulo dica={`Decimal (-12,6915, -39,1262), GMS (12°41'29"S 39°07'34"W), UTM com o fuso (24L 500000 8600000) ou o link do Google Maps do imóvel.`}>Ir para o imóvel</Rotulo>
+        <Rotulo dica={`Decimal (-12,6915, -39,1262), GMS (12°41'29"S 39°07'34"W), UTM com o fuso (24L 500000 8600000) ou o link do Google Maps do imóvel.`}>{principal ? "Coordenada ou link do imóvel" : "Ir para o imóvel"}</Rotulo>
         <span className="campo-ir-linha">
           <input value={texto} onChange={(e) => { setTexto(e.target.value); setErro(false); }} placeholder="Coordenada ou link do Google Maps"
-            aria-invalid={erro || undefined} inputMode="text" autoComplete="off" />
-          <button type="submit" disabled={!texto.trim()}>Ir</button>
+            aria-invalid={erro || undefined} inputMode="text" autoComplete="off" autoFocus={focar} />
+          <button type="submit" className={principal ? "principal" : undefined} disabled={!texto.trim()}>Ir</button>
         </span>
       </label>
       {erro && <span className="campo-ir-erro" role="alert">Não entendi esse lugar. Cole a coordenada (lat, lon), a UTM com o fuso ou o link do Google Maps.</span>}
@@ -707,11 +750,13 @@ function IrPara({ onIr }: { onIr: (p: LonLat) => void }) {
 }
 
 function Numeros({ md, aberta }: { md: ReturnType<typeof medir>; aberta: boolean }) {
+  // andando, a área só aparece quando já é uma área (em linha reta é uma lasca sem sentido)
+  const temArea = aberta ? areaSignificativa(md) : md.n >= 3;
   return (
     <dl className="campo-numeros">
       <div className="campo-num-area">
-        <dt>Área{aberta && md.n >= 3 ? <small> · fechando agora</small> : null}</dt>
-        <dd>{md.n >= 3 ? textoHa(md.areaM2) : "—"}{md.n >= 3 && <small>{textoM2(md.areaM2)}</small>}</dd>
+        <dt>Área{aberta && temArea ? <small> · fechando agora</small> : null}</dt>
+        <dd>{temArea ? textoHa(md.areaM2) : "—"}{temArea ? <small>{textoM2(md.areaM2)}</small> : aberta && md.n >= 2 ? <small>aparece ao virar a cerca</small> : null}</dd>
       </div>
       <div><dt>Perímetro</dt><dd>{md.n >= 2 ? textoDistancia(md.perimetroM) : "—"}</dd></div>
       <div><dt>Vértices</dt><dd>{md.n}</dd></div>
@@ -804,7 +849,7 @@ function PainelControle(p: PropsPainel) {
   if (!m || n === 0) {
     return (
       <div className="campo-painel campo-comeco" role="region" aria-label="Começar a medir">
-        {p.gps.tipo === "erro" && <p className="campo-alerta" role="alert">{p.gps.erro.mensagem}</p>}
+        {p.gps.tipo === "erro" && !semGps && <p className="campo-alerta" role="alert">{p.gps.erro.mensagem}</p>}
         {marcandoEl || pontoRuimEl || (
           <>
             {!semGps && !p.desenhando && (
@@ -823,12 +868,27 @@ function PainelControle(p: PropsPainel) {
                   {!p.leitura && <IrPara onIr={p.onIrPara} />}
                 </>
               )
-              : semGps
+              : semGps && p.gps.tipo === "erro"
                 ? (
-                  <>
-                    <div className="campo-acoes-linha"><button type="button" className="principal campo-btn-grande" onClick={p.onDesenhar}><Ic d={ICO.mao} />Desenhar no mapa</button></div>
-                    <IrPara onIr={p.onIrPara} />
-                  </>
+                  // sem GPS (o computador do escritório): primeiro chegar ao imóvel, depois desenhar
+                  <div className="campo-onde">
+                    <b className="campo-pergunta">Onde fica o imóvel?</b>
+                    <span className="campo-sub">
+                      {p.gps.erro.tipo === "sem-permissao"
+                        ? "A localização está bloqueada neste navegador. Cole a coordenada e desenhe o contorno tocando no mapa."
+                        : "Este aparelho não tem GPS. Cole a coordenada ou o link do Google Maps: o mapa vai até lá e você desenha o contorno tocando nos cantos."}
+                    </span>
+                    <IrPara onIr={(lugar) => { p.onIrPara(lugar); p.onDesenhar(); }} principal focar={!ehCelular()} />
+                    <div className="campo-acoes-rodape">
+                      <button type="button" className="fantasma" onClick={p.onDesenhar}><Ic d={ICO.mao} tam={16} />O mapa já está no imóvel: desenhar</button>
+                    </div>
+                    {p.gps.erro.tipo === "sem-permissao" && (
+                      <details className="campo-como">
+                        <summary>Como liberar a localização</summary>
+                        <p>{p.gps.erro.mensagem}</p>
+                      </details>
+                    )}
+                  </div>
                 )
                 : (
                   <div className="campo-acoes-rodape">

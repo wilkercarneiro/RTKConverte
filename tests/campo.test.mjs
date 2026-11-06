@@ -20,17 +20,17 @@ import proj4lib from "proj4";
 import { areaUtmM2, fusoDoLon } from "../src/lib/restricoes.ts";
 import { GEO_DEF, utmDef } from "../supabase/functions/_shared/geo.ts";
 import {
-  circuloLonLat, classePrecisao, deslocar, contornoSeCruza, difAngulo, distanciaM, fusoDaMedicao, medir, rumoGraus,
+  areaSignificativa, circuloLonLat, classePrecisao, deslocar, contornoSeCruza, difAngulo, distanciaM, fusoDaMedicao, medir, rumoGraus,
   textoDistancia, textoHa, textoPrecisao,
 } from "../src/lib/campo/geometria.ts";
 import { combinarLeituras, leituraUtil, verticeAoCaminhar, verticeDoPonto } from "../src/lib/campo/motor.ts";
 import {
-  alterar, armazemDoUsuario, CHAVE_APARELHO, gravarAparelho, guardarMedicao, juntarListas, lerAparelho, marcarEnviada, medicaoValida,
+  alterar, armazemDoUsuario, CHAVE_APARELHO, enviadasAgora, excluidasNaConta, gravarAparelho, guardarMedicao, juntarListas, lerAparelho, marcarEnviada, medicaoValida,
   nomePadrao, novaMedicao, novoId, paraEnviar, pendente, quando, removerMedicao, textoRetomada, textoUltimoVertice,
 } from "../src/lib/campo/aparelho.ts";
 import { areaDaMedicao } from "../src/lib/campo/ponte.ts";
 import { pegarAreaTransferida, transferirArea } from "../src/lib/area_transferida.ts";
-import { enviarPendentes, SUFIXO_COPIA } from "../src/lib/campo/fila.ts";
+import { enviarPendentes, filaViva, SUFIXO_COPIA } from "../src/lib/campo/fila.ts";
 import { arquivoDaMedicao, camadasDaMedicao } from "../src/lib/campo/arquivos.ts";
 import { criarSimulador } from "../src/lib/campo/gps.ts";
 import { linhaDaMedicao, repositorioMemoria } from "../src/lib/campo/repositorio.ts";
@@ -115,6 +115,24 @@ test("contorno que se cruza (gravata) é apontado; o normal não", () => {
   const gravata = [q[0], q[2], q[1], q[3]];
   assert.equal(contornoSeCruza(gravata), true);
   assert.equal(contornoSeCruza(q.slice(0, 3)), false);
+});
+
+test("andando pela 1ª cerca (quase reta): a medição aberta NÃO acusa cruzamento nem mostra área", () => {
+  const vs = [];
+  for (const l of TRAJETO_EXEMPLO) {
+    const r = verticeAoCaminhar(vs, l, OP);
+    if (r) vs.push(r.vertice);
+    if (vs.length >= 4 && vs.length <= 30) {
+      assert.equal(contornoSeCruza(vs, false), false, `alarme falso com ${vs.length} vértices`);
+    }
+  }
+  // o começo (P1..P11) é a cerca de baixo, quase reta: a área do fecho é uma lasca sem sentido
+  const inicio = vs.slice(0, 11);
+  assert.equal(areaSignificativa(medir(inicio)), false, `lasca ${medir(inicio).areaM2} m²`);
+  assert.equal(areaSignificativa(medir(vs)), true, "a volta inteira é área");
+  // gravata de verdade na medição aberta: o caminho cruza o próprio caminho
+  const q = [[0, 0], [100, 0], [100, 100], [0, 100]].map(([x, y]) => vert(desloc(ORIGEM, x, y)));
+  assert.equal(contornoSeCruza([q[0], q[2], q[1], q[3]], false), true);
 });
 
 // ---------------------------------------------------------------- Caminhar
@@ -277,6 +295,23 @@ test("lista: aparelho e conta juntos pela versão mais nova", () => {
   assert.deepEqual(l.map((i) => [i.medicao.nome, i.onde]), [["renomeada no escritório", "conta"]]);
   // mesma versão nos dois: conta
   assert.equal(juntarListas(e, [local])[0].onde, "conta");
+});
+
+test("lista: excluída na conta por outro aparelho sai deste; a recém-enviada e a pendente ficam", () => {
+  const mk = (nome, h) => ({ ...novaMedicao(new Date(Date.UTC(2026, 10, 6, h))), nome, vertices: [vert(ORIGEM)] });
+  const apagada = mk("apagada no escritório", 10), naConta = mk("na conta", 11), pend = mk("pendente", 12), nova = mk("enviada depois de pedir a lista", 13);
+  let e = { atualId: null, registros: {} };
+  e = guardarMedicao(e, apagada, false, true);
+  e = guardarMedicao(e, naConta, false, true);
+  e = guardarMedicao(e, pend, false);
+  const antes = enviadasAgora(e);
+  // enquanto a lista vinha, a fila subiu a "nova"
+  e = marcarEnviada(guardarMedicao(e, nova, false), nova.id, nova.atualizadaEm);
+  assert.deepEqual(excluidasNaConta(e, [naConta], antes, 100), [apagada.id]);
+  // a em andamento não some debaixo do dedo
+  assert.deepEqual(excluidasNaConta({ ...e, atualId: apagada.id }, [naConta], antes, 100), []);
+  // lista cheia (limite): abaixo da mais velha listada não dá para saber
+  assert.deepEqual(excluidasNaConta(e, [naConta], antes, 1), [], "a apagada é mais velha que a última da lista cheia");
 });
 
 test("textos: retomada, quando e nome padrão", () => {
@@ -461,7 +496,7 @@ const medida = (nome, quandoMs) => {
   return { ...m, nome, vertices: [vert(ORIGEM), vert(desloc(ORIGEM, 10, 0)), vert(desloc(ORIGEM, 10, 10))] };
 };
 
-test("fila: um erro numa medição não segura as outras; recusada pela conta não tenta mais", async () => {
+test("fila: um erro numa medição não segura as outras; o id de outra empresa sobe como cópia", async () => {
   const m1 = medida("da outra empresa", Date.UTC(2026, 10, 6, 10)), m2 = medida("boa", Date.UTC(2026, 10, 6, 11)), m3 = medida("falha avulsa", Date.UTC(2026, 10, 6, 12));
   let e = { atualId: null, registros: {} };
   for (const m of [m1, m2, m3]) e = guardarMedicao(e, m, false);
@@ -469,20 +504,37 @@ test("fila: um erro numa medição não segura as outras; recusada pela conta n�
   const repo = repositorioMemoria([], { demoraMs: 0, falha: (id) => (id === m1.id ? "outra-conta" : id === m3.id && terceira ? "outro" : null) });
   const { f, estado } = filaDeTeste(e, repo);
   const r = await enviarPendentes(f);
-  assert.deepEqual(r.recusadas.map((m) => m.nome), ["da outra empresa"]);
-  assert.equal(r.enviadas, 1);
+  assert.equal(r.recusadas.length, 0);
+  assert.deepEqual(r.copias.map((c) => [c.de, c.motivo, c.copia.nome]), [[m1.id, "outra-conta", "da outra empresa" + SUFIXO_COPIA]]);
+  assert.equal(r.enviadas, 2, "a boa e a cópia da recusada");
   assert.equal(r.falhas, 1);
   assert.equal(r.parou, null);
-  assert.deepEqual(repo.itens().map((m) => m.nome), ["boa"], "a boa subiu mesmo com a primeira recusada");
-  assert.equal(estado().registros[m1.id].recusada, true);
+  assert.deepEqual(repo.itens().map((m) => m.nome).sort(), ["boa", "da outra empresa" + SUFIXO_COPIA]);
+  assert.equal(estado().registros[m1.id], undefined, "a original saiu do aparelho: virou a cópia");
   assert.equal(estado().registros[m2.id].enviadaVersao, m2.atualizadaEm);
-  // na rodada seguinte: a recusada não vai de novo; a avulsa sobe
+  // na rodada seguinte: a avulsa sobe; nada mais
   terceira = false;
   const r2 = await enviarPendentes(f);
   assert.equal(r2.enviadas, 1);
-  assert.equal(r2.recusadas.length, 0);
+  assert.equal(r2.copias.length, 0);
   assert.equal(r2.restam, 0);
-  assert.ok(estado().registros[m1.id], "a recusada continua no aparelho (nada se perde)");
+});
+
+test("fila: se até a cópia é recusada, para de tentar e fica no aparelho", async () => {
+  const m = medida("sem permissão", Date.UTC(2026, 10, 6, 10));
+  const repo = repositorioMemoria([], { demoraMs: 0, falha: () => "outra-conta" });
+  const { f, estado } = filaDeTeste(guardarMedicao({ atualId: null, registros: {} }, m, true), repo);
+  const r = await enviarPendentes(f);
+  assert.equal(r.copias.length, 1, "uma cópia só");
+  assert.equal(r.recusadas.length, 1);
+  const regs = Object.values(estado().registros);
+  assert.equal(regs.length, 1);
+  assert.equal(regs[0].recusada, true);
+  assert.equal(regs[0].copiaPorRecusa, true);
+  assert.equal(estado().atualId, regs[0].medicao.id);
+  const r2 = await enviarPendentes(f);
+  assert.equal(r2.copias.length + r2.recusadas.length + r2.enviadas, 0, "não tenta de novo nem copia de novo");
+  assert.equal(repo.itens().length, 0);
 });
 
 test("fila: sem internet para tudo e tenta depois", async () => {
@@ -536,6 +588,49 @@ test("fila: duas chamadas ao mesmo tempo não enviam em dobro", async () => {
   const { f } = filaDeTeste(guardarMedicao({ atualId: null, registros: {} }, m, false), repo);
   await Promise.all([enviarPendentes(f), enviarPendentes(f)]);
   assert.equal(chamadas, 1);
+});
+
+test("fila: outra fila chamada no meio da rodada ganha a SUA rodada (nada fica para trás)", async () => {
+  const m1 = medida("da fila A", Date.UTC(2026, 10, 6, 10)), m2 = medida("da fila B", Date.UTC(2026, 10, 6, 11));
+  const repo = repositorioMemoria([], { demoraMs: 10 });
+  const A = filaDeTeste(guardarMedicao({ atualId: null, registros: {} }, m1, false), repo);
+  const B = filaDeTeste(guardarMedicao({ atualId: null, registros: {} }, m2, false), repo);
+  const ra = enviarPendentes(A.f);
+  await new Promise((r) => setTimeout(r, 2)); // A está subindo m1
+  const rb = await enviarPendentes(B.f);
+  assert.equal(rb.enviadas, 1, "o resultado de B é o da rodada de B");
+  assert.equal(rb.restam, 0);
+  assert.equal(B.estado().registros[m2.id].enviadaVersao, m2.atualizadaEm, "a medição de B saiu de pendente");
+  assert.equal((await ra).enviadas, 1);
+  assert.deepEqual(repo.itens().map((m) => m.nome).sort(), ["da fila A", "da fila B"]);
+});
+
+test("fila: casca e tela no mesmo aparelho, com conflito: UMA cópia na conta e a tela não volta a original", async () => {
+  // o cenário de quem volta do campo: a casca começa a enviar pelo localStorage e o #/campo abre no meio
+  const mem = new Map();
+  const arm = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+  const local = medida("Pasto da sede", Date.UTC(2026, 10, 6, 14, 32));
+  const doEscritorio = { ...local, nome: "Renomeada no escritório", atualizadaEm: "2026-11-06T20:00:00.000Z" };
+  const repo = repositorioMemoria([doEscritorio], { demoraMs: 10 });
+  gravarAparelho(arm, guardarMedicao({ atualId: null, registros: {} }, local, true));
+  let tela = null;
+  const casca = filaViva({ repo, ler: () => lerAparelho(arm), gravar: (e) => { gravarAparelho(arm, e); } }, () => tela);
+  const ida = enviarPendentes(casca);
+  // a tela abre no meio do envio: lê o aparelho e assume a fila (como o Campo.tsx faz)
+  await new Promise((r) => setTimeout(r, 2));
+  let memTela = lerAparelho(arm);
+  tela = { repo, ler: () => memTela, gravar: (e) => { memTela = e; gravarAparelho(arm, e); } };
+  const daTela = enviarPendentes(tela);
+  await Promise.all([ida, daTela]);
+  // a tela grava o próximo vértice a partir da memória dela
+  const atual = memTela.registros[memTela.atualId].medicao;
+  tela.gravar(guardarMedicao(memTela, alterar(atual, { vertices: [...atual.vertices, vert(desloc(ORIGEM, 0, 20))] }), true));
+  await enviarPendentes(tela);
+  const copias = repo.itens().filter((m) => m.nome.endsWith(SUFIXO_COPIA));
+  assert.equal(copias.length, 1, `cópias na conta: ${repo.itens().map((m) => m.nome)}`);
+  assert.equal(copias[0].vertices.length, 4, "a cópia recebeu o vértice novo");
+  assert.equal(lerAparelho(arm).registros[local.id], undefined, "a original não volta para o aparelho");
+  assert.equal(repo.itens().find((m) => m.id === local.id).nome, "Renomeada no escritório", "a do escritório intacta");
 });
 
 // ---------------------------------------------------------------- ajustes
