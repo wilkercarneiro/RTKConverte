@@ -9,6 +9,7 @@ import { armazemDoUsuario, gravarAparelho, lerAparelho, paraEnviar } from "./apa
 import type { Armazem } from "./aparelho.ts";
 import { repositorioSupabase } from "./conta.ts";
 import { enviarPendentes, filaViva } from "./fila.ts";
+import { usuarioDaSessaoGravada } from "./sessao.ts";
 import type { Fila, ResultadoFila } from "./fila.ts";
 
 // ---------------------------------------------------------------------------
@@ -19,15 +20,23 @@ function storageDoNavegador(): Armazem | null {
   try { return typeof localStorage === "undefined" ? null : localStorage; } catch { return null; }
 }
 
-/** O id de quem está logado (null = ninguém). */
+/**
+ * O id de quem está logado (null = ninguém). Sem internet e com o token
+ * vencido, getSession() devolve null: aí vale a sessão gravada no navegador
+ * (src/lib/campo/sessao.ts) — o aparelho é de quem está logado na casca.
+ */
 export async function usuarioAtual(): Promise<string | null> {
+  let id: string | null = null;
   try {
     if (!supabase) return null;
     const { data } = await supabase.auth.getSession();
-    return data.session?.user.id ?? null;
-  } catch {
-    return null;
-  }
+    id = data.session?.user.id ?? null;
+  } catch { /* sem rede: cai na sessão gravada */ }
+  if (id) return id;
+  const chave = (supabase?.auth as unknown as { storageKey?: string } | undefined)?.storageKey ?? null;
+  let st: Storage | null = null;
+  try { st = typeof localStorage === "undefined" ? null : localStorage; } catch { /* bloqueado */ }
+  return usuarioDaSessaoGravada(st, chave);
 }
 
 /** O aparelho de quem está logado (null = sem login ou sem storage). */

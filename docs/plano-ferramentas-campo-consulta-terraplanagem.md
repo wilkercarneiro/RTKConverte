@@ -111,7 +111,7 @@ São quatro frentes. Cada uma resolve um problema real do agrimensor ou do escri
   - `MapaInterativo` (painel SIGEF e Consultar imóvel);
   - mapa do Medir no campo;
   - mapa do CAR, se usar MapLibre. Se não usar, anotar a pendência em vez de reescrever o mapa.
-  - **Situação (frente Imagem por data, 06/11):** ligado no `MapaInterativo`, o que já cobre o painel SIGEF e o Consultar imóvel. **Pendente: CAR.** O mapa do CAR (`src/components/car/CarEditor.tsx`, `CarNovo.tsx`) é desenhado em SVG, sem MapLibre; o seletor não foi ligado e precisa de um adaptador ou de o CAR passar a usar o `MapaInterativo`. **Pendente: Medir no campo.** O mapa dele está na branch da própria frente; quando juntar, basta `<SeletorImagemData mapa={mapa} centro={centroDaMedicao} />` dentro do contêiner do mapa.
+  - **Situação (frente Imagem por data, 06/11):** ligado no `MapaInterativo`, o que já cobre o painel SIGEF e o Consultar imóvel. **Pendente: CAR.** O mapa do CAR (`src/components/car/CarEditor.tsx`, `CarNovo.tsx`) é desenhado em SVG, sem MapLibre; o seletor não foi ligado e precisa de um adaptador ou de o CAR passar a usar o `MapaInterativo`. **Medir no campo: ligado na integração** (o `Campo` usa o seletor por padrão, no pé do mapa, com o centro do 1º vértice enquanto mede e a caixa da medição depois de fechada).
 - **Laboratório:** `#/lab/imagem` (o mapa com o seletor; por ser de imagem, este pode depender da rede).
 
 ## 4. Terraplanagem (`#/terraplanagem`)

@@ -9,7 +9,7 @@
 // Imagem por data (frente 3 do plano): `controleImagem` recebe o mapa e o
 // centro e desenha o SeletorImagemData por cima — o integrador liga em
 // Campo.tsx; aqui só existe o lugar.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSource, Map as MapaGl, StyleSpecification } from "maplibre-gl";
@@ -18,10 +18,13 @@ import { ATRIBUICAO, motivoDaFalhaDoMapa } from "../MapaInterativo";
 import { classePrecisao, circuloLonLat } from "../../lib/campo/geometria.ts";
 import type { Leitura, LonLat, VerticeCampo } from "../../lib/campo/tipos.ts";
 import { BotaoTelaCheia } from "../TelaCheia";
+import { zoomParaExtensao } from "../../lib/imagem_data";
 
 export interface ControleImagemProps {
   mapa: MapaGl | null;
   centro: LonLat | null;
+  /** zoom em que a mudança da foto é procurada (o que enquadra a medição) */
+  zoom?: number;
 }
 
 interface Props {
@@ -345,9 +348,20 @@ export function MapaCampo(props: Props) {
     return () => ro.disconnect();
   }, [falha]);
 
-  const centro: LonLat | null = props.vertices.length
-    ? [props.vertices[0].lon, props.vertices[0].lat]
-    : props.posicao ? [props.posicao.lon, props.posicao.lat] : null;
+  // centro e zoom da medição, para o seletor de imagem por data. Enquanto mede, o
+  // 1º vértice (fixo: andar não refaz a busca das datas a cada vértice); fechada, a caixa toda.
+  const { centro, zoomImagem } = useMemo(() => {
+    const vs = props.vertices;
+    if (props.fechada && vs.length >= 3) {
+      let [o, s, l, n] = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const v of vs) { o = Math.min(o, v.lon); s = Math.min(s, v.lat); l = Math.max(l, v.lon); n = Math.max(n, v.lat); }
+      return { centro: [(o + l) / 2, (s + n) / 2] as LonLat, zoomImagem: zoomParaExtensao([o, s, l, n]) };
+    }
+    if (vs.length) return { centro: [vs[0].lon, vs[0].lat] as LonLat, zoomImagem: 16 };
+    const p = props.posicao;
+    // a posição muda a cada leitura: arredonda (~100 m) para não refazer a busca das datas a cada passo
+    return { centro: p ? [Math.round(p.lon * 1e3) / 1e3, Math.round(p.lat * 1e3) / 1e3] as LonLat : null, zoomImagem: 16 };
+  }, [props.vertices, props.posicao, props.fechada]);
 
   return (
     <div className="campo-mapa" data-desenhando={props.desenhando || undefined}>
@@ -377,7 +391,7 @@ export function MapaCampo(props: Props) {
         )}
       </div>
       {/* Imagem por data (SeletorImagemData): o integrador passa `controleImagem` em Campo.tsx */}
-      {props.controleImagem && !falha && <div className="campo-mapa-imagem">{props.controleImagem({ mapa, centro })}</div>}
+      {props.controleImagem && !falha && <div className="campo-mapa-imagem">{props.controleImagem({ mapa, centro, zoom: zoomImagem })}</div>}
       {props.desenhando && !falha && <div className="campo-dica-mao" role="status">Toque no mapa para pôr cada vértice. Arraste um vértice para ajustar.</div>}
     </div>
   );

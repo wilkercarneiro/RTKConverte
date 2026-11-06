@@ -4,7 +4,7 @@
 // novo", e o resto segue.
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { AVISO_RESTRICOES, fmtData, textoFonte, textoItem } from "../../lib/restricoes";
+import { AVISO_RESTRICOES, fmtData, sobreposicaoPequena, textoFonte, textoItem } from "../../lib/restricoes";
 import { ehPropriaArea, fraseDaAnalise } from "../../lib/consulta/analise.ts";
 import type { Analise, ChaveFonte } from "../../lib/consulta/analise.ts";
 import { textoFocos } from "../../lib/consulta/focos.ts";
@@ -90,17 +90,20 @@ function CartaoRestricoes({ a, onTentar }: { a: Analise; onTentar: () => void })
   const comAlgo = fontes.filter((x) => x.classe !== "livre");
   const livres = fontes.filter((x) => x.classe === "livre");
   const propria = (tipo: string, pct: number) => ehPropriaArea(a.imovel, tipo, pct);
-  const sobre = fontes.some((x) => x.itens.some((it) => it.classe === "sobrepoe" && !propria(x.tipo, it.pct)));
+  const sobrepostas = fontes.flatMap((x) => x.itens.filter((it) => it.classe === "sobrepoe" && !propria(x.tipo, it.pct)));
+  // só sobreposições pequenas (em % E em ha): provável escala da base — o mesmo tom da frase do topo
+  const sobre = sobrepostas.some((it) => !sobreposicaoPequena(it));
+  const pequenas = !sobre && sobrepostas.length > 0;
   const faltou = fontes.some((x) => x.classe === "nao_consultado" || x.classe === "incompleta");
   const tom = sobre ? "perigo" : faltou || comAlgo.length ? "aviso" : "";
-  const selo = sobre ? { texto: "sobrepõe", tom: "perigo" } : faltou ? { texto: "incompleta", tom: "aviso" } : comAlgo.length ? { texto: "encosta", tom: "aviso" } : { texto: "livre", tom: "ok" };
+  const selo = sobre ? { texto: "sobrepõe", tom: "perigo" } : faltou ? { texto: "incompleta", tom: "aviso" } : pequenas ? { texto: "conferir", tom: "aviso" } : comAlgo.length ? { texto: "encosta", tom: "aviso" } : { texto: "livre", tom: "ok" };
   return (
     <Cartao titulo="Restrições" dica={dica} selo={selo} tom={tom}>
       {comAlgo.length > 0 && (
         <ul>
           {comAlgo.flatMap((x) => x.itens.length
             ? x.itens.map((it) => (
-              <li key={`${x.tipo}:${it.id}`} className={propria(x.tipo, it.pct) ? "ident" : it.classe === "sobrepoe" ? "sobre" : "encosta"}>
+              <li key={`${x.tipo}:${it.id}`} className={propria(x.tipo, it.pct) ? "ident" : it.classe === "sobrepoe" && !sobreposicaoPequena(it) ? "sobre" : "encosta"}>
                 <span><b>{x.singular}</b> · {it.nome} — {propria(x.tipo, it.pct) ? `é a própria área (${textoItem(it)}): o CAR é ${a.imovel.car?.tipo === "AST" ? "de assentamento" : "de povo tradicional"}` : textoItem(it)}</span>
                 {it.detalhes.length > 0 && <small>{it.detalhes.join(" · ")}</small>}
               </li>

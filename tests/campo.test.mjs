@@ -642,3 +642,22 @@ test("ajustes: o limite vale ao terminar de digitar, com o porquê", () => {
   assert.equal(conferirAjuste("passoM", "", 5).valor, 5);
   assert.match(conferirAjuste("passoM", "", 5).nota, /de 1 a 100/);
 });
+
+// ---------------------------------------------------------------- sem internet, sessão vencida
+test("sessão: sem internet e com o token vencido, o id vem da sessão gravada no navegador", async () => {
+  const { usuarioDaSessaoGravada } = await import("../src/lib/campo/sessao.ts");
+  const st = (o) => ({ get length() { return Object.keys(o).length; }, key: (i) => Object.keys(o)[i] ?? null, getItem: (k) => (k in o ? o[k] : null) });
+  const vencida = JSON.stringify({ access_token: "x", expires_at: 1, user: { id: "u-123" } });
+  // a chave do cliente
+  assert.equal(usuarioDaSessaoGravada(st({ "sb-api-auth-token": vencida }), "sb-api-auth-token"), "u-123");
+  // sem saber a chave: acha a única sb-*-auth-token
+  assert.equal(usuarioDaSessaoGravada(st({ outra: "1", "sb-api-auth-token": vencida })), "u-123");
+  // usuário guardado à parte (userStorage)
+  assert.equal(usuarioDaSessaoGravada(st({ "sb-api-auth-token-user": JSON.stringify({ user: { id: "u-9" } }) }), "sb-api-auth-token"), "u-9");
+  // duas contas de projetos diferentes: não adivinha
+  assert.equal(usuarioDaSessaoGravada(st({ "sb-a-auth-token": vencida, "sb-b-auth-token": JSON.stringify({ user: { id: "u-2" } }) })), null);
+  // nada gravado, lixo, sem storage
+  assert.equal(usuarioDaSessaoGravada(st({})), null);
+  assert.equal(usuarioDaSessaoGravada(st({ "sb-api-auth-token": "{lixo" })), null);
+  assert.equal(usuarioDaSessaoGravada(null), null);
+});

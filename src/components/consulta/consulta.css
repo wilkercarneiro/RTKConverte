@@ -47,7 +47,8 @@ button.cb-alt.ativo:hover:not(:disabled) { background: var(--floresta); color: #
 .consulta-painel { display: grid; gap: 14px; min-width: 0; container-type: inline-size; }
 @container (min-width: 700px) { .ca-grade { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .consulta-mapa { position: sticky; top: 16px; border-radius: var(--raio-cartao); overflow: hidden; box-shadow: var(--anel); background: #0b1a12; }
-.consulta-mapa > .mapa-interativo { height: calc(var(--vh) - 200px) !important; min-height: 460px; }
+/* o mapa cabe inteiro na janela a partir do sticky (top 16px): a barra do desenho e a legenda ficam à vista */
+.consulta-mapa > .mapa-interativo { height: calc(var(--vh) - 32px) !important; max-height: 900px; min-height: 420px; }
 .consulta-mapa .mapa-indisponivel { background: var(--card); }
 .consulta-mapa.desenhando .maplibregl-canvas, .consulta-mapa.clicavel .maplibregl-canvas { cursor: crosshair; }
 .consulta-mapa .mapa-cert-tela-cheia { left: 10px; top: 10px; }
@@ -64,8 +65,8 @@ button.cb-alt.ativo:hover:not(:disabled) { background: var(--floresta); color: #
 .cm-legenda i { width: 12px; height: 9px; border-radius: 2px; border: 2px solid; background: transparent; }
 .cm-legenda i.ponto { width: 9px; height: 9px; border-radius: 50%; border-width: 1.5px; }
 
-/* barra do desenho, por cima do mapa */
-.cm-desenho { position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); z-index: 3; display: flex; gap: 8px; align-items: center;
+/* barra do desenho, por cima do mapa — NO ALTO (logo abaixo da dica), à vista na primeira dobra e longe da legenda */
+.cm-desenho { position: absolute; left: 50%; top: 48px; bottom: auto; transform: translateX(-50%); z-index: 3; display: flex; gap: 8px; align-items: center;
   background: var(--card); border-radius: 14px; padding: 8px 10px; box-shadow: var(--anel-alto); white-space: nowrap; }
 .cm-desenho .cm-conta { font-size: 12.5px; color: var(--texto-2); padding: 0 6px; font-variant-numeric: tabular-nums; }
 .cm-desenho button { height: 34px; }
@@ -241,3 +242,6 @@ button.cr-copiar { margin-left: 8px; font: 500 12px var(--fonte); color: var(--p
 button.cr-copiar:hover:not(:disabled) { text-decoration: underline; color: var(--floresta); background: none; }
 /* laboratório: faixa que diz de onde vêm os dados */
 .lab-faixa { font-size: 12.5px; color: var(--alerta-escuro); background: var(--alerta-claro); border-radius: 10px; padding: 7px 12px; }
+
+/* Imagem por data: a pílula "Imagem: atual" fica ao lado do botão de tela cheia (canto 10,10) */
+.consulta-mapa .imgdata-controle, .consulta-mapa .imgdata-cortina-barra { left: 50px; }

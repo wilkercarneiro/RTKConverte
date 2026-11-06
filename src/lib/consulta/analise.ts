@@ -5,7 +5,7 @@
 import { FONTE_POR_TIPO, minusculas, resumoRestricoes, textoFonte, textoItem } from "../restricoes.ts";
 import type { ResultadoRestricoes } from "../restricoes.ts";
 import type { FeatureParcela, Sobreposicao } from "../sigef.ts";
-import { PCT_PEQUENA } from "../restricoes.ts";
+import { sobreposicaoPequena } from "../restricoes.ts";
 import type { Bioma, Clima, Municipio, Solo } from "./ambiente.ts";
 import type { FocosDoImovel } from "./focos.ts";
 import { textoFocos } from "./focos.ts";
@@ -106,7 +106,7 @@ const artigo = (singular: string) => (/^(Terra|Unidade|Área|Faixa)/.test(singul
 
 export function fraseDaAnalise(a: Analise): Frase {
   const carregando = CHAVES_FONTES.filter((k) => a[k].estado === "carregando").length;
-  const sobre: { texto: string; area: number }[] = [];
+  const sobre: { texto: string; area: number; pequena?: boolean; curto?: string }[] = [];
   const identificacao: string[] = [];
   const avisos: string[] = [];
   const pendentes: string[] = [];
@@ -126,8 +126,9 @@ export function fraseDaAnalise(a: Analise): Frase {
             continue;
           }
           const quanto = it.pct >= 99.995 ? "no imóvel inteiro" : it.areaM2 > 0 ? `em ${fmtAreaCurta(it.areaM2)}` : "com ponto cadastrado dentro";
-          if (it.areaM2 > 0 && it.pct < PCT_PEQUENA) avisos.push(`A sobreposição com ${minusculas(f.singular)} ${it.nome} é pequena (${fmtNum(it.pct, 2)}% da área): pode ser só a escala da base pública — confira em campo`);
-          sobre.push({ texto: `${artigo(f.singular)} ${minusculas(f.singular)} ${it.nome} ${quanto}`, area: it.areaM2 });
+          const pequena = sobreposicaoPequena(it);
+          if (pequena) avisos.push(`A sobreposição com ${minusculas(f.singular)} ${it.nome} é pequena (${fmtAreaCurta(it.areaM2)}, ${fmtNum(it.pct, 2)}% da área): pode ser só a escala da base pública — confira em campo`);
+          sobre.push({ texto: `${artigo(f.singular)} ${minusculas(f.singular)} ${it.nome} ${quanto}`, area: it.areaM2, pequena, curto: `${minusculas(f.singular)} ${it.nome} (${fmtAreaCurta(it.areaM2)}, provável diferença de escala)` });
         } else {
           avisos.push(`Encosta em ${minusculas(f.singular)} ${it.nome} (a ${fmtDist(it.distanciaM)})`);
         }
@@ -162,7 +163,11 @@ export function fraseDaAnalise(a: Analise): Frase {
   const detalhe = carregando ? `consultando ${carregando} ${carregando === 1 ? "fonte" : "fontes"}…` : null;
 
   let texto: string, tom: Tom;
-  if (ordenadas.length) {
+  if (ordenadas.length && ordenadas.every((x) => x.pequena)) {
+    // só sobreposições pequenas em % E em área: provável escala da base, não restrição afirmada
+    texto = `Encosta ${ordenadas.length === 1 ? `em ${ordenadas[0].curto}` : `em ${ordenadas.length} áreas, todas com sobreposição pequena (provável diferença de escala)`}`;
+    tom = "aviso";
+  } else if (ordenadas.length) {
     texto = `Sobrepõe ${ordenadas[0].texto}${ordenadas.length > 1 ? ` e mais ${ordenadas.length - 1} ${ordenadas.length === 2 ? "área" : "áreas"}` : ""}`;
     tom = "perigo";
   } else if (carregando && a.restricoes.estado === "carregando") {

@@ -263,3 +263,13 @@ button.campo-item:hover:not(:disabled) { border-color: var(--primaria); color: v
 .campo-como summary { cursor: pointer; color: var(--texto-2); }
 .campo-como p { margin: 6px 0 0; line-height: 1.45; }
 @media (max-width: 900px) { .campo-so-largo { display: none; } }
+
+/* Imagem por data (SeletorImagemData) no mapa do campo: o seletor se pendura no
+   contêiner do mapa; aqui ele mora no pé, à esquerda (o topo é do selo do GPS e
+   dos botões), e a lista de datas abre para cima. A cortina de comparação idem. */
+.campo-mapa .imgdata-controle { top: 120px; bottom: 40px; right: 56px; flex-direction: column-reverse; justify-content: flex-start; }
+.campo-mapa .imgdata-cortina-barra { top: auto; bottom: 40px; right: 10px; }
+@media (max-width: 900px) {
+  .campo-mapa .imgdata-controle { top: 170px; bottom: 48px; }
+  .campo-mapa .imgdata-cortina-barra { bottom: 48px; }
+}

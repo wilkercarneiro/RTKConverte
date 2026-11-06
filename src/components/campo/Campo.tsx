@@ -37,6 +37,8 @@ import { avisar, confirmar, Dica, EstadoErro, EstadoVazio, Esqueleto, Gaveta, Ro
 import { MapaCampo } from "./MapaCampo";
 import type { ControleImagemProps } from "./MapaCampo";
 import { MenuBaixar } from "./MenuBaixar";
+import { SeletorImagemData } from "../imagem/SeletorImagemData";
+import { zoomParaExtensao } from "../../lib/imagem_data";
 import "./campo.css";
 
 export interface PropsCampo {
@@ -52,11 +54,11 @@ export interface PropsCampo {
   /** abre direto nesta medição (laboratório) */
   abrir?: Medicao;
   /**
-   * Imagem por data (frente 3): desenha o SeletorImagemData por cima do mapa.
-   * O integrador liga assim:
-   *   <Campo ir={ir} controleImagem={(p) => <SeletorImagemData mapa={p.mapa} centro={p.centro} />} />
+   * Imagem por data (frente 3): o que desenhar por cima do mapa para trocar a
+   * foto de satélite pela de outra data. Padrão: o SeletorImagemData, já ligado
+   * (centro e zoom da medição). `null` tira o controle.
    */
-  controleImagem?: (p: ControleImagemProps) => ReactNode;
+  controleImagem?: ((p: ControleImagemProps) => ReactNode) | null;
 }
 
 type EstadoGps =
@@ -69,6 +71,11 @@ type EstadoEnvio = "ocioso" | "enviando" | "enviado" | TipoErroConta;
 
 const CHAVE_OPCOES = "vertces.campo.opcoes";
 export const AVISO_GPS = "GPS do celular: ±3 a 10 m. Serve para croqui, orçamento e CAR, não para georreferenciamento SIGEF.";
+
+/** Imagem por data no mapa do campo: as datas são procuradas no lugar da medição. */
+function controleImagemPadrao(p: ControleImagemProps): ReactNode {
+  return <SeletorImagemData mapa={p.mapa} centro={p.centro} zoom={p.zoom} />;
+}
 
 function armazemPadrao(): Armazem | null {
   try { return typeof localStorage === "undefined" ? null : localStorage; } catch { return null; }
@@ -584,7 +591,7 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
             if (!m) return;
             mudar(alterar(m, { vertices: m.vertices.map((v, k) => (k === i ? { ...v, lon: p[0], lat: p[1], modo: "mao" as const, precisao: null } : v)) }));
           }}
-          enquadrar={enquadrar} voarPara={voarPara} controleImagem={props.controleImagem}>
+          enquadrar={enquadrar} voarPara={voarPara} controleImagem={props.controleImagem === undefined ? controleImagemPadrao : props.controleImagem ?? undefined}>
           <div className="campo-topo-linha">
             <SeloGps gps={gps} leitura={leitura} descansa={gpsDescansa && gpsLigado} />
             <span className={`campo-salvo ${statusEnvio.tom}`} title={statusEnvio.dica}>
@@ -847,12 +854,25 @@ function PainelControle(p: PropsPainel) {
 
   // 3) começo: nada medido ainda
   if (!m || n === 0) {
+    // No computador do escritório (sem toque) o GPS fica desligado: lá o normal é
+    // chegar ao imóvel pela coordenada e desenhar. Se ligou e o navegador não deu a
+    // posição (POSITION_UNAVAILABLE), é o computador sem GPS, não "falta céu aberto".
+    const computadorSemPosicao = !ehCelular() && p.gps.tipo === "erro" && p.gps.erro.tipo === "sem-sinal" && !p.leitura;
+    const escritorio = !ehCelular() && !semGps && (!p.gpsLigado || computadorSemPosicao);
+    const ondeFica = semGps || escritorio;
+    const textoOnde = semGps && p.gps.tipo === "erro"
+      ? p.gps.erro.tipo === "sem-permissao"
+        ? "A localização está bloqueada neste navegador. Cole a coordenada e desenhe o contorno tocando no mapa."
+        : "Este aparelho não tem GPS. Cole a coordenada ou o link do Google Maps: o mapa vai até lá e você desenha o contorno tocando nos cantos."
+      : computadorSemPosicao
+        ? "Este computador não informou a posição (computador não tem GPS). Cole a coordenada ou o link do Google Maps: o mapa vai até lá e você desenha o contorno clicando nos cantos."
+        : "No computador, comece pelo lugar: cole a coordenada (decimal, GMS ou UTM) ou o link do Google Maps. O mapa vai até lá e você desenha o contorno clicando nos cantos.";
     return (
       <div className="campo-painel campo-comeco" role="region" aria-label="Começar a medir">
-        {p.gps.tipo === "erro" && !semGps && <p className="campo-alerta" role="alert">{p.gps.erro.mensagem}</p>}
+        {p.gps.tipo === "erro" && !semGps && !escritorio && <p className="campo-alerta" role="alert">{p.gps.erro.mensagem}</p>}
         {marcandoEl || pontoRuimEl || (
           <>
-            {!semGps && !p.desenhando && (
+            {!ondeFica && !p.desenhando && (
               <div className="campo-acoes-linha">
                 <button type="button" className="principal campo-btn-grande" onClick={p.onCaminhar}><Ic d={ICO.andar} />Caminhar</button>
                 <button type="button" className="campo-btn-grande" onClick={p.onMarcar}><Ic d={ICO.ponto} />Marcar ponto aqui</button>
@@ -868,21 +888,18 @@ function PainelControle(p: PropsPainel) {
                   {!p.leitura && <IrPara onIr={p.onIrPara} />}
                 </>
               )
-              : semGps && p.gps.tipo === "erro"
+              : ondeFica
                 ? (
                   // sem GPS (o computador do escritório): primeiro chegar ao imóvel, depois desenhar
                   <div className="campo-onde">
                     <b className="campo-pergunta">Onde fica o imóvel?</b>
-                    <span className="campo-sub">
-                      {p.gps.erro.tipo === "sem-permissao"
-                        ? "A localização está bloqueada neste navegador. Cole a coordenada e desenhe o contorno tocando no mapa."
-                        : "Este aparelho não tem GPS. Cole a coordenada ou o link do Google Maps: o mapa vai até lá e você desenha o contorno tocando nos cantos."}
-                    </span>
+                    <span className="campo-sub">{textoOnde}</span>
                     <IrPara onIr={(lugar) => { p.onIrPara(lugar); p.onDesenhar(); }} principal focar={!ehCelular()} />
                     <div className="campo-acoes-rodape">
                       <button type="button" className="fantasma" onClick={p.onDesenhar}><Ic d={ICO.mao} tam={16} />O mapa já está no imóvel: desenhar</button>
+                      {escritorio && !p.gpsLigado && <button type="button" className="fantasma" onClick={p.onLigarGps}>Usar a localização deste computador</button>}
                     </div>
-                    {p.gps.erro.tipo === "sem-permissao" && (
+                    {p.gps.tipo === "erro" && p.gps.erro.tipo === "sem-permissao" && (
                       <details className="campo-como">
                         <summary>Como liberar a localização</summary>
                         <p>{p.gps.erro.mensagem}</p>
@@ -896,7 +913,7 @@ function PainelControle(p: PropsPainel) {
                     {!p.gpsLigado && <button type="button" className="fantasma" onClick={p.onLigarGps}>Usar o GPS deste aparelho</button>}
                   </div>
                 )}
-            {!p.desenhando && !semGps && (
+            {!p.desenhando && !ondeFica && (
               <p className="campo-sub campo-explica">
                 <b>Caminhar</b> põe um vértice sozinho a cada {p.opcoes.passoM} m ou a cada curva. <b>Marcar ponto</b>: pare no canto e espere {p.opcoes.segundosMarcar} s.
               </p>

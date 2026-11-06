@@ -140,8 +140,19 @@ export interface OpcoesRestricoes {
 
 /** Sobreposição menor que isto é ruído do recorte (m²). */
 export const AREA_MINIMA_M2 = 1;
-/** Abaixo deste % a sobreposição pode ser só a diferença de escala da base pública. */
+/** Abaixo deste % a sobreposição pode ser só a diferença de escala da base pública… */
 export const PCT_PEQUENA = 0.5;
+/**
+ * …mas só se também for pequena em área. Numa fazenda de 20.000 ha, 80 ha de Terra
+ * Indígena são 0,4% e NÃO são escala: o erro de uma base de 1:100.000 é uma faixa
+ * de dezenas de metros ao longo da divisa, poucos hectares. Acima de 3 ha é restrição.
+ */
+export const AREA_PEQUENA_M2 = 30_000;
+
+/** Sobreposição que pode ser só a diferença de escala da base pública (pequena em % E em área). */
+export function sobreposicaoPequena(it: { pct: number; areaM2: number }): boolean {
+  return it.areaM2 > 0 && it.pct < PCT_PEQUENA && it.areaM2 <= AREA_PEQUENA_M2;
+}
 
 // ---------------------------------------------------------------------------
 // Leitura das respostas
@@ -375,7 +386,8 @@ export const FONTES: FonteRestricao[] = [
     ],
   },
   {
-    tipo: "assentamento", rotulo: "Assentamentos da reforma agrária", singular: "Assentamento", orgao: "INCRA", cor: "#EAB308",
+    // fúcsia, não amarelo: no mapa a parcela certificada do SIGEF já é amarela (MapaInterativo)
+    tipo: "assentamento", rotulo: "Assentamentos da reforma agrária", singular: "Assentamento", orgao: "INCRA", cor: "#D946EF",
     nota: "Perímetros dos projetos de assentamento do INCRA (SIPRA).",
     servidores: [
       servidorArcgis("IBAMA/PAMGIA — base sincronizada do INCRA", `${PAMGIA_SYNC}/lim_assentamentos_incra_a/FeatureServer/0`,
@@ -760,7 +772,7 @@ export function textoItem(it: ItemRestricao): string {
   if (it.classe === "encosta") return `a ${fmtM(it.distanciaM)} do perímetro, sem sobreposição`;
   if (it.pontos.length && it.areaM2 === 0) return "ponto cadastrado dentro do imóvel";
   if (it.pct >= 99.995) return `o imóvel inteiro está dentro (${fmtHa(it.areaM2)})`;
-  const pequena = it.pct < PCT_PEQUENA ? " — pequena: pode ser só a diferença de escala da base pública; confira em campo" : "";
+  const pequena = sobreposicaoPequena(it) ? " — pequena: pode ser só a diferença de escala da base pública; confira em campo" : "";
   return `sobrepõe ${fmtHa(it.areaM2)} (${fmtPct(it.pct)} do imóvel)${pequena}`;
 }
 

@@ -17,6 +17,7 @@ import { Campo } from "./Campo";
 import { rotaParaHash } from "../../lib/rota";
 import type { Rota } from "../../lib/rota";
 import { pegarAreaTransferida } from "../../lib/area_transferida";
+import { laboratorioDe } from "../../lib/laboratorio_destino";
 import { CHAVE_APARELHO, gravarAparelho, guardarMedicao, novoId } from "../../lib/campo/aparelho.ts";
 import type { Armazem } from "../../lib/campo/aparelho.ts";
 import { criarSimulador, fonteComErro } from "../../lib/campo/gps.ts";
@@ -115,7 +116,10 @@ export function LaboratorioCampo() {
   );
 
   function ir(r: Rota) {
-    // o CAR e a Consulta recebem a área pelo mesmo canal (lib/area_transferida.ts)
+    // o CAR e a Consulta recebem a área pelo mesmo canal (lib/area_transferida.ts):
+    // no laboratório, segue para o laboratório da tela de destino, com a área
+    const destino = laboratorioDe(r);
+    if (destino) { location.hash = destino; location.reload(); return; }
     const a = pegarAreaTransferida();
     avisar("ok", `Laboratório: iria para ${rotaParaHash(r)}${a ? ` com "${a.nome}" (${a.perimetro.length} vértices · ${a.origem})` : ""}.`);
     if (a) console.info("[lab campo] área levada:", a);

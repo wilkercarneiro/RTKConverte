@@ -14,6 +14,7 @@
 //   #/lab/consulta?q=-12.43,-41.25          ponto sem imóvel (nada encontrado)
 //   #/lab/consulta?estado=historico-erro    as consultas recentes não carregam
 //   sem-casca: a tela pura, sem o menu do sistema
+import { laboratorioDe } from "../../lib/laboratorio_destino";
 import { useMemo } from "react";
 import { rotaParaHash } from "../../lib/rota";
 import { CascaLab } from "../CascaLab";
@@ -27,7 +28,7 @@ export function LaboratorioConsulta() {
   const fontes = useMemo(() => fontesDoLaboratorio(estado), [estado]);
   return (
     <CascaLab>
-      <ConsultaImovel ir={(r) => { location.hash = rotaParaHash(r); }} fontes={fontes} inicial={q.get("q") ?? undefined} atualizarEndereco={false} />
+      <ConsultaImovel ir={(r) => { const lab = laboratorioDe(r); location.hash = lab ?? rotaParaHash(r); if (lab) location.reload(); }} fontes={fontes} inicial={q.get("q") ?? undefined} atualizarEndereco={false} />
     </CascaLab>
   );
 }

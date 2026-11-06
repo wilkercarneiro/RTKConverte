@@ -74,7 +74,9 @@ function estilo(): StyleSpecification {
       esri: {
         type: "raster",
         tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-        tileSize: 256, maxzoom: 19, attribution: ATRIBUICAO,
+        // 18, não 19: em boa parte do interior o nível 19 da Esri é o ladrilho cinza "Map data not
+        // yet available"; acima de 18 o mapa amplia o 18 (o Medir no campo achou isso no tilemap)
+        tileSize: 256, maxzoom: 18, attribution: ATRIBUICAO,
       },
       relevo: {
         type: "raster-dem",

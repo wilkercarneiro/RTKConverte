@@ -421,7 +421,9 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
       nome: im.fonte === "car" ? (mun?.nome ? `Imóvel em ${mun.nome}` : "Imóvel") : im.titulo,
       perimetro: anel, nomes: im.aneis.length === 1 ? im.nomes : undefined,
       origem: im.fonte === "car" ? `CAR ${im.codigo} (declarado no SICAR${im.situacao ? `, ${im.situacao.toLowerCase()}` : ""})`
-        : im.fonte === "sigef" ? `parcela certificada ${im.codigo} (SIGEF)` : `${im.titulo} (Consultar imóvel)`,
+        : im.fonte === "sigef" ? `parcela certificada ${im.codigo} (SIGEF)`
+          // a medição de campo segue dizendo o que é (GPS do celular, a precisão): o CAR mostra isso
+          : im.fonte === "campo" && im.situacao ? `${im.situacao}, consultada no Vertces` : `${im.titulo} (Consultar imóvel)`,
       uf: mun?.uf ?? im.uf ?? null, municipio: mun?.nome ?? im.municipio ?? null,
     });
     if (im.aneis.length > 1) avisar("alerta", `A área tem ${im.aneis.length} partes: o CAR leva a maior.`);
@@ -448,6 +450,12 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     const t = resumoEmTexto(analise);
     (navigator.clipboard?.writeText(t) ?? Promise.reject(new Error("sem área de transferência")))
       .then(() => avisar("ok", "Resumo copiado: cole no WhatsApp ou no e-mail do cliente."), () => avisar("erro", "O navegador não deixou copiar."));
+  }
+
+  // ao começar o desenho, o mapa inteiro (com a barra Desfazer / Fechar a área) entra na vista
+  const mapaCaixaRef = useRef<HTMLDivElement>(null);
+  function rolarMapaParaVista() {
+    requestAnimationFrame(() => { try { mapaCaixaRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch { /* navegador antigo */ } });
   }
 
   // ------------------------------------------------------------- ao abrir
@@ -480,11 +488,11 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     const parcelas: FeatureParcela[] = outros.filter((i) => i.fonte === "sigef").map(parcelaDoMapa);
     const sig = analise?.sigef.estado === "ok" ? analise.sigef.dados : null;
     if (sig?.parcelas) parcelas.push(...sig.parcelas.filter((p) => p.properties.codigo !== sel?.codigo && !parcelas.some((q) => q.properties.codigo === p.properties.codigo)));
-    // a restrição que é a própria área (CAR de assentamento sobre o PA) fica só no contorno, sem o tom forte
+    // a restrição que é a própria área (CAR de assentamento sobre o PA) não pinta o mapa: o imóvel
+    // inteiro colorido parece todo sobreposto. Ela já está escrita na identificação, no painel.
     const camadas: CamadaRestricao[] = analise?.restricoes.estado === "ok"
-      ? analise.restricoes.dados.fontes.flatMap((f) => f.itens.map((i) => ({
-        tipo: f.tipo, cor: f.cor, nome: i.nome, rotulo: f.singular, geometria: i.geometria,
-        sobreposta: ehPropriaArea(analise.imovel, f.tipo, i.pct) ? null : i.sobreposta, pontos: i.pontos,
+      ? analise.restricoes.dados.fontes.flatMap((f) => f.itens.filter((i) => !ehPropriaArea(analise.imovel, f.tipo, i.pct)).map((i) => ({
+        tipo: f.tipo, cor: f.cor, nome: i.nome, rotulo: f.singular, geometria: i.geometria, sobreposta: i.sobreposta, pontos: i.pontos,
       })))
       : [];
     if (analise?.car.estado === "ok") {
@@ -546,7 +554,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     <div className="pagina consulta" {...soltar}>
       <CabecalhoPagina olho="Ferramentas" titulo={<>Consultar imóvel<Dica>CAR, SIGEF, restrições (TI, UC, assentamento, quilombola, embargo, fronteira, área militar, sítio arqueológico), focos de queimada, bioma, solo e chuva de qualquer lugar — sem abrir serviço e sem gastar crédito. O resultado vira serviço de CAR com um clique e sai em PDF, KML, SHP, DXF…</Dica></>} />
       <BuscaConsulta texto={texto} onTexto={setTexto} onConsultar={(e, t) => void consultar(e, t)} onArquivo={(f) => void abrirArquivo(f)}
-        desenhando={!!desenho} onDesenhar={() => { if (desenho) setDesenho(null); else { setPontoPend(null); setDesenho([]); avisar("ok", "Clique no mapa para marcar os vértices da área."); } }}
+        desenhando={!!desenho} onDesenhar={() => { if (desenho) setDesenho(null); else { setPontoPend(null); setDesenho([]); rolarMapaParaVista(); } }}
         onLocalizacao={ondeEstou} ocupado={ocupado} foco={busca.fase === "ocioso"} />
 
       <div className="consulta-corpo">
@@ -563,7 +571,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
           {busca.fase === "resultado" && (
             <>
               <Resultados busca={busca} selId={selId} onSelecionar={selecionar}
-                onDesenhar={() => { setDesenho([]); avisar("ok", "Clique no mapa para marcar os vértices da área."); }}
+                onDesenhar={() => { setDesenho([]); rolarMapaParaVista(); }}
                 onEntorno={analisarEntorno} onTentar={() => consultarTexto(busca.entrada.texto)} />
               {imAtual && (
                 <div className="ca-acoes">
@@ -585,7 +593,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
           )}
         </div>
 
-        <div className={`consulta-mapa${desenho ? " desenhando" : " clicavel"}`} data-tela-cheia="">
+        <div ref={mapaCaixaRef} className={`consulta-mapa${desenho ? " desenhando" : " clicavel"}`} data-tela-cheia="">
           <BotaoTelaCheia className="mapa-cert-tela-cheia" />
           <MapaInterativo aneis={mapa.aneis} pontos={mapa.pontos} parcelas={mapa.parcelas} destaques={mapa.destaques} restricoes={mapa.camadas}
             sobreposicoes={mapa.sobreposicoes} altura={560} aoClicar={aoClicarNoMapa} semMapa="a consulta, a análise e o PDF funcionam sem ele" />

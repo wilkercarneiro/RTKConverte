@@ -23,7 +23,7 @@ import { analiseVazia, compactarAnalise, dadosParaLaudo, fraseDaAnalise, resulta
 import { dadosDoPdf, resumoEmTexto, restricoesVazias } from "../src/lib/consulta/relatorio.ts";
 import { sigefDaArea } from "../src/lib/consulta/sigef_imovel.ts";
 import { fontesQueEsperavamUf, montarTarefas } from "../src/lib/consulta/tarefas.ts";
-import { consultarRestricoes } from "../src/lib/restricoes.ts";
+import { consultarRestricoes, sobreposicaoPequena, textoItem } from "../src/lib/restricoes.ts";
 import { gerarPdfRestricoes } from "../src/lib/restricoes_pdf.ts";
 import { FOCOS_POR_PAGINA, HOSTS_PONTE, PAGINAS_FOCOS, buscarFocos, camadasFocos, dadosDoLaudo, lerFocos, limparLaudo, montarPedidoLaudo, paginaCheia, urlFocos, validarCaixa, validarDesde, escreverLaudo } from "../supabase/functions/analise-imovel/logica.ts";
 
@@ -189,15 +189,32 @@ async function analiseDeLencois({ falhar = [] } = {}) {
   return a;
 }
 
-test("frase: o CAR de assentamento sobre o próprio PA é identificação; o outro PA é sobreposição", async () => {
+test("frase: o CAR de assentamento sobre o próprio PA é identificação; o outro PA, pequeno em % e em ha, é aviso", async () => {
   const a = await analiseDeLencois();
   const f = fraseDaAnalise(a);
-  assert.equal(f.tom, "perigo");
-  assert.equal(f.texto, "Sobrepõe o assentamento PA PIABAS em 2,07 ha");
+  // 2,07 ha e 0,28%: provável escala da base — o topo não grita "Sobrepõe" em vermelho
+  assert.equal(f.tom, "aviso");
+  assert.equal(f.texto, "Encosta em assentamento PA PIABAS (2,07 ha, provável diferença de escala)");
+  assert.deepEqual(f.sobreposicoes, ["o assentamento PA PIABAS em 2,07 ha"]);
   assert.match(f.identificacao[0], /PA NOVO HORIZONTE \(98% da área\)/);
-  assert.ok(f.avisos.some((x) => /pequena \(0,28%/.test(x)));
+  assert.ok(f.avisos.some((x) => /pequena \(2,07 ha, 0,28%/.test(x)));
   assert.equal(f.avisos.filter((x) => /outro CAR/.test(x)).length, 3);
   assert.equal(f.pendentes.length, 0);
+});
+
+test("frase: sobreposição pequena em % mas grande em hectares é restrição (fazenda de 20.000 ha × 80 ha de TI)", async () => {
+  const a = await analiseDeLencois();
+  const r = a.restricoes.dados;
+  const pa = r.fontes.find((f) => f.itens.some((i) => i.classe === "sobrepoe" && /PIABAS/.test(i.nome)));
+  const it = pa.itens.find((i) => /PIABAS/.test(i.nome));
+  it.areaM2 = 800_000; it.pct = 0.4; // 80 ha, 0,4% de 20.000 ha
+  const f = fraseDaAnalise(a);
+  assert.equal(f.tom, "perigo");
+  assert.match(f.texto, /^Sobrepõe o assentamento PA PIABAS em 80/);
+  assert.ok(!f.avisos.some((x) => /pequena/.test(x)));
+  assert.ok(!/pequena/.test(textoItem(it)));
+  assert.equal(sobreposicaoPequena({ pct: 0.4, areaM2: 800_000 }), false);
+  assert.equal(sobreposicaoPequena({ pct: 0.28, areaM2: 20_700 }), true);
 });
 
 test("frase: fonte fora do ar nunca vira 'nenhuma restrição' verde", async () => {
