@@ -35,6 +35,12 @@ export function motivoDaFalhaDoMapa(e: unknown): string {
 
 export const ATRIBUICAO = "© AWS Terrain Tiles | © Esri World Imagery";
 
+/** O que estava debaixo do clique: a parcela do SIGEF, o CAR em destaque ou o pedaço de CAR sobreposto. */
+export interface AlvoClique { tipo: "sigef" | "car"; codigo: string; nome: string | null; situacao?: string | null }
+
+/** O clique no mapa, além do lugar: o zoom da vista e o vizinho debaixo do dedo (se houver). */
+export interface InfoClique { zoom: number; alvo: AlvoClique | null }
+
 export interface PontoMapa {
   lonlat: LonLat;
   rotulo: string;
@@ -62,7 +68,9 @@ interface Props {
   /** o que o usuário pode usar no lugar, quando o mapa não abre (ex.: "use Satélite ou Esquema, acima") */
   semMapa?: string;
   /** clique no mapa (sem arrastar), em lon/lat — a Consultar imóvel consulta o ponto ou desenha */
-  aoClicar?: (lonlat: LonLat) => void;
+  aoClicar?: (lonlat: LonLat, info: InfoClique) => void;
+  /** a vista mudou (fim do arraste/zoom): centro e zoom — a Consulta não deixa marcar vértice na escala do Brasil */
+  aoMudarVista?: (vista: { centro: LonLat; zoom: number }) => void;
   /** leva o mapa a um lugar (a Consulta, antes de desenhar: "Onde fica o imóvel?"); troque a `chave` para ir de novo */
   irPara?: { lonlat: LonLat; zoom?: number; chave: string | number } | null;
 }
@@ -233,8 +241,25 @@ export function MapaInterativo(props: Props) {
       mapa.on("mousemove", camada, mostrarRestricao);
       mapa.on("mouseleave", camada, esconder);
     }
-    mapa.on("click", (e) => propsRef.current.aoClicar?.([e.lngLat.lng, e.lngLat.lat]));
-    mapa.on("load", () => { prontoRef.current = true; aplicar(); });
+    mapa.on("click", (e) => {
+      if (!propsRef.current.aoClicar) return;
+      // o vizinho debaixo do clique (o de cima primeiro): parcela do SIGEF, CAR em destaque, pedaço de CAR sobreposto
+      let alvo: AlvoClique | null = null;
+      try {
+        const camadas = ["destaques-fill", "parcelas-fill", "restricoes-sobre-fill"].filter((c) => mapa.getLayer(c));
+        for (const f of mapa.queryRenderedFeatures(e.point, { layers: camadas })) {
+          const p = (f.properties ?? {}) as Record<string, string | null>;
+          if (f.layer.id === "parcelas-fill" && p.codigo) { alvo = { tipo: "sigef", codigo: String(p.codigo), nome: p.nome ?? null, situacao: p.situacao ?? null }; break; }
+          if (f.layer.id === "destaques-fill" && p.codigo && p.codigo !== "ponto") { alvo = { tipo: "car", codigo: String(p.codigo), nome: p.nome ?? null }; break; }
+          const car = f.layer.id === "restricoes-sobre-fill" && p.tipo === "car" ? /^CAR\s+(\S+)/.exec(String(p.nome ?? "")) : null;
+          if (car) { alvo = { tipo: "car", codigo: car[1], nome: null }; break; }
+        }
+      } catch { /* camada ainda não carregada: só o ponto */ }
+      propsRef.current.aoClicar([e.lngLat.lng, e.lngLat.lat], { zoom: mapa.getZoom(), alvo });
+    });
+    const vista = () => { const c = mapa.getCenter(); propsRef.current.aoMudarVista?.({ centro: [c.lng, c.lat], zoom: mapa.getZoom() }); };
+    mapa.on("moveend", vista);
+    mapa.on("load", () => { prontoRef.current = true; aplicar(); vista(); });
     mapa.on("zoom", () => ajustarRotulos());
     mapaRef.current = mapa;
     setMapaVivo(mapa);
@@ -279,7 +304,11 @@ export function MapaInterativo(props: Props) {
       type: "FeatureCollection",
       features: (sobreposicoes ?? []).map((s) => ({ type: "Feature", properties: { codigo: s.codigo }, geometry: s.geometria })),
     });
-    const fcDest = poligonos((destaques ?? []).map((d) => d.anel));
+    // cada destaque leva o código e o nome: o clique sabe qual CAR vizinho foi tocado
+    const fcDest: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: (destaques ?? []).flatMap((d) => poligonos([d.anel], { codigo: d.codigo, nome: d.nome }).features),
+    };
     (mapa.getSource("destaques") as GeoJSONSource).setData(fcDest);
     const restricoes = propsRef.current.restricoes ?? [];
     const props = (c: CamadaRestricao) => ({ cor: c.cor, nome: c.nome, rotulo: c.rotulo, tipo: c.tipo });

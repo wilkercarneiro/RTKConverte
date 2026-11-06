@@ -264,3 +264,48 @@ button.cr-copiar:hover:not(:disabled) { text-decoration: underline; color: var(-
 
 /* Imagem por data: a pílula "Imagem: atual" fica ao lado do botão de tela cheia (canto 10,10) */
 .consulta-mapa .imgdata-controle, .consulta-mapa .imgdata-cortina-barra { left: 50px; }
+
+/* ---------- acabamento 1 (06/11) ---------- */
+/* rótulos curtos dos botões da busca: só abaixo de 400 px */
+.cb-alt .rot-curto { display: none; }
+/* a área que veio de fora da caixa (Medir no campo, arquivo): na linha de situação, com ✕ */
+.cb-entendi.cb-origem .cb-origem-texto { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cb-entendi.cb-origem .cb-origem-texto b { font-weight: 700; }
+button.cb-origem-limpar { flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--texto-3); font-size: 13px; }
+button.cb-origem-limpar:hover:not(:disabled) { background: #EEF2F0; color: var(--texto); }
+/* quando a linha de situação tem conteúdo, ela não deixa vão: a busca fica justa */
+.cb:has(.cb-origem) { padding-bottom: 12px; }
+
+/* "← Voltar para …" (depois de consultar um vizinho) */
+button.cr-voltar { justify-self: start; font-size: 13px; font-weight: 600; padding: 0; height: auto; }
+
+/* Copiar: resumo, confrontantes e link — a mesma ação, numa linha */
+.ca-copiar-linha { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: -6px; }
+.ca-copiar-rot { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--texto-3); margin-right: 2px; }
+
+/* balão do vizinho tocado no mapa */
+.cm-vizinho .cm-conta { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.cm-vizinho .cm-conta b { color: var(--texto); font-size: 13px; }
+.cm-vizinho .cm-conta small { color: var(--texto-3); }
+
+@media (max-width: 600px) {
+  /* "Onde fica o imóvel?" no pé do mapa, na largura toda: em cima ficam o zoom e a bússola (antes um pedaço deles aparecia à direita) */
+  .cm-desenho.cm-onde { top: auto; bottom: 30px; left: 8px; right: 8px; width: auto; transform: none; }
+  /* os três botões sem um sozinho na linha: Onde estou + Cancelar em cima, "Desenhar onde o mapa estiver" na largura toda */
+  .cm-onde-acoes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cm-onde-acoes button:nth-child(2) { grid-column: 1 / -1; order: 3; }
+  /* a linha de situação vazia não ocupa uma faixa entre "Consultar" e os botões */
+  .cb-entendi.vazio { display: none; }
+  .cb:has(.cb-origem) .cb-pe { gap: 8px; }
+  button.cb-alt { height: 36px; white-space: nowrap; overflow: hidden; }
+}
+@media (max-width: 399px) {
+  .cb-alt .rot-longo { display: none; }
+  .cb-alt .rot-curto { display: inline; }
+  button.cb-alt { height: 36px; white-space: nowrap; }
+}
+/* fora do cartão (no fundo da página), os botões de copiar precisam de borda para parecer botão */
+.ca-copiar-linha button.cb-alt { background: var(--card); border: 1px solid var(--borda); height: 30px; }
+.ca-copiar-linha button.cb-alt:hover:not(:disabled) { background: var(--primaria-clara); border-color: var(--primaria); color: var(--floresta); }
+/* a instrução do mapa fica à direita da pílula "Imagem…" (canto de cima à esquerda), sem encostar nela */
+@media (min-width: 601px) { .consulta-mapa .cm-dica { left: calc(50% + 70px); max-width: calc(100% - 340px); } }

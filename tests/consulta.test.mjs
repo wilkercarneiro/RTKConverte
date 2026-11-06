@@ -20,7 +20,7 @@ import { classificarFocos, pedidoFocos, textoFocos } from "../src/lib/consulta/f
 import { areaDoArquivo } from "../src/lib/consulta/arquivo.ts";
 import { autointersecta, caixaComMargem, centroDe, medir, textoCruzamento } from "../src/lib/consulta/geometria.ts";
 import { analiseVazia, compactarAnalise, dadosParaLaudo, fraseDaAnalise, resultadoParaGravar } from "../src/lib/consulta/analise.ts";
-import { dadosDoPdf, resumoEmTexto, restricoesVazias } from "../src/lib/consulta/relatorio.ts";
+import { dadosDoPdf, resumoEmTexto, restricoesVazias, textoConfrontantes } from "../src/lib/consulta/relatorio.ts";
 import { sigefDaArea } from "../src/lib/consulta/sigef_imovel.ts";
 import { fontesQueEsperavamUf, montarTarefas } from "../src/lib/consulta/tarefas.ts";
 import { consultarRestricoes, sobreposicaoPequena, textoItem } from "../src/lib/restricoes.ts";
@@ -439,4 +439,36 @@ test("desenho: o lado de fechamento provisório cruzando não é confundido com 
   const g = [[0, 0], [0.01, 0.01], [0.01, 0], [0, 0.01], [-0.005, 0.005]].map(([x, y]) => [-41.2 + x, -12.4 + y]);
   assert.ok(autointersecta(g, undefined, true));
   assert.match(textoCruzamento([0, 2], 4, "P"), /P1–P2 cruza o lado P3–P4/);
+});
+
+test("confrontantes: SIGEF (sobreposta e vizinha) e CAR que sobrepõem/encostam, prontos para o memorial", async () => {
+  const a = await analiseDeLencois();
+  // uma parcela vizinha a 0,4 m (encosta), uma a 35 m e uma sobreposição (a própria parcela não entra)
+  a.sigef = { estado: "ok", dados: { online: "ok", raioM: 500,
+    sobreposicoes: [
+      { codigo: "aaaa1111-0000-4000-8000-000000000001", nome: "Fazenda Sobreposta", municipio: null, uf: null, situacao: "Certificada", area_ha: null, area_m2: 1234, percentual_imovel: 0.02, geometria: null },
+      { codigo: "aaaa1111-0000-4000-8000-000000000009", nome: "A própria", municipio: null, uf: null, situacao: "Certificada", area_ha: null, area_m2: 1, percentual_imovel: 100, mesma_parcela: true, geometria: null },
+    ],
+    vizinhas: [
+      { codigo: "bbbb2222-0000-4000-8000-000000000002", nome: "Sítio Encosta", situacao: "Certificada", areaHa: 12, distanciaM: 0.4 },
+      { codigo: "cccc3333-0000-4000-8000-000000000003", nome: null, situacao: null, areaHa: null, distanciaM: 35 },
+    ] } };
+  const { texto, total } = textoConfrontantes(a);
+  const carItens = a.car.dados.itens.length;
+  assert.equal(total, 3 + carItens, "2 vizinhas + 1 sobreposta (a mesma parcela fica de fora) + os CAR");
+  assert.match(texto, /^CONFRONTANTES EM POTENCIAL — CAR BA-2919306-4185CFD257C54A4788F5C145A504C5C8 \(743,8531 ha\)/);
+  assert.match(texto, /1\. aaaa1111-0000-4000-8000-000000000001 — Fazenda Sobreposta · Certificada · SOBREPÕE 1\.234 m² \(0,02% da área\)/);
+  assert.match(texto, /2\. bbbb2222-0000-4000-8000-000000000002 — Sítio Encosta · Certificada · encosta na divisa/);
+  assert.match(texto, /3\. cccc3333-0000-4000-8000-000000000003 — sem denominação na base · certificada · a 35 m da divisa/);
+  assert.ok(!texto.includes("A própria"));
+  assert.match(texto, /CAR — imóveis declarados no SICAR/);
+  assert.ok(carItens > 0, "Lençóis tem CAR sobrepostos");
+  assert.match(texto, /1\. BA-\S+ · .*SOBREPÕE/);
+  assert.match(texto, /Alerta, não certidão/);
+  // fonte fora do ar não vira "nenhum confrontante"
+  const f = textoConfrontantes(await analiseDeLencois({ falhar: ["sigef", "car"] }));
+  assert.equal(f.total, 0);
+  assert.match(f.texto, /o SIGEF não respondeu/);
+  assert.match(f.texto, /o SICAR não respondeu/);
+  assert.ok(!/Nenhuma parcela certificada/.test(f.texto));
 });

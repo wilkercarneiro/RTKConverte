@@ -2,7 +2,8 @@
 // diz o que o sistema entendeu ("Código do CAR · BA", "Coordenada → −12,40…");
 // colar algo que já dá para consultar consulta na hora, sem precisar do botão.
 // Ao lado, as outras entradas: arquivo, desenho no mapa e a localização do GPS.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { interpretarEntrada, utmParaEntrada } from "../../lib/consulta/entrada.ts";
 import type { Entrada } from "../../lib/consulta/entrada.ts";
 import { ACEITA_ARQUIVO } from "../../lib/consulta/arquivo.ts";
@@ -11,7 +12,25 @@ import { Icone, ICONE } from "../Icone";
 const FUSOS = [18, 19, 20, 21, 22, 23, 24, 25];
 const consultavel = (e: Entrada) => e.tipo === "car" || e.tipo === "sigef" || e.tipo === "coordenada";
 
-export function BuscaConsulta({ texto, onTexto, onConsultar, onArquivo, desenhando, onDesenhar, onLocalizacao, ocupado, foco }: {
+/** Tela de toque (dedo) ou estreita: "Toque no mapa…", não "Clique…" (o Medir no campo já fala assim). */
+const MIDIA_TOQUE = "(pointer: coarse), (max-width: 599px)";
+export function useToque(): boolean {
+  const [toque, setToque] = useState(() => typeof matchMedia === "function" && matchMedia(MIDIA_TOQUE).matches);
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return;
+    const m = matchMedia(MIDIA_TOQUE);
+    const f = () => setToque(m.matches);
+    f();
+    m.addEventListener?.("change", f);
+    return () => m.removeEventListener?.("change", f);
+  }, []);
+  return toque;
+}
+
+/** A área que já está na tela sem ter vindo da caixa (Medir no campo, arquivo): "✓ Medição de campo · Pasto da sede (2,7511 ha)". */
+export interface OrigemBusca { texto: ReactNode; onLimpar: () => void }
+
+export function BuscaConsulta({ texto, onTexto, onConsultar, onArquivo, desenhando, onDesenhar, onLocalizacao, ocupado, foco, origem }: {
   texto: string;
   onTexto: (t: string) => void;
   /** a entrada já interpretada (o texto original vai junto, para o histórico) */
@@ -23,7 +42,10 @@ export function BuscaConsulta({ texto, onTexto, onConsultar, onArquivo, desenhan
   ocupado: boolean;
   /** foca a caixa ao abrir (tela vazia) */
   foco?: boolean;
+  /** a área na tela veio de fora da caixa: a linha de situação diz qual é (com ✕ para limpar) */
+  origem?: OrigemBusca | null;
 }) {
+  const toque = useToque();
   const campo = useRef<HTMLInputElement>(null);
   const arquivo = useRef<HTMLInputElement>(null);
   const entrada = interpretarEntrada(texto);
@@ -64,17 +86,23 @@ export function BuscaConsulta({ texto, onTexto, onConsultar, onArquivo, desenhan
         <button type="submit" className="principal" disabled={ocupado || !consultavel(entrada)}>{ocupado ? "Consultando…" : "Consultar"}</button>
       </div>
       <div className="cb-pe">
-        <Entendi entrada={entrada} onFuso={(f) => {
+        {entrada.tipo === "vazio" && origem ? (
+          <p className="cb-entendi cb-origem" role="status">
+            <span className="cb-icone" aria-hidden>✓</span>
+            <span className="cb-origem-texto">{origem.texto}</span>
+            <button type="button" className="cb-origem-limpar" aria-label="Limpar a área e começar outra consulta" title="Limpar" onClick={origem.onLimpar}>✕</button>
+          </p>
+        ) : <Entendi entrada={entrada} onFuso={(f) => {
           if (entrada.tipo !== "utm_sem_fuso") return;
           const e = utmParaEntrada(entrada.e, entrada.n, f, entrada.norte);
           onConsultar(e, `${texto} fuso ${f}`);
-        }} />
+        }} />}
         <div className="cb-alternativas" role="group" aria-label="Outras formas de informar a área">
           <button type="button" className="cb-alt" onClick={() => arquivo.current?.click()} title="KML, KMZ, GPX ou GeoJSON da área (também dá para arrastar o arquivo para a tela)">
-            <Icone d={ICONE.upload} size={15} traco={2} />Enviar arquivo
+            <Icone d={ICONE.upload} size={15} traco={2} /><span className="rot-longo">Enviar arquivo</span><span className="rot-curto">Arquivo</span>
           </button>
-          <button type="button" className={`cb-alt${desenhando ? " ativo" : ""}`} aria-pressed={desenhando} onClick={onDesenhar} title="Clique no mapa para marcar os vértices da área">
-            <Icone d="M3 21l3.5-1 11-11-2.5-2.5-11 11zM14 6.5l2.5 2.5" size={15} traco={2} />{desenhando ? "Desenhando…" : "Desenhar no mapa"}
+          <button type="button" className={`cb-alt${desenhando ? " ativo" : ""}`} aria-pressed={desenhando} onClick={onDesenhar} title={`${toque ? "Toque" : "Clique"} no mapa para marcar os vértices da área`}>
+            <Icone d="M3 21l3.5-1 11-11-2.5-2.5-11 11zM14 6.5l2.5 2.5" size={15} traco={2} />{desenhando ? "Desenhando…" : <><span className="rot-longo">Desenhar no mapa</span><span className="rot-curto">Desenhar</span></>}
           </button>
           <button type="button" className="cb-alt" onClick={onLocalizacao} title="Consulta o ponto onde você está (GPS do aparelho)">
             <Icone d="M12 2v3M12 19v3M2 12h3M19 12h3M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z" size={15} traco={2} />Onde estou

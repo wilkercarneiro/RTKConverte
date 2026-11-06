@@ -20,9 +20,9 @@ import type { Entrada } from "../../lib/consulta/entrada.ts";
 import { areaDoArquivo, textoDoArquivo } from "../../lib/consulta/arquivo.ts";
 import { analiseCompleta, analiseVazia, CHAVES_FONTES, ehPropriaArea, fraseDaAnalise, resultadoParaGravar } from "../../lib/consulta/analise.ts";
 import type { Analise, ChaveFonte } from "../../lib/consulta/analise.ts";
-import { autointersecta, centroDe, circulo, fmtAreaCurta, maiorAnel, medir, pontoEmPoligonos, textoCruzamento } from "../../lib/consulta/geometria.ts";
+import { autointersecta, centroDe, circulo, fmtAreaCurta, fmtHa, maiorAnel, medir, pontoEmPoligonos, textoCruzamento } from "../../lib/consulta/geometria.ts";
 import type { LonLat } from "../../lib/consulta/geometria.ts";
-import { dadosDoPdf, diferencaDeArea, restricoesVazias, resumoEmTexto } from "../../lib/consulta/relatorio.ts";
+import { dadosDoPdf, diferencaDeArea, restricoesVazias, resumoEmTexto, textoConfrontantes } from "../../lib/consulta/relatorio.ts";
 import { fontesReais } from "../../lib/consulta/fontes.ts";
 import { fontesQueEsperavamUf, montarTarefas } from "../../lib/consulta/tarefas.ts";
 import type { Tarefas } from "../../lib/consulta/tarefas.ts";
@@ -30,11 +30,12 @@ import type { FontesConsulta, RegistroConsulta, TipoEntrada } from "../../lib/co
 import type { ImovelEncontrado, Resposta } from "../../lib/consulta/tipos.ts";
 import type { Municipio } from "../../lib/consulta/ambiente.ts";
 import { MapaInterativo } from "../MapaInterativo";
-import type { PontoMapa } from "../MapaInterativo";
+import type { AlvoClique, InfoClique, PontoMapa } from "../MapaInterativo";
 import { BotaoTelaCheia } from "../TelaCheia";
 import { avisar, CabecalhoPagina, Dica, EstadoErro, EstadoVazio } from "../ui";
 import { ICONE } from "../Icone";
-import { BuscaConsulta } from "./BuscaConsulta";
+import { BuscaConsulta, useToque } from "./BuscaConsulta";
+import type { OrigemBusca } from "./BuscaConsulta";
 import { BaixarArea } from "./BaixarArea";
 import { PainelAnalise } from "./PainelAnalise";
 import { lerLugar } from "../../lib/campo/lugar.ts";
@@ -57,6 +58,23 @@ const EXEMPLOS = [
 
 const SELO: Record<string, string> = { car: "CAR · declarado", sigef: "SIGEF · certificado", arquivo: "Arquivo", desenho: "Desenho", campo: "Medição de campo" };
 const consultavel = (e: Entrada) => e.tipo === "car" || e.tipo === "sigef" || e.tipo === "coordenada";
+
+/** Abaixo deste zoom (o Brasil, o estado) não dá para ver cerca: o desenho aproxima antes de marcar vértice. */
+const ZOOM_MIN_DESENHO = 12;
+const ZOOM_DESENHO = 15;
+const AVISO_APROXIMAR = "Aproxime até ver as cercas: o mapa chegou mais perto para você marcar os vértices.";
+
+type EstadoLaudo = { estado: "pronto" | "gravando" | "escrevendo" | "indisponivel"; motivo?: string };
+/** A consulta de antes de "Consultar este vizinho": volta como estava, com a análise pronta. */
+interface Retrato { rotulo: string; texto: string; busca: Busca; selId: string | null; analise: Analise | null; registroId: string | null; laudo: EstadoLaudo }
+
+/** O que vai no #/consulta?q= desta busca (só o que a caixa entende de novo: CAR, SIGEF, coordenada). */
+function qDaEntrada(ent: { texto: string; tipo: TipoEntrada }): string | null {
+  if (ent.tipo !== "car" && ent.tipo !== "sigef" && ent.tipo !== "coordenada") return null;
+  const e = interpretarEntrada(ent.texto);
+  if (e.tipo === "car" || e.tipo === "sigef") return e.codigo;
+  return e.tipo === "coordenada" ? ent.texto.trim() : null;
+}
 
 const quando = (iso: string) => {
   const d = new Date(iso), hoje = new Date();
@@ -99,7 +117,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   const [selId, setSelId] = useState<string | null>(null);
   const [analise, setAnalise] = useState<Analise | null>(null);
   const [registroId, setRegistroId] = useState<string | null>(null);
-  const [laudo, setLaudo] = useState<{ estado: "pronto" | "gravando" | "escrevendo" | "indisponivel"; motivo?: string }>({ estado: "gravando" });
+  const [laudo, setLaudo] = useState<EstadoLaudo>({ estado: "gravando" });
   const [desenho, setDesenho] = useState<LonLat[] | null>(null);
   /** clique fora do imóvel com uma análise aberta: pergunta antes de trocar a tela */
   const [pontoPend, setPontoPend] = useState<LonLat | null>(null);
@@ -110,6 +128,15 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   const [historico, setHistorico] = useState<Resposta<RegistroConsulta[]>>({ estado: "carregando" });
   const [arrastando, setArrastando] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
+  /** o vizinho tocado no mapa (CAR ou parcela do SIGEF): o balão "Consultar este vizinho" */
+  const [vizinho, setVizinho] = useState<(AlvoClique & { ponto: LonLat }) | null>(null);
+  /** as consultas de antes dos vizinhos: "← Voltar para …" */
+  const [pilha, setPilha] = useState<Retrato[]>([]);
+  /** a vista do mapa (centro, zoom): o desenho não marca vértice na escala do Brasil */
+  const vistaRef = useRef<{ centro: LonLat; zoom: number } | null>(null);
+  const [longe, setLonge] = useState(true);
+  const toque = useToque();
+  const verbo = toque ? "Toque" : "Clique";
   const corrida = useRef(0);
   /** a busca da vez (código, ponto, GPS, exemplo): a resposta de uma busca velha é descartada */
   const buscaVez = useRef(0);
@@ -165,7 +192,7 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   }
 
   // outra busca ou outro imóvel: a pergunta "consultar este ponto?" deixa de valer
-  useEffect(() => { setPontoPend(null); }, [busca.fase, selId]);
+  useEffect(() => { setPontoPend(null); setVizinho(null); }, [busca.fase, selId]);
 
   // o Município voltou a responder (tentar de novo): o SIGEF que rodou sem a UF é refeito com ela
   useEffect(() => {
@@ -367,9 +394,23 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     setAnalise(null); corrida.current++;
   }
 
-  function aoClicarNoMapa(p: LonLat) {
-    if (desenho) { setOndeDesenhar(false); setDesenho([...desenho, p]); return; }
+  /** O mapa vai para mais perto (zoom de ver cerca) no ponto, com o aviso. */
+  function aproximar(p: LonLat) {
+    setIrPara({ lonlat: p, zoom: ZOOM_DESENHO, chave: Date.now() });
+    avisar("alerta", AVISO_APROXIMAR);
+  }
+
+  function aoClicarNoMapa(p: LonLat, info?: InfoClique) {
+    if (desenho) {
+      // na escala do Brasil/estado, um vértice cairia a quilômetros da cerca: aproxima primeiro
+      if ((info?.zoom ?? vistaRef.current?.zoom ?? 99) < ZOOM_MIN_DESENHO) { setOndeDesenhar(false); aproximar(p); return; }
+      setOndeDesenhar(false); setDesenho([...desenho, p]); return;
+    }
     if (ocupado) return;
+    // um vizinho (CAR ou parcela do SIGEF que não está na lista de resultados): o balão "Consultar este vizinho"
+    const alvo = info?.alvo;
+    if (alvo && !imoveis.some((i) => i.codigo === alvo.codigo)) { setPontoPend(null); setVizinho({ ...alvo, ponto: p }); return; }
+    setVizinho(null);
     const dentro = imoveis.find((i) => pontoEmPoligonos(p, i.poligonos));
     if (dentro) { setPontoPend(null); selecionar(dentro); return; }
     // com uma análise aberta, um clique para ler um rótulo (foco, restrição) não derruba a tela
@@ -383,6 +424,43 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     setTexto(t);
     guardarEndereco(t);
     void consultarPonto(p[0], p[1], { texto: t, tipo: "coordenada", rotulo: `Ponto ${descreverPonto(p[0], p[1])}` });
+  }
+
+  /** Troca a consulta para o vizinho tocado no mapa; a de agora fica guardada para o "← Voltar". */
+  function consultarVizinho(v: AlvoClique & { ponto: LonLat }) {
+    setVizinho(null);
+    if (busca.fase === "resultado") {
+      const atual = analise?.imovel ?? sel;
+      setPilha((ps) => [...ps.slice(-4), { rotulo: atual ? rotuloCurto(atual) : busca.entrada.rotulo, texto, busca, selId, analise, registroId, laudo }]);
+    }
+    const e = interpretarEntrada(v.codigo);
+    if (consultavel(e)) { setTexto(v.codigo); void consultar(e, v.codigo); }
+    else consultarAqui(v.ponto);
+  }
+
+  function voltarConsulta() {
+    const r = pilha[pilha.length - 1];
+    if (!r) return;
+    setPilha(pilha.slice(0, -1));
+    corrida.current++; buscaVez.current++;
+    setTexto(r.texto); setBusca(r.busca); setSelId(r.selId);
+    setDesenho(null); setPontoPend(null); setVizinho(null);
+    if (r.busca.fase === "resultado") { const q = qDaEntrada(r.busca.entrada); if (q) guardarEndereco(q); }
+    const im = r.analise?.imovel ?? (r.busca.fase === "resultado" ? r.busca.imoveis.find((i) => i.id === r.selId) : null) ?? null;
+    if (r.analise && analiseCompleta(r.analise)) {
+      // pronta: volta como estava, sem consultar de novo nem regravar o histórico
+      const a = r.analise;
+      gravadoEm.current = `${a.quando}|${CHAVES_FONTES.map((k) => a[k].estado).join(",")}`;
+      tarefasRef.current = null;
+      setAnalise(a); setRegistroId(r.registroId); setLaudo(r.laudo.estado === "escrevendo" ? { estado: "pronto" } : r.laudo);
+    } else if (im) analisar(im, r.busca.fase === "resultado" ? r.busca.municipio : null);
+    else setAnalise(null);
+  }
+
+  function limparTudo() {
+    corrida.current++; buscaVez.current++;
+    setBusca({ fase: "ocioso" }); setSelId(null); setAnalise(null); setDesenho(null); setPontoPend(null); setVizinho(null); setPilha([]); setTexto("");
+    if (atualizarEndereco) { try { history.replaceState(null, "", "#/consulta"); } catch { /* segue */ } }
   }
 
   function abrirRegistro(r: RegistroConsulta) {
@@ -432,6 +510,11 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
       uf: mun?.uf ?? im.uf ?? null, municipio: mun?.nome ?? im.municipio ?? null,
       // a área que a Consulta mostrou (todas as partes): o CAR diz o que ficou de fora
       areaOrigemM2: medir(im.aneis).areaM2, partes: im.aneis.length,
+      // "← Voltar para a Consulta": pelo código/coordenada, ou mandando a área de novo (arquivo, desenho, campo)
+      volta: (() => {
+        const q = busca.fase === "resultado" ? qDaEntrada(busca.entrada) : null;
+        return q ? { rotulo: "a Consulta", hash: `#/consulta?q=${encodeURIComponent(q)}` } : { rotulo: "a Consulta", hash: "#/consulta", reenviar: true };
+      })(),
     });
     ir({ t: "novo", chave: "car" });
   }
@@ -451,11 +534,25 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     }
   }
 
+  function copiar(t: string, ok: string) {
+    (navigator.clipboard?.writeText(t) ?? Promise.reject(new Error("sem área de transferência")))
+      .then(() => avisar("ok", ok), () => avisar("erro", "O navegador não deixou copiar."));
+  }
   function copiarResumo() {
     if (!analise) return;
-    const t = resumoEmTexto(analise);
-    (navigator.clipboard?.writeText(t) ?? Promise.reject(new Error("sem área de transferência")))
-      .then(() => avisar("ok", "Resumo copiado: cole no WhatsApp ou no e-mail do cliente."), () => avisar("erro", "O navegador não deixou copiar."));
+    copiar(resumoEmTexto(analise), "Copiado: o resumo, para colar no WhatsApp ou no e-mail do cliente.");
+  }
+  function copiarConfrontantes() {
+    if (!analise) return;
+    const { texto: t, total } = textoConfrontantes(analise);
+    copiar(t, total ? `Copiado: ${total} confrontante${total > 1 ? "s" : ""} em potencial (SIGEF e CAR), pronto para o memorial ou a carta de anuência.`
+      : "Copiado: nenhum confrontante certificado nem CAR encostando na área — o texto diz o que foi consultado.");
+  }
+  const qLink = busca.fase === "resultado" ? qDaEntrada(busca.entrada) : null;
+  function copiarLink() {
+    if (!qLink) return;
+    const base = typeof location !== "undefined" ? `${location.origin}${location.pathname}` : "";
+    copiar(`${base}#/consulta?q=${encodeURIComponent(qLink)}`, "Copiado: o link desta consulta. Quem abrir (com login na empresa) vê a mesma área analisada.");
   }
 
   // ao começar o desenho, o mapa inteiro (com a barra Desfazer / Fechar a área) entra na vista
@@ -575,10 +672,17 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
   const cruzamento = cruzaMarcado ?? (desenho && desenho.length >= 4 ? autointersecta(desenho) : null);
   const soFecho = !!cruzamento && !cruzaMarcado;
   const avisoCruza = soFecho ? "Fechando agora, os lados se cruzariam: continue marcando ou desfaça o último vértice" : "Os lados se cruzam: desfaça o último vértice";
+  // há vizinho clicável no mapa (CAR em destaque, parcela do SIGEF por perto, CAR sobreposto)?
+  const temVizinho = mapa.destaques.some((d) => d.codigo !== "ponto")
+    || (analise?.sigef.estado === "ok" && (analise.sigef.dados.vizinhas.length > 0 || analise.sigef.dados.sobreposicoes.some((x) => !x.mesma_parcela)))
+    || (analise?.car.estado === "ok" && analise.car.dados.itens.some((c) => c.sobreposta));
   const dicaMapa = desenho
-    ? desenho.length < 3 ? `Clique no mapa para marcar os vértices (${desenho.length} de pelo menos 3)`
-      : cruzamento ? avisoCruza : "Continue marcando ou feche a área"
-    : imoveis.length > 1 && !sel ? "Clique num imóvel para analisar" : "Clique no mapa para consultar um ponto";
+    ? longe ? "Aproxime até ver as cercas para marcar os vértices"
+      : desenho.length < 3 ? `${verbo} no mapa para marcar os vértices (${desenho.length} de pelo menos 3)`
+        : cruzamento ? avisoCruza : "Continue marcando ou feche a área"
+    : imoveis.length > 1 && !sel ? `${verbo} num imóvel para analisar`
+      : temVizinho ? `${verbo} num vizinho para consultá-lo`
+        : `${verbo} no mapa para consultar um ponto`;
 
   // ------------------------------------------------------------- arrastar arquivo
   const soltar = {
@@ -586,6 +690,11 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     onDragLeave: (e: React.DragEvent) => { if (!e.relatedTarget || !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) setArrastando(false); },
     onDrop: (e: React.DragEvent) => { e.preventDefault(); setArrastando(false); const f = e.dataTransfer.files[0]; if (f) void abrirArquivo(f); },
   };
+
+  // a área veio de fora da caixa (Medir no campo, arquivo): a linha de situação da busca diz qual é
+  const origemBusca: OrigemBusca | null = busca.fase === "resultado" && (busca.entrada.tipo === "campo" || busca.entrada.tipo === "arquivo") && imoveis.length === 1
+    ? { texto: <><b>{SELO[imoveis[0].fonte] ?? "Área"}</b> · {imoveis[0].titulo} ({fmtHa(analise?.imovel.id === imoveis[0].id ? analise.medidas.areaM2 : medir(imoveis[0].aneis).areaM2)})</>, onLimpar: limparTudo }
+    : null;
 
   const podeCriar = temPermissao("servicos.criar");
   const imAtual = analise?.imovel ?? sel;
@@ -596,11 +705,11 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
       <CabecalhoPagina olho="Ferramentas" titulo={<>Consultar imóvel<Dica>CAR, SIGEF, restrições (TI, UC, assentamento, quilombola, embargo, fronteira, área militar, sítio arqueológico), focos de queimada, bioma, solo e chuva de qualquer lugar — sem abrir serviço e sem gastar crédito. O resultado vira serviço de CAR com um clique e sai em PDF, KML, SHP, DXF…</Dica></>} />
       <BuscaConsulta texto={texto} onTexto={setTexto} onConsultar={(e, t) => void consultar(e, t)} onArquivo={(f) => void abrirArquivo(f)}
         desenhando={!!desenho} onDesenhar={() => { if (desenho) setDesenho(null); else comecarDesenho(); }}
-        onLocalizacao={ondeEstou} ocupado={ocupado} foco={busca.fase === "ocioso"} />
+        onLocalizacao={ondeEstou} ocupado={ocupado} foco={busca.fase === "ocioso"} origem={origemBusca} />
 
       <div className="consulta-corpo">
         <div className="consulta-painel">
-          {busca.fase === "ocioso" && <Inicio historico={historico} onExemplo={consultarTexto} onAbrir={abrirRegistro} onApagar={(r) => void apagarRegistro(r)} onTentar={carregarHistorico} />}
+          {busca.fase === "ocioso" && <Inicio historico={historico} onExemplo={consultarTexto} onAbrir={abrirRegistro} onApagar={(r) => void apagarRegistro(r)} onTentar={carregarHistorico} verbo={verbo} />}
           {busca.fase === "buscando" && (
             <section className="cp-bloco" aria-busy="true">
               <h2><span className="spinner" aria-hidden /> Procurando {busca.entrada.rotulo}…</h2>
@@ -611,6 +720,9 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
           )}
           {busca.fase === "resultado" && (
             <>
+              {pilha.length > 0 && (
+                <button type="button" className="link cr-voltar" onClick={voltarConsulta}>← Voltar para {pilha[pilha.length - 1].rotulo}</button>
+              )}
               <Resultados busca={busca} selId={selId} onSelecionar={selecionar}
                 onDesenhar={comecarDesenho}
                 onEntorno={analisarEntorno} onTentar={() => consultarTexto(busca.entrada.texto)} />
@@ -621,12 +733,17 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
                     : <button type="button" className="principal" disabled={gerandoPdf || carregandoAnalise} onClick={() => void baixarPdf()} title="Tudo desta consulta, com o croqui, as fontes e o laudo (se houver)">{gerandoPdf ? "Gerando o PDF…" : "Baixar PDF"}</button>}
                   <BaixarArea nome={imAtual.fonte === "car" && imAtual.codigo ? imAtual.codigo : imAtual.titulo} aneis={imAtual.aneis} nomes={imAtual.nomes} />
                   {podeCriar && <button type="button" onClick={criarCar} title="Abre o serviço de CAR já com este perímetro carregado">Criar serviço de CAR com esta área</button>}
-                  <span className="esticar" />
+                </div>
+              )}
+              {imAtual && (analise || qLink) && (
+                <div className="ca-copiar-linha" role="group" aria-label="Copiar">
+                  <span className="ca-copiar-rot"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>Copiar</span>
+                  {analise && <button type="button" className="cb-alt" onClick={copiarResumo} title="O resumo da análise, para o WhatsApp ou o e-mail do cliente">Resumo</button>}
                   {analise && (
-                    <button type="button" className="fantasma ca-copiar" onClick={copiarResumo} title="Copiar o resumo para o WhatsApp ou o e-mail" aria-label="Copiar resumo">
-                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
-                    </button>
+                    <button type="button" className="cb-alt" onClick={copiarConfrontantes} disabled={analise.sigef.estado === "carregando" || analise.car.estado === "carregando"}
+                      title="As parcelas do SIGEF e os CAR que sobrepõem ou encostam na área, com código, nome, situação e distância — para o memorial ou a carta de anuência">Confrontantes</button>
                   )}
+                  {qLink && <button type="button" className="cb-alt" onClick={copiarLink} title="O link desta consulta (#/consulta?q=…), para mandar a alguém da equipe">Link desta consulta</button>}
                 </div>
               )}
               {analise && <PainelAnalise analise={analise} onTentar={tentar} onAtualizar={() => analisar(analise.imovel, busca.municipio)} laudo={{ ...laudo, onEscrever: (r) => void escreverLaudo(r) }} />}
@@ -637,7 +754,8 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
         <div ref={mapaCaixaRef} className={`consulta-mapa${desenho ? " desenhando" : " clicavel"}`} data-tela-cheia="">
           <BotaoTelaCheia className="mapa-cert-tela-cheia" />
           <MapaInterativo aneis={mapa.aneis} pontos={mapa.pontos} parcelas={mapa.parcelas} destaques={mapa.destaques} restricoes={mapa.camadas}
-            sobreposicoes={mapa.sobreposicoes} altura={560} aoClicar={aoClicarNoMapa} irPara={irPara} semMapa="a consulta, a análise e o PDF funcionam sem ele" />
+            sobreposicoes={mapa.sobreposicoes} altura={560} aoClicar={aoClicarNoMapa} irPara={irPara} semMapa="a consulta, a análise e o PDF funcionam sem ele"
+            aoMudarVista={(v) => { vistaRef.current = v; setLonge(v.zoom < ZOOM_MIN_DESENHO); }} />
           {!(desenho && ondeDesenhar) && <span className="cm-dica" aria-hidden>{dicaMapa}</span>}
           {legenda.length > 0 && (
             <div className="cm-legenda" aria-label="Legenda do mapa">
@@ -651,8 +769,25 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
               <button type="button" className="principal" autoFocus onClick={() => consultarAqui(pontoPend)}>Consultar o ponto</button>
             </div>
           )}
+          {vizinho && !desenho && !pontoPend && (
+            <div className="cm-desenho cm-pergunta cm-vizinho" role="dialog" aria-label="Vizinho no mapa">
+              <span className="cm-conta">
+                <span className={`cr-selo ${vizinho.tipo}`}>{vizinho.tipo === "car" ? "CAR · declarado" : "SIGEF · certificado"}</span>
+                <b>{vizinho.nome?.trim() && !vizinho.nome.startsWith(vizinho.codigo.slice(0, 12)) ? vizinho.nome : vizinho.tipo === "car" ? `${vizinho.codigo.slice(0, 17)}…` : `Parcela ${vizinho.codigo.slice(0, 8)}`}</b>
+                {vizinho.situacao && <small>{vizinho.situacao}</small>}
+              </span>
+              <button type="button" onClick={() => setVizinho(null)}>Fechar</button>
+              <button type="button" className="principal" autoFocus onClick={() => consultarVizinho(vizinho)}>Consultar este vizinho</button>
+            </div>
+          )}
           {desenho && ondeDesenhar && (
-            <LugarDoDesenho onIr={irParaDesenho} onOndeEstou={ondeEstouDesenho} onAqui={() => setOndeDesenhar(false)} onCancelar={() => { setOndeDesenhar(false); setDesenho(null); }} />
+            <LugarDoDesenho onIr={irParaDesenho} onOndeEstou={ondeEstouDesenho} onCancelar={() => { setOndeDesenhar(false); setDesenho(null); }}
+              onAqui={() => {
+                setOndeDesenhar(false);
+                // "desenhar onde o mapa estiver" com o Brasil inteiro na tela: aproxima no centro da vista
+                const v = vistaRef.current;
+                if (!v || v.zoom < ZOOM_MIN_DESENHO) aproximar(v?.centro ?? [-47.9, -15.8]);
+              }} />
           )}
           {desenho && !ondeDesenhar && (
             <div className="cm-desenho" role="toolbar" aria-label="Desenho da área">
@@ -698,8 +833,9 @@ function LugarDoDesenho({ onIr, onOndeEstou, onAqui, onCancelar }: { onIr: (p: L
   );
 }
 
-function Inicio({ historico, onExemplo, onAbrir, onApagar, onTentar }: {
+function Inicio({ historico, onExemplo, onAbrir, onApagar, onTentar, verbo }: {
   historico: Resposta<RegistroConsulta[]>;
+  verbo: string;
   onExemplo: (t: string) => void;
   onAbrir: (r: RegistroConsulta) => void;
   onApagar: (r: RegistroConsulta) => void;
@@ -714,7 +850,7 @@ function Inicio({ historico, onExemplo, onAbrir, onApagar, onTentar }: {
         {historico.estado === "falhou" && <EstadoErro titulo="Não deu para carregar as consultas recentes" mensagem={historico.motivo} onTentar={onTentar} />}
         {historico.estado === "ok" && !lista.length && (
           <EstadoVazio compacto icone={ICONE.busca} titulo="Nenhuma consulta ainda"
-            texto="Cole um código do CAR ou uma coordenada acima, ou clique em qualquer lugar do mapa. A consulta não gasta crédito e fica guardada aqui para a equipe." />
+            texto={`Cole um código do CAR ou uma coordenada acima, ou ${verbo.toLowerCase()} em qualquer lugar do mapa. A consulta não gasta crédito e fica guardada aqui para a equipe.`} />
         )}
         {lista.length > 0 && (
           <ul className="ci-recentes">

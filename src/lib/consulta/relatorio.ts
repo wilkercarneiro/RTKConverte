@@ -6,7 +6,7 @@ import type { DadosRelatorioRestricoes, SecaoRelatorio } from "../restricoes_pdf
 import { fraseDaAnalise, NOME_FONTE } from "./analise.ts";
 import type { Analise } from "./analise.ts";
 import { textoFocos } from "./focos.ts";
-import { fmtAreaCurta, fmtHa, fmtNum } from "./geometria.ts";
+import { fmtAreaCurta, fmtDist, fmtHa, fmtNum } from "./geometria.ts";
 
 const NATUREZA: Record<string, string> = {
   car: "CAR — declarado pelo proprietário (SICAR)",
@@ -155,4 +155,51 @@ export function resumoEmTexto(a: Analise): string {
   l.push("");
   l.push(`Consulta automática a bases públicas em ${new Date(a.quando).toLocaleDateString("pt-BR")} — alerta, não certidão. (Vertces)`);
   return l.join("\n");
+}
+
+/** Distância/contato de um vizinho, para o memorial: "encosta na divisa" (até 1 m) ou "a 35 m". */
+function contato(distanciaM: number): string {
+  return distanciaM < 1 ? "encosta na divisa" : `a ${fmtDist(distanciaM)} da divisa`;
+}
+
+/**
+ * Os confrontantes em potencial, prontos para o memorial ou a carta de anuência:
+ * as parcelas certificadas do SIGEF (sobrepostas e vizinhas a até o raio) e os
+ * CAR declarados que sobrepõem ou encostam na área. Fonte que não respondeu
+ * diz que não respondeu (nunca vira "nenhum confrontante"). Puro.
+ */
+export function textoConfrontantes(a: Analise): { texto: string; total: number } {
+  const im = a.imovel;
+  const l: string[] = [];
+  let total = 0;
+  l.push(`CONFRONTANTES EM POTENCIAL — ${im.fonte === "car" && im.codigo ? `CAR ${im.codigo}` : im.titulo} (${fmtHa(a.medidas.areaM2)})`);
+  l.push(`Consulta a bases públicas em ${new Date(a.quando).toLocaleDateString("pt-BR")} (Vertces). Alerta, não certidão: confirme no campo e na documentação.`);
+
+  l.push("");
+  l.push("SIGEF — parcelas certificadas pelo INCRA");
+  if (a.sigef.estado === "ok") {
+    const s = a.sigef.dados;
+    const linhas = [
+      ...s.sobreposicoes.filter((x) => !x.mesma_parcela).map((x) => ({
+        codigo: x.codigo, nome: x.nome, situacao: x.situacao,
+        rel: `SOBREPÕE ${fmtAreaCurta(x.area_m2)} (${fmtNum(x.percentual_imovel, 2)}% da área)`,
+      })),
+      ...s.vizinhas.map((v) => ({ codigo: v.codigo, nome: v.nome, situacao: v.situacao, rel: contato(v.distanciaM) })),
+    ];
+    if (!linhas.length) l.push(`Nenhuma parcela certificada sobrepõe a área nem está a até ${fmtDist(s.raioM)} dela.`);
+    linhas.forEach((x, i) => l.push(`${i + 1}. ${x.codigo}${x.nome?.trim() ? ` — ${x.nome.trim()}` : " — sem denominação na base"} · ${x.situacao ?? "certificada"} · ${x.rel}`));
+    total += linhas.length;
+    if (s.online !== "ok") l.push("(só a cópia da base do sistema: o INCRA não foi consultado agora)");
+  } else l.push(a.sigef.estado === "carregando" ? "(ainda consultando o SIGEF)" : `(o SIGEF não respondeu: ${a.sigef.motivo})`);
+
+  l.push("");
+  l.push("CAR — imóveis declarados no SICAR (declaração do proprietário)");
+  if (a.car.estado === "ok") {
+    const itens = a.car.dados.itens;
+    if (!itens.length) l.push("Nenhum outro CAR declarado sobrepõe ou encosta na área.");
+    itens.forEach((c, i) => l.push(`${i + 1}. ${c.codigo}${c.situacao ? ` · ${c.situacao}` : ""}${c.municipio ? ` · ${c.municipio}` : ""} · ${c.areaM2 > 0 ? `SOBREPÕE ${fmtAreaCurta(c.areaM2)} (${fmtNum(c.pct, 2)}% da área)` : contato(c.distanciaM)}${c.areaDeclaradaHa != null ? ` · declarado com ${fmtNum(c.areaDeclaradaHa, 4)} ha` : ""}`));
+    total += itens.length;
+    if (a.car.dados.cortada) l.push("(resposta cortada pelo SICAR: pode haver outros CAR por perto)");
+  } else l.push(a.car.estado === "carregando" ? "(ainda consultando o SICAR)" : `(o SICAR não respondeu: ${a.car.motivo})`);
+  return { texto: l.join("\n"), total };
 }
