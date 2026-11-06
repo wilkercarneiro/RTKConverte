@@ -23,6 +23,8 @@ export interface RegistroLocal {
   medicao: Medicao;
   /** a versão que está na conta (atualizadaEm); null = nunca foi */
   enviadaVersao: string | null;
+  /** a conta recusou esta medição (é de outra empresa): não tenta mais enviar */
+  recusada?: boolean;
 }
 
 export interface EstadoAparelho {
@@ -67,7 +69,7 @@ export function lerAparelho(arm: Armazem | null): EstadoAparelho {
     const registros: Record<string, RegistroLocal> = {};
     for (const r of Object.values(bruto.registros ?? {})) {
       const m = medicaoValida((r as RegistroLocal)?.medicao);
-      if (m) registros[m.id] = { medicao: m, enviadaVersao: typeof r?.enviadaVersao === "string" ? r.enviadaVersao : null };
+      if (m) registros[m.id] = { medicao: m, enviadaVersao: typeof r?.enviadaVersao === "string" ? r.enviadaVersao : null, ...(r?.recusada === true ? { recusada: true } : {}) };
     }
     const atualId = typeof bruto.atualId === "string" && registros[bruto.atualId] ? bruto.atualId : null;
     return { atualId, registros };
@@ -95,12 +97,20 @@ export function gravarAparelho(arm: Armazem | null, e: EstadoAparelho): boolean 
 
 export const pendente = (r: RegistroLocal): boolean => r.enviadaVersao !== r.medicao.atualizadaEm;
 
-/** Guarda a medição (e, se `atual`, marca como a em andamento). */
-export function guardarMedicao(e: EstadoAparelho, m: Medicao, atual: boolean): EstadoAparelho {
+/** O que a fila de envio deve subir: pendente, com vértice e não recusada pela conta. */
+export const paraEnviar = (r: RegistroLocal): boolean => pendente(r) && !r.recusada && r.medicao.vertices.length > 0;
+
+/**
+ * Guarda a medição (e, se `atual`, marca como a em andamento).
+ * `daConta`: a medição veio da conta como está — já conta como enviada (não
+ * pisca "só no aparelho" nem sobe de novo).
+ */
+export function guardarMedicao(e: EstadoAparelho, m: Medicao, atual: boolean, daConta = false): EstadoAparelho {
   const antes = e.registros[m.id];
+  const enviadaVersao = daConta ? m.atualizadaEm : antes?.enviadaVersao ?? null;
   return {
     atualId: atual ? m.id : e.atualId === m.id ? null : e.atualId,
-    registros: { ...e.registros, [m.id]: { medicao: m, enviadaVersao: antes?.enviadaVersao ?? null } },
+    registros: { ...e.registros, [m.id]: { medicao: m, enviadaVersao, ...(antes?.recusada ? { recusada: true } : {}) } },
   };
 }
 
@@ -161,9 +171,30 @@ export function quando(iso: string, agora: Date = new Date()): string {
 
 const vertices = (n: number) => `${n} ${n === 1 ? "vértice" : "vértices"}`;
 
-/** "Continuar a medição de hoje 14:32 (23 vértices)?" */
+/** "Continuar a medição de hoje 14:32 (23 vértices)?" — a hora em que a medição começou. */
 export function textoRetomada(m: Medicao, agora: Date = new Date()): string {
-  return `Continuar a medição de ${quando(m.atualizadaEm, agora)} (${vertices(m.vertices.length)})?`;
+  return `Continuar a medição de ${quando(m.criadaEm, agora)} (${vertices(m.vertices.length)})?`;
+}
+
+/** "último vértice hoje 14:36" (a linha de baixo da retomada). */
+export function textoUltimoVertice(m: Medicao, agora: Date = new Date()): string {
+  const t = m.vertices.length ? m.vertices[m.vertices.length - 1].t : NaN;
+  const iso = Number.isFinite(t) ? new Date(t).toISOString() : m.atualizadaEm;
+  return `último vértice ${quando(iso, agora)}`;
+}
+
+/**
+ * O aparelho de cada pessoa: as medições ficam numa chave por usuário
+ * ("vertces.campo.v1:<id>"). Quem entra depois no mesmo navegador (outra
+ * pessoa, outra empresa) não vê nem envia as medições de quem saiu.
+ */
+export function armazemDoUsuario(base: Armazem, usuario: string): Armazem {
+  const k = (c: string) => `${c}:${usuario}`;
+  return {
+    getItem: (c) => base.getItem(k(c)),
+    setItem: (c, v) => base.setItem(k(c), v),
+    removeItem: (c) => base.removeItem(k(c)),
+  };
 }
 
 export const textoVertices = vertices;

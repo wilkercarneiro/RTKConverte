@@ -7,15 +7,15 @@
 //   • Desenhar no mapa: sem GPS (computador, permissão negada).
 // Área e perímetro ao vivo no motor único (lib/campo/geometria.ts). Nada se
 // perde: cada vértice vai para o aparelho na hora (lib/campo/aparelho.ts) e a
-// medição sobe sozinha para a conta quando há internet (0044). Fechada a área,
+// medição sobe sozinha para a conta quando há internet (0047). Fechada a área,
 // a próxima ação está à mão: criar o serviço de CAR, consultar, baixar.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Rota } from "../../lib/rota";
 import { transferirArea } from "../../lib/area_transferida";
 import {
-  alterar, gravarAparelho, guardarMedicao, juntarListas, lerAparelho, marcarEnviada, novaMedicao, pendente,
-  quando, removerMedicao, textoRetomada, textoVertices,
+  alterar, armazemDoUsuario, gravarAparelho, guardarMedicao, juntarListas, lerAparelho, novaMedicao, paraEnviar,
+  pendente, quando, removerMedicao, textoRetomada, textoUltimoVertice, textoVertices,
 } from "../../lib/campo/aparelho.ts";
 import type { Armazem, EstadoAparelho, ItemLista } from "../../lib/campo/aparelho.ts";
 import { classePrecisao, contornoSeCruza, medir, textoDistancia, textoHa, textoM2, textoPrecisao } from "../../lib/campo/geometria.ts";
@@ -23,12 +23,15 @@ import { combinarLeituras, leituraUtil, verticeAoCaminhar, verticeDoPonto } from
 import type { PontoCombinado } from "../../lib/campo/motor.ts";
 import { fonteDoNavegador } from "../../lib/campo/gps.ts";
 import type { ErroGps, FonteGps } from "../../lib/campo/gps.ts";
-import { areaDaMedicao, areaParaConsulta } from "../../lib/campo/ponte.ts";
+import { areaDaMedicao } from "../../lib/campo/ponte.ts";
+import { enviarPendentes } from "../../lib/campo/fila.ts";
+import type { Fila } from "../../lib/campo/fila.ts";
+import { pedirArmazenamentoPersistente, registrarTela, usuarioAtual } from "../../lib/campo/envio.ts";
 import { lerLugar } from "../../lib/campo/lugar.ts";
 import { ErroConta } from "../../lib/campo/repositorio.ts";
 import type { RepositorioMedicoes, TipoErroConta } from "../../lib/campo/repositorio.ts";
 import { repositorioSupabase } from "../../lib/campo/conta.ts";
-import { OPCOES_PADRAO, opcoesValidas } from "../../lib/campo/tipos.ts";
+import { conferirAjuste, LIMITES_OPCOES, OPCOES_PADRAO, opcoesValidas } from "../../lib/campo/tipos.ts";
 import type { Leitura, LonLat, Medicao, OpcoesCampo, VerticeCampo } from "../../lib/campo/tipos.ts";
 import { avisar, confirmar, Dica, EstadoErro, EstadoVazio, Esqueleto, Gaveta, Rotulo } from "../ui";
 import { MapaCampo } from "./MapaCampo";
@@ -87,11 +90,35 @@ function useEstreita(): boolean {
 }
 const horaCurta = (d = new Date()) => d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
+/**
+ * A tela. Sem `armazem` (o sistema de verdade), as medições ficam numa chave
+ * do aparelho POR USUÁRIO: quem entra depois no mesmo navegador (outra pessoa,
+ * outra empresa) não vê nem envia as medições de quem saiu.
+ */
 export function Campo(props: PropsCampo) {
+  const doUsuario = props.armazem === undefined;
+  const [usuario, setUsuario] = useState<string | null | undefined>(doUsuario ? undefined : null);
+  useEffect(() => {
+    if (!doUsuario) return;
+    let vivo = true;
+    void usuarioAtual().then((u) => { if (vivo) setUsuario(u); });
+    return () => { vivo = false; };
+  }, [doUsuario]);
+  const arm = useMemo(() => {
+    if (!doUsuario) return props.armazem ?? null;
+    const base = armazemPadrao();
+    return base && usuario ? armazemDoUsuario(base, usuario) : null;
+  }, [doUsuario, props.armazem, usuario]);
+  // a sessão sai do aparelho em milissegundos: espera para não abrir o aparelho errado
+  if (doUsuario && usuario === undefined) return <div className="campo tela-cheia" data-tela-cheia aria-busy="true" />;
+  return <CampoTela key={usuario ?? "-"} {...props} armazem={arm} />;
+}
+
+function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   const { ir } = props;
   const fonte = useMemo(() => props.fonte ?? fonteDoNavegador(), [props.fonte]);
   const repo = useMemo(() => props.repositorio ?? repositorioSupabase(), [props.repositorio]);
-  const arm = useMemo(() => (props.armazem === undefined ? armazemPadrao() : props.armazem), [props.armazem]);
+  const arm = props.armazem;
 
   // ------------------------------------------------------------ aparelho
   const [aparelho, setAparelho] = useState<EstadoAparelho>(() => lerAparelho(arm));
@@ -122,6 +149,8 @@ export function Campo(props: PropsCampo) {
     medicaoRef.current = m;
     setMedicaoEstado(m);
     persistir(guardarMedicao(aparelhoRef.current, m, !m.fechada));
+    // o Safari do iPhone apaga o site sem uso por 7 dias: pede para guardar de vez
+    if (m.vertices.length) pedirArmazenamentoPersistente();
     agendarEnvio();
   }, [persistir, agendarEnvio]);
   const mostrar = useCallback((m: Medicao | null) => {
@@ -166,6 +195,8 @@ export function Campo(props: PropsCampo) {
   const [pontoRuim, setPontoRuim] = useState<PontoCombinado | null>(null);
   const [, setTique] = useState(0);
 
+  const gpsDescansa = !!medicao?.fechada;
+
   const adicionar = useCallback((v: VerticeCampo) => {
     const m = medicaoRef.current;
     if (!m || m.fechada) return;
@@ -173,7 +204,8 @@ export function Campo(props: PropsCampo) {
   }, [mudar]);
 
   useEffect(() => {
-    if (!gpsLigado) { setGps({ tipo: "desligado" }); return; }
+    // área fechada e nada em andamento: o GPS descansa (bateria); volta em Continuar medindo / Nova
+    if (!gpsLigado || gpsDescansa) { setGps({ tipo: "desligado" }); return; }
     setGps({ tipo: "procurando" });
     const parar = fonte.iniciar(
       (l) => {
@@ -194,7 +226,7 @@ export function Campo(props: PropsCampo) {
       },
     );
     return parar;
-  }, [gpsLigado, fonte, adicionar]);
+  }, [gpsLigado, gpsDescansa, fonte, adicionar]);
 
   function registrarPonto(p: PontoCombinado) {
     const m = medicaoRef.current;
@@ -258,42 +290,65 @@ export function Campo(props: PropsCampo) {
   useEffect(() => { void carregarConta(); }, [carregarConta]);
 
   const [envio, setEnvio] = useState<{ estado: EstadoEnvio; hora: string | null }>({ estado: "ocioso", hora: null });
-  const enviandoRef = useRef(false);
-  const deNovoRef = useRef(false);
-  const travadoRef = useRef(false); // sem a 0044 no banco: não adianta tentar até recarregar
+  const travadoRef = useRef(false); // sem a 0047 no banco: não adianta tentar até recarregar
+
+  // a fila mora em lib/campo/fila.ts (a casca também envia, sem esta tela aberta);
+  // aqui ela fala com o estado da tela
+  const filaRef = useRef<() => Fila>(() => ({ repo, ler: () => aparelhoRef.current, gravar: persistir }));
+  filaRef.current = () => ({
+    repo,
+    ler: () => aparelhoRef.current,
+    gravar: persistir,
+    aoEnviar: (m) => setConta((c) => ({ ...c, itens: [m, ...c.itens.filter((x) => x.id !== m.id)] })),
+    // a medição na tela virou a cópia: a tela passa a mostrar (e a gravar) a cópia já
+    aoCopiar: (de, copia) => {
+      if (medicaoRef.current?.id !== de) return;
+      const nova = aparelhoRef.current.registros[copia.id]?.medicao ?? copia;
+      medicaoRef.current = nova; setMedicaoEstado(nova);
+    },
+  });
 
   enviarRef.current = async () => {
     if (travadoRef.current) return;
-    if (enviandoRef.current) { deNovoRef.current = true; return; }
-    const fila = Object.values(aparelhoRef.current.registros).filter((r) => pendente(r) && r.medicao.vertices.length > 0);
-    if (!fila.length) return;
-    enviandoRef.current = true;
+    if (!Object.values(aparelhoRef.current.registros).some(paraEnviar)) return;
     setEnvio((e) => ({ ...e, estado: "enviando" }));
-    try {
-      for (const r of fila) {
-        const m = r.medicao;
-        await repo.salvar(m);
-        persistir(marcarEnviada(aparelhoRef.current, m.id, m.atualizadaEm));
-        setConta((c) => ({ ...c, itens: [m, ...c.itens.filter((x) => x.id !== m.id)] }));
-      }
-      setEnvio({ estado: "enviado", hora: horaCurta() });
-    } catch (e) {
-      const tipo: TipoErroConta = e instanceof ErroConta ? e.tipo : "outro";
-      if (tipo === "sem-tabela") travadoRef.current = true;
-      setEnvio((x) => ({ ...x, estado: tipo }));
-    } finally {
-      enviandoRef.current = false;
-      if (deNovoRef.current) { deNovoRef.current = false; agendarEnvio(800); }
+    const r = await enviarPendentes(filaRef.current());
+    if (r.parou === "sem-tabela") travadoRef.current = true;
+    for (const { copia: c } of r.copias) {
+      avisar("alerta", `A conta já tinha uma versão mais nova desta medição (mexida em outro aparelho). A deste aparelho foi guardada à parte como "${c.nome}".`);
     }
+    if (r.recusadas.length) {
+      const um = r.recusadas.length === 1;
+      avisar("erro", `${um ? `"${r.recusadas[0].nome}" é` : `${r.recusadas.length} medições são`} de outra conta e não ${um ? "sobe" : "sobem"} para a sua. ${um ? "Continua" : "Continuam"} só neste aparelho.`);
+    }
+    if (r.parou) { const tipo = r.parou; setEnvio((x) => ({ ...x, estado: tipo })); }
+    else if (r.falhas) setEnvio((x) => ({ ...x, estado: "outro" }));
+    else if (r.recusadas.length && !r.enviadas) setEnvio((x) => ({ ...x, estado: "outra-conta" }));
+    else setEnvio({ estado: "enviado", hora: horaCurta() });
   };
 
   // ao abrir, quando a internet volta e de tempos em tempos: o que ficou no aparelho sobe
   useEffect(() => {
+    const solta = registrarTela(() => filaRef.current());
     agendarEnvio(600);
     const online = () => agendarEnvio(300);
+    // a aba vai sumir (trocou de app, fechou): envia já, sem esperar o tempo
+    const agora = () => { if (timerEnvio.current) { clearTimeout(timerEnvio.current); timerEnvio.current = null; } void enviarRef.current(); };
+    const vis = () => { if (document.visibilityState === "hidden") agora(); else agendarEnvio(300); };
     addEventListener("online", online);
+    addEventListener("pagehide", agora);
+    document.addEventListener("visibilitychange", vis);
     const t = setInterval(() => agendarEnvio(0), 30_000);
-    return () => { removeEventListener("online", online); clearInterval(t); if (timerEnvio.current) clearTimeout(timerEnvio.current); };
+    return () => {
+      removeEventListener("online", online);
+      removeEventListener("pagehide", agora);
+      document.removeEventListener("visibilitychange", vis);
+      clearInterval(t);
+      solta();
+      // saiu da tela (Criar serviço de CAR, outro menu) antes do tempo: o que esperava sobe já
+      if (timerEnvio.current) { clearTimeout(timerEnvio.current); timerEnvio.current = null; }
+      if (!travadoRef.current && Object.values(aparelhoRef.current.registros).some(paraEnviar)) void enviarPendentes(filaRef.current());
+    };
   }, [agendarEnvio, repo]);
 
   const lista: ItemLista[] = useMemo(
@@ -389,8 +444,11 @@ export function Campo(props: PropsCampo) {
     setGavetaLista(false);
     const atual = medicaoRef.current;
     if (atual && !atual.vertices.length) persistir(removerMedicao(aparelhoRef.current, atual.id));
-    // a aberta passa a ser a "em andamento" do aparelho só se não estiver fechada
-    persistir(guardarMedicao(aparelhoRef.current, m, !m.fechada));
+    // a aberta passa a ser a "em andamento" do aparelho só se não estiver fechada;
+    // veio da conta como está: já conta como enviada (não pisca "só no aparelho" nem sobe de novo)
+    const local = aparelhoRef.current.registros[m.id];
+    const daConta = (!local || !pendente(local)) && conta.itens.some((x) => x.id === m.id && x.atualizadaEm === m.atualizadaEm);
+    persistir(guardarMedicao(aparelhoRef.current, m, !m.fechada, daConta));
     mostrar(m);
     setSeguir(false);
   }
@@ -421,7 +479,8 @@ export function Campo(props: PropsCampo) {
     ir({ t: "novo", chave: "car" });
   }
   function consultar(m: Medicao) {
-    areaParaConsulta(areaDaMedicao(m));
+    // o mesmo canal do CAR: a Consulta lê com pegarAreaTransferida() e marca a fonte "Medição de campo"
+    transferirArea(areaDaMedicao(m));
     ir({ t: "consulta" });
   }
 
@@ -486,7 +545,7 @@ export function Campo(props: PropsCampo) {
           }}
           enquadrar={enquadrar} voarPara={voarPara} controleImagem={props.controleImagem}>
           <div className="campo-topo-linha">
-            <SeloGps gps={gps} leitura={leitura} />
+            <SeloGps gps={gps} leitura={leitura} descansa={gpsDescansa && gpsLigado} />
             <span className={`campo-salvo ${statusEnvio.tom}`} title={statusEnvio.dica}>
               <i aria-hidden="true" />{statusEnvio.texto}
             </span>
@@ -536,19 +595,21 @@ export function Campo(props: PropsCampo) {
 function textoEnvio(m: Medicao | null, pend: boolean, envio: { estado: EstadoEnvio; hora: string | null }, erroLista: TipoErroConta | null): { texto: string; tom: string; dica: string } {
   const offline = typeof navigator !== "undefined" && navigator.onLine === false;
   if (!m || !m.vertices.length) {
-    if (erroLista === "sem-tabela") return { texto: "Grava no aparelho", tom: "aparelho", dica: "O banco ainda não recebe medições (atualização 0044): elas ficam no aparelho." };
+    if (erroLista === "sem-tabela") return { texto: "Grava no aparelho", tom: "aparelho", dica: "O sistema ainda não foi atualizado para guardar medições na conta: elas ficam neste aparelho." };
     return { texto: "Grava sozinho", tom: "ocioso", dica: "Cada vértice é gravado na hora no aparelho e sobe para a conta quando há internet." };
   }
   if (!pend) return { texto: `Na conta${envio.hora ? ` ${envio.hora}` : ""}`, tom: "conta", dica: "Salva na conta da empresa: aparece no computador do escritório." };
   if (envio.estado === "enviando") return { texto: "Enviando…", tom: "enviando", dica: "Salvo no aparelho; subindo para a conta." };
-  if (envio.estado === "sem-tabela") return { texto: "No aparelho", tom: "aparelho", dica: "Salvo no aparelho. O banco ainda não recebe medições (atualização 0044)." };
+  if (envio.estado === "sem-tabela") return { texto: "No aparelho", tom: "aparelho", dica: "Salvo no aparelho. O sistema ainda não foi atualizado para guardar medições na conta." };
+  if (envio.estado === "outra-conta") return { texto: "No aparelho", tom: "alerta", dica: "Uma medição deste aparelho é de outra conta e não sobe para a sua." };
   if (envio.estado === "sem-login") return { texto: "No aparelho · entre de novo", tom: "alerta", dica: "Salvo no aparelho. A sessão expirou: entre de novo para enviar para a conta." };
   if (offline || envio.estado === "sem-rede") return { texto: "No aparelho · sem internet", tom: "aparelho", dica: "Salvo no aparelho. Sobe sozinho para a conta quando a internet voltar." };
   if (envio.estado === "outro") return { texto: "No aparelho · tentando enviar", tom: "alerta", dica: "Salvo no aparelho. A conta não respondeu; o sistema tenta de novo sozinho." };
   return { texto: "Salvo no aparelho", tom: "aparelho", dica: "Salvo no aparelho; sobe para a conta em instantes." };
 }
 
-function SeloGps({ gps, leitura }: { gps: EstadoGps; leitura: Leitura | null }) {
+function SeloGps({ gps, leitura, descansa }: { gps: EstadoGps; leitura: Leitura | null; descansa: boolean }) {
+  if (descansa) return <span className="campo-gps-selo desligado" title="Área fechada: o GPS descansa para poupar a bateria. Volta em Continuar medindo ou Nova medição.">GPS em pausa</span>;
   if (gps.tipo === "desligado") return <span className="campo-gps-selo desligado">GPS desligado</span>;
   if (gps.tipo === "procurando") return <span className="campo-gps-selo procurando"><i aria-hidden="true" />Procurando o GPS…</span>;
   if (gps.tipo === "erro" && (gps.erro.tipo !== "sem-sinal" || !leitura)) {
@@ -633,14 +694,14 @@ function IrPara({ onIr }: { onIr: (p: LonLat) => void }) {
   return (
     <form className="campo-ir" onSubmit={(e) => { e.preventDefault(); ir(); }}>
       <label className="campo-ir-campo">
-        <Rotulo dica={`Decimal (-12.6915, -39.1262), GMS (12°41'29"S 39°07'34"W) ou o link do Google Maps do imóvel.`}>Ir para o imóvel</Rotulo>
+        <Rotulo dica={`Decimal (-12,6915, -39,1262), GMS (12°41'29"S 39°07'34"W), UTM com o fuso (24L 500000 8600000) ou o link do Google Maps do imóvel.`}>Ir para o imóvel</Rotulo>
         <span className="campo-ir-linha">
           <input value={texto} onChange={(e) => { setTexto(e.target.value); setErro(false); }} placeholder="Coordenada ou link do Google Maps"
             aria-invalid={erro || undefined} inputMode="text" autoComplete="off" />
           <button type="submit" disabled={!texto.trim()}>Ir</button>
         </span>
       </label>
-      {erro && <span className="campo-ir-erro" role="alert">Não entendi esse lugar. Cole a coordenada (lat, lon) ou o link do Google Maps.</span>}
+      {erro && <span className="campo-ir-erro" role="alert">Não entendi esse lugar. Cole a coordenada (lat, lon), a UTM com o fuso ou o link do Google Maps.</span>}
     </form>
   );
 }
@@ -666,7 +727,7 @@ function PainelControle(p: PropsPainel) {
     return (
       <div className="campo-painel campo-retomar" role="region" aria-label="Retomar a medição">
         <b className="campo-pergunta">{textoRetomada(p.oferta)}</b>
-        <span className="campo-sub">"{p.oferta.nome}" ficou gravada neste aparelho.</span>
+        <span className="campo-sub">"{p.oferta.nome}" ficou gravada neste aparelho · {textoUltimoVertice(p.oferta)}.</span>
         <div className="campo-acoes-linha">
           <button type="button" className="principal campo-btn-grande" onClick={p.onContinuarOferta}>Continuar</button>
           <button type="button" className="campo-btn-grande" onClick={p.onOutraOferta}>Começar outra</button>
@@ -843,7 +904,7 @@ function ListaMedicoes({ itens, carregando, erroConta, atualId, onAbrir, onExclu
   if (carregando) return <Esqueleto linhas={3} rotulo="Carregando as medições…" />;
   const aviso = erroConta && (
     erroConta.tipo === "sem-rede" ? <p className="campo-nota">Sem internet: mostrando as medições deste aparelho.</p>
-      : erroConta.tipo === "sem-tabela" ? <p className="campo-nota">O banco ainda não guarda medições (atualização 0044): mostrando as deste aparelho.</p>
+      : erroConta.tipo === "sem-tabela" ? <p className="campo-nota">O sistema ainda não foi atualizado para guardar medições na conta: mostrando as deste aparelho.</p>
         : null
   );
   if (erroConta && !aviso && !itens.length) return <EstadoErro titulo="Não deu para carregar as medições" mensagem={erroConta.message} onTentar={onTentar} />;
@@ -886,24 +947,59 @@ function ListaMedicoes({ itens, carregando, erroConta, atualId, onAbrir, onExclu
 // Ajustes
 // ---------------------------------------------------------------------------
 
+type TextosOpcoes = Record<keyof OpcoesCampo, string>;
+const textosDe = (o: OpcoesCampo): TextosOpcoes => ({
+  passoM: String(o.passoM), anguloGraus: String(o.anguloGraus), limitePrecisaoM: String(o.limitePrecisaoM), segundosMarcar: String(o.segundosMarcar),
+});
+
 function Ajustes({ opcoes, onMudar, onFechar }: { opcoes: OpcoesCampo; onMudar: (o: OpcoesCampo) => void; onFechar: () => void }) {
-  const campo = (k: keyof OpcoesCampo, rotulo: string, unidade: string, dica: string) => (
-    <label>
-      <Rotulo dica={dica}>{rotulo}</Rotulo>
-      <span className="campo-unidade">
-        <input type="number" inputMode="decimal" value={opcoes[k]} min={1}
-          onChange={(e) => onMudar(opcoesValidas({ ...opcoes, [k]: e.target.value === "" ? opcoes[k] : Number(e.target.value) }))} />
-        <i>{unidade}</i>
-      </span>
-    </label>
-  );
-  const padrao = JSON.stringify(opcoes) === JSON.stringify(OPCOES_PADRAO);
+  // o texto digitado fica aqui e o limite só vale ao sair do campo (ou no Pronto):
+  // aplicar a cada tecla fazia "20" virar "50" no ângulo (o "2" subia para o mínimo 5)
+  const [textos, setTextos] = useState<TextosOpcoes>(() => textosDe(opcoes));
+  const [notas, setNotas] = useState<Partial<Record<keyof OpcoesCampo, string>>>({});
+  const conferirTudo = (): OpcoesCampo => {
+    const o = { ...opcoes };
+    const n: Partial<Record<keyof OpcoesCampo, string>> = {};
+    for (const k of Object.keys(textos) as (keyof OpcoesCampo)[]) {
+      const r = conferirAjuste(k, textos[k], opcoes[k]);
+      o[k] = r.valor;
+      if (r.nota) n[k] = r.nota;
+    }
+    setNotas(n);
+    setTextos(textosDe(o));
+    return o;
+  };
+  const sair = (k: keyof OpcoesCampo) => {
+    const r = conferirAjuste(k, textos[k], opcoes[k]);
+    setNotas((x) => ({ ...x, [k]: r.nota ?? undefined }));
+    setTextos((x) => ({ ...x, [k]: String(r.valor) }));
+    if (r.valor !== opcoes[k]) onMudar({ ...opcoes, [k]: r.valor });
+  };
+  const campo = (k: keyof OpcoesCampo, rotulo: string, unidade: string, dica: string) => {
+    const [min, max] = LIMITES_OPCOES[k];
+    return (
+      <label>
+        <Rotulo dica={`${dica} Vale de ${min} a ${max} ${unidade}.`}>{rotulo}</Rotulo>
+        <span className="campo-unidade">
+          <input type="number" inputMode="decimal" value={textos[k]} min={min} max={max} step="any"
+            aria-invalid={notas[k] ? true : undefined}
+            onChange={(e) => { const v = e.target.value; setTextos((x) => ({ ...x, [k]: v })); setNotas((x) => ({ ...x, [k]: undefined })); }}
+            onBlur={() => sair(k)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); sair(k); } }} />
+          <i>{unidade}</i>
+        </span>
+        {notas[k] && <small className="campo-ajuste-nota" role="status">{notas[k]}</small>}
+      </label>
+    );
+  };
+  const padrao = JSON.stringify(opcoes) === JSON.stringify(OPCOES_PADRAO) && JSON.stringify(textos) === JSON.stringify(textosDe(OPCOES_PADRAO));
+  const pronto = () => { const o = conferirTudo(); if (JSON.stringify(o) !== JSON.stringify(opcoes)) onMudar(o); onFechar(); };
   return (
-    <Gaveta olho="Medir no campo" titulo="Ajustes do medidor" onFechar={onFechar}
+    <Gaveta olho="Medir no campo" titulo="Ajustes do medidor" onFechar={pronto}
       rodape={(
         <div className="campo-acoes-linha">
-          <button type="button" disabled={padrao} onClick={() => onMudar(OPCOES_PADRAO)}>Voltar ao padrão</button>
-          <button type="button" className="principal" onClick={onFechar}>Pronto</button>
+          <button type="button" disabled={padrao} onClick={() => { setNotas({}); setTextos(textosDe(OPCOES_PADRAO)); onMudar(OPCOES_PADRAO); }}>Voltar ao padrão</button>
+          <button type="button" className="principal" onClick={pronto}>Pronto</button>
         </div>
       )}>
       <div className="grade grade-2">

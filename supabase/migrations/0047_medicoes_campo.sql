@@ -1,4 +1,4 @@
--- 0044 — Medições de campo (#/campo, "Medir no campo").
+-- 0047 — Medições de campo (#/campo, "Medir no campo").
 --
 -- O agrimensor mede o contorno com o GPS do celular (croqui, orçamento, CAR).
 -- A medição é gravada primeiro no aparelho e sobe para cá sozinha quando há
@@ -37,7 +37,7 @@ create table if not exists medicoes_campo (
 );
 
 comment on table medicoes_campo is
-  'Medições do "Medir no campo" (GPS do celular): contorno em lon/lat, gravado do aparelho por upsert do id. Ver 0044.';
+  'Medições do "Medir no campo" (GPS do celular): contorno em lon/lat, gravado do aparelho por upsert do id. Ver 0047.';
 
 create index if not exists medicoes_campo_escritorio_recentes on medicoes_campo (escritorio_id, atualizado_em desc);
 

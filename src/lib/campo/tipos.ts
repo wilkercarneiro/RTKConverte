@@ -79,3 +79,14 @@ export function opcoesValidas(v: unknown): OpcoesCampo {
   }
   return saida;
 }
+
+/** O valor digitado conferido com os limites: o número que vale e, se mudou, por quê. */
+export function conferirAjuste(k: keyof OpcoesCampo, texto: string, atual: number): { valor: number; nota: string | null } {
+  const [min, max] = LIMITES_OPCOES[k];
+  const bruto = texto.trim().replace(",", ".");
+  const n = Number(bruto);
+  if (!bruto || !Number.isFinite(n)) return { valor: atual, nota: `Use um número de ${min} a ${max}: ficou ${atual}.` };
+  if (n < min) return { valor: min, nota: `O mínimo é ${min}: ficou ${min}.` };
+  if (n > max) return { valor: max, nota: `O máximo é ${max}: ficou ${max}.` };
+  return { valor: n, nota: null };
+}

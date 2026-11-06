@@ -25,15 +25,17 @@ import {
 } from "../src/lib/campo/geometria.ts";
 import { combinarLeituras, leituraUtil, verticeAoCaminhar, verticeDoPonto } from "../src/lib/campo/motor.ts";
 import {
-  alterar, CHAVE_APARELHO, gravarAparelho, guardarMedicao, juntarListas, lerAparelho, marcarEnviada, medicaoValida,
-  nomePadrao, novaMedicao, novoId, pendente, quando, removerMedicao, textoRetomada,
+  alterar, armazemDoUsuario, CHAVE_APARELHO, gravarAparelho, guardarMedicao, juntarListas, lerAparelho, marcarEnviada, medicaoValida,
+  nomePadrao, novaMedicao, novoId, paraEnviar, pendente, quando, removerMedicao, textoRetomada, textoUltimoVertice,
 } from "../src/lib/campo/aparelho.ts";
-import { areaDaMedicao, areaParaConsulta, CHAVE_AREA_CONSULTA, pegarAreaParaConsulta } from "../src/lib/campo/ponte.ts";
+import { areaDaMedicao } from "../src/lib/campo/ponte.ts";
+import { pegarAreaTransferida, transferirArea } from "../src/lib/area_transferida.ts";
+import { enviarPendentes, SUFIXO_COPIA } from "../src/lib/campo/fila.ts";
 import { arquivoDaMedicao, camadasDaMedicao } from "../src/lib/campo/arquivos.ts";
 import { criarSimulador } from "../src/lib/campo/gps.ts";
 import { linhaDaMedicao, repositorioMemoria } from "../src/lib/campo/repositorio.ts";
 import { CANTOS_EXEMPLO, TRAJETO_EXEMPLO } from "../src/lib/campo/trajeto_exemplo.ts";
-import { OPCOES_PADRAO, opcoesValidas } from "../src/lib/campo/tipos.ts";
+import { conferirAjuste, OPCOES_PADRAO, opcoesValidas } from "../src/lib/campo/tipos.ts";
 
 const proj = (de, para, c) => proj4lib(de, para, c);
 /** ponto a (x leste, y norte) metros de uma origem lon/lat */
@@ -282,6 +284,11 @@ test("textos: retomada, quando e nome padrão", () => {
   const m = { ...novaMedicao(new Date(2026, 10, 6, 14, 32)), vertices: Array.from({ length: 23 }, () => vert(ORIGEM)) };
   assert.equal(textoRetomada(m, agora), "Continuar a medição de hoje 14:32 (23 vértices)?");
   assert.equal(textoRetomada({ ...m, vertices: [vert(ORIGEM)] }, agora), "Continuar a medição de hoje 14:32 (1 vértice)?");
+  // a pergunta usa a hora em que COMEÇOU, não a do último toque (o nome "Medição 06/11 14:32" bate)
+  const mexida = alterar(m, {}, new Date(2026, 10, 6, 14, 36));
+  assert.equal(textoRetomada(mexida, agora), "Continuar a medição de hoje 14:32 (23 vértices)?");
+  const ult = { ...m, vertices: [vert(ORIGEM, { t: new Date(2026, 10, 6, 14, 36).getTime() })] };
+  assert.equal(textoUltimoVertice(ult, agora), "último vértice hoje 14:36");
   assert.equal(quando(new Date(2026, 10, 5, 9, 10).toISOString(), agora), "ontem 09:10");
   assert.equal(quando(new Date(2026, 10, 3, 8, 5).toISOString(), agora), "03/11 08:05");
   assert.equal(quando(new Date(2025, 10, 3, 8, 5).toISOString(), agora), "03/11/2025 08:05");
@@ -305,28 +312,25 @@ const fechadaExemplo = () => ({
   vertices: CANTOS_EXEMPLO.map((c, i) => vert(c, { precisao: 2.5 + i * 0.2, t: Date.UTC(2026, 10, 6, 17, 32 + i), alt: 410 + i })),
 });
 
-test("ponte: a área para o CAR e para a Consulta (lê e apaga)", () => {
+test("ponte: a área para o CAR e para a Consulta, pelo MESMO canal (pegarAreaTransferida)", () => {
   const m = fechadaExemplo();
   const a = areaDaMedicao(m, new Date(2026, 10, 6, 18));
   assert.equal(a.nome, "Pasto da sede");
   assert.equal(a.perimetro.length, 6);
   assert.deepEqual(a.nomes, ["P1", "P2", "P3", "P4", "P5", "P6"]);
   assert.match(a.origem, /^Medição de campo de hoje 14:32 · GPS do celular ±3,0 m$/);
+  // a Consulta reconhece a fonte "campo" por /campo/i na origem
+  assert.match(a.origem, /campo/i);
   const mem = new Map();
   globalThis.sessionStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
   try {
-    assert.equal(areaParaConsulta(a), true);
-    assert.ok(mem.has(CHAVE_AREA_CONSULTA));
-    assert.deepEqual(pegarAreaParaConsulta(), a);
-    assert.equal(pegarAreaParaConsulta(), null, "entra uma vez só");
-    mem.set(CHAVE_AREA_CONSULTA, JSON.stringify({ ...a, perimetro: [[1, 2], [3, "x"], [5, 6]] }));
-    assert.equal(pegarAreaParaConsulta(), null, "área estragada é recusada");
-    mem.set(CHAVE_AREA_CONSULTA, "{");
-    assert.equal(pegarAreaParaConsulta(), null);
+    transferirArea(a);
+    assert.deepEqual([...mem.keys()], ["vertces.area-transferida"], "uma chave só, a que o CarNovo e a Consulta leem");
+    assert.deepEqual(pegarAreaTransferida(), a);
+    assert.equal(pegarAreaTransferida(), null, "entra uma vez só");
   } finally {
     delete globalThis.sessionStorage;
   }
-  assert.equal(pegarAreaParaConsulta(), null, "sem sessionStorage não quebra");
 });
 
 test("arquivos: KML com as coordenadas, GPX com waypoints, SHP; aberta sai como trajeto", async () => {
@@ -368,6 +372,9 @@ test("conta de mentira: grava, lista a mais nova primeiro, falha sob comando", a
   const a = fechadaExemplo(), b = alterar(fechadaExemplo(), { nome: "b" }, new Date(2030, 0, 1));
   await repo.salvar(a); await repo.salvar(b);
   assert.deepEqual((await repo.listar()).map((m) => m.nome), ["b", "Pasto da sede"]);
+  // versão mais velha que a da conta: fica de lado, sem erro (como o gatilho do banco)
+  assert.equal(await repo.salvar({ ...b, nome: "velha", atualizadaEm: "2000-01-01T00:00:00.000Z" }), "conta-mais-nova");
+  assert.equal((await repo.listar())[0].nome, "b");
   falha = "sem-rede";
   await assert.rejects(repo.salvar(a), (e) => e.tipo === "sem-rede");
   falha = null;
@@ -398,7 +405,7 @@ test("simulador: toca o trajeto em ordem, piora o sinal, para no fim", () => {
 });
 
 // ---------------------------------------------------------------- Ir para (sem GPS)
-test("Ir para: decimal, GMS e link do Google Maps", async () => {
+test("Ir para: decimal, GMS, UTM e link do Google Maps", async () => {
   const { lerLugar } = await import("../src/lib/campo/lugar.ts");
   const perto = (p, lon, lat) => p && Math.abs(p[0] - lon) < 1e-4 && Math.abs(p[1] - lat) < 1e-4;
   assert.ok(perto(lerLugar("-12.6915, -39.1262"), -39.1262, -12.6915));
@@ -409,5 +416,134 @@ test("Ir para: decimal, GMS e link do Google Maps", async () => {
   assert.ok(perto(lerLugar("https://www.google.com/maps/@-12.6915,-39.1262,17z"), -39.1262, -12.6915));
   assert.ok(perto(lerLugar("https://maps.google.com/?q=-12.6915,-39.1262"), -39.1262, -12.6915));
   assert.ok(perto(lerLugar("https://www.google.com/maps/place/X/@-12.7,-39.1,15z/data=!3d-12.6915!4d-39.1262"), -39.1262, -12.6915));
+  // vírgula decimal separada por ", " (o jeito brasileiro de colar) e ";"
+  assert.ok(perto(lerLugar("-12,6915, -39,1262"), -39.1262, -12.6915));
+  assert.ok(perto(lerLugar("-12,6915; -39,1262"), -39.1262, -12.6915));
+  // GMS com minutos decimais (12°41,49'S = 12°41'29,4")
+  assert.ok(perto(lerLugar("12°41,49'S 39°7,5717'W"), -39.12620, -12.69150));
+  // UTM com o fuso (SIRGAS 2000, sul): a volta do que o motor projeta
+  const [e24, n24] = proj(GEO_DEF, utmDef(24), [-39.1262, -12.6915]);
+  assert.ok(perto(lerLugar("24L " + e24.toFixed(2) + " " + n24.toFixed(2)), -39.1262, -12.6915));
+  assert.ok(perto(lerLugar("E " + Math.round(e24) + " N " + Math.round(n24) + " fuso 24"), -39.1262, -12.6915));
+  assert.equal(lerLugar("E " + Math.round(e24) + " N " + Math.round(n24)), null, "UTM sem fuso não chuta");
   for (const ruim of ["", "fazenda boa vista", "100, 200", "0, 0", "https://www.google.com/maps/search/fazenda"]) assert.equal(lerLugar(ruim), null, ruim);
+});
+
+// ---------------------------------------------------------------- aparelho por usuário
+test("aparelho por usuário: quem entra depois no mesmo navegador não vê as medições de quem saiu", () => {
+  const mem = new Map();
+  const base = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+  const a = armazemDoUsuario(base, "usuario-a"), b = armazemDoUsuario(base, "usuario-b");
+  const m = { ...novaMedicao(), vertices: [vert(ORIGEM)] };
+  assert.equal(gravarAparelho(a, guardarMedicao({ atualId: null, registros: {} }, m, true)), true);
+  assert.ok(mem.has(`${CHAVE_APARELHO}:usuario-a`));
+  assert.equal(Object.keys(lerAparelho(a).registros).length, 1);
+  assert.deepEqual(lerAparelho(b), { atualId: null, registros: {} }, "B não vê nada de A");
+});
+
+test("aparelho: a medição aberta da conta já conta como enviada (não sobe de novo)", () => {
+  const m = { ...novaMedicao(), vertices: [vert(ORIGEM)] };
+  const e = guardarMedicao({ atualId: null, registros: {} }, m, false, true);
+  assert.equal(pendente(e.registros[m.id]), false);
+  assert.equal(paraEnviar(e.registros[m.id]), false);
+  // mexeu depois de abrir: aí sim é pendente
+  const e2 = guardarMedicao(e, alterar(m, { nome: "x" }), false);
+  assert.equal(pendente(e2.registros[m.id]), true);
+});
+
+// ---------------------------------------------------------------- fila de envio
+function filaDeTeste(estado, repo) {
+  let e = estado;
+  return { f: { repo, ler: () => e, gravar: (x) => { e = x; } }, estado: () => e };
+}
+const medida = (nome, quandoMs) => {
+  const m = novaMedicao(new Date(quandoMs));
+  return { ...m, nome, vertices: [vert(ORIGEM), vert(desloc(ORIGEM, 10, 0)), vert(desloc(ORIGEM, 10, 10))] };
+};
+
+test("fila: um erro numa medição não segura as outras; recusada pela conta não tenta mais", async () => {
+  const m1 = medida("da outra empresa", Date.UTC(2026, 10, 6, 10)), m2 = medida("boa", Date.UTC(2026, 10, 6, 11)), m3 = medida("falha avulsa", Date.UTC(2026, 10, 6, 12));
+  let e = { atualId: null, registros: {} };
+  for (const m of [m1, m2, m3]) e = guardarMedicao(e, m, false);
+  let terceira = true;
+  const repo = repositorioMemoria([], { demoraMs: 0, falha: (id) => (id === m1.id ? "outra-conta" : id === m3.id && terceira ? "outro" : null) });
+  const { f, estado } = filaDeTeste(e, repo);
+  const r = await enviarPendentes(f);
+  assert.deepEqual(r.recusadas.map((m) => m.nome), ["da outra empresa"]);
+  assert.equal(r.enviadas, 1);
+  assert.equal(r.falhas, 1);
+  assert.equal(r.parou, null);
+  assert.deepEqual(repo.itens().map((m) => m.nome), ["boa"], "a boa subiu mesmo com a primeira recusada");
+  assert.equal(estado().registros[m1.id].recusada, true);
+  assert.equal(estado().registros[m2.id].enviadaVersao, m2.atualizadaEm);
+  // na rodada seguinte: a recusada não vai de novo; a avulsa sobe
+  terceira = false;
+  const r2 = await enviarPendentes(f);
+  assert.equal(r2.enviadas, 1);
+  assert.equal(r2.recusadas.length, 0);
+  assert.equal(r2.restam, 0);
+  assert.ok(estado().registros[m1.id], "a recusada continua no aparelho (nada se perde)");
+});
+
+test("fila: sem internet para tudo e tenta depois", async () => {
+  const m1 = medida("a", Date.UTC(2026, 10, 6, 10)), m2 = medida("b", Date.UTC(2026, 10, 6, 11));
+  const e = guardarMedicao(guardarMedicao({ atualId: null, registros: {} }, m1, false), m2, false);
+  let semRede = true;
+  const repo = repositorioMemoria([], { demoraMs: 0, falha: () => (semRede ? "sem-rede" : null) });
+  const { f } = filaDeTeste(e, repo);
+  const r = await enviarPendentes(f);
+  assert.equal(r.parou, "sem-rede");
+  assert.equal(r.restam, 2);
+  semRede = false;
+  assert.equal((await enviarPendentes(f)).enviadas, 2);
+});
+
+test("fila: a conta tem versão mais nova — a deste aparelho vira cópia e sobe também", async () => {
+  const local = medida("Pasto da sede", Date.UTC(2026, 10, 6, 14, 32));
+  const doEscritorio = { ...local, nome: "Renomeada no escritório", vertices: local.vertices.slice(0, 1), atualizadaEm: "2026-11-06T20:00:00.000Z" };
+  const repo = repositorioMemoria([doEscritorio], { demoraMs: 0 });
+  const { f, estado } = filaDeTeste(guardarMedicao({ atualId: null, registros: {} }, local, true), repo);
+  const copiadas = [];
+  f.aoCopiar = (de, c) => copiadas.push([de, c.nome]);
+  const r = await enviarPendentes(f);
+  assert.equal(r.copias.length, 1);
+  assert.deepEqual(copiadas, [[local.id, "Pasto da sede" + SUFIXO_COPIA]]);
+  const nomes = repo.itens().map((m) => m.nome).sort();
+  assert.deepEqual(nomes, ["Pasto da sede (deste aparelho)", "Renomeada no escritório"], "as duas existem: nada sobrescrito, nada perdido");
+  const copia = repo.itens().find((m) => m.nome.endsWith(SUFIXO_COPIA));
+  assert.equal(copia.vertices.length, 3, "a cópia tem os vértices do celular");
+  assert.notEqual(copia.id, local.id);
+  assert.equal(estado().registros[local.id], undefined);
+  assert.equal(estado().atualId, copia.id, "a em andamento passa a ser a cópia");
+  assert.equal(r.restam, 0);
+});
+
+test("fila: excluída enquanto subia não ressuscita na conta", async () => {
+  const m = medida("vai sumir", Date.UTC(2026, 10, 6, 10));
+  const repo = repositorioMemoria([], { demoraMs: 5 });
+  const { f } = filaDeTeste(guardarMedicao({ atualId: null, registros: {} }, m, false), repo);
+  const ida = enviarPendentes(f);
+  f.gravar(removerMedicao(f.ler(), m.id)); // a pessoa excluiu no meio do envio
+  await ida;
+  assert.equal(repo.itens().length, 0);
+});
+
+test("fila: duas chamadas ao mesmo tempo não enviam em dobro", async () => {
+  const m = medida("uma", Date.UTC(2026, 10, 6, 10));
+  let chamadas = 0;
+  const base = repositorioMemoria([], { demoraMs: 5 });
+  const repo = { ...base, salvar: async (x) => { chamadas++; return base.salvar(x); } };
+  const { f } = filaDeTeste(guardarMedicao({ atualId: null, registros: {} }, m, false), repo);
+  await Promise.all([enviarPendentes(f), enviarPendentes(f)]);
+  assert.equal(chamadas, 1);
+});
+
+// ---------------------------------------------------------------- ajustes
+test("ajustes: o limite vale ao terminar de digitar, com o porquê", () => {
+  assert.deepEqual(conferirAjuste("anguloGraus", "20", 15), { valor: 20, nota: null }, "20 é 20 (antes virava 50)");
+  assert.deepEqual(conferirAjuste("anguloGraus", "2", 15), { valor: 5, nota: "O mínimo é 5: ficou 5." });
+  assert.deepEqual(conferirAjuste("passoM", "500", 5), { valor: 100, nota: "O máximo é 100: ficou 100." });
+  assert.deepEqual(conferirAjuste("passoM", "2,5", 5), { valor: 2.5, nota: null });
+  assert.equal(conferirAjuste("passoM", "", 5).valor, 5);
+  assert.match(conferirAjuste("passoM", "", 5).nota, /de 1 a 100/);
 });

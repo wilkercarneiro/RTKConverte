@@ -1,4 +1,4 @@
--- Medições de campo (supabase/migrations/0044_medicoes_campo.sql): o escritório
+-- Medições de campo (supabase/migrations/0047_medicoes_campo.sql): o escritório
 -- vem do banco, cada empresa só vê e grava as suas, versão velha não
 -- sobrescreve a nova e quem criou não muda. Numa transação desfeita.
 -- (Rodar depois das migrações de escritórios/equipe: npm run test:rls.)
@@ -16,6 +16,14 @@ begin
   return false;
 exception when others then
   return true;
+end $$;
+-- a mensagem do erro (a tela separa "outra conta" de "sessão vencida" por ela)
+create function pg_temp.erro(cmd text) returns text language plpgsql as $$
+begin
+  execute cmd;
+  return null;
+exception when others then
+  return sqlerrm;
 end $$;
 create function pg_temp.afetadas(cmd text) returns int language plpgsql as $$
 declare n int;
@@ -60,6 +68,10 @@ insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111
   on conflict (id) do update set nome = excluded.nome, atualizado_em = excluded.atualizado_em;
 select pg_temp.ok((select nome from medicoes_campo where id = '11111111-1111-4111-8111-111111111111') = 'Renomeada no escritório',
                   'versão mais velha não sobrescreve a mais nova');
+-- a tela (conta.ts) sabe que a conta tem versão mais nova porque o upsert ... returning volta VAZIO
+select pg_temp.ok(pg_temp.afetadas($$insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111-8111-111111111111', 'Outra velha', '2026-11-06T17:55:00Z')
+  on conflict (id) do update set nome = excluded.nome, atualizado_em = excluded.atualizado_em returning atualizado_em$$) = 0,
+  'upsert de versão velha não devolve linha (a tela guarda a do aparelho como cópia)');
 update medicoes_campo set escritorio_id = :'esc_b', criado_por = null, atualizado_em = '2026-11-06T19:00:00Z' where id = '11111111-1111-4111-8111-111111111111';
 select pg_temp.ok((select escritorio_id = :'esc_a' and criado_por = :'ua' from medicoes_campo where id = '11111111-1111-4111-8111-111111111111'),
                   'escritório e autor não mudam no update');
@@ -77,6 +89,10 @@ select pg_temp.ok(pg_temp.afetadas($$delete from medicoes_campo where id = '1111
 select pg_temp.ok(pg_temp.recusa($$insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111-8111-111111111111', 'sequestro', '2030-01-01')
   on conflict (id) do update set nome = excluded.nome, atualizado_em = excluded.atualizado_em$$),
   'outra empresa não sequestra a medição de A pelo upsert do id');
+-- e o erro fala de row-level security (a tela mostra "é de outra conta", não "sessão expirou")
+select pg_temp.ok(pg_temp.erro($$insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111-8111-111111111111', 'sequestro', '2030-01-01')
+  on conflict (id) do update set nome = excluded.nome, atualizado_em = excluded.atualizado_em$$) ilike '%row-level security%',
+  'o erro do sequestro é de row-level security');
 
 -- ---------------------------------------------------------------- anônimo
 reset role;

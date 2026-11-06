@@ -1,9 +1,13 @@
 // "Ir para": sem GPS (no computador do escritório), o mapa precisa chegar ao
 // imóvel antes de desenhar. Uma caixa só entende o que o agrimensor costuma
 // ter na mão (princípio 2 do plano — nada de escolher o tipo de entrada):
-//   • decimal: "-12.6915, -39.1262" ou "-12,6915 -39,1262" (lat, lon);
-//   • GMS: 12°41'29.4"S 39°07'34.3"W (ou O), em qualquer ordem;
+//   • decimal: "-12.6915, -39.1262", "-12,6915 -39,1262" ou "-12,6915, -39,1262" (lat, lon);
+//   • GMS: 12°41'29.4"S 39°07'34.3"W (ou O), em qualquer ordem; minutos
+//     decimais também (12°41,5'S 39°7,57'W);
+//   • UTM: "24L 500000 8600000", "E 500000 N 8600000 fuso 24" (SIRGAS 2000,
+//     hemisfério sul, as mesmas definições do motor geodésico);
 //   • link do Google Maps: …/@-12.6915,-39.1262,17z, ?q=-12.69,-39.12, !3d…!4d….
+import { utmParaGeo } from "../exportar/coordenadas.ts";
 import type { LonLat } from "./tipos.ts";
 
 const valido = (lat: number, lon: number): LonLat | null =>
@@ -26,12 +30,13 @@ export function lerLugar(texto: string): LonLat | null {
     return null;
   }
 
-  // GMS: dois grupos com grau e hemisfério
-  const gms = [...t.matchAll(/(\d{1,3})\s*[°º]\s*(?:(\d{1,2})\s*['’′]\s*)?(?:(\d{1,2}(?:[.,]\d+)?)\s*(?:["”″]|'')\s*)?([NSLOWE])/gi)];
+  // GMS: dois grupos com grau e hemisfério (segundos opcionais; minutos podem ter decimal)
+  const gms = [...t.matchAll(/(\d{1,3}(?:[.,]\d+)?)\s*[°º]\s*(?:(\d{1,2}(?:[.,]\d+)?)\s*['’′]\s*)?(?:(\d{1,2}(?:[.,]\d+)?)\s*(?:["”″]|'')\s*)?([NSLOWE])/gi)];
   if (gms.length === 2) {
     let lat: number | null = null, lon: number | null = null;
+    const n = (x: string | undefined) => Number((x ?? "0").replace(",", "."));
     for (const g of gms) {
-      const v = Number(g[1]) + Number(g[2] ?? 0) / 60 + Number((g[3] ?? "0").replace(",", ".")) / 3600;
+      const v = n(g[1]) + n(g[2]) / 60 + n(g[3]) / 3600;
       const h = g[4].toUpperCase();
       if (h === "N" || h === "S") lat = h === "S" ? -v : v;
       else lon = h === "W" || h === "O" ? -v : v;
@@ -39,9 +44,18 @@ export function lerLugar(texto: string): LonLat | null {
     return lat != null && lon != null ? valido(lat, lon) : null;
   }
 
-  // decimal: lat, lon (vírgula decimal aceita quando separado por espaço ou ;)
-  const sep = t.includes(";") || (/\d,\d/.test(t) && !/,\s/.test(t) && /\s/.test(t)) ? /[;\s]+/ : /[,;\s]+/;
-  const partes = t.split(sep).map((p) => p.trim()).filter(Boolean);
+  // UTM: E de 6 dígitos, N de 7 e o fuso (18 a 25, com ou sem a letra da banda)
+  const utm = lerUtm(t);
+  if (utm) return utm;
+
+  // decimal: lat, lon. Vírgula decimal: "-12,69 -39,12", "-12,69; -39,12" ou "-12,69, -39,12"
+  let partes: string[];
+  const virgulaDecimal = /\d,\d/.test(t);
+  if (t.includes(";")) partes = t.split(";");
+  else if (virgulaDecimal && /,\s/.test(t)) partes = t.split(/,\s+/);
+  else if (virgulaDecimal && /\s/.test(t)) partes = t.split(/\s+/);
+  else partes = t.split(/[,\s]+/);
+  partes = partes.map((p) => p.trim()).filter(Boolean);
   if (partes.length === 2) {
     const [a, b] = partes.map((p) => Number(p.replace(",", ".")));
     if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
@@ -51,4 +65,17 @@ export function lerLugar(texto: string): LonLat | null {
     return trocado ? valido(b, a) : valido(a, b);
   }
   return null;
+}
+
+function lerUtm(t: string): LonLat | null {
+  const s = t.replace(/\d{1,3}(?:\.\d{3}){2,}/g, (m) => m.replace(/\./g, "")); // "8.600.000"
+  const nums = [...s.matchAll(/\d+(?:[.,]\d+)?/g)].map((m) => Number(m[0].replace(",", ".")));
+  const e = nums.find((v) => v >= 100_000 && v < 1_000_000);
+  const n = nums.find((v) => v >= 1_000_000 && v <= 10_000_000);
+  if (e == null || n == null) return null;
+  const mf = s.match(/(?:fuso|zona|zone|utm|mc)\s*[:=]?\s*(1[89]|2[0-5])\s*[a-z]?\b/i) ?? s.match(/\b(1[89]|2[0-5])\s*[c-hj-np-x]\b/i);
+  const fuso = mf ? Number(mf[1]) : nums.find((v) => Number.isInteger(v) && v >= 18 && v <= 25) ?? null;
+  if (fuso == null) return null;
+  const [lon, lat] = utmParaGeo([e, n], fuso);
+  return valido(lat, lon);
 }

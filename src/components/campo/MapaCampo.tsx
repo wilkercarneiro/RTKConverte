@@ -120,7 +120,17 @@ export function MapaCampo(props: Props) {
     m.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
     // o usuário arrastou o mapa: para de seguir o ponto azul (o botão "centralizar" aparece)
     m.on("dragstart", () => propsRef.current.onParouDeSeguir());
-    m.on("click", (e) => { if (propsRef.current.desenhando) propsRef.current.onToque([e.lngLat.lng, e.lngLat.lat]); });
+    // desenhando, o toque duplo não dá zoom nem põe dois vértices (o zoom fica no pinça e nos botões)
+    let ultimoToque = { t: 0, x: 0, y: 0 };
+    m.on("click", (e) => {
+      if (!propsRef.current.desenhando) return;
+      const ev = e.originalEvent as MouseEvent | undefined;
+      if (ev && ev.detail > 1) return;
+      const agora = Date.now();
+      if (agora - ultimoToque.t < 350 && Math.hypot(e.point.x - ultimoToque.x, e.point.y - ultimoToque.y) < 12) return;
+      ultimoToque = { t: agora, x: e.point.x, y: e.point.y };
+      propsRef.current.onToque([e.lngLat.lng, e.lngLat.lat]);
+    });
     m.on("load", () => { prontoRef.current = true; desenhar(); posicionar(); });
     mapaRef.current = m;
     setMapa(m);
@@ -185,6 +195,7 @@ export function MapaCampo(props: Props) {
         });
       }
       m.getCanvas().style.cursor = desenhando ? "crosshair" : "";
+      if (desenhando) m.doubleClickZoom.disable(); else m.doubleClickZoom.enable();
       // enquadra quando pedido (abriu outra medição, fechou a área)
       if (enquadrar !== enquadradoRef.current && pts.length >= 2) {
         enquadradoRef.current = enquadrar;

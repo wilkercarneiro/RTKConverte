@@ -3,7 +3,8 @@
 // trajeto_exemplo.ts) tocado como se fosse o celular andando no pasto.
 //
 // Cenas (#/lab/campo?cena=…): inicio · medindo · fechada · retomar · mao ·
-// sem-gps · sem-permissao · lista-vazia · conta-fora · sem-tabela.
+// sem-gps · sem-permissao · lista-vazia · conta-fora · sem-tabela · conflito
+// (a conta tem uma versão mais nova da medição deste aparelho).
 // "&limpo" esconde o painel do laboratório (para as capturas).
 //
 // O aparelho do laboratório grava com o prefixo "lab:" no localStorage (não
@@ -16,7 +17,6 @@ import { Campo } from "./Campo";
 import { rotaParaHash } from "../../lib/rota";
 import type { Rota } from "../../lib/rota";
 import { pegarAreaTransferida } from "../../lib/area_transferida";
-import { pegarAreaParaConsulta } from "../../lib/campo/ponte.ts";
 import { CHAVE_APARELHO, gravarAparelho, guardarMedicao, novoId } from "../../lib/campo/aparelho.ts";
 import type { Armazem } from "../../lib/campo/aparelho.ts";
 import { criarSimulador, fonteComErro } from "../../lib/campo/gps.ts";
@@ -28,7 +28,7 @@ import { CANTOS_EXEMPLO, TRAJETO_EXEMPLO } from "../../lib/campo/trajeto_exemplo
 import { OPCOES_PADRAO } from "../../lib/campo/tipos.ts";
 import type { Medicao, VerticeCampo } from "../../lib/campo/tipos.ts";
 
-const CENAS = ["inicio", "medindo", "fechada", "retomar", "mao", "sem-gps", "sem-permissao", "lista-vazia", "conta-fora", "sem-tabela"] as const;
+const CENAS = ["inicio", "medindo", "fechada", "retomar", "mao", "sem-gps", "sem-permissao", "lista-vazia", "conta-fora", "sem-tabela", "conflito"] as const;
 type Cena = typeof CENAS[number];
 
 const parametros = () => new URLSearchParams(location.hash.split("?")[1] ?? "");
@@ -63,7 +63,7 @@ function medicoesDaConta(): Medicao[] {
   ];
 }
 
-function prepararCena(cena: Cena): { abrir?: Medicao; inicioTrajeto: number } {
+function prepararCena(cena: Cena): { abrir?: Medicao; inicioTrajeto: number; conta?: Medicao[] } {
   try {
     for (const k of Object.keys(localStorage)) if (k.startsWith("lab:")) localStorage.removeItem(k);
   } catch { /* sem storage */ }
@@ -77,6 +77,12 @@ function prepararCena(cena: Cena): { abrir?: Medicao; inicioTrajeto: number } {
     const m = medicaoAndando(260, "Medição 06/11 14:32", hoje);
     gravarAparelho(armazemLab, guardarMedicao({ atualId: null, registros: {} }, m, true));
     return { inicioTrajeto: 260 };
+  }
+  if (cena === "conflito") {
+    // o celular mediu e não enviou; enquanto isso o escritório renomeou a mesma medição
+    const m = { ...medicaoAndando(TRAJETO_EXEMPLO.length, "Pasto da sede", hoje), fechada: true };
+    const doEscritorio = { ...m, nome: "Pasto da sede (renomeada no escritório)", vertices: m.vertices.slice(0, 8), atualizadaEm: new Date(Date.parse(m.atualizadaEm) + 3_600_000).toISOString() };
+    return { abrir: m, inicioTrajeto: TRAJETO_EXEMPLO.length - 1, conta: [doEscritorio, ...medicoesDaConta()] };
   }
   return { inicioTrajeto: 0 };
 }
@@ -104,14 +110,13 @@ export function LaboratorioCampo() {
   const falhaRef = useRef(falhaConta);
   falhaRef.current = falhaConta;
   const repo = useMemo(
-    () => repositorioMemoria(cena === "lista-vazia" ? [] : medicoesDaConta(), { falha: () => falhaRef.current, demoraMs: 300 }),
-    [cena],
+    () => repositorioMemoria(cena === "lista-vazia" ? [] : preparo.conta ?? medicoesDaConta(), { falha: () => falhaRef.current, demoraMs: 300 }),
+    [cena, preparo],
   );
 
   function ir(r: Rota) {
-    const car = pegarAreaTransferida();
-    const consulta = pegarAreaParaConsulta();
-    const a = car ?? consulta;
+    // o CAR e a Consulta recebem a área pelo mesmo canal (lib/area_transferida.ts)
+    const a = pegarAreaTransferida();
     avisar("ok", `Laboratório: iria para ${rotaParaHash(r)}${a ? ` com "${a.nome}" (${a.perimetro.length} vértices · ${a.origem})` : ""}.`);
     if (a) console.info("[lab campo] área levada:", a);
   }

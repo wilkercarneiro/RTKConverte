@@ -17,6 +17,7 @@ import { AvisosGlobais, DialogosGlobais } from "./ui";
 import { abrirCompraDeCreditos, AvisoCreditoGlobal, CompraDeCreditosGlobal } from "./Creditos";
 import { abrirSuporte, SuporteChat, useNaoLidasSuporte } from "./suporte/SuporteChat";
 import { contagemSuporte } from "../lib/suporte";
+import { useEnvioMedicoes } from "./campo/useEnvioMedicoes";
 import "./casca.css";
 
 const I = {
@@ -93,6 +94,8 @@ export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId
   escritorioId?: string;
 }) {
   const naoLidas = useNaoLidasSuporte();
+  // medição do campo que ficou no aparelho sobe de qualquer tela
+  useEnvioMedicoes();
   // superadmin trabalhando numa empresa: chamados esperando o suporte, no item do painel
   const [esperando, setEsperando] = useState<number | null>(null);
   useEffect(() => {

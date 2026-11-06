@@ -1,11 +1,23 @@
-// Onde as medições ficam na CONTA (migração 0044_medicoes_campo, RLS por
+// Onde as medições ficam na CONTA (migração 0047_medicoes_campo, RLS por
 // escritório): assim a medição feita no celular aparece no computador do
 // escritório. A tela fala com esta interface; o banco de verdade está em
 // conta.ts e o laboratório usa a de memória daqui.
 import { medir } from "./geometria.ts";
 import type { Medicao } from "./tipos.ts";
 
-export type TipoErroConta = "sem-tabela" | "sem-rede" | "sem-login" | "outro";
+/**
+ * sem-tabela: o banco ainda não foi atualizado para guardar medições;
+ * sem-rede; sem-login: a sessão expirou; outra-conta: a medição existe na
+ * conta de OUTRA empresa (a RLS recusou); outro: qualquer outra falha.
+ */
+export type TipoErroConta = "sem-tabela" | "sem-rede" | "sem-login" | "outra-conta" | "outro";
+
+/**
+ * O que aconteceu ao salvar: "ok" ou "conta-mais-nova" — a conta já tinha uma
+ * versão mais nova (outro aparelho, relógio atrasado) e a gravação foi deixada
+ * de lado pelo banco.
+ */
+export type ResultadoSalvar = "ok" | "conta-mais-nova";
 
 export class ErroConta extends Error {
   tipo: TipoErroConta;
@@ -18,8 +30,8 @@ export class ErroConta extends Error {
 export interface RepositorioMedicoes {
   /** as medições da empresa, mais novas primeiro */
   listar(): Promise<Medicao[]>;
-  /** grava (cria ou atualiza pelo id) */
-  salvar(m: Medicao): Promise<void>;
+  /** grava (cria ou atualiza pelo id); a versão mais velha nunca sobrescreve a nova */
+  salvar(m: Medicao): Promise<ResultadoSalvar>;
   excluir(id: string): Promise<void>;
 }
 
@@ -44,17 +56,24 @@ export function linhaDaMedicao(m: Medicao) {
 }
 
 /** Conta de mentira (laboratório): guarda em memória e pode falhar sob comando. */
-export function repositorioMemoria(inicial: Medicao[] = [], op: { falha?: () => TipoErroConta | null; demoraMs?: number } = {}): RepositorioMedicoes & { itens: () => Medicao[] } {
+export function repositorioMemoria(inicial: Medicao[] = [], op: { falha?: (id?: string) => TipoErroConta | null; demoraMs?: number } = {}): RepositorioMedicoes & { itens: () => Medicao[] } {
   const dados = new Map(inicial.map((m) => [m.id, m]));
   const esperar = () => new Promise((r) => setTimeout(r, op.demoraMs ?? 250));
-  const conferir = () => {
-    const f = op.falha?.();
-    if (f) throw new ErroConta(f, f === "sem-rede" ? "Sem internet agora." : f === "sem-tabela" ? "O banco ainda não tem a atualização 0044." : "Falhou.");
+  const conferir = (id?: string) => {
+    const f = op.falha?.(id);
+    if (f) throw new ErroConta(f, f === "sem-rede" ? "Sem internet agora." : f === "sem-tabela" ? "O sistema ainda não foi atualizado para guardar medições na conta." : f === "outra-conta" ? "Esta medição é de outra conta." : "Falhou.");
   };
   return {
     async listar() { await esperar(); conferir(); return [...dados.values()].sort((a, b) => b.atualizadaEm.localeCompare(a.atualizadaEm)); },
-    async salvar(m) { await esperar(); conferir(); dados.set(m.id, structuredClone(m)); },
-    async excluir(id) { await esperar(); conferir(); dados.delete(id); },
+    async salvar(m) {
+      await esperar(); conferir(m.id);
+      const antes = dados.get(m.id);
+      // como o gatilho medicoes_campo_mais_nova: a versão velha fica de lado, sem erro
+      if (antes && m.atualizadaEm < antes.atualizadaEm) return "conta-mais-nova";
+      dados.set(m.id, structuredClone(m));
+      return "ok";
+    },
+    async excluir(id) { await esperar(); conferir(id); dados.delete(id); },
     itens: () => [...dados.values()],
   };
 }
