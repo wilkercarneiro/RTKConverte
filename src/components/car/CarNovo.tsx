@@ -12,6 +12,8 @@ import type { KmlLido } from "../../lib/car/kml.ts";
 import { avisosDosPontos, lerGpx, perimetroDosPontos } from "../../lib/car/gpx.ts";
 import type { PontoGps } from "../../lib/car/gpx.ts";
 import { calcularCar, fmtHa, fmtNum, projetoNovo } from "../../lib/car/motor.ts";
+import type { BaseAreaCar, ProjetoCar } from "../../lib/car/motor.ts";
+import { EscolhaBaseArea } from "./BaseArea";
 import { criarServicoCar } from "../../lib/car/persistencia.ts";
 import { Icone, ICONE } from "../Icone";
 import { Dica, Passos } from "../ui";
@@ -64,6 +66,8 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
   const [pedeAceite, setPedeAceite] = useState(false);
   /** a área veio de uma ferramenta: o "← Voltar" volta para ela (a Consulta, a medição do Campo) */
   const [veio, setVeio] = useState<AreaTransferida | null>(null);
+  /** em que área o CAR fala: a pessoa escolhe; começa na UTM (a do SIGEF, do Campo e da Consulta) ou na última escolhida */
+  const [base, setBase] = useState<BaseAreaCar>(() => (lembrar("car-base-area") === "albers" ? "albers" : "utm"));
 
   // área levada de uma ferramenta (Consultar imóvel, Medir no campo): já abre
   // com o perímetro, como se o KML tivesse sido enviado. pegarAreaTransferida()
@@ -120,7 +124,7 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
 
   const previa = useMemo(() => {
     if (!lido || !entrada || entrada.perimetro.length < 3) return null;
-    const pr = projetoNovo(nome, entrada.perimetro, entrada.rios, entrada.nomes);
+    const pr: ProjetoCar = { ...projetoNovo(nome, entrada.perimetro, entrada.rios, entrada.nomes), baseArea: base };
     const res = calcularCar(pr);
     const pts = res.imovel.ext;
     const todos = [...pts, ...(lido.pontos ?? []).map((p) => res.plano.para([p.lon, p.lat]))];
@@ -137,7 +141,7 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
       pontos: (lido.pontos ?? []).map((p) => ({ nome: p.nome, xy: xy(res.plano.para([p.lon, p.lat])) })),
       w: 52 + (x1 - x0) * s, h: 36 + (y1 - y0) * s,
     };
-  }, [lido, entrada, nome]);
+  }, [lido, entrada, nome, base]);
 
   function alternarPonto(i: number) {
     if (!lido?.pontos) return;
@@ -232,12 +236,14 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
               ))}
             </svg>
             <div className="car-novo-dados">
-              <p className="car-novo-area"><b>{fmtHa(previa.levada?.areaM2 ?? previa.area)}</b>
-                {/* a nota da projeção do módulo do CAR é explicação: vai para o "?" do número */}
-                {previa.levada?.linhaCar && <Dica>{previa.levada.linhaCar} A área de cabeça é a do sistema inteiro (UTM no fuso do lugar, fórmula de Gauss).</Dica>}
-                {" "}· {fmtNum(previa.levada?.areaM2 ?? previa.area, 2)} m² · {entrada.perimetro.length} vértices
+              <p className="car-novo-area"><b>{fmtHa(previa.area)}</b>
+                {" "}· {fmtNum(previa.area, 2)} m² · {entrada.perimetro.length} vértices
                 {entrada.rios.length > 0 && <> · {entrada.rios.length} rio(s) no arquivo</>}</p>
-              {lido.origem && <p className="car-dica car-novo-veio" role="note">{lido.frase ?? `Área de ${lido.origem}`} — a mesma que você viu lá.</p>}
+              {/* a mesma área da origem só na base UTM; na de área igual a frase diria uma coisa falsa */}
+              {lido.origem && (base === "utm"
+                ? <p className="car-dica car-novo-veio" role="note">{lido.frase ?? `Área de ${lido.origem}`} — a mesma que você viu lá.</p>
+                : <p className="car-dica" role="note">{lido.frase ?? `Área de ${lido.origem}`}. Lá ela aparece em UTM; aqui, na projeção de área igual que você escolheu.</p>)}
+              <EscolhaBaseArea perimetro={entrada.perimetro} valor={base} onMudar={(b) => { setBase(b); guardar("car-base-area", b); }} />
               {previa.levada?.linhaPartes && <p className="car-dica" role="note">⚠ {previa.levada.linhaPartes}</p>}
               {entrada.avisos.map((a) => <p key={a} className="car-dica">⚠ {a}</p>)}
               {lido.pontos && <p className="car-dica">Clique num ponto do desenho para tirá-lo do perímetro (a sede, um ponto de outro dia) ou pô-lo de volta.</p>}

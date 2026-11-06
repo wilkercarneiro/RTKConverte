@@ -28,6 +28,7 @@ import {
 } from "../loteamento/geom.ts";
 import type { Poligono, Pt } from "../loteamento/geom.ts";
 import type { LonLat } from "./kml.ts";
+import { medir } from "../consulta/geometria.ts";
 import type { PoligonoGeo } from "./shapefile.ts";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
@@ -72,7 +73,19 @@ export interface ProjetoCar {
   rios: RioCar[];
   /** a área produtiva também exclui a APP? (padrão: só exclui a reserva) */
   produtivaSemApp: boolean;
+  /**
+   * Em que área o serviço fala (o agrimensor escolhe):
+   *  - "utm": UTM no fuso do lugar + Gauss — a mesma do Campo, da Consulta,
+   *    do SIGEF e, no CAR de Lençóis, a declarada no SICAR;
+   *  - "albers": projeção de área igual colada no imóvel (o cálculo de sempre).
+   * Ausente = "albers" (serviço antigo não muda de número sozinho).
+   * O desenho continua no plano Albers; só os hectares (e a meta da
+   * vegetação) passam pelo fator — as porcentagens não mudam.
+   */
+  baseArea?: BaseAreaCar;
 }
+
+export type BaseAreaCar = "utm" | "albers";
 
 /** Faixas de APP de curso d'água (Lei 12.651/2012, art. 4º, I), pela largura do leito. */
 export const FAIXAS_APP: { faixa: number; leito: string }[] = [
@@ -120,7 +133,14 @@ export function normalizarProjetoCar(p: Partial<ProjetoCar> | null, base: Projet
     },
     rios: Array.isArray(p.rios) ? p.rios.filter((r) => r && Array.isArray(r.linha)) : [],
     produtivaSemApp: !!p.produtivaSemApp,
+    ...(p.baseArea === "utm" || p.baseArea === "albers" ? { baseArea: p.baseArea } : {}),
   };
+}
+
+/** As duas áreas do mesmo perímetro, para a escolha (m²). */
+export function areasDasBases(perimetro: LonLat[]): Record<BaseAreaCar, number> {
+  const pl = planoDe(perimetro);
+  return { albers: areaPol({ ext: antiHorario(perimetro.map(pl.para)), furos: [] }), utm: medir([perimetro]).areaM2 };
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +183,10 @@ export interface ResultadoCar {
   vegetacao: Poligono[];
   app: Poligono[];
   produtiva: Poligono[];
+  /** áreas em m² na base escolhida (pr.baseArea) */
   area: { imovel: number; reserva: number; vegetacao: number; app: number; produtiva: number; appNaReserva: number };
+  /** área na base escolhida ÷ área no plano Albers (1 na base "albers") */
+  fatorArea: number;
   /** reserva / imóvel, em % */
   pctReserva: number;
   /** a reserva atinge a porcentagem pedida? */
@@ -200,15 +223,17 @@ export function calcularCar(pr: ProjetoCar): ResultadoCar {
   // só a reserva (o caso de sempre): a mesma conta de antes, sem passar pela união
   const produtiva = semBicos(diferenca([imovel], fora.length === reserva.length ? reserva : uniao(fora)));
 
+  // base UTM: o mesmo desenho, os hectares no número UTM (as razões não mudam)
+  const k = pr.baseArea === "utm" && areaImovel > 0 ? medir([pr.perimetro]).areaM2 / areaImovel : 1;
   const area = {
-    imovel: areaImovel,
-    reserva: areaPols(reserva),
-    vegetacao: areaPols(vegetacao),
-    app: areaPols(app),
-    produtiva: areaPols(produtiva),
-    appNaReserva: reserva.length && app.length ? areaPols(intersecao(reserva, app)) : 0,
+    imovel: areaImovel * k,
+    reserva: areaPols(reserva) * k,
+    vegetacao: areaPols(vegetacao) * k,
+    app: areaPols(app) * k,
+    produtiva: areaPols(produtiva) * k,
+    appNaReserva: reserva.length && app.length ? areaPols(intersecao(reserva, app)) * k : 0,
   };
-  const pctReserva = areaImovel > 0 ? (100 * area.reserva) / areaImovel : 0;
+  const pctReserva = area.imovel > 0 ? (100 * area.reserva) / area.imovel : 0;
   const reservaOk = pctReserva >= pr.reserva.pct - 1e-6;
   const vegetacaoOk = !veg.alvoHa || area.vegetacao >= veg.alvoHa * 1e4 - 1e-3;
 
@@ -219,7 +244,7 @@ export function calcularCar(pr: ProjetoCar): ResultadoCar {
   if (veg.poligonos.length) {
     if (!vegetacao.length) avisos.push("A vegetação nativa desenhada caiu toda dentro da reserva legal — a reserva do próprio imóvel não pode ser cedida.");
     else {
-      const comida = areaPols(vegDesenhada) - area.vegetacao;
+      const comida = areaPols(vegDesenhada) * k - area.vegetacao;
       if (comida > 1) avisos.push(`${fmtNum(comida, 2)} m² da vegetação desenhada caíam na reserva legal e ficaram de fora (só o excedente pode ser cedido).`);
       if (!vegetacaoOk) avisos.push(`A vegetação nativa tem ${fmtHa(area.vegetacao)}; o imóvel beneficiado precisa de ${fmtHa(veg.alvoHa! * 1e4)}. Use “Ajustar”.`);
       if (vegetacao.length > 1) avisos.push(`A vegetação nativa ficou em ${vegetacao.length} pedaços separados.`);
@@ -230,7 +255,7 @@ export function calcularCar(pr: ProjetoCar): ResultadoCar {
     else if (!(r.faixa > 0)) avisos.push(`${r.nome}: falta a largura da faixa de APP.`);
     else if (!intersecao([imovel], faixaDoRio(plano, r)).length) avisos.push(`${r.nome}: a faixa não toca o imóvel.`);
   }
-  return { plano, imovel, reserva, vegetacao, app, produtiva, area, pctReserva, reservaOk, vegetacaoOk, avisos };
+  return { plano, imovel, reserva, vegetacao, app, produtiva, area, fatorArea: k, pctReserva, reservaOk, vegetacaoOk, avisos };
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +286,7 @@ export function reservaPorLado(pr: ProjetoCar, lado: number, giro = 0): Poligono
   // interior à esquerda de cada aresta do anel anti-horário
   const n = esquerda(u);
   const proj = anel.map((p) => dot(sub(p, a), n));
-  const alvo = alvoReserva(pr, res.area.imovel);
+  const alvo = alvoReserva(pr, areaPol(res.imovel));
   const s = bisseccao((x) => areaPolAteCorte(res.imovel, a, n, x), alvo, Math.min(...proj), Math.max(...proj));
   // cortador do tamanho do imóvel: retângulo gigante tira o clipper da faixa rápida de inteiros
   const { min, max } = caixa(anel);
@@ -282,7 +307,7 @@ const alvoReserva = (pr: ProjetoCar, areaImovel: number) => (areaImovel * (pr.re
 export function ajustarReserva(pr: ProjetoCar): PoligonoGeo[] {
   const res = calcularCar(pr);
   if (!res.reserva.length) return pr.reserva.poligonos;
-  const alvo = alvoReserva(pr, res.area.imovel);
+  const alvo = alvoReserva(pr, areaPol(res.imovel));
   const { min, max } = caixa(res.imovel.ext);
   const D = dist(min, max);
   const resto = diferenca([res.imovel], res.reserva);
@@ -319,10 +344,11 @@ function livreDaReserva(pr: ProjetoCar): { res: ResultadoCar; livre: Poligono[] 
  * desviando da reserva. A divisa é paralela ao lado; `giro` (graus) a inclina.
  */
 export function vegetacaoPorLado(pr: ProjetoCar, lado: number, giro = 0): PoligonoGeo[] {
-  const alvo = alvoVegetacao(pr);
   const { res, livre } = livreDaReserva(pr);
+  // a meta está na base escolhida; o corte é no plano
+  const alvo = alvoVegetacao(pr) / res.fatorArea;
   const disponivel = areaPols(livre);
-  if (disponivel < alvo) throw new Error(`Fora da reserva sobram ${fmtHa(disponivel)}; não cabem os ${fmtHa(alvo)} pedidos.`);
+  if (disponivel < alvo) throw new Error(`Fora da reserva sobram ${fmtHa(disponivel * res.fatorArea)}; não cabem os ${fmtHa(alvo * res.fatorArea)} pedidos.`);
   const anel = res.imovel.ext;
   const a = anel[lado % anel.length], b = anel[(lado + 1) % anel.length];
   const g = (giro * Math.PI) / 180;
@@ -339,11 +365,11 @@ export function vegetacaoPorLado(pr: ProjetoCar, lado: number, giro = 0): Poligo
 
 /** Leva a vegetação desenhada à área pedida sem tirá-la do lugar (como "Ajustar" da reserva). */
 export function ajustarVegetacao(pr: ProjetoCar): PoligonoGeo[] {
-  const alvo = alvoVegetacao(pr);
   const res = calcularCar(pr);
+  const alvo = alvoVegetacao(pr) / res.fatorArea;
   if (!res.vegetacao.length) return pr.vegetacao.poligonos;
   const livre = res.reserva.length ? diferenca([res.imovel], res.reserva) : [res.imovel];
-  if (areaPols(livre) < alvo) throw new Error(`Fora da reserva sobram ${fmtHa(areaPols(livre))}; não cabem os ${fmtHa(alvo)} pedidos.`);
+  if (areaPols(livre) < alvo) throw new Error(`Fora da reserva sobram ${fmtHa(areaPols(livre) * res.fatorArea)}; não cabem os ${fmtHa(alvo * res.fatorArea)} pedidos.`);
   const { min, max } = caixa(res.imovel.ext);
   const D = dist(min, max);
   const resto = diferenca(livre, res.vegetacao);

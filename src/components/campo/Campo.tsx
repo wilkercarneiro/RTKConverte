@@ -586,7 +586,7 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
     if (!m || !limpou || limpou.id !== m.id || !limpezaAindaVale(limpou.l, m.vertices)) { setLimpou(null); return; }
     mudar(alterar(m, { vertices: limpou.antes }));
     setLimpou(null);
-    setSemLimpeza((s) => new Set(s).add(m.id));
+    // a oferta volta: quem desfez para comparar pode limpar de novo (ou "Deixar como está")
     agendarEnvio(400);
   }
   const registroAtual = medicao ? aparelho.registros[medicao.id] : undefined;

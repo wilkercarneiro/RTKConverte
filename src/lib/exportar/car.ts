@@ -46,7 +46,7 @@ export function camadasDoCar(pr: ProjetoCar, res: ResultadoCar = calcularCar(pr)
         nome: pols.length > 1 ? `${def.titulo} ${i + 1}` : def.titulo,
         tipo: "poligono", geo: p.ext, furosGeo: p.furos,
         // a área do quadro do CAR (plano de área igual), não a do desenho em grau
-        props: { area_ha: r4((id === "imovel" ? res.area.imovel : planos[i] ? areaPol(planos[i]) : 0) / 1e4) },
+        props: { area_ha: r4((id === "imovel" ? res.area.imovel : planos[i] ? areaPol(planos[i]) * res.fatorArea : 0) / 1e4) },
       })),
     };
   });

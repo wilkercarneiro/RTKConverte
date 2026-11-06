@@ -22,6 +22,7 @@ import { BotaoConcluir, useConclusao } from "../ConcluirServico";
 import { ExportarArea } from "../ExportarArea";
 import { RestricoesImovel } from "../RestricoesImovel";
 import { CarEditor, COR } from "./CarEditor";
+import { EscolhaBaseArea } from "./BaseArea";
 import type { FerramentaCar, SelecaoCar } from "./CarEditor";
 import "./car.css";
 import { Icone } from "../Icone";
@@ -347,6 +348,9 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
               </tbody>
             </table>
             {a.appNaReserva > 0.01 && <p className="car-dica">{fmtHa(a.appNaReserva)} da APP estão dentro da reserva legal.</p>}
+            {/* serviço antigo (sem a escolha gravada) segue na área igual, como sempre foi */}
+            <EscolhaBaseArea compacta perimetro={projeto.perimetro} valor={projeto.baseArea ?? "albers"}
+              onMudar={(b) => mudar({ ...projeto, baseArea: b })} />
             <label className="car-check">
               <input type="checkbox" checked={projeto.produtivaSemApp} onChange={(e) => mudar({ ...projeto, produtivaSemApp: e.target.checked })} />
               <span>Tirar a APP da área produtiva<Dica>Padrão: produtiva = total − reserva − vegetação nativa cedida.</Dica></span>

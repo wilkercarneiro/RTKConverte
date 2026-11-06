@@ -129,3 +129,20 @@
 /* área levada de uma ferramenta: a frase da origem em destaque; a nota da projeção no "?" do número */
 .car-novo-area { display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; }
 .car-novo-dados p.car-novo-veio { color: var(--floresta); font-weight: 600; }
+
+/* em que área o CAR fala (UTM × área igual): duas opções lado a lado, o número grande */
+.car-base { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; min-width: 0; }
+.car-base legend { display: inline-flex; align-items: center; gap: 2px; padding: 0; font-size: 13px; color: var(--texto-2); }
+.car-base-opcoes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+button.car-base-opcao {
+  display: grid; gap: 1px; justify-items: start; text-align: left; height: auto; padding: 8px 10px;
+  border: 1.5px solid var(--borda); border-radius: 10px; background: var(--superficie, #fff); color: var(--texto);
+  font-weight: 400; cursor: pointer; min-width: 0;
+}
+button.car-base-opcao:hover:not(:disabled) { border-color: var(--primaria); background: var(--primaria-clara); color: var(--texto); }
+button.car-base-opcao.ativa { border-color: var(--primaria); background: var(--primaria-clara); box-shadow: inset 0 0 0 1px var(--primaria); }
+.car-base-titulo { font-size: 12px; color: var(--texto-2); font-weight: 600; }
+button.car-base-opcao b { font-size: 15px; color: var(--floresta); font-variant-numeric: tabular-nums; }
+button.car-base-opcao small { font-size: 11.5px; color: var(--texto-3); line-height: 1.3; }
+.car-base.compacta button.car-base-opcao { padding: 6px 8px; }
+.car-base.compacta button.car-base-opcao b { font-size: 13.5px; }

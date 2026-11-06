@@ -942,7 +942,8 @@ function CartaoImovel({ im, ativo, onClick, varios }: { im: ImovelEncontrado; at
     <>
       <span className="cr-topo">
         <span className={`cr-selo ${im.fonte}`}>{SELO[im.fonte] ?? im.fonte}</span>
-        {im.situacao && <span className={`cr-situacao${condicaoAlerta ? " alerta" : ""}`}>{im.situacao}</span>}
+        {/* o selo já diz "Medição de campo": a situação fica só com o quando e o GPS */}
+        {im.situacao && <span className={`cr-situacao${condicaoAlerta ? " alerta" : ""}`}>{im.fonte === "campo" ? im.situacao.replace(/^Medi[çc][ãa]o de campo (de )?/i, "") : im.situacao}</span>}
       </span>
       <span className={`cr-titulo${im.fonte === "car" ? " mono" : ""}`}>
         {im.fonte === "car" ? im.codigo : im.titulo}
