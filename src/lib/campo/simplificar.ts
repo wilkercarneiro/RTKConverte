@@ -115,7 +115,7 @@ function areaIdx(xy: [number, number][], idx: number[]): number {
 /**
  * 2ª passada (depois do Douglas–Peucker): nos lados compridos ficam vértices
  * do Caminhar quase em linha — o ruído do GPS passa da tolerância aqui e ali.
- * Sai o que quebra pouco (deflexão < 20°) e fica perto da reta dos vizinhos
+ * Sai o que quebra pouco (deflexão < 20°, ou colado num vizinho) e fica perto da reta dos vizinhos
  * (dentro do ruído: até 0,6 × a precisão média, teto de 2 m), enquanto a área
  * total ficar a menos de 0,15% da medida. O de menor efeito na área sai primeiro.
  */
@@ -133,7 +133,8 @@ function tirarQuaseRetos(vertices: VerticeCampo[], xy: [number, number][], fica:
       const lu = Math.hypot(ux, uy), lv = Math.hypot(vx, vy);
       if (lu > 0 && lv > 0) {
         const def = Math.acos(Math.max(-1, Math.min(1, (ux * vx + uy * vy) / (lu * lv))));
-        if (def >= DEFLEXAO_MAX || distSegmento(p, a, b) > altMax) continue;
+        // vértice colado no vizinho (lado curto): a quebra aparente é só o ruído — vale a altura
+        if ((def >= DEFLEXAO_MAX && Math.min(lu, lv) > 5 * altMax) || distSegmento(p, a, b) > altMax) continue;
       }
       const dif = Math.abs(areaIdx(xy, idx.filter((x) => x !== i)) - areaAntesM2);
       if (dif < melhorDif) { melhorDif = dif; melhor = i; }
