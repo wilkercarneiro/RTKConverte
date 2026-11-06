@@ -1,8 +1,8 @@
-// GPROL no Início. Conectado: uma faixa discreta com o estado do sincronismo.
+// GPROL no Início. Conectado: um cartãozinho na linha dos números (modo "mini").
 // Desconectado: um convite com o que a empresa ganha ligando os dois sistemas,
 // o botão de conectar (para quem configura a empresa) e o caminho para quem
 // ainda não usa o GPROL. "Agora não" esconde o convite por 14 dias.
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { gprol, useIntegracaoGprol } from "../../lib/gprol";
 import { temPermissao } from "../../lib/permissoes";
 import { temRecurso } from "../../lib/recursos";
@@ -33,40 +33,32 @@ const Ico = ({ d, size = 16 }: { d: string; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
 );
 
-export function GprolCartao({ onConfigurar }: { onConfigurar: () => void }) {
+/**
+ * modo "convite" (padrão): o convite grande quando a empresa NÃO está conectada
+ * (conectada, não mostra nada). modo "mini": conectada, o cartãozinho que mora
+ * na linha dos números do Início (antes de "em andamento"); desconectada, nada.
+ */
+export function GprolCartao({ onConfigurar, modo = "convite" }: { onConfigurar: () => void; modo?: "convite" | "mini" }) {
   const { integracao, carregando } = useIntegracaoGprol();
   const [adiado, setAdiado] = useState(() => Number(lembrar(ADIADO) ?? 0) > Date.now());
   const [ocupado, setOcupado] = useState(false);
-  const [pedidos, setPedidos] = useState<number | null>(null);
   const conectado = integracao?.status === "ativa";
 
-  useEffect(() => {
-    if (!conectado) return;
-    let vivo = true;
-    import("../../lib/supabase").then(({ supabase }) =>
-      supabase.from("pedidos_externos").select("id", { count: "exact", head: true }).in("status", ["pendente", "em_execucao"])
-        .then(({ count }) => { if (vivo) setPedidos(count ?? 0); }));
-    return () => { vivo = false; };
-  }, [conectado, integracao?.ultima_sincronizacao]);
 
   if (carregando) return null;
-
-  if (conectado) {
+  if (modo === "mini") {
+    if (!conectado) return null;
     const i = integracao!;
     return (
-      <div className={`gpc-faixa${i.ultimo_erro ? " alerta" : ""}`} role="status">
-        <span className="gpc-pulso" aria-hidden="true"><i /></span>
-        <span className="gpc-faixa-tx">
-          <b>Conectado ao GPROL</b>
-          {i.empresa_externa_nome && <span>{i.empresa_externa_nome}</span>}
-          <span>{i.ultimo_erro ? "última sincronização com problema" : i.ultima_sincronizacao ? `sincronizado ${quandoFoi(i.ultima_sincronizacao)}` : "aguardando a primeira sincronização"}</span>
-          {pedidos != null && pedidos > 0 && <span>{pedidos} {pedidos === 1 ? "pedido a executar" : "pedidos a executar"}</span>}
-        </span>
+      <div className={`gpc-mini${i.ultimo_erro ? " alerta" : ""}`} role="status">
+        <span className="gpc-mini-topo"><span className="gpc-pulso" aria-hidden="true"><i /></span><b>GPROL</b></span>
+        <span className="gpc-mini-tx">{i.ultimo_erro ? "sincronização com problema" : "conectado"}{i.ultima_sincronizacao && !i.ultimo_erro ? ` · ${quandoFoi(i.ultima_sincronizacao)}` : ""}</span>
         <button type="button" className="link" onClick={onConfigurar}>Ver integração</button>
       </div>
     );
   }
 
+  if (conectado) return null;
   if (adiado) return null;
   const liberado = temRecurso("integracao.gprol");
   const podeConectar = temPermissao("empresa.configurar");

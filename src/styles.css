@@ -1717,3 +1717,15 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .gp-pagina { display: flex; flex-direction: column; gap: 14px; }
 .gp-pagina .gp-pagina-cabeca { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .gp-pagina h1 { margin: 2px 0 0; }
+
+/* ---- Início: créditos acima dos números; GPROL conectado como cartãozinho na linha dos números */
+.inicio-lado { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; min-width: 0; }
+.inicio-lado .creditos-resumo { padding: 8px 12px; font-size: 13px; justify-content: flex-end; }
+.inicio-lado .creditos-resumo > span { flex: 0 1 auto; }
+.gpc-mini { min-width: 150px; padding: 10px 14px; border-radius: 14px; background: linear-gradient(160deg, var(--primaria-clara), #F6FBF8); box-shadow: inset 0 0 0 1px #CFE7DA; display: flex; flex-direction: column; gap: 2px; justify-content: center; }
+.gpc-mini.alerta { background: var(--alerta-claro); box-shadow: inset 0 0 0 1px #EFD9AE; }
+.gpc-mini-topo { display: flex; align-items: center; gap: 8px; font-family: var(--fonte-titulo); font-size: 15px; color: var(--floresta); }
+.gpc-mini.alerta .gpc-pulso, .gpc-mini.alerta .gpc-pulso i { background: var(--alerta); }
+.gpc-mini-tx { font-size: 12px; color: var(--texto-3); }
+.gpc-mini .link { padding: 0; font-size: 12.5px; text-align: left; margin-top: 2px; }
+@media (max-width: 900px) { .inicio-cabeca { flex-direction: column; align-items: stretch; } .inicio-lado { align-items: stretch; } }

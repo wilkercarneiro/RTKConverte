@@ -20,7 +20,7 @@ import fotoLoteamento from "../assets/servicos/loteamento.jpg";
 import fotoCar from "../assets/servicos/car.jpg";
 import fotoPecas from "../assets/servicos/pecas.jpg";
 
-const FOTOS: Partial<Record<ChaveServico, string>> = {
+export const FOTOS: Partial<Record<ChaveServico, string>> = {
   completo: fotoCompleto, conferencia: fotoConferencia, gleba: fotoGleba, divisao: fotoDivisao,
   loteamento: fotoLoteamento, car: fotoCar, pecas: fotoPecas,
 };

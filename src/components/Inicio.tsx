@@ -112,10 +112,14 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
                 : `${emAndamento.length} ${emAndamento.length === 1 ? "serviço espera" : "serviços esperam"} por você.`}
           </p>
         </div>
-        <div className="inicio-numeros" aria-label="Resumo">
+        <div className="inicio-lado">
+          {creditos && <CreditosResumo creditos={creditos} onAtualizar={onAtualizarCreditos ?? (() => {})} />}
+          <div className="inicio-numeros" aria-label="Resumo">
+          {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} modo="mini" />}
           <div><b>{servicos === null ? "–" : emAndamento.length}</b><span>em andamento</span></div>
           <div><b>{servicos === null ? "–" : concluidosMes}</b><span>concluídos no mês</span></div>
           <div><b>{servicos === null ? "–" : servicos.length >= 200 ? "200+" : servicos.length}</b><span>serviços no total</span></div>
+          </div>
         </div>
       </div>
 
@@ -123,8 +127,6 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
 
       <AvisoMensalidade cobranca={cobranca ?? null} />
       <AvisoCartao cobranca={cobranca ?? null} creditos={creditos} onCadastrado={onCobrancaMudou ?? (() => {})} />
-      {creditos && <CreditosResumo creditos={creditos} onAtualizar={onAtualizarCreditos ?? (() => {})} />}
-
       {erro && (
         <div className="aviso-erro-pagina" role="alert">
           <span>Não foi possível carregar os seus serviços. {erro}</span>

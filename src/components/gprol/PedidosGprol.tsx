@@ -113,7 +113,6 @@ export function PedidosGprol({ clienteId, onExecutar, limite, onVerTodos, titulo
           <button type="button" onClick={() => setMostrar((m) => m + limite)}>
             Ver mais {Math.min(limite, resto)} {Math.min(limite, resto) === 1 ? "pedido" : "pedidos"} ({resto} {resto === 1 ? "restante" : "restantes"})
           </button>
-          {onVerTodos && <button type="button" className="principal" onClick={onVerTodos}>Ver todos ({visiveis.length})</button>}
         </div>
       )}
     </div>

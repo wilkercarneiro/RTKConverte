@@ -5,6 +5,7 @@
 //   #/lab/casca/inicio · #/lab/casca/clientes · #/lab/casca/cliente[/<id>]
 //   #/lab/casca/equipe · #/lab/casca/creditos (CAR sem crédito) · #/lab/casca/aceite (CAR com o geral)
 //   #/lab/casca/socar (plano Só CAR) · #/lab/casca/pagamento (empresa esperando a 1ª mensalidade)
+//   #/lab/casca/pedidos (todos os pedidos do GPROL) · #/lab/casca/escolher (serviço novo: é pedido do GPROL?)
 //   ?semasaas: compra de créditos sem o pagamento online
 //   ?operador na URL: entra como membro sem permissões de gestão
 import { useState } from "react";
@@ -22,6 +23,7 @@ import { AguardandoPagamento } from "./Mensalidade";
 import { avisarConsumo } from "../lib/creditos";
 import { avisar } from "./ui";
 import { PaginaPedidosGprol } from "./gprol/PedidosGprol";
+import { EscolherPedido } from "./gprol/EscolherPedido";
 import type { Creditos } from "../lib/creditos";
 import { definicaoDe, SERVICOS as SERVICOS_CATALOGO } from "../lib/modalidades";
 import { cobrancaDeExemplo, creditosDeExemplo, instalarCobrancaFalsa } from "./laboratorioCreditos";
@@ -276,13 +278,15 @@ export function LaboratorioCasca() {
       {tela === "equipe" ? <Equipe escritorio={escritorio} />
         : tela === "creditos" ? <SemCreditos def={definicaoDe("car")} creditos={cred} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizar} />
         : tela === "aceite" ? <AceiteCreditoGeral def={definicaoDe("car")} creditos={cred} onAceitar={() => {}} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizar} />
+        : tela === "escolher" ? <EscolherPedido chave="completo" onEscolher={(p) => avisar("ok", `Ligaria ao pedido ${p.titulo}.`)}><div className="pagina"><h1>(tela do serviço novo, do zero)</h1></div></EscolherPedido>
         : tela === "pedidos" ? <PaginaPedidosGprol onVoltar={() => { location.hash = "#/lab/casca/inicio"; }} onExecutar={() => avisar("ok", "Abriria o serviço novo do pedido.")} />
         : tela === "clientes" ? <Clientes onAbrir={(id) => ir({ t: "cliente", id })} />
         : tela === "cliente" ? <ClientePage key={idCliente || "c1"} clienteId={idCliente || "c1"} onVoltar={() => ir({ t: "clientes" })}
             onAbrirServico={() => {}} onNovoServico={() => {}} onExecutarPedido={() => {}} />
           : <Inicio onNovo={() => {}} onAbrir={() => {}} onVerServicos={() => {}} nome="Daniel Nascimento" creditos={cred} onAtualizarCreditos={atualizar}
               cobranca={RPC.minha_cobranca as ReturnType<typeof cobrancaDeExemplo>}
-              onExecutarPedido={() => avisar("ok", "Abriria o serviço novo do pedido.")} onVerPedidos={() => { location.hash = "#/lab/casca/pedidos"; }} />}
+              onExecutarPedido={() => avisar("ok", "Abriria o serviço novo do pedido.")} onVerPedidos={() => { location.hash = "#/lab/casca/pedidos"; }}
+              onConfigurarGprol={() => avisar("ok", "Abriria Configurações → Integrações.")} />}
     </AppShell>
   );
 }
