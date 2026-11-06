@@ -1708,3 +1708,12 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .restricoes.compacto > header button { height: 28px; padding: 0 10px; font-size: 12px; }
 .restricoes.compacto .restricao-fonte { padding: 8px 10px; }
 .restricoes.compacto .restricoes-livres ul { grid-template-columns: 1fr; }
+
+/* ---- Comprar créditos sempre à mão (Início) e "A executar · GPROL" com 3 + Ver mais / Ver todos */
+.creditos-resumo .cr-comprar { height: 32px; padding: 0 14px; font-size: 13px; font-weight: 600; background: var(--primaria); color: #fff; border: 0; border-radius: 8px; }
+.creditos-resumo .cr-comprar:hover { filter: brightness(1.08); }
+.gp-pedidos .gp-mais { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.gp-pedidos .gp-mais button { height: 34px; padding: 0 16px; font-size: 13px; }
+.gp-pagina { display: flex; flex-direction: column; gap: 14px; }
+.gp-pagina .gp-pagina-cabeca { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.gp-pagina h1 { margin: 2px 0 0; }

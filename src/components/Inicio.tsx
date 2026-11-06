@@ -40,6 +40,8 @@ interface Props {
   onExecutarPedido?: (p: PedidoGprol, chave: ChaveServico) => void;
   /** abre Configurações → Integrações */
   onConfigurarGprol?: () => void;
+  /** "Ver todos" dos pedidos do GPROL: a página #/pedidos */
+  onVerPedidos?: () => void;
 }
 
 function saudacao(): string {
@@ -62,7 +64,7 @@ function primeiroNome(nome?: string): string | null {
   return base.charAt(0).toUpperCase() + base.slice(1).toLowerCase();
 }
 
-export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, cobranca, onCobrancaMudou, onExecutarPedido, onConfigurarGprol }: Props) {
+export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, cobranca, onCobrancaMudou, onExecutarPedido, onConfigurarGprol, onVerPedidos }: Props) {
   // null = carregando; erro separado: falha nunca aparece como "nenhum serviço"
   const [servicos, setServicos] = useState<Servico[] | null>(null);
   const [docs, setDocs] = useState<Record<string, DocsDoServico>>({});
@@ -160,7 +162,7 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
         <p className="nota-permissao">Para abrir um serviço novo, peça a permissão “Criar serviços” a quem gerencia a equipe.</p>
       )}
 
-      {onExecutarPedido && <PedidosGprol onExecutar={onExecutarPedido} />}
+      {onExecutarPedido && <PedidosGprol onExecutar={onExecutarPedido} limite={3} onVerTodos={onVerPedidos} />}
 
       <div>
         <div className="secao-cabeca">

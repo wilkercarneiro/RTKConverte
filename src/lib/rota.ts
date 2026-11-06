@@ -16,6 +16,7 @@ export type Rota =
   | { t: "config" }
   | { t: "equipe" }
   | { t: "ajuda" }
+  | { t: "pedidos" }
   // públicas (abrem sem login). #/assinar?plano=<id>&ciclo=anual: o autocadastro
   // (0040) com o plano e o período já escolhidos; #/cadastro (o link antigo) cai nela
   | { t: "assinar"; plano?: string; ciclo?: string }
@@ -57,6 +58,7 @@ export function hashParaRota(hash: string): Rota {
     // o guia da marca mora no painel do superadmin (links antigos caem lá)
     case "marca": return { t: "admin", aba: "marca" };
     case "ajuda": return { t: "ajuda" };
+    case "pedidos": return { t: "pedidos" };
     case "cadastro":
     case "assinar": {
       const q = new URLSearchParams(consulta);

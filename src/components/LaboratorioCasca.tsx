@@ -20,6 +20,8 @@ import { Equipe } from "./Equipe";
 import { AceiteCreditoGeral, SemCreditos } from "./Creditos";
 import { AguardandoPagamento } from "./Mensalidade";
 import { avisarConsumo } from "../lib/creditos";
+import { avisar } from "./ui";
+import { PaginaPedidosGprol } from "./gprol/PedidosGprol";
 import type { Creditos } from "../lib/creditos";
 import { definicaoDe, SERVICOS as SERVICOS_CATALOGO } from "../lib/modalidades";
 import { cobrancaDeExemplo, creditosDeExemplo, instalarCobrancaFalsa } from "./laboratorioCreditos";
@@ -100,6 +102,12 @@ const PEDIDOS: Linha[] = [
   // já atrelado ao serviço s8 (FAZENDA BOA ESPERANÇA)
   { id: "p2", externo_id: "gp-p-61", origem: "gprol", cliente_id: "c1", titulo: "Georreferenciamento — Fazenda Boa Esperança", nome_servico: "Georreferenciamento",
     modalidades: ["completo"], dados: { local: "Santa Bárbara-BA" }, etapa: "Certificação SIGEF", status: "em_execucao", recebido_em: dia(58), atualizado_em: dia(1) },
+  // mais pedidos: o Início mostra 3, "Ver mais" e "Ver todos" (#/pedidos)
+  ...["Sítio Riacho Fundo", "Fazenda Caraíbas", "Fazenda Pau Ferro", "Sítio Lagoa Seca", "Fazenda Sossego", "Fazenda Barra Nova"].map((f, i): Linha => ({
+    id: `p${i + 3}`, externo_id: `gp-p-${80 + i}`, origem: "gprol", cliente_id: "c1", titulo: `${i % 2 ? "CAR" : "Georreferenciamento"} — ${f}`,
+    nome_servico: i % 2 ? "CAR" : "Georreferenciamento", modalidades: [i % 2 ? "car" : "completo"], dados: { local: "Feira de Santana-BA" },
+    etapa: "Medição", status: "pendente", recebido_em: dia(3 + i), atualizado_em: dia(3 + i),
+  })),
 ];
 // serviços do cliente no GPROL (ação servicos_gprol da função gprol)
 const SERVICOS_GPROL: Record<string, Linha[]> = {
@@ -268,11 +276,13 @@ export function LaboratorioCasca() {
       {tela === "equipe" ? <Equipe escritorio={escritorio} />
         : tela === "creditos" ? <SemCreditos def={definicaoDe("car")} creditos={cred} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizar} />
         : tela === "aceite" ? <AceiteCreditoGeral def={definicaoDe("car")} creditos={cred} onAceitar={() => {}} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizar} />
+        : tela === "pedidos" ? <PaginaPedidosGprol onVoltar={() => { location.hash = "#/lab/casca/inicio"; }} onExecutar={() => avisar("ok", "Abriria o serviço novo do pedido.")} />
         : tela === "clientes" ? <Clientes onAbrir={(id) => ir({ t: "cliente", id })} />
         : tela === "cliente" ? <ClientePage key={idCliente || "c1"} clienteId={idCliente || "c1"} onVoltar={() => ir({ t: "clientes" })}
             onAbrirServico={() => {}} onNovoServico={() => {}} onExecutarPedido={() => {}} />
           : <Inicio onNovo={() => {}} onAbrir={() => {}} onVerServicos={() => {}} nome="Daniel Nascimento" creditos={cred} onAtualizarCreditos={atualizar}
-              cobranca={RPC.minha_cobranca as ReturnType<typeof cobrancaDeExemplo>} />}
+              cobranca={RPC.minha_cobranca as ReturnType<typeof cobrancaDeExemplo>}
+              onExecutarPedido={() => avisar("ok", "Abriria o serviço novo do pedido.")} onVerPedidos={() => { location.hash = "#/lab/casca/pedidos"; }} />}
     </AppShell>
   );
 }

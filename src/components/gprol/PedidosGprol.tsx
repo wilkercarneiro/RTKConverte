@@ -15,14 +15,21 @@ const MODALIDADES: ChaveServico[] = ["completo", "conferencia", "gleba", "divisa
 
 const data = (iso?: string) => (iso ? new Date(iso).toLocaleDateString("pt-BR") : "");
 
-export function PedidosGprol({ clienteId, onExecutar }: {
+export function PedidosGprol({ clienteId, onExecutar, limite, onVerTodos, titulo = true }: {
   clienteId?: string;
   onExecutar: (p: PedidoGprol, chave: ChaveServico) => void;
+  /** quantos mostrar de início (Início: 3); "Ver mais" mostra mais tantos. Sem limite: todos */
+  limite?: number;
+  /** "Ver todos": a página só com os pedidos a executar (#/pedidos) */
+  onVerTodos?: () => void;
+  /** a página própria já tem o título grande */
+  titulo?: boolean;
 }) {
   const { pedidos, erro } = usePedidosGprol(clienteId);
   // null até saber o que já foi feito: sem isso o botão Executar pisca e dá para duplicar
   const [feitas, setFeitas] = useState<Record<string, string[]> | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
+  const [mostrar, setMostrar] = useState(limite ?? Infinity);
   const criar = temPermissao("servicos.criar");
 
   useEffect(() => {
@@ -36,7 +43,7 @@ export function PedidosGprol({ clienteId, onExecutar }: {
   // "a executar": pendente, ou em execução com modalidade ainda sem serviço
   const visiveis = pedidos.filter((p) =>
     p.origem === "gprol" && (p.status === "pendente" || p.modalidades.some((m) => !(feitas[p.id] ?? []).includes(m))));
-  if (!visiveis.length) return null;
+  if (!visiveis.length) return titulo ? null : <p className="sub">Nenhum pedido do GPROL esperando execução.</p>;
 
   async function acao(p: PedidoGprol, qual: "entregar" | "descartar") {
     const ok = await confirmar(qual === "entregar"
@@ -55,14 +62,19 @@ export function PedidosGprol({ clienteId, onExecutar }: {
     }
   }
 
+  const lista = visiveis.slice(0, mostrar);
+  const resto = visiveis.length - lista.length;
   return (
     <div className="gp-pedidos">
-      <div className="secao-cabeca">
-        <div className="rotulo-secao">A executar · GPROL<Dica>serviços vendidos no GPROL; ao executar, as etapas de lá andam sozinhas</Dica></div>
-        <span className="sub">{visiveis.length} pedido(s)</span>
-      </div>
+      {titulo && (
+        <div className="secao-cabeca">
+          <div className="rotulo-secao">A executar · GPROL<Dica>serviços vendidos no GPROL; ao executar, as etapas de lá andam sozinhas</Dica></div>
+          <span className="sub">{visiveis.length} {visiveis.length === 1 ? "pedido" : "pedidos"}</span>
+          {onVerTodos && <button type="button" className="link" onClick={onVerTodos}>Ver todos</button>}
+        </div>
+      )}
       <ul className="gp-lista">
-        {visiveis.map((p) => {
+        {lista.map((p) => {
           const feitasP = feitas[p.id] ?? [];
           return (
             <li key={p.id} className="gp-pedido">
@@ -96,6 +108,36 @@ export function PedidosGprol({ clienteId, onExecutar }: {
           );
         })}
       </ul>
+      {resto > 0 && limite && (
+        <div className="gp-mais">
+          <button type="button" onClick={() => setMostrar((m) => m + limite)}>
+            Ver mais {Math.min(limite, resto)} {Math.min(limite, resto) === 1 ? "pedido" : "pedidos"} ({resto} {resto === 1 ? "restante" : "restantes"})
+          </button>
+          {onVerTodos && <button type="button" className="principal" onClick={onVerTodos}>Ver todos ({visiveis.length})</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Página #/pedidos: todos os pedidos do GPROL a executar. */
+export function PaginaPedidosGprol({ onExecutar, onVoltar }: {
+  onExecutar: (p: PedidoGprol, chave: ChaveServico) => void;
+  onVoltar: () => void;
+}) {
+  const { pedidos, erro } = usePedidosGprol();
+  return (
+    <div className="pagina gp-pagina fade">
+      <div className="gp-pagina-cabeca">
+        <div>
+          <button type="button" className="link" onClick={onVoltar}>← Início</button>
+          <h1>A executar · GPROL</h1>
+          <p className="sub">Serviços vendidos no GPROL que ainda falta fazer aqui. Ao executar, as etapas de lá andam sozinhas.</p>
+        </div>
+      </div>
+      {erro && <div className="aviso-erro-pagina" role="alert"><span>Não foi possível carregar os pedidos do GPROL. {erro}</span></div>}
+      {pedidos === null && !erro && <p className="sub"><span className="spinner" /> Carregando os pedidos…</p>}
+      <PedidosGprol onExecutar={onExecutar} titulo={false} />
     </div>
   );
 }

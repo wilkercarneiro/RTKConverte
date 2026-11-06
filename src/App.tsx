@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { configOk, supabase } from "./lib/supabase";
 import { Login } from "./components/Login";
 import { AppShell } from "./components/AppShell";
+import { PaginaPedidosGprol } from "./components/gprol/PedidosGprol";
 import { Inicio } from "./components/Inicio";
 import { Clientes } from "./components/Clientes";
 import { Servicos } from "./components/Servicos";
@@ -90,6 +91,12 @@ export default function App() {
   const [cartaoAgoraNao, setCartaoAgoraNao] = useState(cartaoAdiado);
   // carteira zerada com a compra automática ligada: compra no cartão
   useRecargaAutomatica(creditos, atualizarCreditos);
+  // a compra pelo menu (CompraDeCreditosGlobal) avisa: a carteira do Início acompanha
+  useEffect(() => {
+    const f = () => atualizarCreditos();
+    addEventListener("vertces:creditos-mudaram", f);
+    return () => removeEventListener("vertces:creditos-mudaram", f);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!configOk) return;
@@ -466,6 +473,14 @@ export default function App() {
     case "ajuda":
       return <AppShell {...casca}><Ajuda /></AppShell>;
 
+    case "pedidos":
+      return (
+        <AppShell {...casca}>
+          <PaginaPedidosGprol onVoltar={() => ir({ t: "inicio" })}
+            onExecutar={(p, chave) => ir({ t: "novo", chave, clienteId: p.cliente_id ?? undefined, pedidoId: p.id })} />
+        </AppShell>
+      );
+
     default:
       return (
         <AppShell {...casca}>
@@ -474,7 +489,8 @@ export default function App() {
             creditos={creditos} onAtualizarCreditos={atualizarCreditos} cobranca={cobranca}
             onCobrancaMudou={() => { atualizarCobranca(); atualizarCreditos(); }}
             onExecutarPedido={(p, chave) => ir({ t: "novo", chave, clienteId: p.cliente_id ?? undefined, pedidoId: p.id })}
-            onConfigurarGprol={() => { guardar("config.aba", "integracoes"); ir({ t: "config" }); }} />
+            onConfigurarGprol={() => { guardar("config.aba", "integracoes"); ir({ t: "config" }); }}
+            onVerPedidos={() => ir({ t: "pedidos" })} />
         </AppShell>
       );
   }

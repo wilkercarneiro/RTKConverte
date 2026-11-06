@@ -48,7 +48,7 @@ test("chave desconhecida cai no serviço completo, não quebra", () => {
 
 test("rotas sobrevivem à ida e volta pelo hash", () => {
   const rotas = [
-    { t: "inicio" }, { t: "clientes" }, { t: "servicos" }, { t: "config" },
+    { t: "inicio" }, { t: "clientes" }, { t: "servicos" }, { t: "config" }, { t: "pedidos" },
     { t: "cliente", id: "abc-123" },
     { t: "servico", id: "def-456" },
     { t: "novo", chave: "gleba" },

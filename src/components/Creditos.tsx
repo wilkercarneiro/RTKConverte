@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   aVenda, assinarAvisoCredito, avisoCreditoAtual, cancelarPedido, carteiraDe, carteiraGeral, carteiraPropria, diaMes, disponivel,
-  fecharAvisoCredito, fmtPreco, naoExibirMaisAvisoCredito, nomeCredito, pedirCreditos, sobraDoMes,
+  carregarCreditos, fecharAvisoCredito, fmtPreco, naoExibirMaisAvisoCredito, nomeCredito, pedirCreditos, sobraDoMes,
 } from "../lib/creditos";
 import type { Carteira, Compra, Creditos } from "../lib/creditos";
 import { cancelarCompra, comprarCreditos, conferirPagamentos, pixDaCompra, rotuloPagamento } from "../lib/cobranca";
@@ -15,6 +15,7 @@ import type { DefinicaoServico } from "../lib/modalidades";
 import { temRecurso } from "../lib/recursos";
 import type { ChaveRecurso } from "../lib/recursos";
 import { confirmar, Gaveta } from "./ui";
+import { abrirSuporte } from "./suporte/SuporteChat";
 
 /** Montar UMA vez (AppShell). Fica até a pessoa fechar. */
 export function AvisoCreditoGlobal() {
@@ -146,12 +147,61 @@ export function AceiteCreditoGeral({ def, creditos, onAceitar, onVoltar, onAtual
 }
 
 /** Uma linha do Início: quanto sobra em cada carteira, e o atalho da compra. */
+// ---------------------------------------------------------------------------
+// "Comprar créditos" de qualquer tela (menu lateral, Início): pedido do Wilker
+// em 05/11/2026 — antes a compra só aparecia quando o crédito acabava ou como
+// um link pequeno que sumia no plano sem limite.
+// ---------------------------------------------------------------------------
+const EVENTO_COMPRAR = "vertces:comprar-creditos";
+
+/** Abre a gaveta de compra de créditos (carrega a carteira na hora). */
+export function abrirCompraDeCreditos(): void {
+  dispatchEvent(new Event(EVENTO_COMPRAR));
+}
+
+/** Mora no AppShell: escuta o pedido e mostra a gaveta certa para quem está logado. */
+export function CompraDeCreditosGlobal() {
+  const [aberta, setAberta] = useState(false);
+  const [creditos, setCreditos] = useState<Creditos | null | undefined>(undefined);
+  const recarregar = () => carregarCreditos().then(setCreditos).catch(() => setCreditos(null));
+  useEffect(() => {
+    const f = () => { setAberta(true); setCreditos(undefined); void recarregar(); };
+    addEventListener(EVENTO_COMPRAR, f);
+    return () => removeEventListener(EVENTO_COMPRAR, f);
+  }, []);
+  if (!aberta) return null;
+  const fechar = () => { setAberta(false); dispatchEvent(new Event("vertces:creditos-mudaram")); };
+  if (creditos === undefined) {
+    return <Gaveta olho="Créditos" titulo="Comprar créditos" onFechar={fechar}><p className="sub"><span className="spinner" /> Carregando a sua carteira…</p></Gaveta>;
+  }
+  const motivo = creditos === null ? "Não foi possível carregar os seus créditos agora. Tente de novo em instantes."
+    : !creditos.sou_dono ? "Só o dono da conta compra créditos. Peça a quem é o dono da empresa no Vertces."
+      : !creditos.carteiras.some(aVenda) ? "A sua empresa ainda não tem pacotes de crédito à venda. Fale com o suporte para liberar a compra."
+        : null;
+  if (motivo) {
+    return (
+      <Gaveta olho="Créditos" titulo="Comprar créditos" onFechar={fechar}>
+        <p>{motivo}</p>
+        <div className="acoes-linha">
+          {creditos && creditos.sou_dono && !creditos.carteiras.some(aVenda) && (
+            <button type="button" className="principal" onClick={() => { fechar(); abrirSuporte({ novo: true, assunto: "Quero comprar créditos" }); }}>Falar com o suporte</button>
+          )}
+          <button type="button" onClick={fechar}>Fechar</button>
+        </div>
+      </Gaveta>
+    );
+  }
+  if (!creditos) return null;
+  return <ComprarCreditos creditos={creditos} onFechar={fechar} onPedido={() => { void recarregar(); dispatchEvent(new Event("vertces:creditos-mudaram")); }} />;
+}
+
 export function CreditosResumo({ creditos, onAtualizar }: { creditos: Creditos; onAtualizar: () => void }) {
   const [comprando, setComprando] = useState(false);
   const comLimite = creditos.carteiras.filter((k) => k.por_mes !== null && (k.por_mes > 0 || k.extra > 0 || k.usado > 0));
   const extras = creditos.carteiras.filter((k) => k.por_mes === null && k.extra > 0);
-  // plano sem limite e sem extra: não há o que mostrar
-  if (!comLimite.length && !extras.length) return null;
+  const vende = creditos.sou_dono && creditos.carteiras.some(aVenda);
+  // plano sem limite e sem extra e nada à venda: não há o que mostrar
+  if (!comLimite.length && !extras.length && !vende) return null;
   // só conta o serviço que o plano libera (no Só CAR os outros não têm crédito, mas nem aparecem)
   const acabou = Object.entries(creditos.servicos).some(([k, x]) => !x.disponivel && temRecurso(k as ChaveRecurso));
   const pagando = creditos.compras.some((p) => p.status === "pendente" && p.origem === "compra");
@@ -168,7 +218,7 @@ export function CreditosResumo({ creditos, onAtualizar }: { creditos: Creditos; 
           <span className="cr-renova">renovam em {diaMes(creditos.periodo.renova_em)}</span>
           {pagando && <span className="cr-renova">· compra esperando pagamento</span>}
         </span>
-        {creditos.carteiras.some(aVenda) && <button type="button" className="link" onClick={() => setComprando(true)}>Comprar créditos</button>}
+        {vende && <button type="button" className="cr-comprar" onClick={() => setComprando(true)}>Comprar créditos</button>}
       </div>
       {/* fora da faixa: dentro dela a gaveta herdava a cor de alerta e a fonte menor */}
       {comprando && <ComprarCreditos creditos={creditos} onFechar={() => setComprando(false)} onPedido={onAtualizar} />}
