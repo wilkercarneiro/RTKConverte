@@ -36,6 +36,13 @@ export function fonteDoNavegador(): FonteGps {
         aoErrar({ tipo: "indisponivel", mensagem: "A localização só funciona com o endereço seguro (https). Abra pelo vertces.com.br." });
         return () => {};
       }
+      // a política do site (cabeçalho Permissions-Policy) proíbe a localização: o navegador
+      // recusa sem perguntar — mandar o usuário "liberar no cadeado" seria pedir o impossível
+      const fp = (document as unknown as { featurePolicy?: { allowsFeature(f: string): boolean } }).featurePolicy;
+      if (fp && !fp.allowsFeature("geolocation")) {
+        aoErrar({ tipo: "indisponivel", mensagem: "A localização está desligada nesta página do Vertces (não é o seu aparelho). Avise o suporte; enquanto isso, dá para desenhar o contorno à mão no mapa." });
+        return () => {};
+      }
       const id = geo.watchPosition(
         (p) => aoLer({
           lon: p.coords.longitude, lat: p.coords.latitude,
