@@ -90,7 +90,7 @@ export function terraplanagemParaDxf(r: ResultadoTerraplanagem, pr: ProjetoTerra
   for (const c of r.curvasTerreno) {
     const cam = c.mestra ? "TERRENO_CURVAS_MESTRAS" : "TERRENO_CURVAS";
     poli(abrir(c), cam, c.fechada, c.cota);
-    if (c.mestra) for (const q of pontosDeRotulo(c.pts, alt * 60)) texto(q.p, fmtN(c.cota, r.intervaloTerreno < 1 ? 1 : 0).replace(",", "."), alt, cam, c.cota, q.ang);
+    if (c.mestra) for (const q of pontosDeRotulo(c.pts, alt * 60)) texto(q.p, c.cota.toFixed(r.intervaloTerreno < 1 ? 1 : 0), alt, cam, c.cota, q.ang);
   }
   poli(r.contorno, "CONTORNO_LEVANTAMENTO", true, 0);
   for (const p of pr.pontos) {
@@ -105,7 +105,7 @@ export function terraplanagemParaDxf(r: ResultadoTerraplanagem, pr: ProjetoTerra
   };
   poli(r.plataforma, "PLATAFORMA", true, r.plataforma.map(zPlat));
   const c0 = r.retangulo.centro;
-  texto(c0, `PLATAFORMA ${fmtN(r.cota, 2).replace(",", ".")}`, alt * 1.4, "PLATAFORMA", r.cota);
+  texto(c0, `PLATAFORMA ${r.cota.toFixed(2)}`, alt * 1.4, "PLATAFORMA", r.cota);
   for (const l of r.crista) poli(l, "TALUDE_CRISTA", false, l.map(cotaEm));
   for (const l of r.pe) poli(l, "TALUDE_PE", false, l.map(cotaEm));
   for (const l of r.passagem) poli(l, "LINHA_PASSAGEM", false, l.map(() => r.cota));

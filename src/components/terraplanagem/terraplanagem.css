@@ -224,3 +224,23 @@ button.tp-item:hover:not(:disabled) { background: #F4F7F5; color: var(--texto); 
 .tp-campos.grade-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .tp-campos.grade-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .tp-campos > .largo { grid-column: 1 / -1; }
+
+/* resultado incompleto: a plataforma sai do levantamento — o número não é o da obra inteira */
+.tp-incompleto { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 10px 14px; border-radius: var(--raio); background: var(--alerta-claro); color: var(--alerta-escuro); border: 1px solid #EBCB8B; font-size: 13px; line-height: 1.4; flex: none; }
+.tp-incompleto b { font-size: 13.5px; }
+.tp-incompleto span { flex: 1 1 260px; min-width: 0; }
+.tp-incompleto button { flex: none; }
+.tp-kpis.incompleto .tp-kpi { background: repeating-linear-gradient(135deg, var(--card) 0 10px, #FDF8EE 10px 20px); border-color: #EBCB8B; }
+.tp-kpis.incompleto .tp-kpi.corte::before, .tp-kpis.incompleto .tp-kpi.aterro::before, .tp-kpis.incompleto .tp-kpi.saldo::before { background: var(--alerta); }
+.tp-kpis.incompleto .tp-kpi.saldo b { color: var(--alerta-escuro); }
+.tp-gravacao.falhou { color: var(--perigo); font-weight: 600; white-space: normal; max-width: 360px; line-height: 1.3; }
+.tp-gravacao.falhou .ponto-salvo { background: var(--perigo); }
+
+/* aproximar/afastar (no celular não há roda; também a pinça) */
+.tp-mapa-zoom { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: grid; border-radius: 10px; overflow: hidden; background: rgb(255 255 255 / 94%); box-shadow: 0 1px 3px rgb(14 59 43 / 14%); }
+.tp-mapa-zoom button { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 0; background: transparent; font: 600 18px var(--fonte); line-height: 1; color: var(--texto); display: grid; place-items: center; }
+.tp-mapa-zoom button + button { border-top: 1px solid var(--borda); }
+.tp-mapa-zoom button:hover:not(:disabled) { background: var(--fundo-2, #EEF2EE); color: var(--texto); border: 0; }
+.tp-mapa-zoom button + button:hover:not(:disabled) { border-top: 1px solid var(--borda); }
+/* o último resultado que deu certo, atrás do aviso de erro */
+.tp-mapa canvas.desatualizado { opacity: .35; filter: grayscale(.6); }

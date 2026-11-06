@@ -63,8 +63,19 @@ function separadorDe(linhas: string[]): { sep: RegExp | string; decimalVirgula: 
   const amostra = linhas.slice(0, 60);
   const conta = (c: string) => amostra.reduce((s, l) => s + (l.split(c).length - 1), 0) / Math.max(1, amostra.length);
   const tab = conta("\t"), pv = conta(";"), vg = conta(",");
-  if (tab >= 2) return { sep: "\t", decimalVirgula: vg >= 1 };
-  if (pv >= 2) return { sep: ";", decimalVirgula: vg >= 1 };
+  // vírgula decimal: decide pelas células que parecem número ("512003,123"), não
+  // pela linha inteira — a descrição "cerca, muro, poste" também tem vírgulas
+  const decimalDasCelulas = (sep: string) => {
+    let comVirgula = 0, comPonto = 0;
+    for (const l of amostra) for (const c of l.split(sep)) {
+      const t = c.trim().replace(/^"(.*)"$/, "$1");
+      if (/^[+-]?\d+,\d+$/.test(t)) comVirgula++;
+      else if (/^[+-]?\d+\.\d+$/.test(t)) comPonto++;
+    }
+    return comVirgula > comPonto;
+  };
+  if (tab >= 2) return { sep: "\t", decimalVirgula: decimalDasCelulas("\t") };
+  if (pv >= 2) return { sep: ";", decimalVirgula: decimalDasCelulas(";") };
   // vírgula como separador quando cada linha tem 2+ vírgulas e números com ponto
   if (vg >= 2 && amostra.some((l) => /\d\.\d/.test(l))) return { sep: ",", decimalVirgula: false };
   if (vg >= 3) {
@@ -76,6 +87,9 @@ function separadorDe(linhas: string[]): { sep: RegExp | string; decimalVirgula: 
 
 const ehE = (v: number) => v >= 100000 && v <= 900000;
 const ehN = (v: number) => v >= 1000000 && v <= 10000000;
+/** N do hemisfério norte (Roraima, Amapá): de 0 a ~600 km do equador */
+const ehNNorte = (v: number) => v >= 10000 && v < 1000000;
+const MSG_NORTE = "As coordenadas parecem do hemisfério norte (N abaixo de 1.000.000, como em Roraima e no Amapá). A terraplanagem ainda só aceita UTM do hemisfério sul: exporte o levantamento em latitude e longitude, que ele é convertido certo.";
 const ehZ = (v: number) => v > -100 && v < 6000;
 const ehLat = (v: number) => v >= -35 && v <= 6 && !Number.isInteger(v);
 const ehLon = (v: number) => v >= -75 && v <= -28 && !Number.isInteger(v);
@@ -124,6 +138,9 @@ export function lerPontos(texto: string): LeituraPontos {
     if (m.e === undefined && m.n === undefined) {
       const e = melhor(ehE); if (e >= 0) m.e = e;
       const n = melhor(ehN); if (n >= 0) m.n = n;
+      if (m.e !== undefined && m.n === undefined && melhor(ehNNorte) >= 0) {
+        return { pontos: [], colunas: "", fuso: null, ignoradas, avisos: [MSG_NORTE] };
+      }
       if (m.e === undefined || m.n === undefined) {
         delete m.e; delete m.n;
         const la = melhor(ehLat); if (la >= 0) m.lat = la;
@@ -196,6 +213,11 @@ export function lerPontos(texto: string): LeituraPontos {
     if (rep) nome = `${nome}-${rep + 1}`;
     const desc = mapa.desc !== undefined ? (l.cels[mapa.desc] ?? "").trim() : "";
     pontos.push({ nome, e, n, z, ...(desc ? { descricao: desc } : {}) });
+  }
+
+  if (temUtm && !pontos.length) {
+    const linhasN = tabela.map((l) => nums(l.cels)).filter((v) => ehE(v[mapa!.e!]) && ehNNorte(v[mapa!.n!]));
+    if (linhasN.length && linhasN.length >= tabela.length * 0.6) return { pontos: [], colunas: "", fuso: null, ignoradas, avisos: [MSG_NORTE] };
   }
 
   // pontos com cota zero quase sempre são "sem cota" (coletora sem altitude)

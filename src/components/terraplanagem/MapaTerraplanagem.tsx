@@ -22,8 +22,10 @@ type Arraste =
   | { tipo: "canto"; oposto: Pt; r: Retangulo }
   | { tipo: "desenho"; ini: Pt; giro: number };
 
-export function MapaTerraplanagem({ resultado, pontos, focoNaPlataforma = false, retangulo, editavel, ferramenta, onFerramenta, onRetangulo, onSecao, ocupado, secaoAtiva }: {
+export function MapaTerraplanagem({ resultado, desatualizado = false, pontos, focoNaPlataforma = false, retangulo, editavel, ferramenta, onFerramenta, onRetangulo, onSecao, ocupado, secaoAtiva }: {
   resultado: ResultadoTerraplanagem | null;
+  /** o resultado é o último que deu certo (o de agora falhou): só fundo esmaecido, sem leitura de número */
+  desatualizado?: boolean;
   pontos: Pt[];
   /** enquadra a plataforma e o talude (retângulo, KML) em vez do levantamento inteiro */
   focoNaPlataforma?: boolean;
@@ -44,6 +46,9 @@ export function MapaTerraplanagem({ resultado, pontos, focoNaPlataforma = false,
   const vista = useRef<Vista | null>(null);
   const [, redesenhar] = useState(0);
   const arraste = useRef<Arraste | null>(null);
+  /** dedos na tela (pinça para aproximar no celular) */
+  const dedos = useRef(new Map<number, Pt>());
+  const pinca = useRef<{ d0: number; v0: Vista; meio: Pt } | null>(null);
   const [leitura, setLeitura] = useState<{ x: number; y: number; texto: string[] } | null>(null);
   const tela = useMemo(() => (resultado ? telaDaMalha(resultado) : null), [resultado]);
 
@@ -117,6 +122,21 @@ export function MapaTerraplanagem({ resultado, pontos, focoNaPlataforma = false,
 
   const baixar = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    if (e.pointerType === "touch") {
+      const q = pontoNoElemento(canvasRef.current!, e) as Pt;
+      dedos.current.set(e.pointerId, q);
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      if (dedos.current.size === 2 && vista.current) {
+        // segundo dedo: vira pinça (desfaz o arraste que o primeiro começou)
+        const [a, b] = [...dedos.current.values()];
+        const ar = arraste.current;
+        if (ar && (ar.tipo === "mover" || ar.tipo === "canto")) onRetangulo(ar.r, true);
+        arraste.current = null;
+        pinca.current = { d0: Math.max(1, Math.hypot(b[0] - a[0], b[1] - a[1])), v0: { ...vista.current }, meio: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
+        return;
+      }
+      if (dedos.current.size > 2) return;
+    }
     const m = noMundo(e);
     const v = vista.current;
     if (!m || !v) return;
@@ -144,10 +164,20 @@ export function MapaTerraplanagem({ resultado, pontos, focoNaPlataforma = false,
   const arred = (r: Retangulo): Retangulo => ({ ...r, largura: Math.round(r.largura * 10) / 10, comprimento: Math.round(r.comprimento * 10) / 10, centro: [Math.round(r.centro[0] * 100) / 100, Math.round(r.centro[1] * 100) / 100] });
 
   const mover = (e: React.PointerEvent) => {
+    if (e.pointerType === "touch" && dedos.current.has(e.pointerId)) {
+      dedos.current.set(e.pointerId, pontoNoElemento(canvasRef.current!, e) as Pt);
+      const pz = pinca.current;
+      if (pz && dedos.current.size >= 2) {
+        const [a, b] = [...dedos.current.values()];
+        const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        aproximar(d / pz.d0, pz.meio, pz.v0);
+        return;
+      }
+    }
     const m = noMundo(e);
     if (!m) return;
     const a = arraste.current;
-    if (!a) { mostrarLeitura(m); return; }
+    if (!a) { if (!desatualizado) mostrarLeitura(m); return; }
     if (a.tipo === "vista") {
       const dx = m.tela[0] - a.x, dy = m.tela[1] - a.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) a.moveu = true;
@@ -165,6 +195,8 @@ export function MapaTerraplanagem({ resultado, pontos, focoNaPlataforma = false,
   };
 
   const soltar = (e: React.PointerEvent) => {
+    dedos.current.delete(e.pointerId);
+    if (pinca.current) { if (dedos.current.size < 2) pinca.current = null; arraste.current = null; return; }
     const a = arraste.current;
     arraste.current = null;
     const m = noMundo(e);
@@ -194,6 +226,17 @@ export function MapaTerraplanagem({ resultado, pontos, focoNaPlataforma = false,
     });
   };
 
+  /** aproxima (f > 1) ou afasta em volta de um ponto da tela (o meio, sem ponto) */
+  const aproximar = (f: number, q?: Pt, base?: Vista) => {
+    const v = base ?? vista.current;
+    if (!v) return;
+    const alvo: Pt = q ?? [tam.w / 2, tam.h / 2];
+    const antes = paraTerreno(v, alvo);
+    const escala = Math.max(0.05, Math.min(80, v.escala * f));
+    vista.current = { escala, e: antes[0] - alvo[0] / escala, n: antes[1] + alvo[1] / escala };
+    redesenhar((n) => n + 1);
+  };
+
   // roda: aproxima em volta do cursor (listener nativo para poder impedir a rolagem da página)
   useEffect(() => {
     const c = canvasRef.current;
@@ -217,8 +260,8 @@ export function MapaTerraplanagem({ resultado, pontos, focoNaPlataforma = false,
 
   return (
     <div className="tp-mapa" ref={caixaRef}>
-      <canvas ref={canvasRef} style={{ cursor, touchAction: "none" }} aria-label="Mapa de corte e aterro"
-        onPointerDown={baixar} onPointerMove={mover} onPointerUp={soltar} onPointerCancel={() => { arraste.current = null; }}
+      <canvas ref={canvasRef} className={desatualizado ? "desatualizado" : undefined} style={{ cursor, touchAction: "none" }} aria-label="Mapa de corte e aterro"
+        onPointerDown={baixar} onPointerMove={mover} onPointerUp={soltar} onPointerCancel={(e) => { arraste.current = null; dedos.current.delete(e.pointerId); pinca.current = null; }}
         onPointerLeave={() => setLeitura(null)} onDoubleClick={() => enquadrarAgora()} />
       <div className="tp-mapa-ferramentas" role="toolbar" aria-label="Ferramentas do mapa">
         <button type="button" className={ferramenta === "mover" ? "ativa" : ""} onClick={() => onFerramenta("mover")} title="Arraste para mover o mapa; roda do mouse aproxima">Mover</button>
@@ -228,6 +271,10 @@ export function MapaTerraplanagem({ resultado, pontos, focoNaPlataforma = false,
           title="Clique no mapa para passar as seções por ali">Seção aqui</button>
         <button type="button" onClick={() => enquadrarAgora(true)} title="Ver o levantamento inteiro (dois cliques no mapa voltam para a plataforma)">Ver tudo</button>
         <BotaoTelaCheia onAlternar={() => setTimeout(() => enquadrarAgora(), 120)} />
+      </div>
+      <div className="tp-mapa-zoom" role="group" aria-label="Aproximar">
+        <button type="button" onClick={() => aproximar(1.5)} aria-label="Aproximar" title="Aproximar (ou a roda do mouse, ou a pinça no celular)">+</button>
+        <button type="button" onClick={() => aproximar(1 / 1.5)} aria-label="Afastar" title="Afastar">−</button>
       </div>
       {ferramenta !== "mover" && (
         <div className="tp-mapa-dica" role="status">

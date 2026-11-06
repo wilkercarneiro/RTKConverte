@@ -34,7 +34,7 @@ import { offsetPols } from "../loteamento/geom.ts";
 import type { Pt } from "./geometria.ts";
 import {
   antiHorario, areaAssinada, caixa, cantosDoRetangulo, centroide, dentro, dist, doAzimute, limparAnel,
-  maisPertoNaBorda, recortarSemiplano, retanguloMinimo, trianguloNoPoligono,
+  maisPertoNaBorda, recortarSemiplano, retanguloMinimo, seCruza, trianguloNoPoligono,
 } from "./geometria.ts";
 import type { RetanguloMinimo } from "./geometria.ts";
 import { IndiceTin, montarTin } from "./tin.ts";
@@ -406,10 +406,17 @@ export interface ResultadoTerraplanagem {
   pe: Pt[][];
   secoes: Secao[];
   avisos: string[];
+  /**
+   * Os volumes não cobrem a obra inteira (plataforma fora do levantamento ou
+   * talude além da borda, acima da tolerância): a tela não trata como pronto.
+   */
+  incompleto: { motivo: string; areaFora: number; areaSemDado: number } | null;
   nPontos: number;
   espacamento: number;
   ms: number;
 }
+
+export const ERRO_GRAVATA = "O polígono da plataforma se cruza (forma de gravata): os lados se atravessam e a área não fecha. Redesenhe a plataforma no Google Earth sem cruzar as linhas e envie o KML de novo.";
 
 export class ErroTerraplanagem extends Error {
   constructor(m: string) { super(m); this.name = "ErroTerraplanagem"; }
@@ -465,6 +472,65 @@ export function tinDoProjeto(pr: Pick<ProjetoTerraplanagem, "pontos">): { tin: T
   return cacheTin;
 }
 
+/**
+ * Cache do preparo da plataforma (as distâncias de cada nó à borda, os pedaços
+ * do TIN): mudar só a cota fixa, a compactação, o caminhão ou o empolamento não
+ * refaz nada disso — só a conta dos volumes.
+ */
+const cachePreparo: { chave: string; malha: Malha; prep: Preparo }[] = [];
+function preparoEmCache(tin: Tin, idx: IndiceTin, malha: Malha, plat: ProjetoPlataforma): Preparo {
+  const chave = JSON.stringify([plat.anel, plat.inclinacao, plat.direcao, plat.taludeCorte, plat.taludeAterro]);
+  const i = cachePreparo.findIndex((c) => c.malha === malha && c.chave === chave);
+  if (i >= 0) { const [c] = cachePreparo.splice(i, 1); cachePreparo.unshift(c); return c.prep; }
+  const prep = prepararPlataforma(tin, idx, malha, plat);
+  cachePreparo.unshift({ chave, malha, prep });
+  if (cachePreparo.length > 6) cachePreparo.length = 6;
+  return prep;
+}
+
+/**
+ * Área de talude que cai fora do levantamento, estimada pela borda da
+ * plataforma: em cada trecho, a largura do talude (desnível × H) na normal para
+ * fora; o pedaço dessa normal fora do contorno dos pontos é volume que não entrou.
+ * A malha não vê isso quando o talude sai inteiro da caixa dos pontos.
+ */
+export function taludeForaDoLevantamento(p: Preparo, tin: Tin, idx: IndiceTin, z0: number): number {
+  const anel = p.plat.anel, cont = tin.contorno;
+  const u = doAzimute(p.plat.direcao), s = p.plat.inclinacao / 100;
+  const passo = p.malha.passo;
+  const hc = p.kc >= 1e8 ? 0 : 1 / p.kc, ha = p.ka >= 1e8 ? 0 : 1 / p.ka;
+  let area = 0;
+  for (let e = 0; e < anel.length; e++) {
+    const a = anel[e], b = anel[(e + 1) % anel.length];
+    const L = dist(a, b);
+    if (L < 1e-9) continue;
+    const nxo = (b[1] - a[1]) / L, nyo = -(b[0] - a[0]) / L; // normal para fora (anel anti-horário)
+    const n = Math.max(1, Math.ceil(L / passo)), ds = L / n;
+    for (let m = 0; m < n; m++) {
+      const t = (m + 0.5) / n;
+      const q: Pt = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      const tq = idx.cota(q[0], q[1]);
+      if (!(tq === tq)) continue; // plataforma fora: já conta como área fora
+      const zb = z0 - s * ((q[0] - p.plat.centro[0]) * u[0] + (q[1] - p.plat.centro[1]) * u[1]);
+      const w = tq >= zb ? (tq - zb) * hc : (zb - tq) * ha;
+      if (w < passo / 4) continue;
+      const k = Math.max(2, Math.ceil(w / (passo / 2)));
+      let fora = 0;
+      for (let i = 1; i <= k; i++) {
+        const d = (w * (i - 0.5)) / k;
+        if (!dentro([q[0] + nxo * d, q[1] + nyo * d], cont)) fora++;
+      }
+      // a faixa do talude afina para fora (a terra encontra o terreno): conta a metade
+      area += 0.5 * (fora / k) * w * ds;
+    }
+  }
+  return area;
+}
+
+/** Tolerâncias do "incompleto": acima disso o número não representa a obra. */
+export const TOLERANCIA_FORA = 0.02;
+export const TOLERANCIA_SEM_DADO = 0.05;
+
 function maiorAnel(pols: { ext: Pt[] }[]): Pt[] | null {
   let m: Pt[] | null = null, am = 0;
   for (const p of pols) { const a = Math.abs(areaAssinada(p.ext)); if (a > am) { am = a; m = p.ext; } }
@@ -497,7 +563,7 @@ export function calcularTerraplanagem(pr: ProjetoTerraplanagem): ResultadoTerrap
 
   const resolver = (anel: Pt[]) => {
     const plat: ProjetoPlataforma = { anel, centro: centroide(antiHorario(anel)), inclinacao, direcao, ...taludes };
-    const prep = prepararPlataforma(tin, idx, malha, plat);
+    const prep = preparoEmCache(tin, idx, malha, plat);
     if (!prep.pecas.length) throw new ErroTerraplanagem("A plataforma está fora da área levantada. Desenhe-a por cima dos pontos.");
     const equilibrio = pr.cota.modo !== "fixa" || pr.cota.valor == null;
     const z0 = equilibrio ? cotaDeEquilibrio(prep, tin, fc) : pr.cota.valor!;
@@ -514,6 +580,7 @@ export function calcularTerraplanagem(pr: ProjetoTerraplanagem): ResultadoTerrap
     anel = cantosDoRetangulo(q.centro, q.largura, q.comprimento, q.giro);
   } else if (pr.plataforma.modo === "poligono" && pr.plataforma.poligono && pr.plataforma.poligono.length >= 3) {
     anel = limparAnel(antiHorario(pr.plataforma.poligono), 0.001);
+    if (anel.length < 3 || seCruza(anel)) throw new ErroTerraplanagem(ERRO_GRAVATA);
   }
   if (anel) r = resolver(anel);
   else if (pr.plataforma.folga != null) {
@@ -546,11 +613,12 @@ export function calcularTerraplanagem(pr: ProjetoTerraplanagem): ResultadoTerrap
   const { prep, z0, equilibrio, av, h } = r;
 
   // avisos honestos
+  const fora = Math.max(0, prep.areaPlataforma - prep.areaCoberta);
   if (prep.areaCoberta < prep.areaPlataforma * 0.995) {
-    const fora = prep.areaPlataforma - prep.areaCoberta;
     avisos.push(`${fmtN(fora, 0)} m² da plataforma ficam fora da área levantada: lá não há terreno para calcular. Mova ou reduza a plataforma.`);
   }
-  if (av.areaSemDado > 0) avisos.push(`O talude passa da borda do levantamento (cerca de ${fmtN(av.areaSemDado, 0)} m²): o volume desse trecho não entrou. Afaste a plataforma da borda ou levante mais pontos em volta.`);
+  const semDado = Math.max(av.areaSemDado, taludeForaDoLevantamento(prep, tin, idx, z0));
+  if (semDado >= 1) avisos.push(`O talude passa da borda do levantamento (cerca de ${fmtN(semDado, 0)} m²): o volume desse trecho não entrou. Afaste a plataforma da borda ou levante mais pontos em volta.`);
   if (pr.taludes.corte === 0 || pr.taludes.aterro === 0) avisos.push("Talude a prumo (0 na horizontal): só vale com muro de arrimo ou contenção.");
 
   // malha para o mapa
@@ -629,6 +697,19 @@ export function calcularTerraplanagem(pr: ProjetoTerraplanagem): ResultadoTerrap
     secaoPor(prep, idx, z0, centroS, giroS + 90, meia, "B"),
   ].filter((x): x is Secao => !!x);
 
+  // incompleto: o volume deixa de fora um pedaço da obra que importa
+  let incompleto: ResultadoTerraplanagem["incompleto"] = null;
+  const pctFora = fora / Math.max(1e-9, prep.areaPlataforma);
+  const pctSemDado = semDado / Math.max(1e-9, prep.areaPlataforma);
+  if (pctFora > TOLERANCIA_FORA || pctSemDado > TOLERANCIA_SEM_DADO) {
+    incompleto = {
+      motivo: pctFora > TOLERANCIA_FORA
+        ? `${fmtN(pctFora * 100, 0)}% da plataforma (${fmtN(fora, 0)} m²) fica fora do levantamento: esse trecho não entrou nos volumes.`
+        : `O talude passa da borda do levantamento em cerca de ${fmtN(semDado, 0)} m²: esse trecho não entrou nos volumes.`,
+      areaFora: fora, areaSemDado: semDado,
+    };
+  }
+
   // números
   const saldo = av.corte - fc * av.aterro;
   const emp = 1 + pr.fatores.empolamento / 100, cap = pr.fatores.caminhao;
@@ -651,7 +732,7 @@ export function calcularTerraplanagem(pr: ProjetoTerraplanagem): ResultadoTerrap
     malha: { e0, n0, passo, nx, ny, terreno, altura, projeto },
     faixaTerreno: { min: tmin, max: tmax }, maxCorte, maxAterro,
     curvasTerreno, intervaloTerreno: ivT, isolinhas, intervaloIsolinhas: ivH,
-    passagem, crista, pe, secoes, avisos,
+    passagem, crista, pe, secoes, avisos, incompleto,
     nPontos: tin.x.length, espacamento: tin.espacamento,
     ms: Date.now() - t0,
   };

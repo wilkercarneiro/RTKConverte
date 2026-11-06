@@ -1,15 +1,17 @@
 // Geometria plana da terraplanagem (UTM, metros). Puro: roda no Web Worker e
 // no node --test.
+import { areaAssinada as areaAssinadaSistema } from "../loteamento/geom.ts";
+
 export type Pt = [number, number];
 
 export const dist = (a: Pt, b: Pt): number => Math.hypot(b[0] - a[0], b[1] - a[1]);
 
-/** Área com sinal (Gauss): positiva no anti-horário. */
-export function areaAssinada(anel: Pt[]): number {
-  let s = 0;
-  for (let i = 0, j = anel.length - 1; i < anel.length; j = i++) s += anel[j][0] * anel[i][1] - anel[i][0] * anel[j][1];
-  return s / 2;
-}
+/**
+ * Área com sinal (Gauss): positiva no anti-horário. É o motor de área do
+ * sistema (o mesmo de areaUtmM2 em restricoes.ts e do loteamento) — não um
+ * cálculo próprio da terraplanagem.
+ */
+export const areaAssinada = (anel: Pt[]): number => areaAssinadaSistema(anel);
 
 export const antiHorario = (anel: Pt[]): Pt[] => (areaAssinada(anel) >= 0 ? anel : [...anel].reverse());
 
@@ -121,6 +123,28 @@ export function perimetro(anel: Pt[]): number {
   let s = 0;
   for (let i = 0, j = anel.length - 1; i < anel.length; j = i++) s += dist(anel[j], anel[i]);
   return s;
+}
+
+/**
+ * O anel se cruza ("gravata")? Lados não vizinhos que se cortam. O(n²), mas
+ * plataforma tem dezenas de vértices — e só roda ao ler o KML e ao calcular.
+ */
+export function seCruza(anel: Pt[]): boolean {
+  const n = anel.length;
+  if (n < 4) return false;
+  const lado = (a: Pt, b: Pt, c: Pt) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const cortam = (p1: Pt, p2: Pt, p3: Pt, p4: Pt) => {
+    const d1 = lado(p3, p4, p1), d2 = lado(p3, p4, p2), d3 = lado(p1, p2, p3), d4 = lado(p1, p2, p4);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  };
+  for (let i = 0; i < n; i++) {
+    const a = anel[i], b = anel[(i + 1) % n];
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue; // vizinhos pelo fechamento
+      if (cortam(a, b, anel[j], anel[(j + 1) % n])) return true;
+    }
+  }
+  return false;
 }
 
 /** Tira pontos repetidos e colineares (tolerância em m). */

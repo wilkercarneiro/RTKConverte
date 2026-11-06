@@ -11,7 +11,8 @@ import { lerKml } from "../car/kml.ts";
 import { buscarTerreno } from "../loteamento/terreno.ts";
 import { fusoDoLon } from "../restricoes.ts";
 import type { Pt } from "./geometria.ts";
-import { antiHorario, caixa, dentro, maisPertoNaBorda } from "./geometria.ts";
+import { antiHorario, caixa, dentro, limparAnel, maisPertoNaBorda, seCruza } from "./geometria.ts";
+import { ERRO_GRAVATA } from "./calculo.ts";
 import type { LeituraPontos, PontoCota } from "./pontos.ts";
 import { lerPontos } from "./pontos.ts";
 
@@ -53,16 +54,27 @@ async function textoKml(f: File): Promise<string> {
   return kml.async("string");
 }
 
-export interface PoligonoLido { utm: Pt[]; fuso: number; nome: string | null; lonlat: [number, number][] }
+export interface PoligonoLido {
+  utm: Pt[]; fuso: number; nome: string | null; lonlat: [number, number][];
+  /** o KML tinha furo (anel interno): a plataforma usa só o contorno de fora */
+  furoIgnorado: boolean;
+}
 
 /** Polígono de um KML/KMZ, em UTM no fuso dado (ou no do próprio KML). */
 export async function lerPoligonoKml(f: File, fuso: number | null): Promise<PoligonoLido> {
-  const k = lerKml(await textoKml(f));
+  return poligonoDoKml(await textoKml(f), fuso);
+}
+
+/** O mesmo, a partir do texto do KML (testável sem File). */
+export function poligonoDoKml(texto: string, fuso: number | null): PoligonoLido {
+  const k = lerKml(texto);
   if (k.perimetro.length < 3) throw new Error("O KML não tem um polígono (área). Desenhe a plataforma como polígono no Google Earth.");
   const lonMed = k.perimetro.reduce((s, p) => s + p[0], 0) / k.perimetro.length;
   const fz = fuso ?? fusoDoLon(lonMed);
   const ud = utmDef(fz);
-  return { utm: antiHorario(k.perimetro.map((p) => proj4(GEO_DEF, ud, p) as Pt)), fuso: fz, nome: k.nome, lonlat: k.perimetro };
+  const utm = antiHorario(k.perimetro.map((p) => proj4(GEO_DEF, ud, p) as Pt));
+  if (seCruza(limparAnel(utm, 0.001))) throw new Error(ERRO_GRAVATA);
+  return { utm, fuso: fz, nome: k.nome, lonlat: k.perimetro, furoIgnorado: /<innerBoundaryIs[\s>]/i.test(texto) };
 }
 
 /**

@@ -5,6 +5,7 @@
 //   #/lab/terraplanagem            o projeto de exemplo (o que foi mexido continua)
 //   #/lab/terraplanagem/novo       o exemplo do zero
 //   #/lab/terraplanagem/retangulo  plataforma de galpão 50 × 30 m com caimento de 1%
+//   #/lab/terraplanagem/incompleto plataforma de 900 × 30 m saindo do levantamento (resultado incompleto)
 //   #/lab/terraplanagem/inicio     a tela de entrada (soltar arquivo, relevo público, recentes)
 import { AppShell } from "../AppShell";
 import { lerPontos } from "../../lib/terraplanagem/pontos.ts";
@@ -32,6 +33,13 @@ export function LaboratorioTerraplanagem() {
     } else {
       try { for (const k of Object.keys(localStorage)) if (k.startsWith("vertces.terraplanagem.")) localStorage.removeItem(k); } catch { /* sem storage */ }
     }
+  } else if (h.includes("/incompleto")) {
+    // plataforma de 900 × 30 m que sai do levantamento: a tela não pode dizer "pronto"
+    const p = exemplo();
+    inicial = {
+      ...p, nome: "Pátio comprido demais",
+      plataforma: { ...p.plataforma, modo: "retangulo", retangulo: { centro: [487395, 8634205], largura: 30, comprimento: 900, giro: 62 } },
+    };
   } else if (h.includes("/retangulo")) {
     const p = exemplo();
     inicial = {

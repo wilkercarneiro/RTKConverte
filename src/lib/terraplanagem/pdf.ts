@@ -74,11 +74,21 @@ export async function gerarPdfTerraplanagem(r: ResultadoTerraplanagem, pr: Proje
   if (dados.emitente || dados.responsavel) escrever([dados.emitente, dados.responsavel].filter(Boolean).join(" · "), { tam: 8.5, cor: COR_SUB });
   y -= 8;
 
+  // resultado incompleto: o cliente lê isso antes dos números
+  if (r.incompleto) {
+    const linhasAv = quebrar(`RESULTADO INCOMPLETO — ${r.incompleto.motivo} Os volumes abaixo não representam a obra inteira.`, negrito, 8.5, L - 20);
+    const hAv = linhasAv.length * 11.5 + 12;
+    garantir(hAv + 8);
+    page.drawRectangle({ x: M, y: y - hAv, width: L, height: hAv, color: rgb(0.984, 0.953, 0.89), borderColor: rgb(0.72, 0.47, 0.12), borderWidth: 0.8 });
+    linhasAv.forEach((l, k) => page.drawText(l, { x: M + 10, y: y - 15 - k * 11.5, size: 8.5, font: negrito, color: rgb(0.48, 0.33, 0.06) }));
+    y -= hAv + 10;
+  }
+
   // ---- números ----
   const caixas: { rot: string; val: string; sub: string; cor: RGB }[] = [
     { rot: "CORTE", val: m3(r.corte), sub: `em ${m2(r.areaCorte)}`, cor: CORTE },
     { rot: "ATERRO", val: m3(r.aterro), sub: `em ${m2(r.areaAterro)}`, cor: ATERRO },
-    { rot: "SALDO", val: Math.abs(r.saldo) < Math.max(1, r.corte) * 0.01 ? "equilibrado" : m3(Math.abs(r.saldo)), sub: textoSaldo(r), cor: VERDE },
+    { rot: "SALDO", val: Math.abs(r.saldo) < Math.max(1, r.corte) * 0.01 ? (r.incompleto ? "~ 0" : "equilibrado") : m3(Math.abs(r.saldo)), sub: textoSaldo(r), cor: VERDE },
     { rot: "CAMINHÕES (APROX.)", val: fmtN(r.caminhoes.quantidade, 0), sub: textoCaminhoes(r, pr, true), cor: OURO },
   ];
   const wc = (L - 3 * 8) / 4, hc = 62;

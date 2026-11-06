@@ -55,6 +55,8 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
   const [gravacao, setGravacao] = useState<EstadoGravacao>({ estado: "ocioso", hora: null });
   const [emitente, setEmitente] = useState<string | null>(emitenteFixo ?? null);
   const sujo = useRef(false);
+  /** a última versão editada ainda não gravada (para gravar ao voltar ou sair da tela) */
+  const pendente = useRef<ProjetoTerraplanagem | null>(null);
   const resultado = useRef<ResultadoTerraplanagem | null>(null);
   const [resumoChave, setResumoChave] = useState("");
 
@@ -71,34 +73,49 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
   const salvar = useCallback(async (p: ProjetoTerraplanagem) => {
     setGravacao((g) => ({ ...g, estado: "salvando" }));
     try {
-      const { naConta } = await armazenamento.salvar(p, resumoDe(p, resultado.current));
-      setGravacao({ estado: naConta ? "conta" : "aparelho", hora: hora() });
-    } catch {
-      setGravacao({ estado: "aparelho", hora: hora() });
+      const g = await armazenamento.salvar(p, resumoDe(p, resultado.current));
+      setGravacao(g.naConta ? { estado: "conta", hora: hora(), motivo: g.motivo }
+        : g.noAparelho ? { estado: "aparelho", hora: hora(), motivo: g.motivo }
+        : { estado: "falhou", hora: hora(), motivo: g.motivo });
+      // gravou e ninguém mexeu depois: nada pendente
+      if ((g.naConta || g.noAparelho) && pendente.current === p) { sujo.current = false; pendente.current = null; }
+    } catch (e) {
+      setGravacao({ estado: "falhou", hora: hora(), motivo: e instanceof Error ? e.message : String(e) });
     }
     try { localStorage.setItem(ULTIMO, p.id); } catch { /* sem storage */ }
   }, [armazenamento]);
+  const salvarRef = useRef(salvar);
+  salvarRef.current = salvar;
+  /** grava já o que estiver pendente (voltar à lista, sair da tela, fechar a aba) */
+  const gravarPendente = useCallback(() => {
+    const p = pendente.current;
+    if (!p || !sujo.current) return;
+    void salvarRef.current(p);
+  }, []);
   useEffect(() => {
     if (!projeto || !sujo.current) return;
     const t = setTimeout(() => void salvar(projeto), 900);
     return () => clearTimeout(t);
   }, [projeto, resumoChave, salvar]);
-  // fechou a aba no meio da digitação: a cópia do aparelho fica
+  // fechou a aba ou trocou de tela pelo menu no meio da digitação: grava na hora
   useEffect(() => {
-    const sair = () => { if (projeto && sujo.current) void armazenamentoLocal.salvar(projeto, resumoDe(projeto, resultado.current)); };
+    const sair = () => { const p = pendente.current; if (p && sujo.current) void armazenamentoLocal.salvar(p, resumoDe(p, resultado.current)); };
     addEventListener("pagehide", sair);
-    return () => removeEventListener("pagehide", sair);
-  }, [projeto]);
+    return () => { removeEventListener("pagehide", sair); gravarPendente(); };
+  }, [gravarPendente]);
 
   const editar = (p: ProjetoTerraplanagem) => {
     sujo.current = true;
-    setProjeto({ ...p, atualizadoEm: new Date().toISOString() });
+    const novo = { ...p, atualizadoEm: new Date().toISOString() };
+    pendente.current = novo;
+    setProjeto(novo);
   };
 
   const abrirNovo = (p: ProjetoTerraplanagem, avisos: string[]) => {
     resultado.current = null;
     setAvisosLeitura(avisos);
     sujo.current = true;
+    pendente.current = p;
     setTrocando(false);
     setGravacao({ estado: "ocioso", hora: null });
     setProjeto(p);
@@ -111,13 +128,13 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
         projeto={projeto}
         onProjeto={editar}
         onResultado={(r) => { resultado.current = r; setResumoChave(r ? `${r.corte.toFixed(1)}|${r.aterro.toFixed(1)}|${r.cota.toFixed(3)}` : ""); }}
-        onTrocarPontos={() => setTrocando(true)}
+        onTrocarPontos={() => { gravarPendente(); setTrocando(true); }}
         gravacao={gravacao}
         avisosLeitura={avisosLeitura}
         emitente={emitente}
         topo={
           <div className="tp-topo-nome">
-            <button type="button" className="fantasma cp-voltar" onClick={() => { setProjeto(null); setAvisosLeitura([]); setGravacao({ estado: "ocioso", hora: null }); sujo.current = false; }}>← Terraplanagens</button>
+            <button type="button" className="fantasma cp-voltar" onClick={() => { gravarPendente(); setProjeto(null); setAvisosLeitura([]); setGravacao({ estado: "ocioso", hora: null }); }}>← Terraplanagens</button>
             <input className="tp-nome" aria-label="Nome do projeto" value={projeto.nome} maxLength={120}
               onChange={(e) => editar({ ...projeto, nome: e.target.value })}
               onBlur={(e) => { if (!e.target.value.trim()) editar({ ...projeto, nome: "Terraplanagem" }); }} />
@@ -132,7 +149,7 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
         try {
           const p = await armazenamento.carregar(id);
           if (!p) { avisar("erro", "Este projeto não foi encontrado (apagado em outro aparelho?)."); return; }
-          sujo.current = false; resultado.current = null; setAvisosLeitura([]);
+          sujo.current = false; pendente.current = null; resultado.current = null; setAvisosLeitura([]);
           setGravacao({ estado: "ocioso", hora: null });
           setProjeto(p);
           try { localStorage.setItem(ULTIMO, p.id); } catch { /* sem storage */ }
@@ -159,7 +176,7 @@ function Inicio({ armazenamento, trocando, onCancelarTroca, onAbrir, onPontos }:
   onAbrir: (id: string) => void;
   onPontos: AoPontos;
 }) {
-  const [lista, setLista] = useState<{ estado: "carregando" } | { estado: "erro"; msg: string } | { estado: "ok"; itens: ResumoTerraplanagem[]; soNoAparelho: boolean }>({ estado: "carregando" });
+  const [lista, setLista] = useState<{ estado: "carregando" } | { estado: "erro"; msg: string } | { estado: "ok"; itens: ResumoTerraplanagem[]; soNoAparelho: boolean; semConexao?: boolean }>({ estado: "carregando" });
   const [lendo, setLendo] = useState(false);
   const [falha, setFalha] = useState<string[] | null>(null);
   const [arrastando, setArrastando] = useState(false);
@@ -188,6 +205,7 @@ function Inicio({ armazenamento, trocando, onCancelarTroca, onAbrir, onPontos }:
     setRelevo({ estado: "buscando" });
     try {
       let utm: Pt[], fuso: number, descricao: string, nome: string;
+      const avisos: string[] = [];
       if (origem.tipo === "coord") {
         const ll = lerCoordenada(origem.texto);
         if (!ll) throw new Error("Não entendi a coordenada. Use \"-12,9714, -38,5014\" ou cole o link do Google Maps.");
@@ -197,12 +215,13 @@ function Inicio({ armazenamento, trocando, onCancelarTroca, onAbrir, onPontos }:
       } else {
         const k = await lerPoligonoKml(origem.f, null);
         utm = k.utm; fuso = k.fuso;
+        if (k.furoIgnorado) avisos.push("O KML tem um furo (área interna): a plataforma usa só o contorno de fora.");
         descricao = `relevo público na área de ${origem.f.name}`;
         nome = k.nome || semExt(origem.f.name);
       }
       const t = await terrenoPublico(utm, fuso);
       setRelevo({ estado: "ocioso" });
-      onPontos(t.pontos, nome, { tipo: "relevo", descricao }, fuso, [],
+      onPontos(t.pontos, nome, { tipo: "relevo", descricao }, fuso, avisos,
         { modo: "poligono", folga: null, retangulo: null, poligono: t.plataforma, nomePoligono: origem.tipo === "kml" ? origem.f.name : "quadrado de 60 × 60 m" });
     } catch (e) {
       setRelevo({ estado: "erro", msg: e instanceof Error ? e.message : String(e) });
@@ -253,7 +272,8 @@ function Inicio({ armazenamento, trocando, onCancelarTroca, onAbrir, onPontos }:
         <section className="bloco lista tp-recentes" aria-labelledby="tp-recentes-t">
           <header>
             <h3 id="tp-recentes-t">Projetos recentes</h3>
-            {lista.estado === "ok" && lista.soNoAparelho && lista.itens.length > 0 && <span className="desc">guardados neste aparelho</span>}
+            {lista.estado === "ok" && lista.semConexao && <span className="desc tp-sem-conexao">sem conexão com a conta — mostrando os deste aparelho<button type="button" className="link" onClick={carregar}>tentar de novo</button></span>}
+            {lista.estado === "ok" && !lista.semConexao && lista.soNoAparelho && lista.itens.length > 0 && <span className="desc">guardados neste aparelho</span>}
           </header>
           {lista.estado === "carregando" && <div style={{ padding: "0 20px 16px" }}><Esqueleto linhas={3} rotulo="Carregando os projetos…" /></div>}
           {lista.estado === "erro" && <EstadoErro mensagem={lista.msg} onTentar={carregar} />}

@@ -11,7 +11,7 @@ import type { Pt } from "../../lib/terraplanagem/geometria.ts";
 import type { ModoCota, ModoPlataforma, ProjetoTerraplanagem, Retangulo } from "../../lib/terraplanagem/modelo.ts";
 import { lerPoligonoKml } from "../../lib/terraplanagem/entrada.ts";
 import { terraplanagemParaDxf, malhaParaCsv, nomeDoArquivo } from "../../lib/terraplanagem/saidas.ts";
-import { rumo, textoCaminhoes, textoSaldo } from "../../lib/terraplanagem/textos.ts";
+import { estadoDaEntrega, rumo, textoCaminhoes, textoSaldo } from "../../lib/terraplanagem/textos.ts";
 import { pngDoMapa } from "../../lib/terraplanagem/desenho.ts";
 import { baixarBlob } from "../../lib/entregas";
 import { avisar, Dica, ProximaAcao, Rotulo, Secao } from "../ui";
@@ -19,7 +19,7 @@ import { MapaTerraplanagem } from "./MapaTerraplanagem";
 import type { Ferramenta } from "./MapaTerraplanagem";
 import { PerfilSecao } from "./PerfilSecao";
 
-export type EstadoGravacao = { estado: "ocioso" | "salvando" | "conta" | "aparelho"; hora: string | null };
+export type EstadoGravacao = { estado: "ocioso" | "salvando" | "conta" | "aparelho" | "falhou"; hora: string | null; motivo?: string };
 
 const lerNum = (s: string): number => {
   const t = s.trim().replace(/\s/g, "").replace(/%$/, "");
@@ -103,6 +103,8 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
 }) {
   const calc = useRef<Calculadora | null>(null);
   const [resultado, setResultado] = useState<ResultadoTerraplanagem | null>(null);
+  /** o último resultado que deu certo: só o fundo do mapa quando o de agora falha (para dar para arrastar de volta) */
+  const [fundo, setFundo] = useState<ResultadoTerraplanagem | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [ferramenta, setFerramenta] = useState<Ferramenta>("mover");
@@ -117,11 +119,18 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
   useEffect(() => {
     let vivo = true;
     setOcupado(true);
+    setErro(null);
+    // até o novo resultado chegar, o resumo gravado não leva os números de antes
+    onResultado?.(null);
     (calc.current ?? new Calculadora()).calcular(projeto).then((r) => {
       if (!vivo || !r) return;
       setOcupado(false);
-      if (r.ok) { setResultado(r.r); setErro(null); onResultado?.(r.r); }
-      else { setErro(r.doUsuario ? r.erro : `Não deu para calcular: ${r.erro}`); }
+      if (r.ok) { setResultado(r.r); setFundo(r.r); setErro(null); onResultado?.(r.r); }
+      else {
+        // o resultado anterior não é mais o deste projeto: some da tela, das saídas e do resumo
+        setResultado(null); onResultado?.(null);
+        setErro(r.doUsuario ? r.erro : `Não deu para calcular: ${r.erro}`);
+      }
     });
     return () => { vivo = false; };
   }, [chave, projeto.pontos]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -170,13 +179,18 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
       const k = await lerPoligonoKml(f, projeto.fuso);
       mudar({ fuso: projeto.fuso ?? k.fuso, plataforma: { ...plat, modo: "poligono", poligono: k.utm, nomePoligono: k.nome ?? f.name } });
       avisar("ok", `Plataforma do KML: ${k.nome ?? f.name}${projeto.fuso ? "" : ` (fuso ${k.fuso})`}.`);
+      if (k.furoIgnorado) avisar("alerta", "O KML tem um furo (área interna): a plataforma usa só o contorno de fora.");
     } catch (e) {
       avisar("erro", e instanceof Error ? e.message : String(e));
     }
   };
 
+  const r = resultado;
+  const entrega = estadoDaEntrega({ r, erro, ocupado, modo: plat.modo, folga: plat.folga });
+
   const baixar = async (tipo: "pdf" | "dxf" | "csv") => {
-    if (!resultado) return;
+    // só o resultado que é o do projeto de agora (nunca o de antes de um erro ou no meio do recálculo)
+    if (!resultado || !entrega.podeExportar) return;
     setBaixando(tipo);
     try {
       if (tipo === "pdf") {
@@ -195,31 +209,42 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
     } finally { setBaixando(null); }
   };
 
-  const r = resultado;
   const fontePontos = projeto.fonte.tipo === "arquivo" ? projeto.fonte.arquivo || "arquivo de pontos" : projeto.fonte.descricao;
   const saldoTxt = r ? textoSaldo(r) : "";
-  const equilibrado = r?.caminhoes.para === "interno";
+  const incompleto = r?.incompleto ?? null;
+  const equilibrado = r?.caminhoes.para === "interno" && !incompleto;
+  const vazio = erro ? "—" : "…";
+  const travado = !entrega.podeExportar || !!baixando;
+  const porQueTravado = erro ? "Ajuste a plataforma: não há resultado para exportar." : ocupado ? "Recalculando…" : undefined;
+  const fazerAcao = () => {
+    if (entrega.acao === "pdf") void baixar("pdf");
+    else if (entrega.acao === "contorno") mudarPlat({ modo: "contorno" });
+    else if (entrega.acao === "recuo-automatico") mudarPlat({ folga: null });
+  };
 
   const status = gravacao.estado === "salvando" ? "salvando…"
     : gravacao.estado === "conta" ? `salvo na conta${gravacao.hora ? ` às ${gravacao.hora}` : ""}`
     : gravacao.estado === "aparelho" ? `salvo neste aparelho${gravacao.hora ? ` às ${gravacao.hora}` : ""}`
+    : gravacao.estado === "falhou" ? `não gravado: ${gravacao.motivo ?? "erro ao gravar"}`
     : "salva sozinho";
 
   return (
     <div className="tp-tela tela-cheia">
       <header className="tp-topo">
         {topo}
-        <span className={`tp-gravacao ${gravacao.estado}`} aria-live="polite" title={gravacao.estado === "aparelho" ? "Sem conexão com a conta agora: o projeto está guardado neste navegador e vai para a conta na próxima mudança." : undefined}>
+        <span className={`tp-gravacao ${gravacao.estado}`} aria-live="polite" role={gravacao.estado === "falhou" ? "alert" : undefined}
+          title={gravacao.estado === "aparelho" ? `${gravacao.motivo ? `Não foi para a conta (${gravacao.motivo}). ` : ""}O projeto está guardado neste navegador e vai para a conta na próxima mudança.`
+            : gravacao.estado === "falhou" ? "Nada foi gravado. Não feche a página: baixe o DXF ou o PDF, ou libere espaço no navegador." : undefined}>
           <span className="ponto-salvo" aria-hidden="true" />{status}
         </span>
         <div className="tp-topo-acoes">
-          <button type="button" disabled={!r || !!baixando} onClick={() => baixar("dxf")} title="Terreno, curvas, plataforma, taludes e mapa de corte/aterro em camadas (UTM)">
+          <button type="button" disabled={travado} onClick={() => baixar("dxf")} title={porQueTravado ?? "Terreno, curvas, plataforma, taludes e mapa de corte/aterro em camadas (UTM)"}>
             {baixando === "dxf" ? <span className="spinner" /> : null}DXF para o CAD
           </button>
-          <button type="button" disabled={!r || !!baixando} onClick={() => baixar("csv")} title="Cada nó da malha: E, N, terreno, projeto, corte e aterro (abre no Excel)">
+          <button type="button" disabled={travado} onClick={() => baixar("csv")} title={porQueTravado ?? "Cada nó da malha: E, N, terreno, projeto, corte e aterro (abre no Excel)"}>
             {baixando === "csv" ? <span className="spinner" /> : null}CSV da malha
           </button>
-          <button type="button" className="principal" disabled={!r || !!baixando} onClick={() => baixar("pdf")} title="Relatório para o cliente: números, mapa, seções e método">
+          <button type="button" className="principal" disabled={travado} onClick={() => baixar("pdf")} title={porQueTravado ?? "Relatório para o cliente: números, mapa, seções e método"}>
             {baixando === "pdf" ? <span className="spinner" /> : null}Relatório em PDF
           </button>
         </div>
@@ -334,44 +359,51 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
             </Secao>
           </div>
 
-          <ProximaAcao acao={r ? {
-            tom: "pronto", titulo: "Pronto para o cliente",
-            detalhe: "Relatório em PDF com os números, o mapa, as duas seções e o método.",
-            rotuloBotao: baixando === "pdf" ? "Gerando…" : "Baixar relatório", onClick: baixando ? undefined : () => void baixar("pdf"),
-          } : { tom: "pendente", titulo: erro ? "Ajuste a plataforma" : "Calculando…", detalhe: erro ?? "Montando o terreno e a cota de equilíbrio." }} />
+          <ProximaAcao acao={{
+            tom: entrega.tom, titulo: entrega.titulo, detalhe: entrega.detalhe,
+            rotuloBotao: entrega.acao === "pdf" && baixando === "pdf" ? "Gerando…" : entrega.rotuloAcao ?? undefined,
+            onClick: entrega.acao && !(entrega.acao === "pdf" && baixando) ? fazerAcao : undefined,
+          }} />
         </aside>
 
         <section className="tp-centro" aria-label="Resultado">
-          <div className={`tp-kpis${ocupado && r ? " recalculando" : ""}`} aria-live="polite">
+          {incompleto && (
+            <div className="tp-incompleto" role="status">
+              <b>Resultado incompleto</b>
+              <span>{incompleto.motivo}</span>
+              {entrega.acao && entrega.acao !== "pdf" && <button type="button" onClick={fazerAcao}>{entrega.rotuloAcao}</button>}
+            </div>
+          )}
+          <div className={`tp-kpis${ocupado && r ? " recalculando" : ""}${incompleto ? " incompleto" : ""}`} aria-live="polite">
             <div className="tp-kpi corte">
               <span className="tp-kpi-rot">Corte</span>
-              <b>{r ? m3(r.corte) : "…"}<small> m³</small></b>
+              <b>{r ? <>{m3(r.corte)}<small> m³</small></> : vazio}</b>
               <span className="sub">{r ? `em ${fmtN(r.areaCorte, 0)} m² · até ${fmtN(r.maxCorte, 2)} m` : ""}</span>
             </div>
             <div className="tp-kpi aterro">
               <span className="tp-kpi-rot">Aterro</span>
-              <b>{r ? m3(r.aterro) : "…"}<small> m³</small></b>
+              <b>{r ? <>{m3(r.aterro)}<small> m³</small></> : vazio}</b>
               <span className="sub">{r ? `em ${fmtN(r.areaAterro, 0)} m² · até ${fmtN(r.maxAterro, 2)} m` : ""}</span>
             </div>
             <div className={`tp-kpi saldo${equilibrado ? " equilibrado" : ""}`}>
               <span className="tp-kpi-rot">Saldo</span>
-              <b>{r ? (equilibrado ? "equilibrado" : <>{m3(Math.abs(r.saldo))}<small> m³</small></>) : "…"}</b>
-              <span className="sub">{saldoTxt}</span>
+              <b>{r ? (equilibrado ? "equilibrado" : r.caminhoes.para === "interno" ? "≈ 0" : <>{m3(Math.abs(r.saldo))}<small> m³</small></>) : vazio}</b>
+              <span className="sub">{incompleto ? "só do trecho dentro do levantamento" : saldoTxt}</span>
             </div>
             <div className="tp-kpi caminhoes">
               <span className="tp-kpi-rot">Caminhões</span>
-              <b>{r ? <>≈ {fmtN(r.caminhoes.quantidade, 0)}</> : "…"}</b>
+              <b>{r ? <>≈ {fmtN(r.caminhoes.quantidade, 0)}</> : vazio}</b>
               <span className="sub">{r ? textoCaminhoes(r, projeto) : ""}</span>
             </div>
             <div className="tp-kpi cota">
               <span className="tp-kpi-rot">Cota da plataforma</span>
-              <b>{r ? fmtN(r.cota, 2) : "…"}<small> m</small></b>
+              <b>{r ? <>{fmtN(r.cota, 2)}<small> m</small></> : vazio}</b>
               <span className="sub">{r ? (r.equilibrio ? "equilibra corte e aterro" : "digitada") + (projeto.cota.inclinacao > 0 ? ` · ${fmtN(projeto.cota.inclinacao, 1)}% para ${rumo(projeto.cota.direcao)}` : "") : ""}</span>
             </div>
           </div>
 
           <div className="tp-mapa-caixa">
-            <MapaTerraplanagem resultado={r} pontos={pontosXY} focoNaPlataforma={plat.modo !== "contorno"} retangulo={plat.modo === "retangulo" ? plat.retangulo : null}
+            <MapaTerraplanagem resultado={r ?? (erro ? fundo : null)} desatualizado={!r && !!erro} pontos={pontosXY} focoNaPlataforma={plat.modo !== "contorno"} retangulo={plat.modo === "retangulo" ? plat.retangulo : null}
               editavel={plat.modo === "retangulo"} ferramenta={ferramenta} onFerramenta={setFerramenta}
               onRetangulo={(rr) => aoRetangulo(rr)} onSecao={(c) => mudar({ secao: { ...projeto.secao, centro: c } })}
               ocupado={ocupado} secaoAtiva={foco} />

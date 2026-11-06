@@ -27,3 +27,40 @@ export function textoCaminhoes(r: ResultadoTerraplanagem, pr: ProjetoTerraplanag
   if (r.caminhoes.para === "bota-fora") return curto ? `de ${cap} para o bota-fora (empolamento ${emp})` : `caminhões de ${cap} para tirar a sobra — ${solto} soltos, com empolamento de ${emp}`;
   return curto ? `de ${cap} trazendo terra (empolamento ${emp})` : `caminhões de ${cap} trazendo terra de empréstimo — ${solto} soltos, com empolamento de ${emp}`;
 }
+
+/** O que a tela pode oferecer agora — puro, para testar sem React. */
+export interface EstadoEntrega {
+  /** PDF, DXF e CSV só com um resultado que é o do projeto de agora */
+  podeExportar: boolean;
+  tom: "pendente" | "pronto";
+  titulo: string;
+  detalhe: string;
+  /** o botão da faixa "e agora?" */
+  acao: "pdf" | "contorno" | "recuo-automatico" | null;
+  rotuloAcao: string | null;
+}
+
+/**
+ * Estado da entrega: com erro, recalculando ou sem resultado não há o que
+ * baixar; com o resultado incompleto (plataforma fora do levantamento) a faixa
+ * pede o ajuste em vez de dizer "pronto" — o PDF ainda sai, com o aviso dentro.
+ */
+export function estadoDaEntrega(o: {
+  r: ResultadoTerraplanagem | null; erro: string | null; ocupado: boolean;
+  modo: ProjetoTerraplanagem["plataforma"]["modo"]; folga: number | null;
+}): EstadoEntrega {
+  const { r, erro, ocupado, modo, folga } = o;
+  const ajuste = (): Pick<EstadoEntrega, "acao" | "rotuloAcao"> => modo !== "contorno"
+    ? { acao: "contorno", rotuloAcao: "Usar o contorno dos pontos" }
+    : folga != null ? { acao: "recuo-automatico", rotuloAcao: "Recuo automático" } : { acao: null, rotuloAcao: null };
+  if (erro) return { podeExportar: false, tom: "pendente", titulo: "Ajuste a plataforma", detalhe: erro, ...ajuste() };
+  if (!r || ocupado) return { podeExportar: false, tom: "pendente", titulo: "Calculando…", detalhe: r ? "Refazendo os volumes com a mudança." : "Montando o terreno e a cota de equilíbrio.", acao: null, rotuloAcao: null };
+  if (r.incompleto) {
+    return {
+      podeExportar: true, tom: "pendente", titulo: "A plataforma sai do levantamento",
+      detalhe: `${r.incompleto.motivo} ${modo === "retangulo" ? "Arraste a plataforma para cima dos pontos ou diminua o tamanho." : modo === "poligono" ? "Use um KML dentro da área levantada ou levante mais pontos em volta." : "Aumente o recuo da borda ou levante mais pontos em volta."}`,
+      ...ajuste(),
+    };
+  }
+  return { podeExportar: true, tom: "pronto", titulo: "Pronto para o cliente", detalhe: "Relatório em PDF com os números, o mapa, as duas seções e o método.", acao: "pdf", rotuloAcao: "Baixar relatório" };
+}
