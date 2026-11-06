@@ -11,7 +11,8 @@
 --   RLS só deixa ver/gravar as da própria empresa (escritorio_atual(), 0025).
 -- - Duas gravações fora de ordem (o celular reenviando uma versão velha depois
 --   que o computador já renomeou): a versão mais VELHA não sobrescreve a mais
---   nova (gatilho medicoes_campo_mais_nova, pela coluna atualizado_em).
+--   nova (gatilho medicoes_campo_mais_nova, pela coluna atualizado_em, que
+--   fica limitada a now() + 5 min: relógio adiantado não trava edições).
 -- - vertices: [{lon, lat, precisao, t, modo: caminhar|ponto|mao, leituras?, alt?}]
 --   em lon/lat SIRGAS 2000. area_m2/perimetro_m/fuso saem do motor único da
 --   tela (UTM no fuso do lugar, Gauss) e servem à lista; a geometria manda.
@@ -63,13 +64,22 @@ drop trigger if exists medicoes_campo_autor on medicoes_campo;
 create trigger medicoes_campo_autor before insert on medicoes_campo
   for each row execute function medicoes_campo_autor();
 
--- quem criou não muda; o escritório não muda; versão velha não sobrescreve a nova
+-- quem criou não muda; o escritório não muda; versão velha não sobrescreve a nova.
+-- Relógio adiantado: o atualizado_em vem do APARELHO. Um celular com a hora
+-- adiantada (ex.: um dia) gravaria uma versão "do futuro" e travaria toda edição
+-- do escritório até o relógio do mundo alcançá-la. Por isso o atualizado_em fica
+-- limitado a now() + 5 minutos, no INSERT e no UPDATE (no upsert, o INSERT
+-- limita o excluded antes de o UPDATE comparar).
 create or replace function medicoes_campo_mais_nova()
 returns trigger
 language plpgsql
 set search_path = public
 as $$
 begin
+  new.atualizado_em := least(coalesce(new.atualizado_em, now()), now() + interval '5 minutes');
+  if tg_op = 'INSERT' then
+    return new;
+  end if;
   new.escritorio_id := old.escritorio_id;
   new.criado_por := old.criado_por;
   new.criado_em := old.criado_em;
@@ -80,7 +90,7 @@ begin
 end $$;
 
 drop trigger if exists medicoes_campo_mais_nova on medicoes_campo;
-create trigger medicoes_campo_mais_nova before update on medicoes_campo
+create trigger medicoes_campo_mais_nova before insert or update on medicoes_campo
   for each row execute function medicoes_campo_mais_nova();
 
 alter table medicoes_campo enable row level security;

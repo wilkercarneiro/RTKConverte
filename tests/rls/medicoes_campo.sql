@@ -47,7 +47,7 @@ set role authenticated;
 insert into medicoes_campo (id, nome, vertices, fechada, n_vertices, area_m2, criado_em, atualizado_em)
 values ('11111111-1111-4111-8111-111111111111', 'Pasto do Sr. João',
         '[{"lon": -41.39, "lat": -12.56, "precisao": 3, "t": 0, "modo": "ponto"}]', true, 1, 26123.4,
-        '2026-11-06T17:32:00Z', '2026-11-06T17:40:00Z');
+        now() - interval '40 minutes', now() - interval '30 minutes');
 select pg_temp.ok((select escritorio_id from medicoes_campo where id = '11111111-1111-4111-8111-111111111111') = :'esc_a',
                   'o escritório vem do banco (gatilho preencher_escritorio)');
 select pg_temp.ok((select criado_por from medicoes_campo where id = '11111111-1111-4111-8111-111111111111') = :'ua',
@@ -65,20 +65,32 @@ select pg_temp.ok(pg_temp.recusa($$insert into medicoes_campo (id, nome) values 
                   'nome vazio é recusado');
 
 -- upsert pelo id (como a tela grava): versão nova entra, versão velha não sobrescreve
-insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111-8111-111111111111', 'Renomeada no escritório', '2026-11-06T18:00:00Z')
+insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111-8111-111111111111', 'Renomeada no escritório', now() - interval '10 minutes')
   on conflict (id) do update set nome = excluded.nome, atualizado_em = excluded.atualizado_em;
 select pg_temp.ok((select nome from medicoes_campo where id = '11111111-1111-4111-8111-111111111111') = 'Renomeada no escritório', 'upsert com versão nova grava');
-insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111-8111-111111111111', 'Versão velha do celular', '2026-11-06T17:50:00Z')
+insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111-8111-111111111111', 'Versão velha do celular', now() - interval '20 minutes')
   on conflict (id) do update set nome = excluded.nome, atualizado_em = excluded.atualizado_em;
 select pg_temp.ok((select nome from medicoes_campo where id = '11111111-1111-4111-8111-111111111111') = 'Renomeada no escritório',
                   'versão mais velha não sobrescreve a mais nova');
 -- a tela (conta.ts) sabe que a conta tem versão mais nova porque o upsert ... returning volta VAZIO
-select pg_temp.ok(pg_temp.afetadas($$insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111-8111-111111111111', 'Outra velha', '2026-11-06T17:55:00Z')
+select pg_temp.ok(pg_temp.afetadas($$insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111-8111-111111111111', 'Outra velha', now() - interval '15 minutes')
   on conflict (id) do update set nome = excluded.nome, atualizado_em = excluded.atualizado_em returning atualizado_em$$) = 0,
   'upsert de versão velha não devolve linha (a tela guarda a do aparelho como cópia)');
-update medicoes_campo set escritorio_id = :'esc_b', criado_por = null, atualizado_em = '2026-11-06T19:00:00Z' where id = '11111111-1111-4111-8111-111111111111';
+update medicoes_campo set escritorio_id = :'esc_b', criado_por = null, atualizado_em = now() where id = '11111111-1111-4111-8111-111111111111';
 select pg_temp.ok((select escritorio_id = :'esc_a' and criado_por = :'ua' from medicoes_campo where id = '11111111-1111-4111-8111-111111111111'),
                   'escritório e autor não mudam no update');
+-- relógio adiantado: a versão "do futuro" fica em now() + 5 min e não trava o escritório
+insert into medicoes_campo (id, nome, atualizado_em) values ('11111111-1111-4111-8111-111111111111', 'Celular com a hora errada', now() + interval '1 day')
+  on conflict (id) do update set nome = excluded.nome, atualizado_em = excluded.atualizado_em;
+select pg_temp.ok((select atualizado_em <= now() + interval '5 minutes' from medicoes_campo where id = '11111111-1111-4111-8111-111111111111'),
+                  'atualizado_em do futuro fica limitado a now() + 5 min (upsert)');
+insert into medicoes_campo (id, nome, atualizado_em) values ('66666666-6666-4666-8666-666666666666', 'Nova com a hora errada', '2030-01-01');
+select pg_temp.ok((select atualizado_em <= now() + interval '5 minutes' from medicoes_campo where id = '66666666-6666-4666-8666-666666666666'),
+                  'atualizado_em do futuro fica limitado a now() + 5 min (insert)');
+delete from medicoes_campo where id = '66666666-6666-4666-8666-666666666666';
+update medicoes_campo set nome = 'Renomeada depois', atualizado_em = now() + interval '6 minutes' where id = '11111111-1111-4111-8111-111111111111';
+select pg_temp.ok((select nome from medicoes_campo where id = '11111111-1111-4111-8111-111111111111') = 'Renomeada depois',
+                  'edição seguinte do escritório passa (não fica travada pela versão do futuro)');
 
 -- ---------------------------------------------------------------- como outra empresa
 reset role;
