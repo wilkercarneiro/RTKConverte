@@ -45,6 +45,62 @@ Os módulos são: imóvel rural (memorial SIGEF), imóvel urbano (com edificaç�
 | Academia com progresso; perguntas sugeridas no chat | Próximo (pequeno). |
 | Ortomosaico de drone como fundo | Avaliar depois (arquivos grandes). |
 
+## Módulos vistos por dentro em 06/11/2026
+
+Em 05/11 só os cartões da página inicial foram lidos. Em 06/11 os módulos foram abertos e usados na conta do grupo, com o plano vencido. A consulta e a análise rodaram sem pedir crédito. O ponto de teste foi -12,40 / -41,20, em Lençóis (BA).
+
+### GPS Campo (`/campo`)
+- O mapa é Leaflet com satélite do Google. Um seletor de data troca a imagem por datas antigas do Esri World Imagery Wayback (2025-10-29, 2025-09-…, 2025-08-…).
+- Há quatro jeitos de criar a área:
+  - medição automática pelo GPS do celular, caminhando;
+  - modo manual com GPS, marcando o vértice por toque;
+  - desenho à mão;
+  - importação de arquivo.
+- Arquivos aceitos na importação: KML, KMZ, XML, GML, GeoJSON, GPX, SHP/ZIP, DXF, CSV, TXT e GPKG.
+- Fundo próprio: GeoTIFF, ou JPG/PNG/TIFF com world file (.tfw, .jgw, .pgw) e .prj. O botão "Reconectar arquivo grande" guarda o arquivo no próprio aparelho.
+- Configurações:
+  - modo alta precisão, para pontos a 1–2 m;
+  - precisão máxima aceitável, 8 m por padrão;
+  - cálculo em UTM plano ou geodésico (Vincenty e Karney, recomendado para o rural);
+  - formato da área.
+- Também tem ir até coordenada, UTM ou link do Google Maps, salvar medição e medições salvas.
+
+### Consulta Avançada (`/consulta-avancada`)
+- A busca é por nº do CAR, SNCR/NIRF, matrícula ou coordenada (digitada ou clicada no mapa).
+- Cada imóvel achado mostra código, área, município, KML e GeoJSON. Há também "Baixar todos" em KML e GeoJSON.
+- Tudo passa pela função `terrain-report` deles.
+- **Atenção:** os resultados aparecem com a etiqueta "SIGEF/INCRA", mas os códigos (BA-2919306-…) e a fonte (`sicar:ba`) são do **CAR**. Eles vendem declaração do CAR como se fosse SIGEF.
+
+### Análise de Terreno (`/analise-terreno`)
+- Define a área de três jeitos:
+  - buscar imóvel por CAR, SNCR/SIGEF, matrícula, endereço, link do Google Maps ou coordenada (aceita decimal, GMS e UTM);
+  - GPS em tempo real;
+  - importar arquivo.
+- Do imóvel achado saem "Usar como perímetro" e "Analisar dados ambientais".
+- A análise cruza SIGEF/INCRA, embargos do IBAMA, terras indígenas, quilombolas, UC, assentamentos, bioma (IBGE), focos de queimada (INPE), solo (SoilGrids, classe WRB), clima (Open-Meteo) e a localização administrativa. Leva de 20 a 30 s.
+- O relatório tem as abas Resumo, Imóveis, Resolver, Alertas e Fontes. Sai em JSON, KML e PDF.
+- No resumo do teste vieram:
+  - área e centro;
+  - chuva de 365, 30 e 7 dias e a temperatura média;
+  - solo (Ferralsols);
+  - avisos.
+- Botão "Gerar Laudo com IA" junta tudo num laudo técnico.
+- O bloco "Cartório / ônus / hipoteca / bloqueio judicial" está como "em breve" (depende do ONR, que é pago).
+
+### Terraplanagem (`/terraplanagem`)
+- Não deu para abrir: a extensão do navegador caiu antes. Pelo cartão, ela faz levantamento com cotas, plataforma projetada e volumes de corte e aterro. **Pendente.**
+
+### O que isso muda para o Vertces
+
+| Deles | Vertces hoje | Proposta |
+|---|---|---|
+| GPS de campo no celular (caminhar ou tocar o vértice) | Não existe. Não há `geolocation` no código. | Tela "Campo" de celular: caminhar e marcar M/P com a precisão do GPS e um limite. Serve para croqui e CAR, não para o SIGEF. O resultado vira serviço de CAR ou de loteamento. |
+| Imagem por data (Wayback) | Satélite do Mapbox, só a imagem atual | Seletor de data no mapa interativo, útil para provar área consolidada antes de 22/07/2008 no CAR |
+| Fundo GeoTIFF ou ortomosaico | Não existe | Já estava em "avaliar depois". O GPS deles mostra que é viável no navegador. |
+| Busca por CAR, SNCR, matrícula ou coordenada com KML do resultado | Mapa SIGEF com parcelas certificadas (Geoportal) | Juntar a camada pública do CAR (SICAR/GeoServer) à busca, sempre marcando a fonte certa. CAR é declaração, não certificação: é aí que podemos ser mais honestos do que eles. |
+| Clima, solo, queimadas e laudo por IA na análise | A análise de restrições (05/11) cobre TI, UC, assentamento, quilombola, embargos, fronteira, militar e arqueológico, mas não clima, solo nem queimadas | Acrescentar Open-Meteo, SoilGrids e focos do INPE (são públicos) e um laudo por IA opcional, cobrado em crédito |
+| Terraplanagem (corte e aterro) | Corte e aterro só dentro da maquete do loteamento (ruas e platô das casas) | Esperar a terraplanagem deles ser vista. O relevo do loteamento (`src/lib/relevo`) já tem a base para volumes de uma plataforma. |
+
 ## O que não copiar
 
 - Mapa pequeno que rouba a rolagem da página.
