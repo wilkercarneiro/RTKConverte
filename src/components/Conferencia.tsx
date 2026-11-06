@@ -39,6 +39,7 @@ import { camadasDoResultado } from "../lib/restricoes";
 import type { ResultadoRestricoes } from "../lib/restricoes";
 import type { PontoMapa } from "./MapaInterativo";
 import { aneisLonLat, lonLatComoNaArea, lonLatDoVertice } from "../lib/sigef";
+import { reprojetarVerticesNoFuso } from "../lib/vertice_utm";
 import type { GeorefMapa } from "../../supabase/functions/_shared/satelite.ts";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { avisarHistoricoAtualizado, folhaDoTitulo, nomeDaGlebaNoTitulo, ultimaGeracao } from "../lib/historico";
@@ -320,8 +321,10 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
       // O que falta, o servidor busca sozinho pelas coordenadas (Mapbox): a
       // imagem do imóvel, a de cada gleba e o mapa da tela. Serviço sem
       // vértices não tem o que enquadrar — e é o caso do serviço só-PDF, que
-      // nem passa por aqui.
-      if (inicial.vertices.length >= 3 && (!achados.satelite || !achados.mapa || inicial.servico.tem_glebas)) {
+      // nem passa por aqui. Sempre pergunta: o servidor também renova a imagem
+      // que ficou de outro contorno (fuso trocado, pontos movidos) — sem isso a
+      // tela e a planta mostravam outro lugar (FAZENDA SALGADINHO, 06/11/2026).
+      if (inicial.vertices.length >= 3) {
         buscarSatelite({ faltantes: true });
       }
     });
@@ -1171,8 +1174,14 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     }
   }
   function trocarFuso(z: number) {
+    if (z === servico.fuso_utm) return;
     campo("fuso_utm", z);
-    if (temCertificados && z !== servico.fuso_utm) void reunirCertificados(z);
+    if (temCertificados) { void reunirCertificados(z); return; }
+    // sem certificados: o E/N fica, o GMS é refeito no fuso novo (antes ficava
+    // no antigo e a satélite/prévia iam parar 6° fora — ver reprojetarVerticesNoFuso)
+    setVertices((vs) => reprojetarVerticesNoFuso(vs, z));
+    setGerado(null);
+    avisar("ok", `Fuso trocado para ${z}S: latitude/longitude dos vértices recalculadas. Gere os documentos novamente.`);
   }
 
   // ------- correção de sobreposição SIGEF -------

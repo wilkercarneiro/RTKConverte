@@ -20,7 +20,7 @@ import { createClient } from "@supabase/supabase-js";
 import proj4mod from "proj4";
 import { GEO_DEF, gmsToDeg, parseGmsPlanilha, utmDef } from "../_shared/geo.ts";
 import type { Proj4 } from "../_shared/geo.ts";
-import { buscarImagemMapbox, enquadrar, guardarImagem, urlMapaSatelite } from "../_shared/satelite.ts";
+import { buscarImagemMapbox, caixaConfere, caixaDosAneis, enquadrar, guardarImagem, lerCaixaGuardada, urlMapaSatelite } from "../_shared/satelite.ts";
 import type { GeorefMapa, LonLat } from "../_shared/satelite.ts";
 import { exigirServicoDoUsuario } from "../_shared/acesso.ts";
 import type { ClienteUsuario } from "../_shared/acesso.ts";
@@ -55,17 +55,27 @@ function fusoDoServico(fusoServico: number | null, verts: VertRow[]): number {
   return 24;
 }
 
-/** Anel do imóvel em [lon, lat]: o GMS gravado quando há; senão E/N re-projetado. */
+/**
+ * Anel do imóvel em [lon, lat]: o E/N no fuso do serviço (a mesma conta da
+ * planta e do mapa interativo); o GMS gravado só quando falta E/N.
+ *
+ * Até 06/11/2026 era o contrário — GMS primeiro. Serviço que teve o fuso
+ * trocado sem certificados ficava com o GMS no fuso antigo (6° fora) e a
+ * imagem saía de outro lugar enquanto o mapa, pelo E/N, saía certo.
+ */
 function anelDosVertices(verts: VertRow[], fuso: number): LonLat[] {
   const out: LonLat[] = [];
   for (const v of verts) {
+    const e = v.e == null ? NaN : Number(v.e), n = v.n == null ? NaN : Number(v.n);
+    if (Number.isFinite(e) && Number.isFinite(n) && !(e === 0 && n === 0)) {
+      out.push(proj4(utmDef(fuso), GEO_DEF, [e, n]));
+      continue;
+    }
     if (v.lat_gms && v.lon_gms) {
       try {
         out.push([gmsToDeg(parseGmsPlanilha(v.lon_gms)), gmsToDeg(parseGmsPlanilha(v.lat_gms))]);
-        continue;
-      } catch { /* GMS ilegível: tenta E/N */ }
+      } catch { /* GMS ilegível: o ponto fica de fora */ }
     }
-    if (v.e != null && v.n != null) out.push(proj4(utmDef(fuso), GEO_DEF, [Number(v.e), Number(v.n)]));
   }
   return out;
 }
@@ -110,22 +120,30 @@ Deno.serve(async (req) => {
       const { data: lista } = await supa.storage.from("gerados").list(pasta);
       for (const f of lista ?? []) existentes.add(f.name);
     }
+    // "falta" também é a imagem que existe mas é de OUTRO contorno (fuso
+    // trocado, união refeita, pontos movidos) ou antiga, sem caixa guardada
+    const tem = (nome: string) => existentes.has(`${nome}.png`) || existentes.has(`${nome}.jpg`);
+    const emDia = async (nome: string, aneis: LonLat[][]) => {
+      if (!tem(nome)) return false;
+      const caixa = caixaDosAneis(aneis);
+      return !caixa || caixaConfere(await lerCaixaGuardada(supa.storage, servico_id, nome), caixa);
+    };
 
+    const aneisImovel = glebas.length ? glebas.map((g) => anelDaGleba(g.anel!, fuso)) : [anelDosVertices(verts, fuso)];
     type Alvo = { alvo: "imovel" | number; aneis: LonLat[][]; nome: string };
     const alvos: Alvo[] = [];
-    const querImovel = imovel || (faltantes && !existentes.has("satelite.png") && !existentes.has("satelite.jpg"));
+    const querImovel = imovel || (faltantes && !(await emDia("satelite", aneisImovel)));
     if (querImovel) {
       // com glebas, o imóvel é o conjunto delas (partes separadas por estrada
       // saem cada uma com o seu contorno); sem glebas, o anel dos vértices
-      const aneis = glebas.length ? glebas.map((g) => anelDaGleba(g.anel!, fuso)) : [anelDosVertices(verts, fuso)];
-      alvos.push({ alvo: "imovel", aneis, nome: "satelite" });
+      alvos.push({ alvo: "imovel", aneis: aneisImovel, nome: "satelite" });
     }
     const ks = new Set<number>(Array.isArray(glebasPedidas) ? glebasPedidas.map(Number) : []);
     if (faltantes) {
-      glebas.forEach((_, i) => {
+      for (const [i, g] of glebas.entries()) {
         const k = i + 1;
-        if (!existentes.has(`satelite-gleba-${k}.png`) && !existentes.has(`satelite-gleba-${k}.jpg`)) ks.add(k);
-      });
+        if (!(await emDia(`satelite-gleba-${k}`, [anelDaGleba(g.anel!, fuso)]))) ks.add(k);
+      }
     }
     for (const k of [...ks].sort((a, b) => a - b)) {
       const g = glebas[k - 1];
@@ -138,11 +156,21 @@ Deno.serve(async (req) => {
 
     // mapa da tela: junto com a do imóvel, sozinho (`mapa`), ou quando falta
     let mapa: GeorefMapa | null = null;
-    const querMapa = mapaPedido || querImovel || (faltantes && !existentes.has("mapa.json"));
+    let mapaEmDia = false;
+    if (faltantes && !mapaPedido && !querImovel && existentes.has("mapa.json") && existentes.has("mapa.jpg")) {
+      const caixa = caixaDosAneis(aneisImovel);
+      const dl = await supa.storage.from("gerados").download(`${pasta}/mapa.json`);
+      try {
+        const guardado = !dl.error && dl.data ? JSON.parse(await dl.data.text()) as GeorefMapa : null;
+        mapaEmDia = !caixa || caixaConfere(guardado?.caixa, caixa);
+      } catch { mapaEmDia = false; }
+    }
+    const querMapa = mapaPedido || querImovel || (faltantes && !mapaEmDia);
     if (querMapa) {
       try {
-        const aneis = glebas.length ? glebas.map((g) => anelDaGleba(g.anel!, fuso)) : [anelDosVertices(verts, fuso)];
-        const g = enquadrar(aneis, 640, 640, 44);
+        const g: GeorefMapa = enquadrar(aneisImovel, 640, 640, 44);
+        const caixaMapa = caixaDosAneis(aneisImovel);
+        if (caixaMapa) g.caixa = caixaMapa;
         const resp = await fetch(urlMapaSatelite(g, token));
         if (!resp.ok) throw new Error(`Mapbox respondeu ${resp.status}: ${(await resp.text().catch(() => "")).slice(0, 200)}`);
         const bytes = new Uint8Array(await resp.arrayBuffer());
@@ -159,7 +187,7 @@ Deno.serve(async (req) => {
     for (const a of alvos) {
       try {
         const img = await buscarImagemMapbox(a.aneis, token);
-        await guardarImagem(supa.storage, servico_id, a.nome, img);
+        await guardarImagem(supa.storage, servico_id, a.nome, img, caixaDosAneis(a.aneis));
         gerados.push({ alvo: a.alvo, nome: `${a.nome}.${img.tipo}`, tipo: img.tipo });
       } catch (e) {
         const rotulo = a.alvo === "imovel" ? "imóvel" : `gleba ${a.alvo}`;

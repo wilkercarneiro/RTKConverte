@@ -171,6 +171,49 @@ export function anelLonLatDeEN(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// A imagem guardada é DESTE contorno?
+//
+// Até 06/11/2026 a imagem guardada valia para sempre: trocar o fuso, refazer a
+// união, mover pontos ou reimportar o TXT não a renovava, e a planta continuava
+// saindo com a imagem antiga — na FAZENDA SALGADINHO, de um lugar ~650 km a
+// oeste. Agora cada imagem guarda ao lado a CAIXA (oeste, sul, leste, norte)
+// dos anéis que a enquadraram (`entrada/{nome}.caixa.json`; no mapa da tela,
+// dentro do próprio mapa.json). Caixa diferente da atual = imagem refeita.
+// Imagem sem caixa (guardada antes disto) também é refeita na primeira vez.
+
+/** oeste, sul, leste, norte — em graus */
+export type Caixa = [number, number, number, number];
+
+export function caixaDosAneis(aneis: LonLat[][]): Caixa | null {
+  const pts = aneis.flat().filter(([lon, lat]) => Number.isFinite(lon) && Number.isFinite(lat));
+  if (!pts.length) return null;
+  return [
+    Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])),
+    Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1])),
+  ];
+}
+
+/**
+ * A caixa guardada serve para a atual? Folga de ~5 m (ou 2% do tamanho do
+ * imóvel, se maior): a planta e a tela montam o anel por caminhos um pouco
+ * diferentes (vértice certificado pelo GMS × pelo E/N) e não podem ficar
+ * trocando a imagem uma da outra por centímetros.
+ */
+export function caixaConfere(guardada: unknown, atual: Caixa): boolean {
+  if (!Array.isArray(guardada) || guardada.length !== 4 || !guardada.every((x) => typeof x === "number" && Number.isFinite(x))) return false;
+  const tam = Math.max(atual[2] - atual[0], atual[3] - atual[1]);
+  const folga = Math.max(5e-5, tam * 0.02);
+  return guardada.every((x, i) => Math.abs((x as number) - atual[i]) <= folga);
+}
+
+/** A caixa guardada junto da imagem `nome`, ou null (imagem antiga, sem caixa). */
+export async function lerCaixaGuardada(storage: StorageMinimo, servicoId: string, nome: string): Promise<unknown> {
+  const dl = await storage.from("gerados").download(`${servicoId}/entrada/${nome}.caixa.json`);
+  if (dl.error || !dl.data) return null;
+  try { return (JSON.parse(await dl.data.text()) as { caixa?: unknown }).caixa ?? null; } catch { return null; }
+}
+
 /** A imagem guardada em `entrada/{nome}.png|jpg`, ou null. */
 export async function baixarImagemGuardada(storage: StorageMinimo, servicoId: string, nome: string): Promise<ImagemSatelite | null> {
   for (const tipo of ["png", "jpg"] as const) {
@@ -193,12 +236,15 @@ export async function buscarImagemMapbox(aneis: LonLat[][], token: string, opcoe
 }
 
 /** Guarda em `entrada/{nome}.{tipo}` e apaga a outra extensão, para sobrar uma só. */
-export async function guardarImagem(storage: StorageMinimo, servicoId: string, nome: string, img: ImagemSatelite): Promise<void> {
+export async function guardarImagem(storage: StorageMinimo, servicoId: string, nome: string, img: ImagemSatelite, caixa?: Caixa | null): Promise<void> {
   const pasta = `${servicoId}/entrada`;
   const up = await storage.from("gerados").upload(`${pasta}/${nome}.${img.tipo}`, img.bytes,
     { upsert: true, contentType: img.tipo === "png" ? "image/png" : "image/jpeg" });
   if (up.error) throw new Error(`não ficou guardada no Storage: ${up.error.message}`);
   await storage.from("gerados").remove([`${pasta}/${nome}.${img.tipo === "png" ? "jpg" : "png"}`]);
+  // sem a caixa a imagem só é refeita de novo na próxima vez — não é erro
+  if (caixa) await storage.from("gerados").upload(`${pasta}/${nome}.caixa.json`, new TextEncoder().encode(JSON.stringify({ caixa })),
+    { upsert: true, contentType: "application/json" });
 }
 
 /**
@@ -213,15 +259,23 @@ export async function garantirImagemSatelite(
   token: string | undefined,
   rotulo: string,
 ): Promise<{ imagem: ImagemSatelite | null; aviso: string | null }> {
+  const caixa = caixaDosAneis(aneis);
   const guardada = await baixarImagemGuardada(storage, servicoId, nome);
-  if (guardada) return { imagem: guardada, aviso: null };
-  if (!token) return { imagem: null, aviso: `${rotulo}: MAPBOX_TOKEN não configurado no servidor — a planta saiu sem imagem de satélite.` };
+  const caixaGuardada = guardada ? await lerCaixaGuardada(storage, servicoId, nome) : null;
+  if (guardada && (!caixa || caixaConfere(caixaGuardada, caixa))) return { imagem: guardada, aviso: null };
+  // a guardada, quando há, NÃO é comprovadamente deste contorno: sem caixa
+  // (antiga) ainda serve de reserva, avisada; com caixa diferente, nunca
+  const reserva = guardada && caixaGuardada === null ? guardada : null;
+  const falhou = (motivo: string) => reserva
+    ? { imagem: reserva, aviso: `${rotulo}: a imagem de satélite não pôde ser renovada (${motivo}) — saiu a guardada antes; confira se ela é do imóvel.` }
+    : { imagem: null, aviso: `${rotulo}: a imagem de satélite não pôde ser buscada (${motivo}) — o quadro PLANTA DE SITUAÇÃO saiu vazio.` };
+  if (!token) return falhou("MAPBOX_TOKEN não configurado no servidor");
   try {
     const img = await buscarImagemMapbox(aneis, token);
-    try { await guardarImagem(storage, servicoId, nome, img); } catch { /* a planta desta geração sai mesmo assim */ }
+    try { await guardarImagem(storage, servicoId, nome, img, caixa); } catch { /* a planta desta geração sai mesmo assim */ }
     return { imagem: img, aviso: null };
   } catch (e) {
-    return { imagem: null, aviso: `${rotulo}: a imagem de satélite não pôde ser buscada (${e instanceof Error ? e.message : String(e)}) — o quadro PLANTA DE SITUAÇÃO saiu vazio.` };
+    return falhou(e instanceof Error ? e.message : String(e));
   }
 }
 
@@ -243,6 +297,8 @@ export interface GeorefMapa {
   /** tamanho LÓGICO em pixels (a imagem @2x tem o dobro) */
   largura: number;
   altura: number;
+  /** caixa dos anéis que geraram a imagem (ver caixaConfere); ausente nas antigas */
+  caixa?: Caixa;
 }
 
 /** Pixel Web Mercator global (origem no canto NW do mundo) para o zoom dado, tiles de 512 px. */
