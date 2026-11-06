@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   agruparSeguidos, buscarComPrazo, citacaoAtual, buscarMudancas, camadaMetadados, erroPrazo, citacao, consolidar, dataBr, detalheImagem, gms, idade,
-  imagensDoLugar, lerCaptura, lerConfig, lerTilemap, limparCache, ordenarPorData, percorrerVersoes, rotuloImagem, tileDoPonto,
+  fotoVelha, imagensDoLugar, lerCaptura, lerConfig, lerTilemap, limparCache, ordenarPorData, percorrerVersoes, rotuloImagem, tileDoPonto,
   zoomParaExtensao,
 } from "../src/lib/imagem_data.ts";
 
@@ -443,4 +443,15 @@ test("imagensDoLugar: a imagem de hoje igual à versão mais nova ganha a data d
   limparCache();
   f.bytesAtual = async () => { throw new Error("HTTP 500"); };
   assert.equal((await imagensDoLugar(-51.9, -6.6, 15, { fonte: f })).atualIgual, null, "falhou: não confirma, e não derruba");
+});
+
+test("fotoVelha: mais de 3 anos vira 'Mais recente disponível', não 'Imagem atual'", () => {
+  const foto = (data) => ({ captura: data ? { data } : null });
+  assert.equal(fotoVelha(foto("2013-04-14"), "2026-11-06"), true);
+  assert.equal(fotoVelha(foto("2023-11-06"), "2026-11-06"), false, "3 anos exatos ainda não é velha");
+  assert.equal(fotoVelha(foto("2023-11-05"), "2026-11-06"), true);
+  assert.equal(fotoVelha(foto("2024-06-01"), "2026-11-06"), false);
+  assert.equal(fotoVelha(foto(null), "2026-11-06"), false, "sem data da foto não afirma nada");
+  assert.equal(fotoVelha(null, "2026-11-06"), false);
+  assert.equal(fotoVelha(foto("2020-01-01"), "2026-11-06", 10), false, "limite configurável");
 });

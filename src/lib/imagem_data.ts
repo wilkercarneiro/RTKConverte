@@ -787,3 +787,12 @@ export function citacaoAtual(lon: number, lat: number, hoje: string): string {
   return `Fonte: Esri World Imagery (mapa base atual; data da captura da foto não confirmada). `
     + `Ponto consultado: ${gms(lat, "lat")}, ${gms(lon, "lon")} (WGS 84). Disponível em: ${URL_WORLD_IMAGERY}. Acesso em: ${dataBr(hoje)}.`;
 }
+
+/** A foto de base tem mais de `anos` anos (padrão 3)? Então ela não é "atual": é a mais recente que o acervo tem. */
+export function fotoVelha(img: ImagemLocal | null, hoje: string, anos = 3): boolean {
+  const d = img?.captura?.data;
+  if (!d || !/^\d{4}-\d\d-\d\d/.test(d)) return false;
+  // a data da foto + `anos` anos, em ISO (compara como texto): passou dela, a foto é velha
+  const limite = `${Number(d.slice(0, 4)) + anos}${d.slice(4, 10)}`;
+  return hoje.slice(0, 10) > limite;
+}

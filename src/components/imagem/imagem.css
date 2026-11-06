@@ -186,3 +186,31 @@ button.imgdata-cortina-fechar:hover:not(:disabled) { background: #fff; color: va
   .imgdata-cortina-lado select { max-width: 118px; font-size: 13px; }
   button.imgdata-cortina-fechar { order: 3; margin-top: 0; }
 }
+
+/* ---- acabamento 1 (06/11) ---- */
+/* foto de base com mais de 3 anos: "Mais recente disponível · dd/mm/aaaa", com leve destaque de alerta */
+.imgdata-pilula.velha { background: #FFF8EA; box-shadow: 0 0 0 2px rgb(217 154 43 / 55%), 0 4px 14px -6px rgb(0 0 0 / 35%); }
+.imgdata-pilula.velha button.imgdata-botao { color: var(--alerta-escuro); }
+.imgdata-pilula.velha button.imgdata-botao:hover:not(:disabled) { background: var(--alerta-claro); color: var(--alerta-escuro); }
+.imgdata-pilula.velha .imgdata-botao-texto small { opacity: .9; }
+.imgdata-item-texto b.velha, .imgdata-item-texto small.velha { color: var(--alerta-escuro); }
+/* rótulos curtos do pé do painel ("PNG", "Fonte"): só no celular */
+.imgdata-painel .rot-curto { display: none; }
+
+@media (max-width: 600px) {
+  /* no celular o painel abre como folha de baixo, na largura da tela: o mapa fica à vista em cima */
+  .imgdata-painel {
+    position: fixed; left: 0; right: 0; bottom: 0; width: auto; max-width: none; z-index: 90;
+    max-height: calc(var(--vh, 100vh) * .72); border-radius: 18px 18px 0 0;
+    box-shadow: 0 -14px 40px -12px rgb(0 0 0 / 50%); padding-bottom: env(safe-area-inset-bottom, 0);
+    animation: imgdata-sobe .18s ease-out;
+  }
+  .imgdata-painel::before { content: ""; flex: none; align-self: center; width: 40px; height: 4px; margin-top: 8px; border-radius: 99px; background: var(--borda-forte); }
+  /* o controle (z-index 3) é o contexto de empilhamento do painel: aberto, ele sobe acima da folha do Campo e da página */
+  .imgdata-controle:has(> .imgdata-painel) { z-index: 95; }
+  .imgdata-painel .rot-longo { display: none; }
+  .imgdata-painel .rot-curto { display: inline; }
+  .imgdata-painel > footer button { min-height: 40px; font-size: 13.5px; font-weight: 600; }
+}
+@keyframes imgdata-sobe { from { transform: translateY(24px); opacity: .4; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .imgdata-painel { animation: none; } }

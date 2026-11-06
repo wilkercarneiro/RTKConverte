@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Map as MapaGl } from "maplibre-gl";
 import {
-  anoImagem, aoTrocarFonte, citacao, citacaoAtual, dataBr, detalheImagem, fonteEmUso, gms, idade, imagensDoLugar, PRIMEIRO_ANO,
+  anoImagem, aoTrocarFonte, citacao, citacaoAtual, dataBr, detalheImagem, fonteEmUso, fotoVelha, gms, idade, imagensDoLugar, PRIMEIRO_ANO,
   rotuloImagem, tileDoPonto,
 } from "../../lib/imagem_data";
 import type { ImagemLocal, Progresso, ResultadoLugar } from "../../lib/imagem_data";
@@ -295,14 +295,17 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
   const datasPendentes = resultado?.datasPendentes ?? 0;
   const semDataExata = todas.filter((i) => !i.captura);
   const nFotos = todas.length;
+  // a foto do mapa de hoje tem mais de 3 anos: não é "atual", é a mais recente que o acervo tem ali
+  const velha = fotoVelha(fotoHoje, hoje);
+  const rotuloHoje = velha ? "Mais recente disponível" : "Atual";
   const opcoes = [
-    { valor: ATUAL, rotulo: fotoHoje ? `Atual · ${rotuloImagem(fotoHoje)}` : "Atual (hoje)" },
+    { valor: ATUAL, rotulo: fotoHoje ? `${rotuloHoje} · ${rotuloImagem(fotoHoje)}` : "Atual (hoje)" },
     ...imagens.map((i) => ({ valor: String(i.release), rotulo: rotuloImagem(i) })),
   ];
   const [lonP, latP] = lugar ? [lugar.lon, lugar.lat] : [mapa.getCenter().lng, mapa.getCenter().lat];
 
   const pilula = (
-    <div className={`imgdata-pilula${atual ? " com-data" : ""}`}>
+    <div className={`imgdata-pilula${atual ? " com-data" : ""}${!atual && velha ? " velha" : ""}`}>
       {tocando && (
         <button type="button" className="imgdata-seta parar" onClick={() => setTocando(false)} title="Parar a evolução" aria-label="Parar a evolução">
           <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="2" fill="currentColor" /></svg>
@@ -313,11 +316,11 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
           title="Imagem mais antiga" aria-label="Imagem mais antiga">‹</button>
       )}
       <button type="button" className="imgdata-botao" onClick={abrir} aria-expanded={aberto} aria-haspopup="dialog"
-        title="Ver a imagem de satélite de outras datas">
+        title={velha && !atual && fotoHoje ? `A foto mais recente deste lugar é de ${rotuloImagem(fotoHoje)} (${idade(fotoHoje.captura!.data, hoje)}). Ver outras datas` : "Ver a imagem de satélite de outras datas"}>
         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2M3.5 12a8.5 8.5 0 1 0 2.5-6M3 4v4h4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
         <span className="imgdata-botao-texto">
           {atual ? <><small>{atual.captura ? "Imagem de" : "Imagem"}</small><b>{rotuloImagem(atual)}</b></>
-            : fotoHoje ? <><small>Imagem atual · de</small><b>{rotuloImagem(fotoHoje)}</b></>
+            : fotoHoje ? <><small>{velha ? "Mais recente disponível ·" : "Imagem atual · de"}</small><b>{rotuloImagem(fotoHoje)}</b></>
               : <><small>Imagem</small><b>atual</b></>}
         </span>
         {!atual && nFotos > 1 && <em className="imgdata-contagem">{nFotos} datas</em>}
@@ -399,8 +402,8 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
                   {fonte.urlTileAtual && resultado ? <img src={fonte.urlTileAtual(resultado.tile)} alt="" loading="lazy" /> : null}
                 </span>
                 <span className="imgdata-item-texto">
-                  <b>{fotoHoje ? <>Atual · {rotuloImagem(fotoHoje)}</> : "Atual"}</b>
-                  <small className={fotoHoje ? undefined : "pendente"}>
+                  <b className={velha ? "velha" : undefined}>{fotoHoje ? <>{rotuloHoje} · {rotuloImagem(fotoHoje)}</> : "Atual"}</b>
+                  <small className={fotoHoje ? (velha ? "velha" : undefined) : "pendente"}>
                     {fotoHoje ? `${detalheImagem(fotoHoje)}${fotoHoje.captura ? ` · ${idade(fotoHoje.captura.data, hoje)}` : ""}` : datasPendentes || carregando ? "mapa base de hoje" : "mapa base de hoje · data não confirmada"}
                   </small>
                 </span>
@@ -452,8 +455,8 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
 
       <footer>
         <button type="button" onClick={abrirComparacao} disabled={!nDatas} title="Duas datas no mesmo mapa, com uma divisa para arrastar">Comparar</button>
-        <button type="button" onClick={baixar} disabled={baixando} title="PNG da vista com a data e a fonte no rodapé">{baixando ? "Gerando…" : "Baixar PNG"}</button>
-        <button type="button" onClick={copiar} title={exibida ? `Fonte da imagem de ${rotuloImagem(exibida)} para o laudo ou o CAR` : "Fonte da imagem de hoje (data da foto não confirmada)"}>Copiar fonte</button>
+        <button type="button" onClick={baixar} disabled={baixando} title="PNG da vista com a data e a fonte no rodapé">{baixando ? "Gerando…" : <><span className="rot-longo">Baixar PNG</span><span className="rot-curto">PNG</span></>}</button>
+        <button type="button" onClick={copiar} title={exibida ? `Fonte da imagem de ${rotuloImagem(exibida)} para o laudo ou o CAR` : "Fonte da imagem de hoje (data da foto não confirmada)"}><span className="rot-longo">Copiar fonte</span><span className="rot-curto">Fonte</span></button>
       </footer>
     </div>
   );
