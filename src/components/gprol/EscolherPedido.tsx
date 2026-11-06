@@ -12,12 +12,27 @@ import type { PedidoGprol } from "../../lib/gprol";
 import { definicaoDe, rotuloCurto } from "../../lib/modalidades";
 import type { ChaveServico } from "../../lib/modalidades";
 import { FOTOS } from "../NovoServico";
+import { quandoFoi } from "../Auditoria";
 import "./gprol.css";
 
 const SETA = "M5 12h14M12 5l7 7-7 7";
 const Seta = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={SETA} /></svg>
 );
+
+/** "Georreferenciamento — Fazenda Pau Ferro" → imóvel em destaque, serviço na linha de baixo. */
+function partes(p: PedidoGprol): { imovel: string; servico: string | null } {
+  const t = (p.titulo || p.nome_servico || "Serviço do GPROL").split(/\s+[—–-]\s+/);
+  return t.length > 1 ? { imovel: t.slice(1).join(" — "), servico: t[0] } : { imovel: t[0], servico: p.nome_servico && p.nome_servico !== t[0] ? p.nome_servico : null };
+}
+
+/** Duas letras do imóvel do pedido ("Fazenda Pau Ferro" → "PF"). */
+function iniciais(p: PedidoGprol): string {
+  const nome = (p.titulo || p.nome_servico || "").split("—").pop()!
+    .replace(/(^|\s)(fazenda|s[ií]tio|ch[aá]cara|lote|im[oó]vel|de|da|do|dos|das)(?=\s|$)/gi, " ");
+  const partes = nome.trim().split(/\s+/).filter(Boolean);
+  return ((partes[0]?.[0] ?? "G") + (partes[1]?.[0] ?? "")).toUpperCase();
+}
 
 const local = (p: PedidoGprol) => [p.dados?.cliente_gprol, p.dados?.local, p.etapa ? `GPROL: ${p.etapa}` : null].filter(Boolean).join(" · ");
 
@@ -56,10 +71,12 @@ export function EscolherPedido({ chave, clienteId, onEscolher, children }: {
   return (
     <div className="pagina fade gpe">
       <div className="gpe-centro">
+        <button type="button" className="link gpe-voltar" onClick={() => history.back()}>← Voltar</button>
         <span className="gpe-olho">{titulo}</span>
         <h1>Este serviço é um pedido do GPROL?</h1>
         <p className="sub">
           {um ? "Há um pedido" : `Há ${candidatos.length} pedidos`} de {naFrase} vendido{um ? "" : "s"} no GPROL esperando execução.
+          Ligando ao pedido, o card anda sozinho por lá.
         </p>
         <div className="gpe-cartoes">
           <button type="button" className="gpe-cartao gprol" onClick={() => (um ? onEscolher(um) : setLista(true))}>
@@ -71,17 +88,18 @@ export function EscolherPedido({ chave, clienteId, onEscolher, children }: {
               <span className="gpe-fluxo"><i /><i /><i /></span>
               <span className="gpe-vertces-mock">Vertces</span>
             </span>
+            <span className="gpe-selo">{um ? "1 pedido esperando" : `${candidatos.length} pedidos esperando`}</span>
             <span className="gpe-texto">
               <b>Sim, é um pedido do GPROL</b>
-              <small>{um ? <>{um.titulo || um.nome_servico}{local(um) ? <> · {local(um)}</> : null}</> : `Escolher entre os ${candidatos.length} pedidos`}</small>
-              <span className="gpe-acao">{um ? "Executar este pedido" : "Ver os pedidos"} <Seta /></span>
+              <small>{um ? <>{um.titulo || um.nome_servico}{local(um) ? <> · {local(um)}</> : null}</> : "Escolha o pedido na lista e o serviço já nasce ligado a ele."}</small>
+              <span className="gpe-acao">{um ? "Executar este pedido" : "Escolher o pedido"} <Seta /></span>
             </span>
           </button>
           <button type="button" className="gpe-cartao zero" onClick={() => setSeguir(true)}>
             <span className="gpe-arte foto" aria-hidden="true" style={foto ? { backgroundImage: `url(${foto})` } : undefined} />
             <span className="gpe-texto">
               <b>Começar do zero</b>
-              <small>Abrir um serviço novo, sem ligar a pedido do GPROL.</small>
+              <small>Um serviço novo, sem ligar a pedido do GPROL.</small>
               <span className="gpe-acao">Começar <Seta /></span>
             </span>
           </button>
@@ -132,15 +150,20 @@ function ModalPedidos({ candidatos, nome, onEscolher, onFechar, onZero }: {
           {achados.map((p) => (
             <li key={p.id}>
               <button type="button" className="gpe-item" onClick={() => onEscolher(p)}>
-                <span className="gpe-item-tx"><b>{p.titulo || p.nome_servico}</b><small>{local(p)}</small></span>
-                <span className="gpe-item-ir">Executar <Seta /></span>
+                <span className="gpe-avatar" aria-hidden="true">{iniciais(p)}</span>
+                <span className="gpe-item-tx">
+                  <b>{partes(p).imovel}</b>
+                  <small>{[partes(p).servico, local(p), p.recebido_em ? `recebido ${quandoFoi(p.recebido_em)}` : null].filter(Boolean).join(" · ")}</small>
+                </span>
+                <span className="gpe-item-ir"><span className="gpe-item-ir-tx">Executar</span> <Seta /></span>
               </button>
             </li>
           ))}
           {!achados.length && <li className="gpe-vazio">Nenhum pedido com “{busca}”.</li>}
         </ul>
         <div className="gpe-modal-rodape">
-          <button type="button" className="link" onClick={onZero}>Nenhum destes: começar do zero</button>
+          <span>Nenhum é este serviço?</span>
+          <button type="button" className="link" onClick={onZero}>Começar do zero</button>
         </div>
       </div>
     </div>

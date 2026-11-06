@@ -50,10 +50,13 @@ export function GprolCartao({ onConfigurar, modo = "convite" }: { onConfigurar: 
     if (!conectado) return null;
     const i = integracao!;
     return (
-      <div className={`gpc-mini${i.ultimo_erro ? " alerta" : ""}`} role="status">
-        <span className="gpc-mini-topo"><span className="gpc-pulso" aria-hidden="true"><i /></span><b>GPROL</b></span>
-        <span className="gpc-mini-tx">{i.ultimo_erro ? "sincronização com problema" : "conectado"}{i.ultima_sincronizacao && !i.ultimo_erro ? ` · ${quandoFoi(i.ultima_sincronizacao)}` : ""}</span>
-        <button type="button" className="link" onClick={onConfigurar}>Ver integração</button>
+      <div className={`ini-cartao gprol${i.ultimo_erro ? " alerta" : ""}`} role="status">
+        <span className="ini-c-rotulo"><span className="ini-c-icone" aria-hidden="true"><span className="gpc-pulso"><i /></span></span>Integração GPROL</span>
+        <b className="ini-c-valor">{i.ultimo_erro ? "Com problema" : "Conectado"}</b>
+        <span className="ini-c-dica">
+          {i.ultimo_erro ? "a última sincronização falhou" : i.ultima_sincronizacao ? `sincronizado ${quandoFoi(i.ultima_sincronizacao)}` : "aguardando a 1ª sincronização"}
+        </span>
+        <button type="button" className="ini-c-link" onClick={onConfigurar}>Ver integração <Ico d={I.seta} size={14} /></button>
       </div>
     );
   }

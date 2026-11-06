@@ -195,6 +195,11 @@ export function CompraDeCreditosGlobal() {
   return <ComprarCreditos creditos={creditos} onFechar={fechar} onPedido={() => { void recarregar(); dispatchEvent(new Event("vertces:creditos-mudaram")); }} />;
 }
 
+/**
+ * O painel de créditos do Início (logo acima dos cartões de números): cada
+ * carteira com o que sobra no mês, uma barra de uso e o extra; a renovação; e
+ * "Comprar créditos" para o dono quando há pacote à venda.
+ */
 export function CreditosResumo({ creditos, onAtualizar }: { creditos: Creditos; onAtualizar: () => void }) {
   const [comprando, setComprando] = useState(false);
   const comLimite = creditos.carteiras.filter((k) => k.por_mes !== null && (k.por_mes > 0 || k.extra > 0 || k.usado > 0));
@@ -205,22 +210,39 @@ export function CreditosResumo({ creditos, onAtualizar }: { creditos: Creditos; 
   // só conta o serviço que o plano libera (no Só CAR os outros não têm crédito, mas nem aparecem)
   const acabou = Object.entries(creditos.servicos).some(([k, x]) => !x.disponivel && temRecurso(k as ChaveRecurso));
   const pagando = creditos.compras.some((p) => p.status === "pendente" && p.origem === "compra");
+  const lista = [...comLimite, ...extras];
   return (
     <>
-      <div className={`creditos-resumo${acabou ? " alerta" : ""}`}>
-        <span className="cr-linha">
-          <b>Créditos</b>
-          {[...comLimite, ...extras].map((k) => (
-            <span key={k.chave} className="cr-pilula">
-              {k.nome.replace(/^Créditos\s*/i, "").replace(/^./, (x) => x.toUpperCase())}: <Saldo k={k} />
-            </span>
-          ))}
-          <span className="cr-renova">renovam em {diaMes(creditos.periodo.renova_em)}</span>
-          {pagando && <span className="cr-renova">· compra esperando pagamento</span>}
-        </span>
-        {vende && <button type="button" className="cr-comprar" onClick={() => setComprando(true)}>Comprar créditos</button>}
-      </div>
-      {/* fora da faixa: dentro dela a gaveta herdava a cor de alerta e a fonte menor */}
+      <section className={`cr-painel${acabou ? " alerta" : ""}`} aria-label="Créditos">
+        <div className="cr-p-cabeca">
+          <span className="cr-p-icone" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" /></svg>
+          </span>
+          <span className="cr-p-titulo">
+            <b>Créditos</b>
+            <small>{acabou ? "acabaram em algum serviço" : `renovam em ${diaMes(creditos.periodo.renova_em)}`}</small>
+            {pagando && <small className="cr-p-pend">compra esperando pagamento</small>}
+          </span>
+        </div>
+        <div className="cr-p-carteiras">
+          {lista.length ? lista.map((k) => {
+            const sobra = sobraDoMes(k);
+            const pct = sobra !== null && k.por_mes ? Math.max(0, Math.min(100, (100 * sobra) / k.por_mes)) : 100;
+            return (
+              <div key={k.chave} className="cr-p-carteira">
+                <span className="cr-p-nome">{k.nome.replace(/^Créditos\s*/i, "").replace(/^./, (x) => x.toUpperCase())}</span>
+                <span className="cr-p-valor">
+                  <b>{sobra === null ? "sem limite" : sobra}</b>
+                  {sobra !== null && <small> de {k.por_mes} no mês</small>}
+                  {k.extra > 0 && <em>+{k.extra} extra{k.extra === 1 ? "" : "s"}</em>}
+                </span>
+                {sobra !== null && <span className={`cr-p-barra${pct <= 20 ? " baixa" : ""}`} aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>}
+              </div>
+            );
+          }) : <span className="cr-p-livre">O seu plano não tem limite de créditos no mês.</span>}
+        </div>
+        {vende && <button type="button" className="principal cr-p-comprar" onClick={() => setComprando(true)}>Comprar créditos</button>}
+      </section>
       {comprando && <ComprarCreditos creditos={creditos} onFechar={() => setComprando(false)} onPedido={onAtualizar} />}
     </>
   );

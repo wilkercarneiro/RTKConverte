@@ -1710,22 +1710,58 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .restricoes.compacto .restricoes-livres ul { grid-template-columns: 1fr; }
 
 /* ---- Comprar créditos sempre à mão (Início) e "A executar · GPROL" com 3 + Ver mais / Ver todos */
-.creditos-resumo .cr-comprar { height: 32px; padding: 0 14px; font-size: 13px; font-weight: 600; background: var(--primaria); color: #fff; border: 0; border-radius: 8px; }
-.creditos-resumo .cr-comprar:hover { filter: brightness(1.08); }
 .gp-pedidos .gp-mais { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .gp-pedidos .gp-mais button { height: 34px; padding: 0 16px; font-size: 13px; }
 .gp-pagina { display: flex; flex-direction: column; gap: 14px; }
 .gp-pagina .gp-pagina-cabeca { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .gp-pagina h1 { margin: 2px 0 0; }
 
-/* ---- Início: créditos acima dos números; GPROL conectado como cartãozinho na linha dos números */
-.inicio-lado { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; min-width: 0; }
-.inicio-lado .creditos-resumo { padding: 8px 12px; font-size: 13px; justify-content: flex-end; }
-.inicio-lado .creditos-resumo > span { flex: 0 1 auto; }
-.gpc-mini { min-width: 150px; padding: 10px 14px; border-radius: 14px; background: linear-gradient(160deg, var(--primaria-clara), #F6FBF8); box-shadow: inset 0 0 0 1px #CFE7DA; display: flex; flex-direction: column; gap: 2px; justify-content: center; }
-.gpc-mini.alerta { background: var(--alerta-claro); box-shadow: inset 0 0 0 1px #EFD9AE; }
-.gpc-mini-topo { display: flex; align-items: center; gap: 8px; font-family: var(--fonte-titulo); font-size: 15px; color: var(--floresta); }
-.gpc-mini.alerta .gpc-pulso, .gpc-mini.alerta .gpc-pulso i { background: var(--alerta); }
-.gpc-mini-tx { font-size: 12px; color: var(--texto-3); }
-.gpc-mini .link { padding: 0; font-size: 12.5px; text-align: left; margin-top: 2px; }
-@media (max-width: 900px) { .inicio-cabeca { flex-direction: column; align-items: stretch; } .inicio-lado { align-items: stretch; } }
+
+/* ---- Início: painel (créditos + cartões de números do mesmo tamanho; GPROL conectado é o 1º cartão) */
+.inicio-painel { display: flex; flex-direction: column; gap: 12px; }
+.cr-painel { display: flex; align-items: center; gap: 22px; padding: 14px 18px; border-radius: 16px; background: var(--card); box-shadow: var(--anel); }
+.cr-painel.alerta { background: #FFFBF3; box-shadow: inset 0 0 0 1px #EFD9AE; }
+.cr-p-cabeca { display: flex; align-items: center; gap: 12px; flex: none; min-width: 190px; }
+.cr-p-icone { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--primaria-clara); color: var(--primaria); }
+.cr-painel.alerta .cr-p-icone { background: var(--alerta-claro); color: var(--alerta-escuro); }
+.cr-p-titulo { display: flex; flex-direction: column; line-height: 1.25; }
+.cr-p-titulo b { font-family: var(--fonte-titulo); font-size: 16px; }
+.cr-p-titulo small { font-size: 12.5px; color: var(--texto-3); }
+.cr-p-titulo .cr-p-pend { color: var(--alerta-escuro); }
+.cr-p-carteiras { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 26px; padding-left: 22px; border-left: 1px solid var(--linha); }
+.cr-p-carteira { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 10px; min-width: 0; }
+.cr-p-nome { font-size: 12.5px; font-weight: 600; color: var(--texto-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cr-p-valor { justify-self: end; white-space: nowrap; font-size: 12.5px; color: var(--texto-3); }
+.cr-p-valor b { font-family: var(--fonte-titulo); font-size: 17px; color: var(--texto); font-variant-numeric: tabular-nums; }
+.cr-p-valor em { font-style: normal; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--primaria-clara); color: var(--floresta); font-weight: 600; font-size: 11.5px; }
+.cr-p-barra { grid-column: 1 / -1; height: 6px; border-radius: 999px; background: #E8EEEA; overflow: hidden; }
+.cr-p-barra i { display: block; height: 100%; border-radius: inherit; background: var(--primaria); transition: width .4s ease; }
+.cr-p-barra.baixa i { background: var(--alerta); }
+.cr-p-livre { font-size: 13.5px; color: var(--texto-2); align-self: center; }
+.cr-p-comprar { flex: none; height: 40px; padding: 0 18px; }
+@media (max-width: 860px) {
+  .cr-painel { flex-wrap: wrap; gap: 14px; }
+  .cr-p-carteiras { padding-left: 0; border-left: 0; flex-basis: 100%; }
+  .cr-p-comprar { width: 100%; }
+}
+
+.inicio-cartoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.ini-cartao { all: unset; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; min-height: 118px; padding: 14px 16px; border-radius: 16px; background: var(--card); box-shadow: var(--anel); }
+.ini-cartao.clicavel { cursor: pointer; transition: box-shadow .15s, transform .15s; }
+.ini-cartao.clicavel:hover { box-shadow: 0 0 0 2px var(--primaria); transform: translateY(-1px); }
+.ini-cartao.clicavel:focus-visible { outline: 3px solid var(--primaria); outline-offset: 2px; }
+.ini-c-rotulo { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--texto-2); }
+.ini-c-icone { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: #F0F4F1; color: var(--texto-2); }
+.ini-c-valor { margin-top: auto; font-family: var(--fonte-titulo); font-size: 30px; line-height: 1.05; letter-spacing: -0.02em; color: var(--texto); font-variant-numeric: tabular-nums; }
+.ini-c-dica { font-size: 12px; color: var(--texto-3); }
+.ini-cartao.gprol { background: linear-gradient(150deg, #EAF6EF 0%, #F7FBF9 70%); box-shadow: inset 0 0 0 1px #CFE7DA; }
+.ini-cartao.gprol .ini-c-rotulo { color: var(--floresta); }
+.ini-cartao.gprol .ini-c-icone { background: #D6EEE1; }
+.ini-cartao.gprol .gpc-pulso { width: 8px; height: 8px; }
+.ini-cartao.gprol .ini-c-valor { font-size: 22px; color: var(--floresta); }
+.ini-cartao.gprol.alerta { background: var(--alerta-claro); box-shadow: inset 0 0 0 1px #EFD9AE; }
+.ini-cartao.gprol.alerta .ini-c-rotulo, .ini-cartao.gprol.alerta .ini-c-valor { color: var(--alerta-escuro); }
+.ini-cartao.gprol.alerta .gpc-pulso, .ini-cartao.gprol.alerta .gpc-pulso i { background: var(--alerta); }
+.ini-c-link { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 12.5px; font-weight: 700; color: var(--primaria); }
+.ini-c-link:hover { text-decoration: underline; }
+.ini-c-link:focus-visible { outline: 2px solid var(--primaria); outline-offset: 2px; border-radius: 4px; }

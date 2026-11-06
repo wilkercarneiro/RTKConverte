@@ -64,6 +64,22 @@ function primeiroNome(nome?: string): string | null {
   return base.charAt(0).toUpperCase() + base.slice(1).toLowerCase();
 }
 
+const OK = "M20 6 9 17l-5-5";
+
+/** Um cartão de número do Início (mesmo tamanho dos outros, ícone e dica). */
+function Numero({ icone, rotulo, valor, dica, onClick }: { icone: string; rotulo: string; valor: number | string; dica?: string; onClick?: () => void }) {
+  const corpo = (
+    <>
+      <span className="ini-c-rotulo"><span className="ini-c-icone"><Icone d={icone} size={15} traco={2} /></span>{rotulo}</span>
+      <b className="ini-c-valor">{valor}</b>
+      {dica && <span className="ini-c-dica">{dica}</span>}
+    </>
+  );
+  return onClick
+    ? <button type="button" className="ini-cartao clicavel" onClick={onClick} title="Ver todos os serviços">{corpo}</button>
+    : <div className="ini-cartao">{corpo}</div>;
+}
+
 export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, cobranca, onCobrancaMudou, onExecutarPedido, onConfigurarGprol, onVerPedidos }: Props) {
   // null = carregando; erro separado: falha nunca aparece como "nenhum serviço"
   const [servicos, setServicos] = useState<Servico[] | null>(null);
@@ -112,21 +128,25 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
                 : `${emAndamento.length} ${emAndamento.length === 1 ? "serviço espera" : "serviços esperam"} por você.`}
           </p>
         </div>
-        <div className="inicio-lado">
-          {creditos && <CreditosResumo creditos={creditos} onAtualizar={onAtualizarCreditos ?? (() => {})} />}
-          <div className="inicio-numeros" aria-label="Resumo">
-          {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} modo="mini" />}
-          <div><b>{servicos === null ? "–" : emAndamento.length}</b><span>em andamento</span></div>
-          <div><b>{servicos === null ? "–" : concluidosMes}</b><span>concluídos no mês</span></div>
-          <div><b>{servicos === null ? "–" : servicos.length >= 200 ? "200+" : servicos.length}</b><span>serviços no total</span></div>
-          </div>
-        </div>
       </div>
 
       {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} />}
-
       <AvisoMensalidade cobranca={cobranca ?? null} />
       <AvisoCartao cobranca={cobranca ?? null} creditos={creditos} onCadastrado={onCobrancaMudou ?? (() => {})} />
+
+      <div className="inicio-painel">
+        {creditos && <CreditosResumo creditos={creditos} onAtualizar={onAtualizarCreditos ?? (() => {})} />}
+        <div className="inicio-cartoes" aria-label="Resumo">
+          {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} modo="mini" />}
+          <Numero icone={ICONE.relogio} rotulo="Em andamento" valor={servicos === null ? "–" : emAndamento.length}
+            dica={emAndamento.length === 1 ? "serviço aberto" : "serviços abertos"} />
+          <Numero icone={OK} rotulo="Concluídos no mês" valor={servicos === null ? "–" : concluidosMes}
+            dica={new Date().toLocaleDateString("pt-BR", { month: "long" })} />
+          <Numero icone={ICONE.arquivo} rotulo="Serviços no total" valor={servicos === null ? "–" : servicos.length >= 200 ? "200+" : servicos.length}
+            dica="desde o primeiro" onClick={onVerServicos} />
+        </div>
+      </div>
+
       {erro && (
         <div className="aviso-erro-pagina" role="alert">
           <span>Não foi possível carregar os seus serviços. {erro}</span>

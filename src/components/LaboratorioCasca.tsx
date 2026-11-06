@@ -105,7 +105,9 @@ const PEDIDOS: Linha[] = [
   { id: "p2", externo_id: "gp-p-61", origem: "gprol", cliente_id: "c1", titulo: "Georreferenciamento — Fazenda Boa Esperança", nome_servico: "Georreferenciamento",
     modalidades: ["completo"], dados: { local: "Santa Bárbara-BA" }, etapa: "Certificação SIGEF", status: "em_execucao", recebido_em: dia(58), atualizado_em: dia(1) },
   // mais pedidos: o Início mostra 3, "Ver mais" e "Ver todos" (#/pedidos)
-  ...["Sítio Riacho Fundo", "Fazenda Caraíbas", "Fazenda Pau Ferro", "Sítio Lagoa Seca", "Fazenda Sossego", "Fazenda Barra Nova"].map((f, i): Linha => ({
+  ...["Sítio Riacho Fundo", "Fazenda Caraíbas", "Fazenda Pau Ferro", "Sítio Lagoa Seca", "Fazenda Sossego", "Fazenda Barra Nova",
+    "Fazenda Boa Vista", "Fazenda Santa Rita", "Sítio Umbuzeiro", "Fazenda Juazeiro", "Fazenda Riachão", "Sítio Olho d'Água",
+    "Fazenda Tanque Novo", "Fazenda Lagoa do Boi", "Sítio Mandacaru", "Fazenda Serra Branca", "Fazenda Água Fria", "Sítio Baixa Grande"].map((f, i): Linha => ({
     id: `p${i + 3}`, externo_id: `gp-p-${80 + i}`, origem: "gprol", cliente_id: "c1", titulo: `${i % 2 ? "CAR" : "Georreferenciamento"} — ${f}`,
     nome_servico: i % 2 ? "CAR" : "Georreferenciamento", modalidades: [i % 2 ? "car" : "completo"], dados: { local: "Feira de Santana-BA" },
     etapa: "Medição", status: "pendente", recebido_em: dia(3 + i), atualizado_em: dia(3 + i),
