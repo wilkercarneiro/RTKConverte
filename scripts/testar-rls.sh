@@ -42,6 +42,8 @@ for f in supabase/migrations/*.sql; do
     # 0038+ usam a origem_id (0027) e as carteiras (0034): também entram abaixo, em ordem
     # (sem isto o script parava na 0038 desde 04/11/2026)
     0038_*|0039_*|0040_*|0041_*|0042_*|0043_*) continue ;;
+    # 0044 em diante (ferramentas: campo, consulta, terraplanagem…) dependem dos escritórios: no fim
+    004[4-9]_*|00[5-9][0-9]_*) continue ;;
     # usa servicos.tipo, que só nasce na 0005: em produção foi aplicada depois
     0002_confrontacao_no_vertice.sql) continue ;;
   esac
@@ -159,6 +161,18 @@ for f in supabase/migrations/0040_*.sql supabase/migrations/0041_*.sql supabase/
   echo "migração aplicada: $f"
 done
 for t in tests/rls/autocadastro.sql tests/rls/recuo_vias.sql tests/rls/monografia.sql tests/rls/autenticidade.sql; do
+  [ -f "$t" ] || continue
+  PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f "$t" 2>&1 >/dev/null | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
+  echo "testes de $t: todos passaram"
+done
+
+# 0044 em diante, em ordem; cada uma com o teste de mesmo nome em tests/rls, se houver
+# (0045_analises_imovel.sql → tests/rls/analises_imovel.sql)
+for f in supabase/migrations/004[4-9]_*.sql supabase/migrations/00[5-9][0-9]_*.sql; do
+  [ -f "$f" ] || continue
+  "${PSQL[@]}" -f "$f" >/dev/null
+  echo "migração aplicada: $f"
+  t="tests/rls/$(basename "$f" .sql | sed -E 's/^[0-9]+_//').sql"
   [ -f "$t" ] || continue
   PGOPTIONS="-c client_min_messages=notice" "${PSQL[@]}" -f "$t" 2>&1 >/dev/null | sed -E 's/^psql:[^ ]+ (NOTICE|NOTA): +//'
   echo "testes de $t: todos passaram"
