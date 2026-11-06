@@ -50,8 +50,10 @@ export function aplicarImagem(mapa: MapaGl, modelo: string | null, atribuicao: s
 
 /**
  * Estilo do mapa "antes" da cortina: o mesmo do mapa principal (imóvel,
- * vértices, parcelas por cima), com a imagem pedida no lugar da base, sem
- * terreno 3D e sem a imagem que o mapa principal estiver mostrando.
+ * vértices, parcelas por cima), com a imagem pedida no lugar da base e sem a
+ * imagem que o mapa principal estiver mostrando. O relevo 3D (e o céu) vêm
+ * junto: sem eles, com o 3D ligado, os dois lados da divisa projetavam o
+ * imóvel em lugares diferentes.
  */
 export function estiloComparacao(mapa: MapaGl, modelo: string | null, atribuicao: string): StyleSpecification {
   const st = mapa.getStyle();
@@ -73,6 +75,9 @@ export function estiloComparacao(mapa: MapaGl, modelo: string | null, atribuicao
   const estilo: StyleSpecification = { version: 8, sources: fontes, layers: camadas };
   if (st.glyphs) estilo.glyphs = st.glyphs;
   if (st.sprite) estilo.sprite = st.sprite;
+  if (st.terrain) estilo.terrain = { ...st.terrain };
+  if (st.sky) estilo.sky = st.sky;
+  if (st.projection) estilo.projection = st.projection;
   return estilo;
 }
 
@@ -88,7 +93,10 @@ export function esperarOcioso(mapa: MapaGl, prazoMs = 12000): Promise<void> {
 /**
  * PNG da vista com um carimbo embaixo (data da foto, fonte, ponto e quando
  * foi gerado): a prova sai pronta para anexar. O buffer do WebGL só é legível
- * dentro do evento "render" (sem preserveDrawingBuffer).
+ * dentro do evento "render" (sem preserveDrawingBuffer). Os nomes dos
+ * vértices e das parcelas são marcadores HTML (fora do canvas): são
+ * redesenhados por cima, no mesmo lugar, para a prova não sair com vértices
+ * sem nome.
  */
 export async function capturarComCarimbo(mapa: MapaGl, linhas: string[]): Promise<Blob> {
   await esperarOcioso(mapa);
@@ -113,6 +121,7 @@ export async function capturarComCarimbo(mapa: MapaGl, linhas: string[]): Promis
   out.height = canvasMapa.height + alturaFaixa;
   const g = out.getContext("2d")!;
   g.drawImage(canvasMapa, 0, 0);
+  desenharRotulos(mapa, g, canvasMapa.width);
   g.fillStyle = "#0E3B2B";
   g.fillRect(0, canvasMapa.height, out.width, alturaFaixa);
   g.textBaseline = "top";
@@ -122,6 +131,42 @@ export async function capturarComCarimbo(mapa: MapaGl, linhas: string[]): Promis
     g.fillText(l, pad, canvasMapa.height + pad + i * Math.round(fonte * 1.45), out.width - pad * 2);
   });
   return new Promise((ok, falha) => out.toBlob((b) => (b ? ok(b) : falha(new Error("o navegador não gerou o PNG"))), "image/png"));
+}
+
+/** Redesenha no canvas os rótulos dos marcadores visíveis (M-01…, nome da parcela). */
+function desenharRotulos(mapa: MapaGl, g: CanvasRenderingContext2D, larguraPx: number): void {
+  const tela = mapa.getCanvas().getBoundingClientRect();
+  if (!tela.width) return;
+  // px do canvas por px de tela (vale com devicePixelRatio e com o zoom .8 da raiz)
+  const k = larguraPx / tela.width;
+  const marcadores = mapa.getContainer().querySelectorAll<HTMLElement>(".maplibregl-marker");
+  for (const el of Array.from(marcadores)) {
+    const texto = (el.textContent ?? "").trim();
+    if (!texto || el.offsetParent === null || getComputedStyle(el).display === "none") continue;
+    const r = el.getBoundingClientRect();
+    if (r.right < tela.left || r.left > tela.right || r.bottom < tela.top || r.top > tela.bottom) continue;
+    const cs = getComputedStyle(el);
+    const tam = Math.max(9, parseFloat(cs.fontSize) || 11) * (r.width / (el.offsetWidth || r.width)) * k;
+    const cx = (r.left + r.width / 2 - tela.left) * k;
+    const cy = (r.top + r.height / 2 - tela.top) * k;
+    g.save();
+    g.font = `700 ${Math.round(tam)}px Figtree, system-ui, sans-serif`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    const w = g.measureText(texto).width;
+    const padX = tam * 0.4, alt = tam * 1.5;
+    g.fillStyle = "rgba(255,255,255,0.92)";
+    g.strokeStyle = cs.borderTopColor && cs.borderTopWidth !== "0px" ? cs.borderTopColor : "rgba(14,59,43,0.6)";
+    g.lineWidth = Math.max(1, k);
+    g.beginPath();
+    const x0 = cx - w / 2 - padX, y0 = cy - alt / 2;
+    if (typeof g.roundRect === "function") g.roundRect(x0, y0, w + padX * 2, alt, alt / 3); else g.rect(x0, y0, w + padX * 2, alt);
+    g.fill();
+    g.stroke();
+    g.fillStyle = "#0E3B2B";
+    g.fillText(texto, cx, cy + tam * 0.05);
+    g.restore();
+  }
 }
 
 export function baixarBlob(blob: Blob, nome: string): void {

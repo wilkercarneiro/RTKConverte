@@ -64,21 +64,35 @@ button.imgdata-aqui:hover:not(:disabled) { background: #F7E9C8; border-color: va
 .imgdata-resumo { margin: 0 12px 8px 14px; display: flex; align-items: center; gap: 10px; }
 .imgdata-resumo p { margin: 0; flex: 1; color: var(--texto-2); font-size: 12.5px; line-height: 1.4; }
 .imgdata-resumo b { color: var(--texto); }
+button.imgdata-link {
+  display: inline; height: auto; min-height: 0; padding: 0; border: 0; background: none; font: inherit; font-weight: 700;
+  color: var(--primaria-escura); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; cursor: pointer;
+}
+button.imgdata-link:hover:not(:disabled) { background: none; color: var(--floresta); border: 0; }
 button.imgdata-tocar {
   flex: none; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; font-size: 12.5px;
   background: var(--floresta); border-color: var(--floresta); color: #fff;
 }
 button.imgdata-tocar:hover:not(:disabled) { background: var(--primaria-escura); border-color: var(--primaria-escura); color: #fff; }
 
-.imgdata-lista { list-style: none; margin: 0; padding: 0 6px; overflow-y: auto; min-height: 0; flex: 0 1 auto; overscroll-behavior: contain; }
-.imgdata-lista li + li { margin-top: 2px; }
+.imgdata-lista {
+  list-style: none; margin: 0; padding: 0 6px; overflow-y: auto; min-height: 0; flex: 0 1 auto; overscroll-behavior: contain; position: relative;
+  /* sombra no pé (e no topo) só quando há o que rolar: a foto mais antiga não some calada */
+  background:
+    linear-gradient(#fff 30%, rgb(255 255 255 / 0)) top / 100% 28px no-repeat local,
+    linear-gradient(rgb(255 255 255 / 0), #fff 70%) bottom / 100% 28px no-repeat local,
+    radial-gradient(farthest-side at 50% 0, rgb(14 59 43 / 22%), transparent) top / 100% 12px no-repeat scroll,
+    radial-gradient(farthest-side at 50% 100%, rgb(14 59 43 / 22%), transparent) bottom / 100% 12px no-repeat scroll;
+  background-color: #fff;
+}
+.imgdata-lista li + li { margin-top: 1px; }
 button.imgdata-item {
-  width: 100%; height: auto; display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; align-items: center; gap: 10px;
-  padding: 6px 8px; border: 1px solid transparent; border-radius: 9px; background: transparent; text-align: left; font-weight: 400; color: var(--texto);
+  width: 100%; height: auto; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  padding: 4px 8px; border: 1px solid transparent; border-radius: 9px; background: transparent; text-align: left; font-weight: 400; color: var(--texto);
 }
 button.imgdata-item:hover:not(:disabled) { background: var(--bg); border-color: transparent; color: var(--texto); }
 button.imgdata-item.ativo, button.imgdata-item.ativo:hover:not(:disabled) { background: var(--primaria-clara); border-color: #A9DCC1; color: var(--texto); }
-.imgdata-mini { width: 52px; height: 52px; border-radius: 7px; overflow: hidden; background: #22332B; display: block; }
+.imgdata-mini { width: 42px; height: 42px; border-radius: 7px; overflow: hidden; background: #22332B; display: block; }
 .imgdata-mini img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .imgdata-mini.atual { background: linear-gradient(135deg, #2b4a3b, #12201A); }
 .imgdata-item-texto { display: grid; gap: 2px; min-width: 0; }
@@ -155,8 +169,15 @@ button.imgdata-cortina-fechar:hover:not(:disabled) { background: #fff; color: va
 }
 
 @media (max-width: 600px) {
-  .imgdata-controle { bottom: 26px; }
+  /* o painel não cobre os controles do MapLibre (zoom, 3D) do canto direito */
+  .imgdata-controle { bottom: 26px; right: 52px; }
   .imgdata-painel { width: 100%; }
+  /* no celular cada linha conta: o resumo ocupa a largura e o botão desce, sobra lugar para as fotos */
+  .imgdata-resumo { flex-wrap: wrap; gap: 6px; }
+  .imgdata-resumo p { flex-basis: 100%; }
+  .imgdata-painel > header { padding-top: 8px; padding-bottom: 4px; }
+  .imgdata-marco { margin-top: 6px; padding: 6px 8px; font-size: 11.5px; line-height: 1.35; }
+  .imgdata-painel > footer { padding: 8px 10px 10px; margin-top: 6px; }
   .imgdata-cortina-barra { right: 48px; flex-wrap: wrap; }
   .imgdata-cortina-lado select { max-width: 118px; font-size: 13px; }
   button.imgdata-cortina-fechar { order: 3; margin-top: 0; }

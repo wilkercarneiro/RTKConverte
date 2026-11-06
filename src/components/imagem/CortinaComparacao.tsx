@@ -11,6 +11,11 @@ import { estiloComparacao } from "./camada";
 
 export interface OpcaoData { valor: string; rotulo: string }
 
+/** A câmera inteira do principal, inclusive a altitude do centro (relevo 3D) e o giro. */
+function camera(m: MapaGl) {
+  return { center: m.getCenter(), zoom: m.getZoom(), bearing: m.getBearing(), pitch: m.getPitch(), roll: m.getRoll(), elevation: m.getCenterElevation() };
+}
+
 export function CortinaComparacao({ mapa, modeloAntes, atribuicao, opcoes, antes, depois, onAntes, onDepois, onFechar }: {
   mapa: MapaGl;
   /** imagem da esquerda (null = a base atual) */
@@ -37,8 +42,9 @@ export function CortinaComparacao({ mapa, modeloAntes, atribuicao, opcoes, antes
     try {
       outro = new maplibregl.Map({
         container: div, style: estiloComparacao(mapa, modeloAntes, atribuicao), interactive: false, attributionControl: false,
-        center: mapa.getCenter(), zoom: mapa.getZoom(), bearing: mapa.getBearing(), pitch: mapa.getPitch(), maxPitch: 85,
-        fadeDuration: 0,
+        ...camera(mapa), maxPitch: 85, fadeDuration: 0,
+        // a altitude do centro vem do principal (com relevo 3D, cada mapa calcularia a sua e a câmera ficaria diferente)
+        centerClampedToGround: false,
       });
     } catch (e) {
       console.warn("[imagem] mapa da comparação não abriu:", e);
@@ -46,7 +52,9 @@ export function CortinaComparacao({ mapa, modeloAntes, atribuicao, opcoes, antes
       return;
     }
     outroRef.current = outro;
-    const seguir = () => outro.jumpTo({ center: mapa.getCenter(), zoom: mapa.getZoom(), bearing: mapa.getBearing(), pitch: mapa.getPitch() });
+    // acesso para os testes por captura (como o __mapa do MapaInterativo)
+    (div as HTMLDivElement & { __mapa?: MapaGl }).__mapa = outro;
+    const seguir = () => outro.jumpTo(camera(mapa));
     // os desenhos (imóvel, parcelas…) mudam no principal: copia os dados das fontes GeoJSON
     let pendente = 0;
     const copiar = () => {
@@ -62,13 +70,32 @@ export function CortinaComparacao({ mapa, modeloAntes, atribuicao, opcoes, antes
       if (e.dataType === "source" && e.sourceDataType === "content" && !pendente) pendente = requestAnimationFrame(copiar);
     };
     const redimensionar = () => outro.resize();
+    // relevo 3D ligado/desligado no principal: o da esquerda acompanha (senão a divisa junta duas geometrias)
+    const relevo = () => {
+      const t = mapa.getTerrain();
+      const aplicar = () => {
+        try {
+          if (t && !outro.getSource(t.source)) return;
+          outro.setTerrain(t ? { ...t } : null);
+          seguir();
+        } catch (e) { console.warn("[imagem] relevo da comparação:", e); }
+      };
+      // ("load" só dispara uma vez na vida do mapa: depois de um setStyle, espera o "idle")
+      if (outro.isStyleLoaded()) aplicar(); else outro.once("idle", aplicar);
+    };
+    // com relevo, a altitude do centro do principal muda quando os tiles do terreno chegam, sem "move"
+    const altitude = () => { if (Math.abs(outro.getCenterElevation() - mapa.getCenterElevation()) > 0.01) seguir(); };
     mapa.on("move", seguir);
+    mapa.on("render", altitude);
     mapa.on("data", aoMudarDados);
     mapa.on("resize", redimensionar);
+    mapa.on("terrain", relevo);
     return () => {
       mapa.off("move", seguir);
+      mapa.off("render", altitude);
       mapa.off("data", aoMudarDados);
       mapa.off("resize", redimensionar);
+      mapa.off("terrain", relevo);
       if (pendente) cancelAnimationFrame(pendente);
       outroRef.current = null;
       try { outro.remove(); } catch { /* contexto já perdido */ }
@@ -80,6 +107,8 @@ export function CortinaComparacao({ mapa, modeloAntes, atribuicao, opcoes, antes
     const outro = outroRef.current;
     if (!outro) return;
     outro.setStyle(estiloComparacao(mapa, modeloAntes, atribuicao), { diff: false });
+    // o estilo novo religa o relevo: a câmera volta a ser a do principal
+    outro.once("idle", () => { try { outro.jumpTo(camera(mapa)); } catch { /* removido */ } });
   }, [modeloAntes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Esc fecha a comparação de qualquer lugar (menos de dentro de uma lista aberta)

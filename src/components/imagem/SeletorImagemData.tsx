@@ -44,12 +44,19 @@ interface Lugar { lon: number; lat: number; z: number }
 
 const hojeIso = () => new Date().toISOString().slice(0, 10);
 
+/** Frase para o usuário (nunca a mensagem crua, em inglês): decide pelo tipo do erro. */
 function motivo(e: unknown): string {
+  console.warn("[imagem] busca das datas:", e);
+  const nome = e && typeof e === "object" && "name" in e ? String((e as { name: unknown }).name) : "";
   const m = e instanceof Error ? e.message : String(e);
-  if (/timeout|tempo|aborted/i.test(m)) return "O acervo da Esri demorou demais para responder.";
-  if (/failed to fetch|network|load failed/i.test(m)) return "Sem conexão com o acervo da Esri (internet ou bloqueio da rede).";
-  return `O acervo da Esri não respondeu (${m.slice(0, 80)}).`;
+  if (nome === "TimeoutError") return "O acervo da Esri demorou demais para responder. Ele costuma voltar em instantes.";
+  if (nome === "TypeError" || /failed to fetch|network|load failed/i.test(m)) return "Sem conexão com o acervo da Esri (internet fora ou rede bloqueando o site da Esri).";
+  if (/HTTP 5\d\d/.test(m)) return "O acervo da Esri está fora do ar agora.";
+  return "O acervo da Esri não respondeu como esperado.";
 }
+
+/** Celular: o painel cobre o mapa, então fecha ao escolher para a foto aparecer. */
+const telaEstreita = () => { try { return matchMedia("(max-width: 600px)").matches; } catch { return false; } };
 
 async function copiarTexto(texto: string): Promise<boolean> {
   try { await navigator.clipboard.writeText(texto); return true; } catch { /* sem permissão ou http */ }
@@ -76,6 +83,7 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
   const [tocando, setTocando] = useState(false);
   const [longe, setLonge] = useState(false);
   const raizRef = useRef<HTMLDivElement>(null);
+  const listaRef = useRef<HTMLUListElement>(null);
 
   // ---- procurar as datas -------------------------------------------------------
   const chaveCentro = centro ? `${centro[0].toFixed(6)},${centro[1].toFixed(6)},${zoom}` : "";
@@ -99,7 +107,9 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
     imagensDoLugar(lugar.lon, lugar.lat, lugar.z, {
       fonte, sinal: ctl.signal,
       aoProgredir: (p) => { if (!ctl.signal.aborted) setEstado((e) => (e.t === "carregando" ? { ...e, prog: p } : e)); },
-      aoParcial: (r) => { if (!ctl.signal.aborted) setEstado({ t: "carregando", prog: null, parcial: r }); },
+      aoParcial: (r) => { if (!ctl.signal.aborted) setEstado((e) => ({ t: "carregando", prog: e.t === "carregando" ? e.prog : null, parcial: r })); },
+      // uma data que estourou o prazo chegou depois: a lista se completa sozinha
+      aoAtualizar: (r) => { if (!ctl.signal.aborted) setEstado((e) => (e.t === "pronto" ? { t: "pronto", r } : e)); },
     })
       .then((r) => { if (!ctl.signal.aborted) setEstado({ t: "pronto", r }); })
       .catch((e) => { if (!ctl.signal.aborted) setEstado({ t: "erro", msg: motivo(e) }); });
@@ -177,6 +187,19 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
     return () => c.classList.remove("imgdata-comparando");
   }, [mapa, comparar]);
 
+  // ao abrir o painel, a data que está no mapa fica à vista (a lista rola)
+  useEffect(() => {
+    if (!aberto) return;
+    // rola só a lista (scrollIntoView rolaria a página junto)
+    const ul = listaRef.current;
+    const el = ul?.querySelector<HTMLElement>(".imgdata-item.ativo")?.parentElement;
+    if (!ul || !el) return;
+    // a lista é position: relative (imagem.css): offsetTop é medido dentro dela
+    const [topo, pe] = [el.offsetTop, el.offsetTop + el.offsetHeight];
+    if (topo < ul.scrollTop) ul.scrollTop = topo;
+    else if (pe > ul.scrollTop + ul.clientHeight) ul.scrollTop = pe - ul.clientHeight;
+  }, [aberto, escolha]);
+
   // fechar o painel com Esc ou clique fora
   useEffect(() => {
     if (!aberto) return;
@@ -197,9 +220,11 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
     const c = mapa.getCenter();
     return [c.lng, c.lat];
   };
-  function escolher(img: ImagemLocal | null) {
+  function escolher(img: ImagemLocal | null, fechar = false) {
     setTocando(false);
     setEscolha(img ? img.release : null);
+    // no celular o painel cobre o mapa: fecha para a foto escolhida aparecer (as setas ‹ › seguem na pílula)
+    if (fechar && telaEstreita()) setAberto(false);
   }
   function passo(dir: 1 | -1) {
     // 1 = mais antiga, -1 = mais nova
@@ -257,6 +282,7 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
   const anoMaisAntigo = maisAntiga ? anoImagem(maisAntiga) : null;
   const antesDoMarco = imagens.find((i) => i.captura && i.captura.data <= MARCO_2008);
   const datasPendentes = resultado?.datasPendentes ?? 0;
+  const semDataExata = imagens.filter((i) => !i.captura);
   const opcoes = [{ valor: ATUAL, rotulo: "Atual (hoje)" }, ...imagens.map((i) => ({ valor: String(i.release), rotulo: rotuloImagem(i) }))];
 
   const pilula = (
@@ -274,9 +300,10 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
         title="Ver a imagem de satélite de outras datas">
         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2M3.5 12a8.5 8.5 0 1 0 2.5-6M3 4v4h4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
         <span className="imgdata-botao-texto">
-          {atual ? <><small>Imagem de</small><b>{rotuloImagem(atual).replace(/^versão de /, "")}</b></> : <><small>Imagem</small><b>atual</b></>}
+          {atual ? <><small>{atual.captura ? "Imagem de" : "Imagem"}</small><b>{rotuloImagem(atual)}</b></> : <><small>Imagem</small><b>atual</b></>}
         </span>
-        {!atual && (carregando && !nDatas ? <i className="imgdata-girando" aria-label="procurando datas" /> : nDatas > 1 ? <em className="imgdata-contagem">{nDatas} datas</em> : null)}
+        {!atual && nDatas > 1 && <em className="imgdata-contagem">{nDatas} datas</em>}
+        {!atual && carregando && <i className="imgdata-girando" aria-label="procurando datas" />}
         <span className="imgdata-v" aria-hidden="true">▾</span>
       </button>
       {atual && !tocando && (
@@ -318,7 +345,9 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
           <p>
             {estado.t === "carregando" && estado.prog?.etapa === "mudancas"
               ? `Procurando quando a foto mudou… (${estado.prog.feitas} ${estado.prog.feitas === 1 ? "versão conferida" : "versões conferidas"})`
-              : "Abrindo o acervo de imagens…"}
+              : estado.t === "carregando" && estado.prog?.etapa === "datas"
+                ? `Lendo a data de cada foto… (${estado.prog.feitas} de ${estado.prog.total})`
+                : "Abrindo o acervo de imagens…"}
           </p>
           {[0, 1, 2].map((i) => <div key={i} className="imgdata-esq" aria-hidden="true"><i /><span><i /><i /></span></div>)}
         </div>
@@ -326,9 +355,15 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
         <>
           <div className="imgdata-resumo">
             <p>
-              <b>{nDatas === 1 ? "1 foto" : `${nDatas} fotos diferentes`}</b>
+              <b>{nDatas === 1 ? "1 foto" : `${nDatas} fotos diferentes`}{datasPendentes > 0 ? " até agora" : ""}</b>
               {resultado ? ` em ${resultado.totalVersoes} versões do acervo` : ""}
-              {anoMaisAntigo ? `, a mais antiga de ${anoMaisAntigo}` : ""}.
+              {maisAntiga && nDatas > 1 ? (
+                <>
+                  {". A mais antiga: "}
+                  <button type="button" className="imgdata-link" onClick={() => escolher(maisAntiga, true)}
+                    title="Mostrar a foto mais antiga no mapa">{rotuloImagem(maisAntiga)} →</button>
+                </>
+              ) : anoMaisAntigo ? `, de ${anoMaisAntigo}.` : "."}
             </p>
             {nDatas > 1 && (
               <button type="button" className="imgdata-tocar" onClick={() => { setAberto(false); setTocando(true); }}
@@ -338,9 +373,9 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
               </button>
             )}
           </div>
-          <ul className="imgdata-lista">
+          <ul className="imgdata-lista" ref={listaRef}>
             <li>
-              <button type="button" className={`imgdata-item${!atual ? " ativo" : ""}`} onClick={() => escolher(null)} aria-pressed={!atual}>
+              <button type="button" className={`imgdata-item${!atual ? " ativo" : ""}`} onClick={() => escolher(null, true)} aria-pressed={!atual}>
                 <span className="imgdata-mini atual" aria-hidden="true">
                   {fonte.urlTileAtual && resultado ? <img src={fonte.urlTileAtual(resultado.tile)} alt="" loading="lazy" /> : null}
                 </span>
@@ -352,20 +387,17 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
             </li>
             {imagens.map((img) => {
               const ativo = atual === img;
-              const semData = !img.captura;
               return (
                 <li key={img.release}>
-                  <button type="button" className={`imgdata-item${ativo ? " ativo" : ""}`} onClick={() => escolher(img)} aria-pressed={ativo}>
+                  <button type="button" className={`imgdata-item${ativo ? " ativo" : ""}`} onClick={() => escolher(img, true)} aria-pressed={ativo}>
                     <span className="imgdata-mini" aria-hidden="true">
                       {resultado && <img src={fonte.urlTile(img.release, resultado.tile)} alt="" loading="lazy" />}
                     </span>
                     <span className="imgdata-item-texto">
                       <b>{rotuloImagem(img)}</b>
-                      <small className={semData && datasPendentes ? "pendente" : undefined}>
-                        {semData && datasPendentes ? "buscando a data da foto…" : detalheImagem(img)}
-                      </small>
+                      <small>{detalheImagem(img)}</small>
                     </span>
-                    <span className="imgdata-idade">{idade(img.captura?.data ?? img.versao.data, hoje)}</span>
+                    <span className="imgdata-idade">{img.captura ? idade(img.captura.data, hoje) : ""}</span>
                   </button>
                 </li>
               );
@@ -377,10 +409,12 @@ export function SeletorImagemData({ mapa, centro, zoom = 16 }: Props) {
               : datasPendentes
                 ? "Conferindo se há foto anterior a 22/07/2008…"
                 : imagens.some((i) => !i.captura)
-                  ? "A Esri não informou a data de todas as fotos: não dá para afirmar se alguma é anterior a 22/07/2008."
+                  ? `A Esri não informou a data exata ${semDataExata.length === 1 ? `da foto ${rotuloImagem(semDataExata[0])}` : `de ${semDataExata.length} fotos`}: não dá para afirmar se alguma é anterior a 22/07/2008.`
                   : "Nenhuma foto anterior a 22/07/2008 (marco do CAR) aqui: para área consolidada, junte outra prova."}
           </p>
-          {resultado?.incompleto && <p className="imgdata-nota">Pode haver datas mais antigas: a busca parou no limite de consultas.</p>}
+          {datasPendentes > 0 && <p className="imgdata-nota" aria-live="polite">Lendo a data das outras fotos… a lista se completa sozinha.</p>}
+          {resultado?.lento && !datasPendentes && <p className="imgdata-nota">O acervo da Esri está lento agora: alguma data pode ter ficado de fora. Abra de novo daqui a pouco.</p>}
+          {resultado?.incompleto && <p className="imgdata-nota">Pode haver datas mais antigas: a busca parou no limite{resultado.lento ? " de tempo" : " de consultas"}.</p>}
         </>
       )}
 

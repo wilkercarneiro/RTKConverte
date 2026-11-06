@@ -33,6 +33,8 @@ export const ATRIBUICAO_WAYBACK = "Imagem histórica: © Esri World Imagery Wayb
 export const PRIMEIRO_ANO = 2014;
 /** Nenhum lugar precisa de mais que isto para achar as mudanças (o acervo tem ~200 versões). */
 export const LIMITE_CONSULTAS = 40;
+/** Tempo máximo da busca por hash (o caminho lento, quando o tilemap não responde). */
+export const ORCAMENTO_HASH_MS = 30000;
 
 // ---------------------------------------------------------------------------
 // Configuração (a lista das versões)
@@ -223,12 +225,16 @@ export async function buscarMudancas(
   n: number,
   hashDe: (i: number) => Promise<string | null>,
   limite = LIMITE_CONSULTAS,
+  /** orçamento de tempo total (ms): estourou, devolve o que achou, marcado incompleto */
+  orcamentoMs = ORCAMENTO_HASH_MS,
 ): Promise<{ indices: number[]; completo: boolean; consultas: number }> {
   if (n <= 0) return { indices: [], completo: true, consultas: 0 };
-  const memo = new Map<number, string | null>();
+  // memo de promessas: as duas metades andam em paralelo sem pedir o mesmo tile duas vezes
+  const memo = new Map<number, Promise<string | null>>();
+  const fim = Date.now() + orcamentoMs;
   let completo = true;
-  const h = async (i: number) => {
-    if (!memo.has(i)) memo.set(i, await hashDe(i));
+  const h = (i: number) => {
+    if (!memo.has(i)) memo.set(i, hashDe(i));
     return memo.get(i)!;
   };
   // inícios de trecho: 0 e todo i em que hash(i) ≠ hash(i − 1)
@@ -238,10 +244,9 @@ export async function buscarMudancas(
     const [ha, hb] = [await h(a), await h(b)];
     if (ha === hb) return;
     if (b - a === 1) { inicios.add(b); return; }
-    if (memo.size >= limite) { completo = false; inicios.add(b); return; }
+    if (memo.size >= limite || Date.now() >= fim) { completo = false; inicios.add(b); return; }
     const m = Math.floor((a + b) / 2);
-    await dividir(a, m);
-    await dividir(m, b);
+    await Promise.all([dividir(a, m), dividir(m, b)]);
   };
   await dividir(0, n - 1);
   const indices: number[] = [];
@@ -309,27 +314,65 @@ export interface FonteWayback {
 
 /** Cada requisição tem prazo: um servidor que trava não pode deixar a lista girando para sempre. */
 export const PRAZO_MS = 15000;
-function comPrazo(sinal?: AbortSignal): AbortSignal {
-  const prazo = AbortSignal.timeout(PRAZO_MS);
-  return sinal ? AbortSignal.any([sinal, prazo]) : prazo;
+
+/** Erro de prazo estourado (o mesmo nome que o navegador usa: TimeoutError). */
+export function erroPrazo(): Error {
+  const e = new Error("o acervo demorou demais para responder");
+  e.name = "TimeoutError";
+  return e;
+}
+/** Erro de cancelamento pelo usuário (AbortError). */
+function erroCancelado(): Error {
+  const e = new Error("cancelado");
+  e.name = "AbortError";
+  return e;
 }
 
-async function json(url: string, sinal?: AbortSignal): Promise<unknown> {
-  const r = await fetch(url, { signal: comPrazo(sinal) });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+/**
+ * fetch com prazo + o cancelamento de quem chama, SEM AbortSignal.any nem
+ * AbortSignal.timeout (Safari/iOS 16 e navegadores antigos não têm: sem isto,
+ * toda requisição falhava antes de sair). O prazo vale até o corpo ser lido
+ * (`ler`). Prazo estourado vira TimeoutError; cancelamento, AbortError — mesmo
+ * no navegador que rejeita o fetch com um AbortError genérico nos dois casos.
+ */
+export async function buscarComPrazo<T>(
+  url: string, sinal: AbortSignal | undefined, ler: (r: Response) => Promise<T>,
+  prazoMs = PRAZO_MS, buscar: typeof fetch = (...a) => fetch(...a),
+): Promise<T> {
+  if (sinal?.aborted) throw erroCancelado();
+  const ctl = new AbortController();
+  let estourou = false;
+  const timer = setTimeout(() => { estourou = true; ctl.abort(); }, prazoMs);
+  const cancelar = () => ctl.abort();
+  sinal?.addEventListener("abort", cancelar, { once: true });
+  try {
+    const r = await buscar(url, { signal: ctl.signal });
+    return await ler(r);
+  } catch (e) {
+    if (sinal?.aborted) throw erroCancelado();
+    if (estourou) throw erroPrazo();
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    sinal?.removeEventListener("abort", cancelar);
+  }
 }
+
+const json = (url: string, sinal?: AbortSignal): Promise<unknown> =>
+  buscarComPrazo(url, sinal, (r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json() as Promise<unknown>;
+  });
 
 export const fonteEsri: FonteWayback = {
   nome: "esri",
   config: (sinal) => json(URL_CONFIG, sinal),
   tilemap: (release, t, sinal) => json(urlTilemapEsri(release, t), sinal),
-  async bytes(release, t, sinal) {
-    const r = await fetch(urlTileEsri(release, t), { signal: comPrazo(sinal) });
+  bytes: (release, t, sinal) => buscarComPrazo(urlTileEsri(release, t), sinal, async (r) => {
     if (r.status === 404) return null;
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.arrayBuffer();
-  },
+  }),
   metadados: (v, camada, lon, lat, sinal) => json(urlMetadadosEsri(v.metadados ?? "", camada, lon, lat), sinal),
   modeloTile: modeloTileEsri,
   urlTile: urlTileEsri,
@@ -403,6 +446,8 @@ export interface ResultadoLugar {
   totalVersoes: number;
   /** datas da captura ainda a caminho (a lista já pode ser mostrada) */
   datasPendentes: number;
+  /** o acervo estourou o prazo em alguma consulta: avisar "está lento" */
+  lento?: boolean;
 }
 
 export interface Progresso { etapa: "versoes" | "mudancas" | "datas"; feitas: number; total: number }
@@ -419,6 +464,7 @@ async function emParalelo<T, R>(itens: T[], n: number, fn: (x: T, i: number) => 
 }
 
 const abortou = (e: unknown) => e instanceof Error && e.name === "AbortError";
+const estourouPrazo = (e: unknown) => e instanceof Error && e.name === "TimeoutError";
 
 /**
  * As imagens diferentes que o acervo tem para o ponto, com a data da captura.
@@ -431,6 +477,8 @@ export async function imagensDoLugar(
     aoProgredir?: (p: Progresso) => void;
     /** a lista já pronta, antes de chegarem as datas da captura (o serviço de metadados da Esri às vezes demora) */
     aoParcial?: (r: ResultadoLugar) => void;
+    /** datas que estouraram o prazo são pedidas de novo em segundo plano; se vierem, a lista nova chega aqui */
+    aoAtualizar?: (r: ResultadoLugar) => void;
   } = {},
 ): Promise<ResultadoLugar> {
   const fonte = opcoes.fonte ?? fonteAtiva;
@@ -440,13 +488,15 @@ export async function imagensDoLugar(
   let z = Math.max(13, Math.min(19, Math.round(zoom)));
   for (;;) {
     const t = tileDoPonto(lon, lat, z);
-    const chave = `lugar:${t.z}/${t.x}/${t.y}`;
+    // a data da foto é consultada NO PONTO: outro imóvel no mesmo tile pode ter outra data
+    const chave = `lugar:${t.z}/${t.x}/${t.y}@${lon.toFixed(5)},${lat.toFixed(5)}`;
     const guardado = doCache<ResultadoLugar>(fonte, chave);
     if (guardado) return guardado;
-    const { resultado, falhas } = await achar(versoes, t, lon, lat, fonte, limite, opcoes);
+    const guardar = (r: ResultadoLugar) => paraCache(fonte, chave, r);
+    const { resultado, falhas } = await achar(versoes, t, lon, lat, fonte, limite, { ...opcoes, guardar });
     if (resultado.imagens.length || z <= 13) {
       // só guarda o que veio inteiro: uma data que falhou agora pode vir na próxima
-      if (!falhas && !resultado.incompleto) paraCache(fonte, chave, resultado);
+      if (!falhas && !resultado.incompleto) guardar(resultado);
       return resultado;
     }
     z = Math.max(13, z - 2);
@@ -465,9 +515,13 @@ export function ordenarPorData(imagens: ImagemLocal[]): ImagemLocal[] {
 
 async function achar(
   versoes: VersaoWayback[], t: Tile, lon: number, lat: number, fonte: FonteWayback, limite: number,
-  opcoes: { sinal?: AbortSignal; aoProgredir?: (p: Progresso) => void; aoParcial?: (r: ResultadoLugar) => void },
+  opcoes: {
+    sinal?: AbortSignal; aoProgredir?: (p: Progresso) => void; aoParcial?: (r: ResultadoLugar) => void;
+    aoAtualizar?: (r: ResultadoLugar) => void; guardar?: (r: ResultadoLugar) => void;
+  },
 ): Promise<{ resultado: ResultadoLugar; falhas: number }> {
-  const { sinal, aoProgredir, aoParcial } = opcoes;
+  const { sinal, aoProgredir, aoParcial, aoAtualizar, guardar } = opcoes;
+  let lento = false;
   const hashes = new Map<number, string | null>();
   const hashDe = async (release: number) => {
     if (!hashes.has(release)) {
@@ -493,6 +547,7 @@ async function achar(
     incompleto = !r.completo;
   } catch (e) {
     if (abortou(e)) throw e;
+    if (estourouPrazo(e)) lento = true;
     metodo = "hash";
     let feitas = 0;
     const r = await buscarMudancas(versoes.length, async (i) => {
@@ -516,39 +571,66 @@ async function achar(
   }
 
   const capturas: (Captura | null)[] = candidatas.map(() => null);
-  let pendentes = candidatas.length;
-  const montar = (final: boolean): ResultadoLugar => {
-    const imagens = consolidar(candidatas.map((c, k) => ({
+  // a data de cada candidata já foi resolvida (veio, ou a fonte não tem/falhou)?
+  const resolvida: boolean[] = candidatas.map(() => false);
+  const montar = (): ResultadoLugar => {
+    // Só entram as candidatas com a data resolvida: a lista CRESCE em ordem
+    // conforme as datas chegam, em vez de nascer com 12 linhas fora de ordem
+    // e encolher até 4 quando a consolidação junta as reprocessadas.
+    const imagens = consolidar(candidatas.flatMap((c, k) => (resolvida[k] ? [{
       release: c.release,
       versao: versoes[c.indice],
       versoes: versoes.slice(c.faixa[0], c.faixa[1] + 1),
       captura: capturas[k],
       hash: hashes.get(c.release) ?? null,
       tamanho: c.tamanho,
-    })));
-    return { tile: t, imagens: final ? ordenarPorData(imagens) : imagens, metodo, incompleto, totalVersoes: versoes.length, datasPendentes: pendentes };
+    }] : [])));
+    const pendentes = resolvida.filter((x) => !x).length;
+    return { tile: t, imagens: ordenarPorData(imagens), metodo, incompleto, totalVersoes: versoes.length, datasPendentes: pendentes, lento };
   };
-  if (candidatas.length) aoParcial?.(montar(false));
 
   // 3. a data real da captura de cada uma (falha = fica a data da versão, não derruba a lista)
   const camada = camadaMetadados(t.z);
+  const porPrazo: number[] = [];
   let falhas = 0;
+  let feitas = 0;
+  if (candidatas.length) aoProgredir?.({ etapa: "datas", feitas: 0, total: candidatas.length });
   await emParalelo(candidatas, 6, async (c, k) => {
     const v = versoes[c.indice];
     if (v.metadados) {
       for (let tentativa = 0; tentativa < 2; tentativa++) {
         try { capturas[k] = lerCaptura(await fonte.metadados(v, camada, lon, lat, sinal)); break; } catch (e) {
           if (abortou(e)) throw e;
-          // prazo estourado: não insiste (a lista não pode esperar outro prazo inteiro)
-          if (tentativa === 1 || (e instanceof Error && e.name === "TimeoutError")) { falhas++; break; }
+          // prazo estourado: não insiste agora (a lista não pode esperar outro prazo inteiro); tenta em segundo plano
+          if (estourouPrazo(e)) { falhas++; lento = true; porPrazo.push(k); break; }
+          if (tentativa === 1) { falhas++; break; }
         }
       }
     }
-    pendentes--;
-    aoProgredir?.({ etapa: "datas", feitas: candidatas.length - pendentes, total: candidatas.length });
-    if (pendentes > 0) aoParcial?.(montar(false));
+    resolvida[k] = true;
+    feitas++;
+    aoProgredir?.({ etapa: "datas", feitas, total: candidatas.length });
+    if (feitas < candidatas.length) aoParcial?.(montar());
   });
-  return { resultado: montar(true), falhas };
+  const resultado = montar();
+
+  // 4. as datas que estouraram o prazo: mais uma tentativa, sem segurar a lista
+  if (porPrazo.length && aoAtualizar) {
+    void (async () => {
+      let veio = 0;
+      await emParalelo(porPrazo, 3, async (k) => {
+        try {
+          const cap = lerCaptura(await fonte.metadados(versoes[candidatas[k].indice], camada, lon, lat, sinal));
+          if (cap) { capturas[k] = cap; veio++; }
+        } catch { /* fica sem a data */ }
+      });
+      if (sinal?.aborted || !veio) return;
+      const novo = montar();
+      if (veio === porPrazo.length && falhas === porPrazo.length && !novo.incompleto) guardar?.(novo);
+      aoAtualizar(novo);
+    })();
+  }
+  return { resultado, falhas };
 }
 
 // ---------------------------------------------------------------------------
@@ -561,9 +643,13 @@ export function dataBr(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 }
 
-/** "17/06/2018" (captura) ou "versão de 05/08/2026" quando a data da foto não veio. */
+/**
+ * "17/06/2018" (captura) ou "até 05/08/2026" quando a data da foto não veio:
+ * a foto não pode ser posterior à versão que a publicou (honesto, e explica a
+ * posição na lista, que é ordenada por essa data).
+ */
 export function rotuloImagem(img: ImagemLocal): string {
-  return img.captura ? dataBr(img.captura.data) : `versão de ${dataBr(img.versao.data)}`;
+  return img.captura ? dataBr(img.captura.data) : `até ${dataBr(img.versao.data)}`;
 }
 
 /** Ano da foto (ou da versão). */
@@ -574,7 +660,7 @@ export function detalheImagem(img: ImagemLocal): string {
   const partes: string[] = [];
   if (img.captura?.fornecedor) partes.push(img.captura.fornecedor);
   if (img.captura?.resolucaoM) partes.push(`${String(Math.round(img.captura.resolucaoM * 100) / 100).replace(".", ",")} m`);
-  if (!img.captura) partes.push("data da foto não informada");
+  if (!img.captura) partes.push("data exata da foto não informada");
   return partes.join(" · ");
 }
 

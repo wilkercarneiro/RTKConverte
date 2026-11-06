@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  agruparSeguidos, buscarMudancas, camadaMetadados, citacao, consolidar, dataBr, detalheImagem, gms, idade,
+  agruparSeguidos, buscarComPrazo, buscarMudancas, camadaMetadados, erroPrazo, citacao, consolidar, dataBr, detalheImagem, gms, idade,
   imagensDoLugar, lerCaptura, lerConfig, lerTilemap, limparCache, ordenarPorData, percorrerVersoes, rotuloImagem, tileDoPonto,
   zoomParaExtensao,
 } from "../src/lib/imagem_data.ts";
@@ -203,7 +203,7 @@ test("imagensDoLugar: metadados falhando não derruba a lista (fica a data da ve
   const r = await imagensDoLugar(-51.9, -6.6, 15, { fonte: fonteFalsa({ metaFalha: new Set([9]) }) });
   const ultima = r.imagens[r.imagens.length - 1];
   assert.equal(ultima.captura, null);
-  assert.equal(rotuloImagem(ultima), "versão de 01/01/2017");
+  assert.equal(rotuloImagem(ultima), "até 01/01/2017", "a foto não pode ser posterior à versão");
   assert.match(detalheImagem(ultima), /não informada/);
 });
 
@@ -247,7 +247,13 @@ test("imagensDoLugar: mostra a lista antes das datas (aoParcial) e ordena pela d
   const r = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f, aoParcial: (p) => parciais.push(p) });
   assert.ok(parciais.length >= 1);
   assert.ok(parciais[0].datasPendentes > 0, "a primeira parcial ainda espera as datas");
-  assert.ok(parciais[0].imagens.length >= 3);
+  // a parcial só mostra o que já tem data: cresce, nunca encolhe, e sai sempre em ordem
+  for (let k = 1; k < parciais.length; k++) assert.ok(parciais[k].imagens.length >= parciais[k - 1].imagens.length, "não encolhe");
+  for (const p of [...parciais, r]) {
+    const datas = p.imagens.map((x) => x.captura?.data ?? x.versao.data);
+    assert.deepEqual(datas, [...datas].sort().reverse(), "mais nova primeiro");
+    assert.equal(new Set(datas).size, datas.length, "sem a mesma foto duas vezes");
+  }
   assert.equal(r.datasPendentes, 0);
 });
 
@@ -256,4 +262,93 @@ test("ordenarPorData: a foto mais nova primeiro, mesmo quando a versão é mais 
   const img = (versao, foto) => ({ release: 1, versao: v(versao), versoes: [], hash: null, tamanho: null, captura: foto ? { data: foto, fornecedor: null, resolucaoM: null, precisaoM: null } : null });
   const r = ordenarPorData([img("2018-09-06", "2013-09-01"), img("2016-10-12", null), img("2014-10-29", "2011-06-12")]);
   assert.deepEqual(r.map((x) => x.captura?.data ?? `v${x.versao.data}`), ["v2016-10-12", "2013-09-01", "2011-06-12"]);
+});
+
+// ---- rodada 2 da revisão -------------------------------------------------------
+
+test("buscarComPrazo: funciona sem AbortSignal.any nem AbortSignal.timeout (Safari/iOS 16)", async () => {
+  const [any, timeout] = [AbortSignal.any, AbortSignal.timeout];
+  delete AbortSignal.any;
+  delete AbortSignal.timeout;
+  try {
+    assert.equal(typeof AbortSignal.any, "undefined");
+    const ok = async (_url, init) => { assert.ok(init.signal instanceof AbortSignal); return new Response(JSON.stringify({ a: 1 })); };
+    const ctl = new AbortController();
+    assert.deepEqual(await buscarComPrazo("x://", ctl.signal, (r) => r.json(), 1000, ok), { a: 1 });
+    // e o caminho inteiro (imagensDoLugar) com um sinal do usuário, como o componente faz
+    limparCache();
+    const r = await imagensDoLugar(-51.9, -6.6, 15, { fonte: fonteFalsa(), sinal: new AbortController().signal });
+    assert.equal(r.imagens.length, 3);
+  } finally {
+    AbortSignal.any = any;
+    AbortSignal.timeout = timeout;
+  }
+});
+
+// fetch que só termina quando abortado (e rejeita com um AbortError genérico, como o Safari)
+const pendurado = (_url, init) => new Promise((_ok, falha) => {
+  init.signal.addEventListener("abort", () => { const e = new Error("The operation was aborted."); e.name = "AbortError"; falha(e); });
+});
+
+test("buscarComPrazo: prazo estourado vira TimeoutError; cancelar vira AbortError", async () => {
+  await assert.rejects(buscarComPrazo("x://", undefined, (r) => r.json(), 30, pendurado), { name: "TimeoutError" });
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), 20);
+  await assert.rejects(buscarComPrazo("x://", ctl.signal, (r) => r.json(), 5000, pendurado), { name: "AbortError" });
+  const ja = new AbortController(); ja.abort();
+  await assert.rejects(buscarComPrazo("x://", ja.signal, (r) => r.json(), 5000, pendurado), { name: "AbortError" });
+});
+
+test("buscarMudancas: orçamento de tempo total devolve o que achou, marcado incompleto", async () => {
+  const t0 = Date.now();
+  const r = await buscarMudancas(200, async (i) => { await new Promise((ok) => setTimeout(ok, 15)); return String(i); }, 1000, 60);
+  assert.equal(r.completo, false);
+  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
+  assert.equal(r.indices[0], 0);
+});
+
+test("imagensDoLugar: tilemap lento (prazo) cai no hash e avisa que o acervo está lento", async () => {
+  limparCache();
+  const f = fonteFalsa();
+  f.tilemap = async () => { throw erroPrazo(); };
+  const r = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f });
+  assert.equal(r.metodo, "hash");
+  assert.equal(r.lento, true);
+  assert.equal(r.imagens.length, 3);
+});
+
+test("imagensDoLugar: dois imóveis no mesmo tile não dividem a data da foto (cache por ponto)", async () => {
+  limparCache();
+  const f = fonteFalsa();
+  const pontos = [];
+  const meta = f.metadados;
+  f.metadados = async (v, c, lon, lat) => { pontos.push(`${lon},${lat}`); return meta(v, c, lon, lat); };
+  await imagensDoLugar(-51.9, -6.6, 15, { fonte: f });
+  const n = pontos.length;
+  assert.deepEqual(tileDoPonto(-51.9, -6.6, 15), tileDoPonto(-51.9001, -6.6001, 15), "mesmo tile em z15");
+  await imagensDoLugar(-51.9001, -6.6001, 15, { fonte: f }); // outro ponto
+  assert.ok(pontos.length > n, "consultou a data no ponto novo");
+  assert.ok(pontos.slice(n).every((p) => p === "-51.9001,-6.6001"));
+});
+
+test("imagensDoLugar: data que estourou o prazo é pedida de novo em segundo plano (aoAtualizar)", async () => {
+  limparCache();
+  const f = fonteFalsa();
+  const meta = f.metadados;
+  let primeira = true;
+  f.metadados = async (v, ...a) => {
+    if (v.release === 1009 && primeira) { primeira = false; throw erroPrazo(); }
+    return meta(v, ...a);
+  };
+  let aoAtualizar;
+  const atualizou = new Promise((ok) => { aoAtualizar = ok; });
+  const r = await imagensDoLugar(-51.9, -6.6, 15, { fonte: f, aoAtualizar });
+  const semData = r.imagens.find((x) => !x.captura);
+  assert.ok(semData, "na primeira resposta uma foto ainda sem data");
+  assert.equal(semData.release, 1009);
+  assert.equal(rotuloImagem(semData), "até 01/01/2017");
+  assert.equal(r.lento, true);
+  const novo = await atualizou;
+  assert.ok(novo.imagens.every((x) => x.captura), "a data chegou depois");
+  assert.equal(novo.imagens[novo.imagens.length - 1].captura.data, "2014-05-10");
 });
