@@ -715,3 +715,6 @@ button.sa-kpi:hover, button.sa-kpi:focus-visible { transform: translateY(-2px); 
   .sa-teste-zap { width: 100%; }
   .sa-teste-zap input { flex: 1; width: auto; }
 }
+
+/* a regra global button:hover (styles.css) deixava o texto verde sobre o menu escuro */
+button.sa-nav:hover:not(:disabled) { color: #fff; }

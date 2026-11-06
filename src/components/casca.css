@@ -518,3 +518,18 @@ fieldset.sem-borda:disabled input, fieldset.sem-borda:disabled select { backgrou
   .au-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .au-barra { width: 60px; }
 }
+
+/* Botões com aparência própria (all: unset) sobre fundo escuro: a regra global
+   button:hover:not(:disabled) (styles.css) pintava o texto de verde-primária
+   por cima do verde da barra e da foto dos cartões. Mesma especificidade + 1. */
+button.tr-item:hover:not(:disabled), button.tr-item.ativo:hover:not(:disabled) { color: #fff; }
+button.tr-marca:hover:not(:disabled) { color: inherit; }
+button.ns-cartao:hover:not(:disabled) { color: #fff; }
+
+/* barra de gerar (05/11): entre 1000 e 1200 px os botões (que não encolhem)
+   passavam da borda e cortavam "com metragem"/"Gerar documentos"; agora as
+   ações descem para uma segunda linha, alinhadas à direita */
+@media (max-width: 1200px) {
+  .app.casca .preview-fina .stats { flex-wrap: wrap; }
+  .app.casca .conferencia:has(> .preview-fina) { padding-bottom: 130px; }
+}

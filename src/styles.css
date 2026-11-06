@@ -1730,7 +1730,7 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .ini-pilula small { font-size: 12px; color: var(--texto-3); }
 .ini-p-icone { display: grid; place-items: center; color: var(--primaria); }
 .ini-p-link { all: unset; cursor: pointer; margin-right: -7px; height: 24px; padding: 0 11px; display: inline-flex; align-items: center; border-radius: 999px; background: var(--primaria-clara); color: var(--floresta); font-size: 12px; font-weight: 700; transition: background .15s, color .15s; }
-.ini-p-link:hover { background: var(--primaria); color: #fff; }
+.ini-p-link:hover, button.ini-p-link:hover:not(:disabled) { background: var(--primaria); color: #fff; }
 .ini-p-link:focus-visible { outline: 2px solid var(--primaria); outline-offset: 2px; }
 .cr-pl-carteira { display: inline-flex; align-items: center; gap: 3px; }
 .cr-pl-carteira + .cr-pl-carteira { padding-left: 10px; border-left: 1px solid var(--linha); }
@@ -1742,7 +1742,7 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .cr-pl-pend { color: var(--alerta-escuro); font-weight: 600; }
 .cr-pilula.alerta { background: #FFF8EC; box-shadow: inset 0 0 0 1px #EFD9AE; }
 .cr-pilula.alerta .ini-p-icone, .cr-pl-aviso { color: var(--alerta-escuro) !important; }
-.cr-pilula.alerta .ini-p-link { background: var(--alerta); color: #fff; }
+.cr-pilula.alerta .ini-p-link, .cr-pilula.alerta button.ini-p-link:hover:not(:disabled) { background: var(--alerta); color: #fff; }
 .gp-pilula .gpc-pulso { width: 8px; height: 8px; margin: 0 2px; }
 .gp-pilula b { color: var(--floresta); }
 .gp-pilula.alerta { background: #FFF8EC; box-shadow: inset 0 0 0 1px #EFD9AE; }
@@ -1768,3 +1768,19 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
   .gp-pilula small { display: none; }
 }
 .cr-pl-carteira.zerada b, .cr-pl-carteira.zerada small { color: var(--alerta-escuro); }
+
+/* ---- Confrontantes × mapa (05/11): abaixo de ~1366 px a coluna da esquerda
+   (grade de trilha auto) crescia até o conteúdo e passava por baixo do mapa
+   sticky. A trilha agora encolhe (minmax(0, 1fr)) e as colunas são fixas:
+   cartões mais largos que o mapa; em tela estreita, uma coluna com o mapa em
+   cima (no fim da página ele ficava depois da tabela de vértices). */
+.confrontantes { grid-template-columns: minmax(0, 1.3fr) minmax(340px, 1fr); }
+.confrontantes .coluna-esq { grid-template-columns: minmax(0, 1fr); }
+.confrontantes .coluna-esq > * { min-width: 0; }
+@media (max-width: 1100px) {
+  .confrontantes { grid-template-columns: minmax(0, 1fr); }
+  .confrontantes > .mapa { position: static; order: -1; }
+}
+/* Rodovias e recuo: 3 colunas que encolhem (1fr não deixava o campo da lei encolher e ele saía da caixa) */
+.grade-3.recuo-campos { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.recuo-campos input { min-width: 0; width: 100%; }
