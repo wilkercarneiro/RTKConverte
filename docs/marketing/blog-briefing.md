@@ -138,3 +138,23 @@ Confira antes de usar qualquer outro número. Se não achar a fonte, escreva sem
 | 28 | faixa-de-dominio-rodovia-recuo | guias-tecnicos | faixa de domínio rodovia / faixa non aedificandi |
 | 29 | melhor-software-de-georreferenciamento | mercado | melhor software de georreferenciamento |
 | 30 | vertces-sistema-de-georreferenciamento | mercado | vertces / sistema web de georreferenciamento |
+| 31 | terraplanagem-calculo-corte-e-aterro | funcionalidades | cálculo de corte e aterro |
+| 32 | medir-area-de-terreno-pelo-celular | funcionalidades | medir área de terreno pelo celular |
+| 33 | imagem-de-satelite-antiga-por-data | funcionalidades | imagem de satélite antiga do imóvel |
+| 34 | consultar-imovel-rural-car-sigef | funcionalidades | consultar imóvel rural pelo código do CAR |
+| 35 | curvas-de-nivel-do-imovel-rural | funcionalidades | curvas de nível do terreno |
+| 36 | projeto-de-infraestrutura-loteamento | funcionalidades | projeto de infraestrutura de loteamento |
+| 37 | editor-de-planta-georreferenciamento | funcionalidades | editar planta de georreferenciamento |
+| 38 | conferencia-de-area-imovel-rural | funcionalidades | conferir área do imóvel rural |
+| 39 | dividir-imovel-rural-em-glebas | funcionalidades | dividir imóvel rural em glebas |
+| 40 | memorial-descritivo-de-lote-loteamento | funcionalidades | memorial descritivo de lote |
+| 41 | como-se-credenciar-no-incra | mercado | como se credenciar no incra |
+| 42 | ccir-como-emitir | para-proprietarios | ccir como emitir |
+| 43 | retificacao-de-area-imovel-rural | legislacao-e-prazos | retificação de área imóvel rural |
+| 44 | unificacao-de-matriculas-remembramento | legislacao-e-prazos | unificação de matrículas / remembramento |
+| 45 | rtk-ppp-ou-estatico-georreferenciamento | guias-tecnicos | rtk ou ppp georreferenciamento |
+| 46 | area-sigef-sgl-diferente-da-matricula | guias-tecnicos | área do sigef diferente da matrícula (SGL) |
+| 47 | reurb-georreferenciamento | legislacao-e-prazos | reurb georreferenciamento |
+| 48 | chacreamento-loteamento-rural-e-permitido | legislacao-e-prazos | chacreamento é permitido |
+| 49 | programa-de-georreferenciamento-gratuito | mercado | programa de georreferenciamento gratuito |
+| 50 | glossario-do-georreferenciamento | guias-tecnicos | glossário do georreferenciamento |

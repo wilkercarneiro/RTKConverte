@@ -99,28 +99,31 @@ O que só dá para fazer fora do site (as IAs confiam em menções de terceiros)
 - **Revisão mensal:** no Search Console, posts nas posições 5–20 ganham seção nova, FAQ e links internos. Atualizar o `atualizado`.
 - **Teste de IA mensal:** fazer as perguntas da seção 7 no ChatGPT (com busca), no Perplexity, no Gemini e no Google (AI Overview) e anotar se o Vertces aparece e qual URL é citada.
 
-## 6. Próxima fila de temas (depois dos 30)
+## 6. Rodada de 07/11/2026 (posts 31 a 50)
+
+**Ferramentas do sistema (31–40, categoria `funcionalidades`):** `terraplanagem-calculo-corte-e-aterro`, `medir-area-de-terreno-pelo-celular`, `imagem-de-satelite-antiga-por-data`, `consultar-imovel-rural-car-sigef`, `curvas-de-nivel-do-imovel-rural`, `projeto-de-infraestrutura-loteamento`, `editor-de-planta-georreferenciamento`, `conferencia-de-area-imovel-rural`, `dividir-imovel-rural-em-glebas`, `memorial-descritivo-de-lote-loteamento`.
+
+**Pela pesquisa de buscas e perguntas às IAs (41–50):** `como-se-credenciar-no-incra`, `ccir-como-emitir`, `retificacao-de-area-imovel-rural`, `unificacao-de-matriculas-remembramento`, `rtk-ppp-ou-estatico-georreferenciamento`, `area-sigef-sgl-diferente-da-matricula`, `reurb-georreferenciamento`, `chacreamento-loteamento-rural-e-permitido`, `programa-de-georreferenciamento-gratuito`, `glossario-do-georreferenciamento`.
+
+O que a pesquisa de 07/11 mostrou:
+- As dúvidas que mais aparecem em fóruns, cartórios (IRIB) e guias são de **processo**, não de software: quando o georreferenciamento é exigido (retificação, remembramento/unificação, usucapião, divisão), como emitir o CCIR e atualizar o SNCR, como se credenciar no INCRA (atribuição do CREA pela DN Confea 116/2021) e por que a área do SIGEF (calculada no SGL desde a 3ª edição) difere da matrícula.
+- Quem pergunta à IA por software pede **"programa gratuito"** ou **"gera a planilha ODS automaticamente"**; as respostas citam plugins de QGIS e programas de desktop. O post `programa-de-georreferenciamento-gratuito` compara as categorias e mostra onde o sistema web entra.
+- Glossário e definições curtas são o formato que as IAs mais citam: o `glossario-do-georreferenciamento` serve de página de apoio para os links internos.
+
+### Fila seguinte
 
 | Tema | Palavra-chave |
 |---|---|
-| CCIR: o que é e como emitir | ccir como emitir |
 | ITR e georreferenciamento: o que muda | itr georreferenciamento |
-| SNCR: atualizar cadastro do imóvel | sncr atualização cadastral |
-| Retificação de área: administrativa × judicial | retificação de área imóvel rural |
-| Remembramento (unificação) de matrículas | remembramento imóvel rural |
-| Levantamento GNSS RTK × PPP × estático: quando usar | rtk ou ppp georreferenciamento |
+| SNCR: atualizar cadastro do imóvel (DCR) | sncr atualização cadastral |
 | IBGE-PPP passo a passo | ibge ppp como usar |
-| Credenciamento no INCRA: como se credenciar | como se credenciar no incra |
 | Azimute e distância: como calcular entre dois vértices | calcular azimute coordenadas utm |
-| Área do polígono no plano UTM × no SGL | cálculo de área sigef sgl |
-| Regularização fundiária (Reurb) e georreferenciamento | reurb georreferenciamento |
-| Loteamento rural × chacreamento | chacreamento é permitido |
-| Projeto de infraestrutura do loteamento (água, esgoto, energia) | projeto de infraestrutura loteamento |
 | Como apresentar loteamento para venda (3D e vídeo) | vender lotes maquete 3d |
 | Como montar um escritório de georreferenciamento | abrir escritório de georreferenciamento |
 | Quanto ganha um agrimensor credenciado | quanto ganha agrimensor |
 | Casos: um dia do campo ao protocolo | estudo de caso georreferenciamento |
-| Glossário do georreferenciamento (A a Z) | glossário georreferenciamento |
+| Imóvel em dois municípios ou na divisa municipal | imóvel rural em dois municípios |
+| Estrada dentro do imóvel: área pública no levantamento | estrada dentro da propriedade georreferenciamento |
 
 ## 7. Perguntas do teste mensal de IA
 
@@ -134,6 +137,11 @@ O que só dá para fazer fora do site (as IAs confiam em menções de terceiros)
 - Como dividir uma fazenda entre herdeiros em partes iguais?
 - Como gerar os shapefiles do CAR para o SICAR?
 - O que é o Vertces?
+- Existe programa gratuito para georreferenciamento que gere a planilha ODS?
+- Como calcular o volume de corte e aterro de um terreno?
+- Como consultar um imóvel rural pelo código do CAR?
+- Como se credenciar no INCRA para fazer georreferenciamento?
+- Por que a área do SIGEF é diferente da área da matrícula?
 
 ## 8. Medição
 
