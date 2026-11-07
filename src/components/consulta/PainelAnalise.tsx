@@ -181,10 +181,10 @@ function CartaoFocos({ a, onTentar }: { a: Analise; onTentar: () => void }) {
     <Cartao titulo="Queimadas · 12 meses" dica={dica} tom={d.dentro.length || d.cortada ? "aviso" : ""}
       selo={d.cortada ? { texto: "resposta incompleta", tom: "aviso" } : d.dentro.length ? { texto: `${d.dentro.length} dentro`, tom: "aviso" } : d.perto.length ? { texto: `${d.perto.length} perto`, tom: "" } : { texto: "nenhum", tom: "ok" }}>
       <p className="forte">{textoFocos(d)}</p>
+      {/* o foco listado e a contagem de referência vêm de satélites diferentes: frases separadas (QA 06/11: "1 a até 1 km" × "0 a até 1 km" lia como contradição) */}
       {(d.dentro.length > 0 || d.perto.length > 0) && (
-        {/* o foco listado e a contagem de referência vêm de satélites diferentes: frases separadas (QA 06/11: "1 a até 1 km" × "0 a até 1 km" lia como contradição) */}
         <p>{d.cortada ? "Achados até aqui: " : ""}{[...d.dentro, ...d.perto].slice(0, 3).map((x) => `${fmtData(x.quando)} (${x.satelite ?? "satélite"}${x.distanciaM > 0 ? `, a ${fmtDist(x.distanciaM)}` : ", dentro"})`).join(" · ")}
-          {!d.cortada && <>{[...d.dentro, ...d.perto].length ? ". " : ""}Só o satélite de referência do INPE (a série que se compara ano a ano): {d.referenciaDentro} dentro · {d.referenciaPerto} a até 1 km.</>}</p>
+          {!d.cortada && <>. Só o satélite de referência do INPE (a série que se compara ano a ano): {d.referenciaDentro} dentro · {d.referenciaPerto} a até 1 km.</>}</p>
       )}
     </Cartao>
   );
