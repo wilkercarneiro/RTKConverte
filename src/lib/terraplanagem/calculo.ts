@@ -55,6 +55,8 @@ export interface Malha {
   t: Float64Array;
 }
 
+/** Acima disso (espaçamento típico entre pontos, m) o levantamento não serve para orçar volume (QA 06/11: perímetro a cada 130 m saía "pronto"). */
+export const ESPACAMENTO_ORCAMENTO_M = 40;
 const PASSOS = [0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50];
 const MAX_NOS = 120_000;
 
@@ -620,6 +622,8 @@ export function calcularTerraplanagem(pr: ProjetoTerraplanagem): ResultadoTerrap
   const semDado = Math.max(av.areaSemDado, taludeForaDoLevantamento(prep, tin, idx, z0));
   if (semDado >= 1) avisos.push(`O talude passa da borda do levantamento (cerca de ${fmtN(semDado, 0)} m²): o volume desse trecho não entrou. Afaste a plataforma da borda ou levante mais pontos em volta.`);
   if (pr.taludes.corte === 0 || pr.taludes.aterro === 0) avisos.push("Talude a prumo (0 na horizontal): só vale com muro de arrimo ou contenção.");
+  // aparece na tela (faixa da entrega) e no PDF: o cliente não pode receber ordem de grandeza como orçamento
+  if (tin.espacamento > ESPACAMENTO_ORCAMENTO_M) avisos.push(`Estimativa grosseira: os pontos estão a cerca de ${fmtN(tin.espacamento, 0)} m uns dos outros e, entre eles, o terreno é suposto reto. Os volumes são uma ordem de grandeza; para orçar, levante o miolo com pontos a cada 10 a 20 m e nas mudanças de inclinação.`);
 
   // malha para o mapa
   const { nx, ny, passo, e0, n0 } = malha;

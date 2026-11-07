@@ -1,6 +1,6 @@
 // Frases do resultado, iguais na tela e no PDF.
 import type { ResultadoTerraplanagem } from "./calculo.ts";
-import { fmtN } from "./calculo.ts";
+import { ESPACAMENTO_ORCAMENTO_M, fmtN } from "./calculo.ts";
 import type { ProjetoTerraplanagem } from "./modelo.ts";
 
 /** Rumo do azimute (para onde a água escorre). */
@@ -71,6 +71,15 @@ export function estadoDaEntrega(o: {
     return {
       podeExportar: true, tom: "pendente", titulo: "O terreno veio sem desnível",
       detalhe: "Todas as cotas são iguais: confira se o arquivo saiu com a altitude dos pontos. Se o terreno é plano mesmo, não há corte nem aterro a fazer.",
+      acao: null, rotuloAcao: null,
+    };
+  }
+  // pontos esparsos (perímetro, poucos pontos no miolo): o terreno entre eles é reta inventada —
+  // o volume é ordem de grandeza, não orçamento. Dizer antes que o cliente receba o número.
+  if (r.espacamento > ESPACAMENTO_ORCAMENTO_M) {
+    return {
+      podeExportar: true, tom: "pendente", titulo: "Estimativa grosseira: poucos pontos",
+      detalhe: `Os pontos estão a ${fmtN(r.espacamento, 0)} m uns dos outros (típico). Entre eles o terreno é suposto reto, então os volumes são só uma ordem de grandeza. Para orçar, levante o miolo da área com pontos a cada 10 a 20 m e nas mudanças de inclinação.`,
       acao: null, rotuloAcao: null,
     };
   }

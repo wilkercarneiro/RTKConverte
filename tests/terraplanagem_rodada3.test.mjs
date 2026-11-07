@@ -258,3 +258,23 @@ test("gravação: na conta vai uma de cada vez e a última versão vence (rede l
   // a v1 foi; a v2 nem saiu (a v3 já estava na fila quando chegou a vez)
   assert.deepEqual(ordemChegada, [v1.atualizadoEm, v3.atualizadoEm]);
 });
+
+// ---------------------------------------------------------------- QA em produção (06/11)
+test("pontos esparsos (perímetro a cada ~130 m): a faixa avisa que é estimativa, nunca 'pronto'", () => {
+  const txt = fs.readFileSync(new URL("./corpus-real/edilson/Arquivo_de_Coordenadas_Formatado.txt", import.meta.url), "utf8");
+  const l = lerPontos(txt);
+  const r = calcularTerraplanagem(projetoNovo("edilson", l.pontos, { tipo: "arquivo", arquivo: "x.txt" }, 24));
+  assert.ok(r.espacamento > 100, `espaçamento ${r.espacamento}`);
+  const e = estadoDaEntrega({ r, erro: null, ocupado: false, modo: "contorno", folga: null, desnivel: 100 });
+  assert.equal(e.tom, "pendente");
+  assert.match(e.titulo, /grosseira/);
+  assert.ok(e.podeExportar);
+});
+
+test("pontos esparsos: o aviso vai também para r.avisos (sai no PDF); levantamento denso não avisa", () => {
+  const txt = fs.readFileSync(new URL("./corpus-real/edilson/Arquivo_de_Coordenadas_Formatado.txt", import.meta.url), "utf8");
+  const r = calcularTerraplanagem(projetoNovo("edilson", lerPontos(txt).pontos, { tipo: "arquivo", arquivo: "x.txt" }, 24));
+  assert.ok(r.avisos.some((a) => /Estimativa grosseira/.test(a)));
+  const denso = calcularTerraplanagem(projetoNovo("d", lerPontos(arquivo(200, (i) => 150 + (i % 7))).pontos, { tipo: "arquivo", arquivo: "x.txt" }, 24));
+  assert.ok(!denso.avisos.some((a) => /Estimativa grosseira/.test(a)), `espaçamento ${denso.espacamento}`);
+});
