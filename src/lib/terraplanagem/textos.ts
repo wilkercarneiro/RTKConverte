@@ -79,7 +79,7 @@ export function estadoDaEntrega(o: {
   if (r.espacamento > ESPACAMENTO_ORCAMENTO_M) {
     return {
       podeExportar: true, tom: "pendente", titulo: "Estimativa grosseira: poucos pontos",
-      detalhe: `Os pontos estão a ${fmtN(r.espacamento, 0)} m uns dos outros (típico). Entre eles o terreno é suposto reto, então os volumes são só uma ordem de grandeza. Para orçar, levante o miolo da área com pontos a cada 10 a 20 m e nas mudanças de inclinação.`,
+      detalhe: "Serve como ordem de grandeza, não como orçamento: o aviso no alto diz o que levantar. O PDF sai com o mesmo aviso.",
       acao: null, rotuloAcao: null,
     };
   }
