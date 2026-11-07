@@ -251,12 +251,21 @@ export function BarraEtapas({ passos, onClick, anterior, seguinte, onIr }: {
   seguinte: { rotulo: string } | null;
   onIr: (direcao: -1 | 1) => void;
 }) {
+  // no celular as etapas deslizam numa linha: a etapa atual vem para a vista
+  const faixa = useRef<HTMLDivElement>(null);
+  const atual = passos.findIndex((p) => p.estado === "ativa");
+  useEffect(() => {
+    const nav = faixa.current?.querySelector<HTMLElement>(".stepper");
+    const alvo = nav?.querySelector<HTMLElement>("[aria-current='step']");
+    if (!nav || !alvo || nav.scrollWidth <= nav.clientWidth) return;
+    nav.scrollTo({ left: Math.max(0, alvo.offsetLeft - nav.offsetLeft - 12), behavior: "smooth" });
+  }, [atual]);
   return (
-    <div className="etapas-barra">
+    <div className="etapas-barra" ref={faixa}>
       <Passos passos={passos} onClick={onClick} />
       <div className="etapas-barra-nav">
-        {anterior && <button type="button" onClick={() => onIr(-1)} title={`Voltar para ${anterior.rotulo}`}>← {anterior.rotulo}</button>}
-        {seguinte && <button type="button" className="escuro" onClick={() => onIr(1)}>{seguinte.rotulo} →</button>}
+        {anterior && <button type="button" onClick={() => onIr(-1)} title={`Voltar para ${anterior.rotulo}`} aria-label={`Voltar para ${anterior.rotulo}`}>← <span className="eb-rotulo">{anterior.rotulo}</span></button>}
+        {seguinte && <button type="button" className="escuro" onClick={() => onIr(1)} title={`Ir para ${seguinte.rotulo}`} aria-label={`Ir para ${seguinte.rotulo}`}><span className="eb-rotulo">{seguinte.rotulo}</span> →</button>}
       </div>
     </div>
   );

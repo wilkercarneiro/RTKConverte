@@ -10,7 +10,7 @@
 // (sem barra), o menu completo no hambúrguer e uma barra de abas embaixo
 // (Início, Serviços, Clientes, Ferramentas, Configurações). As outras telas não
 // têm menu: só o "‹ Voltar" no alto, que volta à tela anterior (lib/rota.ts).
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { supabase } from "../lib/supabase";
 import type { Rota } from "../lib/rota";
@@ -300,7 +300,10 @@ export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId
       <main className="app-conteudo" key={rota.t} ref={conteudo}>
         <BarreiraErro onde="esta tela" chave={JSON.stringify(rota)}
           explicar={(e) => (/webgl/i.test(e.message) ? MOTIVO_SEM_WEBGL : null)}>
-          {children}
+          {/* telas carregadas sob demanda (App.tsx): um aviso discreto enquanto o pedaço chega */}
+          <Suspense fallback={<div className="centro carregando-tela"><span className="spinner" />&nbsp; Carregando…</div>}>
+            {children}
+          </Suspense>
         </BarreiraErro>
       </main>
       {escritorioId && <SuporteChat escritorioId={escritorioId} nome={usuario?.nome} />}

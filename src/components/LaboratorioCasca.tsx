@@ -8,7 +8,7 @@
 //   #/lab/casca/pedidos (todos os pedidos do GPROL) · #/lab/casca/escolher (serviço novo: é pedido do GPROL?)
 //   ?semasaas: compra de créditos sem o pagamento online
 //   ?operador na URL: entra como membro sem permissões de gestão
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { definirPermissoes } from "../lib/permissoes";
 import { definirRecursos } from "../lib/recursos";
@@ -261,6 +261,11 @@ export function LaboratorioCasca() {
   const [, forcar] = useState(0);
   // a compra "paga" muda o objeto dos créditos: uma cópia nova redesenha a gaveta
   const [cred, setCred] = useState<Creditos>(CREDITOS);
+  useEffect(() => {
+    const f = () => forcar((n) => n + 1);
+    addEventListener("hashchange", f);
+    return () => removeEventListener("hashchange", f);
+  }, []);
   const atualizar = () => setCred({ ...CREDITOS, carteiras: CREDITOS.carteiras.map((k) => ({ ...k })), compras: [...CREDITOS.compras] });
   if (tela === "creditos" && !(window as { _avisou?: boolean })._avisou) {
     (window as { _avisou?: boolean })._avisou = true;
@@ -272,8 +277,9 @@ export function LaboratorioCasca() {
       : tela === "clientes" ? { t: "clientes" } : tela === "pedidos" ? { t: "pedidos" } : { t: "inicio" };
   const ir = (r: Rota) => {
     const alvo = r.t === "equipe" ? "equipe" : r.t === "cliente" ? `cliente/${r.id}` : r.t === "clientes" ? "clientes" : "inicio";
+    // como no App: a tela troca no hashchange (a rolagem da tela que sai é
+    // guardada antes — src/lib/rota.ts)
     location.hash = `#/lab/casca/${alvo}${operador ? "?operador" : ""}`;
-    forcar((n) => n + 1);
   };
   const escritorio = { estado: "ok" as const, escritorio: { id: "e1", nome: "D'Prol", papel: operador ? "membro" as const : "dono" as const, modelos_compartilhados: true } };
   return (

@@ -139,10 +139,17 @@ if (typeof window !== "undefined") {
     atualN = n;
   }
   gravarPilha();
+  // A rolagem é nossa (não do navegador): tela nova abre no TOPO; voltar
+  // devolve a tela onde ela estava — como no WhatsApp. Antes, a tela nova
+  // herdava a rolagem da anterior (abria no meio).
+  try { history.scrollRestoration = "manual"; } catch { /* navegador antigo */ }
   addEventListener("hashchange", () => {
+    rolagens[atualN] = scrollY; // a tela que sai ainda está desenhada aqui
     const n2 = numeroDoEstado();
+    let voltou = false;
     if (n2 !== null && pilhaHashes[n2] === location.hash) {
       atualN = n2; // voltar/avançar do navegador
+      voltou = true;
     } else {
       atualN += 1; // entrada nova: o que estava à frente deixa de existir
       pilhaHashes = [...pilhaHashes.slice(0, atualN), location.hash];
@@ -150,7 +157,28 @@ if (typeof window !== "undefined") {
     }
     gravarPilha();
     ouvintesPilha.forEach((f) => f());
+    rolarPara(voltou ? rolagens[atualN] ?? 0 : 0);
   });
+}
+
+const rolagens: Record<number, number> = {};
+/** Leva a página a `y` depois que a tela nova desenhar; se os dados ainda
+ *  estão chegando (página curta), tenta de novo — a menos que a pessoa já
+ *  tenha rolado por conta própria. */
+function rolarPara(y: number) {
+  // a pessoa mexeu (dedo, roda, tecla): para de insistir
+  let mexeu = false;
+  const parar = () => { mexeu = true; };
+  const eventos = ["touchstart", "wheel", "keydown", "mousedown"] as const;
+  eventos.forEach((e) => addEventListener(e, parar, { passive: true, once: true }));
+  const tentar = () => {
+    if (mexeu) return;
+    const alvo = Math.min(y, Math.max(0, document.documentElement.scrollHeight - innerHeight));
+    if (Math.abs(scrollY - alvo) > 1) scrollTo({ top: alvo, left: 0, behavior: "instant" as ScrollBehavior });
+  };
+  requestAnimationFrame(() => requestAnimationFrame(tentar));
+  if (y > 0) [150, 400, 800].forEach((ms) => setTimeout(tentar, ms));
+  setTimeout(() => eventos.forEach((e) => removeEventListener(e, parar)), 900);
 }
 
 /** Tela que o "‹ Voltar" leva quando não há nada antes nesta aba. */

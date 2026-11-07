@@ -4,6 +4,7 @@ import App from "./App";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./styles.css";
 import "./ui.css";
+import "./celular.css";
 import { iniciarMonitoramento } from "./lib/monitoramento";
 import { ligarGradesBalanceadas } from "./lib/grade";
 import { VisualizadorPlantaHost } from "./components/planta/VisualizadorPlanta";

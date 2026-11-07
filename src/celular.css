@@ -1,0 +1,241 @@
+/* ===== Celular na proporção do WhatsApp (07/11/2026) =====
+   Pedido: "diminuir a proporção de botões, textos, menus… baseada no WhatsApp".
+   A régua (Android/iOS, em px de CSS a 390 de largura):
+     margem lateral 14–16 · topo 56 · título da tela 20–22 · nome na lista 15–16
+     · texto 14 · legenda 12 · botão 36–40 · campo 40 · chip 32 · FAB 52–56
+     · abas de baixo ~60 com ícone 22 e rótulo 11.
+   O texto corrido já estava nessa medida (14 px); o que pesava eram títulos de
+   30 px, números de 24–28, cartões com 26–28 px de respiro dentro de páginas
+   com mais 18–24, botões de 44–58 e os cartões de foto de 300 px.
+
+   Tudo aqui vale só até 900 px (o "modo celular" da casca) e cada regra leva
+   :root na frente: ganha das folhas das telas carregadas depois (pedaços sob
+   demanda) sem precisar de !important. */
+
+@media (max-width: 900px) {
+  :root { --pad-x: 16px; --pad-y: 14px; }
+
+  /* ---------- tipografia ---------- */
+  :root h1 { font-size: 22px; line-height: 1.15; }
+  :root h2 { font-size: 18px; }
+  :root h3 { font-size: 16px; }
+  :root h1.sr-only { font-size: 1px; }
+
+  /* ---------- controles ---------- */
+  :root button.principal, :root button.escuro { height: 40px; padding: 0 16px; font-size: 14px; }
+  :root button.principal.grande { height: 42px; padding: 0 18px; }
+  :root .abas [role="tab"] { height: 32px; padding: 0 12px; font-size: 13px; }
+  /* abas da página que quebravam em duas linhas (Configurações): uma linha só,
+     que desliza — como os filtros do WhatsApp */
+  :root .abas { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+  :root .abas::-webkit-scrollbar { display: none; }
+  :root .abas [role="tab"] { flex: none; }
+
+  /* ---------- páginas e cartões ---------- */
+  :root .pagina { padding: var(--pad-y) var(--pad-x) 40px; gap: 16px; }
+  :root .bloco { padding: 16px; }
+  :root .bloco > header { margin-bottom: 14px; }
+  :root .bloco > header h3, :root .pagina .bloco > header h3 { font-size: 16px; }
+  :root .bloco.cartao { padding: 16px; gap: 12px; }
+  :root .bloco.cartao > header h3 { font-size: 16px; }
+  :root .pagina .bloco.lista > header { padding: 14px 16px 10px; }
+  :root .secao > summary { padding: 12px 14px; }
+  :root .secao-titulo { min-width: 0; }
+  :root .secao-corpo { padding: 4px 14px 16px; }
+  :root .proxima-acao { padding: 12px 14px; gap: 10px; }
+  :root .proxima-acao .pa-texto { min-width: 0; flex-basis: 100%; }
+  :root .upload-card { padding: 16px; gap: 16px; }
+  :root .upload-tela { padding: 16px; }
+  :root .estado-vazio { padding: 18px 14px; }
+
+  /* ---------- telas de serviço (conferência, loteamento, CAR) ---------- */
+  :root .topo { padding-top: 12px; gap: 10px; }
+  :root .topo .titulo { font-size: 18px; }
+  :root .step { height: 36px; padding: 0 10px; font-size: 13px; gap: 7px; }
+  :root .conferencia-corpo { padding-top: 16px; gap: 14px; }
+
+  /* faixa presa das etapas: UMA linha (antes eram duas, ~95 px presos no topo).
+     As etapas deslizam; voltar/avançar viram setas quadradas à direita. */
+  :root .app.casca .etapas-barra { flex-wrap: nowrap; gap: 6px; padding: 6px 8px 6px var(--pad-x); }
+  :root .app.casca .etapas-barra .stepper { flex: 1 1 auto; }
+  :root .app.casca .etapas-barra-nav { width: auto; flex: none; gap: 6px; margin-left: 0; }
+  :root .app.casca .etapas-barra-nav button { width: 34px; height: 34px; padding: 0; justify-content: center; font-size: 16px; border-radius: 10px; }
+  :root .app.casca .etapas-barra-nav .eb-rotulo { display: none; }
+  :root .app.casca .etapas-barra .step { height: 34px; }
+  /* sombra no fim da faixa: avisa que há mais etapas para o lado */
+  :root .app.casca .etapas-barra .stepper { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent); }
+
+  /* cabeçalho do serviço (rola junto): nome, selo, salvo/exportar e fuso
+     mais juntos */
+  :root .app.casca .conferencia > .topo:has(+ .etapas-barra) { padding-bottom: 10px; }
+  :root .topo button, :root .topo select { height: 32px; font-size: 13px; }
+  :root .topo-meta { margin-top: -2px; }
+
+  /* barra de gerar (rodapé fixo): mais baixa */
+  :root .app.casca .preview.preview-fina { padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px)); }
+  :root .app.casca .preview-fina .stats { gap: 4px 14px; }
+  :root .app.casca .preview-fina .stat .valor { font-size: 13px; }
+  :root .app.casca .preview-fina button, :root .app.casca .preview-fina select { height: 36px; font-size: 13px; }
+  :root .app.casca .conferencia:has(> .preview-fina) { padding-bottom: 130px; }
+
+  /* avisos (crédito usado, erro, salvo): faixa baixa como o "snackbar" */
+  :root .aviso-credito { padding: 10px 10px 10px 12px; gap: 10px; border-radius: 12px; }
+  :root .aviso-credito .ac-icone { width: 26px; height: 26px; border-radius: 8px; }
+  :root .aviso-credito .ac-corpo { font-size: 13px; gap: 2px; }
+  :root .aviso-credito .ac-corpo b { font-size: 13.5px; }
+  :root .avisos-globais .aviso { padding: 9px 10px 9px 12px; font-size: 13px; border-radius: 12px; }
+  /* o aviso nasce ACIMA das barras de baixo (abas do Início, barra de gerar),
+     não por cima delas — como o snackbar do WhatsApp */
+  :root body:has(.casca-dash) .avisos-globais, :root body:has(.casca-dash) .aviso-credito { bottom: calc(var(--abas-cel, 64px) + 10px); }
+  :root body:has(.preview-fina) .avisos-globais, :root body:has(.preview-fina) .aviso-credito { bottom: calc(108px + env(safe-area-inset-bottom, 0px)); }
+
+  /* formulários: rótulo e campo mais juntos, menos vão entre as linhas */
+  :root .grade { gap: 12px 14px; }
+  :root .grade label { gap: 4px; }
+
+  /* ---------- topo e abas de baixo da casca ---------- */
+  :root .tr-topo-dash { height: 56px; }
+  :root .tr-topo-dash .tr-nome { font-size: 20px; }
+  :root .tr-topo-dash .tr-logo { width: 26px; height: 26px; }
+  :root .tr-menu { width: 40px; height: 40px; }
+  :root .tr-menu svg { width: 22px; height: 22px; }
+
+  /* ---------- Início ---------- */
+  :root .casca-dash .inicio { gap: 16px; }
+  :root .casca-dash .inicio-cabeca h1 { font-size: 24px; letter-spacing: -0.02em; }
+  :root .casca-dash .inicio-cabeca .sub { font-size: 14px; }
+  :root .casca-dash .inicio-situacao { margin-top: 10px; }
+  :root .casca-dash .inicio-numeros > div, :root .casca-dash .inicio-numeros > button { padding: 6px 12px; }
+  :root .casca-dash .inicio-numeros b { font-size: 18px; }
+  :root .casca-dash .inicio-numeros > * > span:last-child { font-size: 11.5px; }
+  :root .casca-dash .retomar { padding: 12px; border-radius: 16px; gap: 8px 12px; }
+  :root .casca-dash .retomar > button.principal { height: 40px; font-size: 14px; }
+  :root .casca-dash .retomar .rt-titulo { font-size: 15px; }
+
+  /* faixa "Novo serviço": cartões mais baixos — cabe o próximo à vista */
+  :root .ns-titulo { font-size: 17px; }
+  :root .ns-cartao, :root .casca-dash .ns-cartao { flex-basis: 62vw; height: 236px; border-radius: 16px; }
+  :root .ns-corpo { padding: 14px; }
+  :root .ns-nome { font-size: 16.5px; }
+  :root .ns-compacto .ns-cartao { flex-basis: 44vw; height: 176px; }
+  :root .ns-compacto .ns-corpo { padding: 12px; }
+  :root .ns-compacto .ns-nome { font-size: 14.5px; }
+
+  /* Ferramentas: faixa baixa, como um item de lista com foto */
+  :root .fe-grade { gap: 8px; }
+  :root .fe-cartao { min-height: 84px; padding: 12px 12px 12px 14px; border-radius: 14px; }
+  :root .fe-nome { font-size: 15.5px; }
+  :root .fe-resumo { font-size: 12px; line-height: 1.4; }
+  :root .fe-cta { width: 32px; height: 32px; }
+  :root .fe-cta span { font-size: 15px; }
+
+  /* ---------- Clientes / cliente ---------- */
+  :root .cl-kpis { gap: 8px; }
+  :root .cl-kpi { padding: 10px 12px; gap: 0; }
+  :root .cl-kpi b { font-size: 20px; }
+  :root .cl-kpi b.menor { font-size: 15px; }
+  :root .cl-cabeca { gap: 12px; }
+  :root .cl-cabeca-txt h1 { font-size: 20px; }
+  :root .cl-cartao { padding: 14px; }
+
+  /* números do topo de Clientes: 2×2 baixinho — o número à esquerda, o rótulo
+     e o detalhe ao lado (antes, cada cartão tinha três linhas e 70 px) */
+  :root .cl-kpi { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 10px; align-items: center; border-radius: 14px; }
+  :root .cl-kpi > b { grid-column: 1; grid-row: 1 / span 2; font-size: 22px; line-height: 1; }
+  :root .cl-kpi > span { grid-column: 2; grid-row: 1; font-size: 12px; }
+  :root .cl-kpi > small { grid-column: 2; grid-row: 2; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* quando o "número" é uma data ou palavra (cliente desde, último serviço), rótulo em cima */
+  :root .cl-kpi:has(> b.menor) { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+  :root .cl-kpi:has(> b.menor) > span { order: -1; }
+  :root .cl-kpi > b.menor { font-size: 15px; line-height: 1.3; }
+
+  /* lista de clientes como a lista de conversas: avatar, nome numa linha,
+     detalhe embaixo, contagem à direita */
+  :root .cl-tabela thead { display: none; }
+  :root .cl-tabela, :root .cl-tabela tbody { display: block; }
+  :root .cl-tabela tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--linha); }
+  :root .cl-tabela tr:last-child { border-bottom: 0; }
+  :root .cl-tabela td { padding: 0; border: 0; min-width: 0; }
+  :root .cl-tabela td.col-sec, :root .cl-tabela td.acao { display: none; }
+  :root .cl-quem { gap: 12px; }
+  :root .cl-tabela .cl-avatar { width: 42px; height: 42px; font-size: 14px; }
+  :root .cl-quem-txt { gap: 1px; }
+  :root .cl-quem-txt b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14.5px; line-height: 1.3; }
+  :root .cl-quem-txt b .cl-tag { vertical-align: 1px; margin-left: 6px; height: 17px; font-size: 9.5px; }
+  :root .cl-quem-txt small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+  :root .cl-tabela .cl-servicos { width: 52px; gap: 4px; align-items: flex-end; }
+  :root .cl-tabela .cl-nada { font-size: 12px; }
+
+  /* cartões de modalidade baixos: nome, resumo em 2 linhas e a ação
+     (a lista de entregas fica para a tela do serviço) */
+  :root .ns-entrega { display: none; }
+  :root .ns-resumo { -webkit-line-clamp: 2; font-size: 12px; line-height: 1.4; }
+  :root .ns-corpo { gap: 6px; }
+  :root .ns-cta { height: 32px; font-size: 12.5px; border-radius: 10px; margin-top: 2px; }
+  :root .ns-selo { top: 10px; left: 10px; font-size: 10px; padding: 3px 8px; }
+
+  /* pedidos do GPROL: cartão de 3 andares → 2 (dados; executar + status na mesma linha) */
+  :root .gp-lista { gap: 8px; }
+  :root .gp-pedido { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 10px; padding: 11px 12px 11px 14px; border-radius: 14px; }
+  :root .gp-pedido-info { grid-column: 1 / -1; }
+  :root .gp-pedido-info b { font-size: 14px; }
+  :root .gp-pedido-info .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+  :root .gp-pedido-mods { gap: 5px; min-width: 0; }
+  :root button.gp-executar { height: 28px; padding: 0 10px; font-size: 12.5px; }
+  :root .gp-pedido-acoes { gap: 8px; justify-content: flex-end; }
+  :root .gp-pedido-acoes .link { font-size: 12.5px; }
+
+  /* área de enviar arquivo: menor (no celular é um toque, não "arrastar") */
+  :root .dropzone { padding: 22px 16px; }
+  :root .dropzone.linha { padding: 11px 14px; }
+  :root .dropzone b { font-size: 14.5px; }
+
+  /* ---------- Entrar ---------- */
+  :root .login-lado { padding: 22px 18px 20px; gap: 14px; }
+  :root .login-lado h1 { font-size: 24px; margin-bottom: 8px; }
+  :root .login-lado p { font-size: 14px; }
+  :root .login-lado .rodape { gap: 16px; font-size: 12px; }
+  :root .login-form { padding: 24px 16px; align-items: flex-start; }
+  :root .login-box h2 { font-size: 20px; }
+  :root .login-box form { gap: 14px; }
+  :root .login-box input { height: 42px; }
+  :root .login-box button { height: 42px; }
+
+  /* ---------- Equipe ---------- */
+  :root .eq { gap: 14px; }
+  /* números da Equipe: três em linha (o do limite do plano por baixo, largo) */
+  :root .eq-resumo { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  :root .eq-kpi { padding: 10px 12px; min-width: 0; border-radius: 14px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 10px; }
+  :root .eq-kpi b { font-size: 20px; }
+  :root .eq-kpi span { font-size: 12px; line-height: 1.3; }
+  :root .eq-kpi-limite { grid-column: 1 / -1; grid-row: 2; display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+  :root .eq-trilho { height: 6px; }
+  :root .eq-resumo > .eq-aviso { grid-column: 1 / -1; }
+  :root .eq-abas { overflow-x: auto; scrollbar-width: none; }
+  :root .eq-abas::-webkit-scrollbar { display: none; }
+  :root .eq-abas button { flex: none; white-space: nowrap; padding: 9px 12px; font-size: 13.5px; }
+  :root .eq-cartao { padding: 14px; gap: 10px; border-radius: 16px; }
+}
+
+/* ---------- toque: nada de "hover preso" depois do toque ----------
+   No celular o :hover fica ligado no último cartão tocado (sobe, troca a cor da
+   seta) e a animação de 0,2–0,6 s pesa ao rolar. Sem mouse, o retorno é o
+   :active, na hora. */
+@media (hover: none) {
+  :root .ns-cartao:hover, :root .fe-cartao:hover, :root .clicavel:hover, :root .eq-cartao:hover { transform: none; }
+  :root .ns-cartao:hover .ns-foto, :root .fe-cartao:hover .fe-foto { transform: scale(1.02); }
+  :root .ns-cartao:active, :root .fe-cartao:active, :root .clicavel:active { transform: scale(0.985); transition-duration: 0.08s; }
+  button, a, summary, [role="tab"], label { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  button:active:not(:disabled) { filter: brightness(0.96); }
+  /* vidro fosco (backdrop-filter) sobre foto é o que mais pesa ao rolar no
+     celular: os selos dos cartões ficam com fundo escuro translúcido */
+  :root .ns-selo, :root .fe-selo { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgb(6 24 18 / 42%); }
+}
+
+/* iPhone: o Safari amplia a página quando o campo tem letra menor que 16 px —
+   a tela "pula" a cada toque num campo. Só no iOS a letra do campo vai a 16. */
+@supports (-webkit-touch-callout: none) {
+  @media (max-width: 900px) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: 16px; }
+  }
+}

@@ -7,17 +7,9 @@ import { PaginaPedidosGprol } from "./components/gprol/PedidosGprol";
 import { Inicio } from "./components/Inicio";
 import { Clientes } from "./components/Clientes";
 import { Servicos } from "./components/Servicos";
-import { Upload, type ResultadoParse } from "./components/Upload";
-import { Conferencia } from "./components/Conferencia";
-import { PecasServico } from "./components/PecasServico";
-import { Loteamento } from "./components/loteamento/Loteamento";
-import { Laboratorio } from "./components/loteamento/Laboratorio";
-import { Car } from "./components/car/Car";
-import { CarNovo } from "./components/car/CarNovo";
+import type { ResultadoParse } from "./components/Upload";
 import { Configuracoes } from "./components/Configuracoes";
 import { ClientePage } from "./components/ClientePage";
-import { Assinar } from "./components/Assinar";
-import { Ajuda } from "./components/Ajuda";
 import { PaginaDocumento } from "./components/Documento";
 import { Logo } from "./components/Logo";
 import termos from "../docs/legal/termos-de-uso.md?raw";
@@ -49,6 +41,19 @@ import { ServicoGprol } from "./components/gprol/ServicoGprol";
 import { avisar } from "./components/ui";
 import { guardar } from "./lib/ux";
 import { useRegistroDeAcesso } from "./lib/acessos";
+
+// Telas pesadas (mapas, pranchetas, editor 3D): cada uma num pedaço à parte,
+// baixado só quando abre — o celular entra no Início sem carregar o sistema todo.
+// O <Suspense> fica na casca (AppShell), em volta do conteúdo.
+const Upload = lazy(() => import("./components/Upload").then((m) => ({ default: m.Upload })));
+const Conferencia = lazy(() => import("./components/Conferencia").then((m) => ({ default: m.Conferencia })));
+const PecasServico = lazy(() => import("./components/PecasServico").then((m) => ({ default: m.PecasServico })));
+const Loteamento = lazy(() => import("./components/loteamento/Loteamento").then((m) => ({ default: m.Loteamento })));
+const Laboratorio = lazy(() => import("./components/loteamento/Laboratorio").then((m) => ({ default: m.Laboratorio })));
+const Car = lazy(() => import("./components/car/Car").then((m) => ({ default: m.Car })));
+const CarNovo = lazy(() => import("./components/car/CarNovo").then((m) => ({ default: m.CarNovo })));
+const Assinar = lazy(() => import("./components/Assinar").then((m) => ({ default: m.Assinar })));
+const Ajuda = lazy(() => import("./components/Ajuda").then((m) => ({ default: m.Ajuda })));
 
 // só no `npm run dev`: fica num pedaço à parte que o build nunca carrega
 const LaboratorioPlanta = lazy(() => import("./components/planta/LaboratorioPlanta").then((m) => ({ default: m.LaboratorioPlanta })));
@@ -209,7 +214,7 @@ export default function App() {
   }, [servicoIdRota, logado]);
 
   // Laboratório do loteamento: só no servidor de desenvolvimento (some do build).
-  if (import.meta.env.DEV && location.hash.startsWith("#/lab/loteamento")) return <Laboratorio />;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/loteamento")) return <Suspense fallback={null}><Laboratorio /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/planta")) return <Suspense fallback={null}><LaboratorioPlanta /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/divisao")) return <Suspense fallback={null}><LaboratorioDivisao /></Suspense>;
   // antes do #/lab/car (que também casaria com "#/lab/cartao")
@@ -244,7 +249,7 @@ export default function App() {
   }
   // Autocadastro (0040): público, com ou sem login. A própria página entra com a
   // conta que cria e leva ao pagamento; quem já está conectado vê o aviso de lá.
-  if (rota.t === "assinar") return <Assinar plano={rota.plano} ciclo={rota.ciclo} />;
+  if (rota.t === "assinar") return <Suspense fallback={null}><Assinar plano={rota.plano} ciclo={rota.ciclo} /></Suspense>;
   // verificação pública do QR da planta: abre com ou sem login
   if (rota.t === "verificar") return <Suspense fallback={null}><VerificarDocumento codigo={rota.codigo} /></Suspense>;
   if (logado === null) return <div className="centro">Carregando...</div>;

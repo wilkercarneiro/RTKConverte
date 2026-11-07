@@ -266,7 +266,7 @@ function FichaCliente({ clienteId, inicial, onVoltar, onAbrirServico, onNovoServ
 
       {aba === "visao" && (
         <>
-          {onExecutarPedido && <PedidosGprol clienteId={clienteId} onExecutar={onExecutarPedido} />}
+          {onExecutarPedido && <PedidosGprol clienteId={clienteId} onExecutar={onExecutarPedido} limite={4} />}
           <div className="cl-visao">
             <div className="cl-principal">
             <section className="cl-cartao">
