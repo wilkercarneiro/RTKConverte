@@ -66,7 +66,7 @@ export function ClientePage(props: Props) {
   if (erroCarga) {
     return (
       <div className="pagina">
-        <button className="fantasma voltar cl-voltar" onClick={onVoltar}>← Clientes</button>
+        <button className="fantasma voltar cl-voltar voltar-pagina" onClick={onVoltar}>← Clientes</button>
         <div className="aviso-erro-pagina" role="alert">
           <span>Não foi possível abrir o cliente. {erroCarga}</span>
           <button onClick={() => setTentativa((n) => n + 1)}>Tentar de novo</button>
@@ -207,7 +207,7 @@ function FichaCliente({ clienteId, inicial, onVoltar, onAbrirServico, onNovoServ
 
   return (
     <div className="pagina fade cl-pagina">
-      <button className="fantasma voltar cl-voltar" onClick={onVoltar}>← Clientes</button>
+      <button className="fantasma voltar cl-voltar voltar-pagina" onClick={onVoltar}>← Clientes</button>
 
       <header className="cl-cabeca">
         <Avatar nome={c.nome} pj={pj} grande />

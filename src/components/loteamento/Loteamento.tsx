@@ -415,7 +415,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
   return (
     <div className={`conferencia lot-pagina etapa-${etapa}${etapa === "projeto" && res ? " tela-cheia" : ""}`}>
       <header className="topo">
-        <button className="fantasma voltar" onClick={onVoltar}>← Serviços</button>
+        <button className="fantasma voltar voltar-pagina" onClick={onVoltar}>← Serviços</button>
         <span className="sep" aria-hidden="true">/</span>
         <h1 className="titulo">{projeto.nome}</h1>
         <span className="chip mod-loteamento">{rotuloCurto.loteamento}</span>

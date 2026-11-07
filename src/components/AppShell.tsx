@@ -4,11 +4,18 @@
 // mouse para nele — a mesma pegada da barra do GPROL: abre depois de ~180 ms
 // parado (passar de raspão não abre), fecha na hora ao sair, abre também pelo
 // teclado. O conteúdo nunca é empurrado: um espaçador do tamanho do trilho
-// fechado segura o layout. No celular vira uma barra no topo com gaveta.
+// fechado segura o layout.
+//
+// No celular (até 900 px), à moda do WhatsApp: o Início tem a marca no alto
+// (sem barra), o menu completo no hambúrguer e uma barra de abas embaixo
+// (Início, Serviços, Clientes, Ferramentas, Configurações). As outras telas não
+// têm menu: só o "‹ Voltar" no alto, que volta à tela anterior (lib/rota.ts).
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { supabase } from "../lib/supabase";
 import type { Rota } from "../lib/rota";
+import { useVoltar } from "../lib/rota";
+import { FerramentasCartoes } from "./Ferramentas";
 import { temRecurso } from "../lib/recursos";
 import { Logo } from "./Logo";
 import { BarreiraErro } from "./BarreiraErro";
@@ -35,7 +42,19 @@ const I = {
   consulta: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3M8 11h6M11 8v6",
   campo: "M12 2v3M12 19v3M2 12h3M19 12h3M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
   terraplanagem: "M2 20h20M4 20l5-8 4 5 3-4 4 7M14 6l2-2 2 2M16 4v6",
+  ferramentas: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z",
+  voltar: "M15 18l-6-6 6-6",
+  fechar: "M18 6 6 18M6 6l12 12",
 };
+
+/** Abas da barra de baixo do celular (só no Início). */
+const ABAS: { t: Rota["t"] | "ferramentas"; rotulo: string; icone: string }[] = [
+  { t: "inicio", rotulo: "Início", icone: I.inicio },
+  { t: "servicos", rotulo: "Serviços", icone: I.servicos },
+  { t: "clientes", rotulo: "Clientes", icone: I.clientes },
+  { t: "ferramentas", rotulo: "Ferramentas", icone: I.ferramentas },
+  { t: "config", rotulo: "Configurações", icone: I.config },
+];
 
 /** `acao`: item que não navega (o suporte abre o painel do chat). */
 interface Item { t: Rota["t"]; rotulo: string; icone: string; destino?: Rota; acao?: () => void; selo?: number | null }
@@ -124,8 +143,40 @@ export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId
   }, []);
   const fechar = useCallback(() => { window.clearTimeout(timer.current); setAberto(false); }, []);
   useEffect(() => () => window.clearTimeout(timer.current), []);
-  // trocar de tela fecha a gaveta do celular
-  useEffect(() => { setGaveta(false); }, [rota]);
+  // folha "Ferramentas" da barra de baixo do celular
+  const [folha, setFolha] = useState(false);
+  // trocar de tela fecha a gaveta e a folha do celular
+  useEffect(() => { setGaveta(false); setFolha(false); }, [rota]);
+  // celular: o Início é o "dash" (marca + abas); as outras telas só têm o voltar
+  const dash = rota.t === "inicio";
+  const volta = useVoltar(rota, ir);
+  // Tela com um "voltar" interno (projeto aberto da Terraplanagem, imóvel
+  // vizinho na Consulta…): no celular o voltar do topo faz o dele — senão
+  // haveria dois voltar com destinos diferentes. Marcado com data-voltar-interno.
+  const conteudo = useRef<HTMLElement>(null);
+  const [interno, setInterno] = useState<string | null>(null);
+  useEffect(() => {
+    const el = conteudo.current;
+    if (!el || dash) { setInterno(null); return; }
+    const ler = () => setInterno(el.querySelector<HTMLElement>("[data-voltar-interno]")?.dataset.voltarInterno ?? null);
+    ler();
+    const mo = new MutationObserver(ler);
+    mo.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-voltar-interno"] });
+    return () => mo.disconnect();
+  }, [dash, rota]);
+  const voltarTopo = () => {
+    const b = interno ? conteudo.current?.querySelector<HTMLElement>("[data-voltar-interno]") : null;
+    if (b) b.click(); else volta.voltar();
+  };
+  const rotuloVolta = interno ?? volta.rotulo;
+  // o topo do dash ganha fundo ao rolar (parado, não há barra nenhuma)
+  const [rolou, setRolou] = useState(false);
+  useEffect(() => {
+    const f = () => setRolou(window.scrollY > 8);
+    f();
+    addEventListener("scroll", f, { passive: true });
+    return () => removeEventListener("scroll", f);
+  }, []);
 
   const ir2 = (it: Item) => {
     fechar();
@@ -168,8 +219,9 @@ export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId
     </>
   );
 
+  const suporteNovo = escritorioId && naoLidas ? naoLidas : 0;
   return (
-    <div className="app casca">
+    <div className={`app casca${dash ? " casca-dash" : " casca-pagina"}`}>
       <div className="tr-espaco" aria-hidden="true" />
       <aside className="tr" data-aberto={aberto} onMouseEnter={abrir} onMouseLeave={fechar}
         onFocus={() => setAberto(true)}
@@ -177,24 +229,75 @@ export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId
         {conteudoTrilho}
       </aside>
 
-      {/* celular: barra no topo + gaveta */}
-      <header className="tr-topo">
-        <button className="tr-marca" onClick={() => ir({ t: "inicio" })}><Logo className="tr-logo" /><span className="tr-nome">Vertces</span></button>
-        <button className="tr-menu" aria-label="Abrir menu" aria-expanded={gaveta} onClick={() => setGaveta(true)}><Ico d={I.menu} /></button>
-      </header>
+      {/* celular: no Início, a marca e o hambúrguer (sem barra); nas outras telas, só o voltar */}
+      {dash ? (
+        <header className={rolou ? "tr-topo tr-topo-dash rolou" : "tr-topo tr-topo-dash"}>
+          <button className="tr-marca" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} aria-label="Vertces — topo do Início">
+            <Logo className="tr-logo" sobreClaro /><span className="tr-nome">Vertces</span>
+          </button>
+          <button className="tr-menu" aria-label={suporteNovo ? `Abrir menu (${suporteNovo} resposta(s) do suporte)` : "Abrir menu"}
+            aria-expanded={gaveta} onClick={() => setGaveta(true)}>
+            <Ico d={I.menu} />
+            {!!suporteNovo && <span className="tr-menu-ponto" aria-hidden="true" />}
+          </button>
+        </header>
+      ) : (
+        <header className="tr-topo tr-topo-voltar">
+          <button className="tr-voltar" onClick={voltarTopo} aria-label={`Voltar para ${rotuloVolta}`}>
+            <Ico d={I.voltar} /><span>{rotuloVolta}</span>
+          </button>
+        </header>
+      )}
       {gaveta && (
         <>
           <div className="tr-veu" onClick={() => setGaveta(false)} />
           <aside className="tr tr-gaveta" data-aberto="true" role="dialog" aria-modal="true" aria-label="Menu"
             onKeyDown={(e) => { if (e.key === "Escape") setGaveta(false); }}>
+            <button className="tr-gaveta-fechar" aria-label="Fechar menu" onClick={() => setGaveta(false)}><Ico d={I.fechar} /></button>
             {conteudoTrilho}
           </aside>
         </>
       )}
 
+      {/* celular, só no Início: as abas principais embaixo */}
+      {dash && (
+        <nav className="tr-abas" aria-label="Atalhos">
+          {ABAS.map((a) => {
+            const ativa2 = a.t === "ferramentas" ? folha : !folha && ativa === a.t;
+            return (
+              <button key={a.t} type="button" className={ativa2 ? "tr-aba ativo" : "tr-aba"} aria-current={ativa2 && a.t !== "ferramentas" ? "page" : undefined}
+                aria-expanded={a.t === "ferramentas" ? folha : undefined}
+                onClick={() => {
+                  if (a.t === "ferramentas") { setFolha((v) => !v); return; }
+                  setFolha(false);
+                  if (a.t === "inicio") { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+                  ir({ t: a.t } as Rota);
+                }}>
+                <span className="tr-aba-icone"><Ico d={a.icone} /></span>
+                <span className="tr-aba-rotulo">{a.rotulo}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
+      {dash && folha && (
+        <>
+          <div className="tr-folha-veu" onClick={() => setFolha(false)} />
+          <div className="tr-folha" role="dialog" aria-modal="true" aria-label="Ferramentas"
+            onKeyDown={(e) => { if (e.key === "Escape") setFolha(false); }}>
+            <span className="tr-folha-alca" aria-hidden="true" />
+            <div className="tr-folha-cabeca">
+              <b>Ferramentas</b>
+              <span>sem abrir serviço</span>
+            </div>
+            <FerramentasCartoes titulo={false} onAbrir={(r) => { setFolha(false); ir(r); }} />
+          </div>
+        </>
+      )}
+
       {/* Um erro de desenho em qualquer tela fica NESTA área: o menu continua e o
           aviso oferece "tentar de novo" — nunca mais a página inteira em branco. */}
-      <main className="app-conteudo" key={rota.t}>
+      <main className="app-conteudo" key={rota.t} ref={conteudo}>
         <BarreiraErro onde="esta tela" chave={JSON.stringify(rota)}
           explicar={(e) => (/webgl/i.test(e.message) ? MOTIVO_SEM_WEBGL : null)}>
           {children}

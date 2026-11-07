@@ -702,14 +702,15 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
 
   return (
     <div className="pagina consulta" {...soltar}>
-      <CabecalhoPagina olho="Ferramentas" titulo={<>Consultar imóvel<Dica>CAR, SIGEF, restrições (TI, UC, assentamento, quilombola, embargo, fronteira, área militar, sítio arqueológico), focos de queimada, bioma, solo e chuva de qualquer lugar — sem abrir serviço e sem gastar crédito. O resultado vira serviço de CAR com um clique e sai em PDF, KML, SHP, DXF…</Dica></>} />
+      <CabecalhoPagina olho="Ferramentas" titulo="Consultar imóvel"
+        descricao={<>Tudo sobre um imóvel, de qualquer lugar — sem abrir serviço e sem gastar crédito.<Dica>CAR, SIGEF, restrições (TI, UC, assentamento, quilombola, embargo, fronteira, área militar, sítio arqueológico), focos de queimada, bioma, solo e chuva de qualquer lugar — sem abrir serviço e sem gastar crédito. O resultado vira serviço de CAR com um clique e sai em PDF, KML, SHP, DXF…</Dica></>} />
       <BuscaConsulta texto={texto} onTexto={setTexto} onConsultar={(e, t) => void consultar(e, t)} onArquivo={(f) => void abrirArquivo(f)}
         desenhando={!!desenho} onDesenhar={() => { if (desenho) setDesenho(null); else comecarDesenho(); }}
         onLocalizacao={ondeEstou} ocupado={ocupado} foco={busca.fase === "ocioso"} origem={origemBusca} />
 
       {/* acima do mapa (no celular o mapa vem antes do painel): quem trocou de imóvel vê logo como voltar */}
       {busca.fase === "resultado" && pilha.length > 0 && (
-        <button type="button" className="cr-voltar" onClick={voltarConsulta}>← Voltar para <b>{pilha[pilha.length - 1].rotulo}</b></button>
+        <button type="button" className="cr-voltar" data-voltar-interno={pilha[pilha.length - 1].rotulo} onClick={voltarConsulta}>← Voltar para <b>{pilha[pilha.length - 1].rotulo}</b></button>
       )}
 
       <div className="consulta-corpo">

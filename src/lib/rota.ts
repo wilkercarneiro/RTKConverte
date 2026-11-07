@@ -104,6 +104,92 @@ export function voltarDoNovo(r: { clienteId?: string }, origem: Rota | null = or
   return r.clienteId ? { rota: { t: "cliente", id: r.clienteId }, rotulo: "o cliente" } : { rota: { t: "inicio" }, rotulo: "o Início" };
 }
 
+// ---------------------------------------------------------------------------
+// Pilha do sistema: o "‹ Voltar" do celular (fora do Início não há menu) volta
+// para a tela anterior DESTE uso do sistema — e nunca sai dele. Cada entrada do
+// histórico ganha um número (history.state.n); os endereços ficam guardados na
+// aba (sessionStorage), então o F5 no meio de um serviço continua sabendo de onde
+// veio. Aberto direto por um link (sem nada antes), volta ao "pai" da tela.
+// ---------------------------------------------------------------------------
+const CHAVE_PILHA = "vertces.pilha";
+let atualN = 0;
+let pilhaHashes: string[] = [];
+const ouvintesPilha = new Set<() => void>();
+
+function lerPilha(): string[] {
+  try { const v = JSON.parse(sessionStorage.getItem(CHAVE_PILHA) ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function gravarPilha() {
+  try { sessionStorage.setItem(CHAVE_PILHA, JSON.stringify(pilhaHashes.slice(-60))); } catch { /* aba privada: só não lembra */ }
+}
+function numeroDoEstado(): number | null {
+  const n = (history.state as { n?: unknown } | null)?.n;
+  return typeof n === "number" ? n : null;
+}
+function marcar(n: number) {
+  history.replaceState({ ...(history.state ?? {}), n }, "");
+}
+if (typeof window !== "undefined") {
+  pilhaHashes = lerPilha();
+  const n = numeroDoEstado();
+  if (n === null || pilhaHashes[n] !== location.hash) {
+    // primeira tela desta aba (ou histórico que não é nosso): começa do zero
+    atualN = 0; pilhaHashes = [location.hash]; marcar(0);
+  } else {
+    atualN = n;
+  }
+  gravarPilha();
+  addEventListener("hashchange", () => {
+    const n2 = numeroDoEstado();
+    if (n2 !== null && pilhaHashes[n2] === location.hash) {
+      atualN = n2; // voltar/avançar do navegador
+    } else {
+      atualN += 1; // entrada nova: o que estava à frente deixa de existir
+      pilhaHashes = [...pilhaHashes.slice(0, atualN), location.hash];
+      marcar(atualN);
+    }
+    gravarPilha();
+    ouvintesPilha.forEach((f) => f());
+  });
+}
+
+/** Tela que o "‹ Voltar" leva quando não há nada antes nesta aba. */
+export function paiDe(r: Rota): Rota {
+  switch (r.t) {
+    case "servico": return { t: "servicos" };
+    case "cliente": return { t: "clientes" };
+    case "novo": return voltarDoNovo(r).rota;
+    default: return { t: "inicio" };
+  }
+}
+
+const NOMES: Partial<Record<Rota["t"], string>> = {
+  inicio: "Início", servicos: "Serviços", clientes: "Clientes", cliente: "Cliente", servico: "Serviço",
+  config: "Configurações", equipe: "Equipe", ajuda: "Ajuda", pedidos: "Pedidos", consulta: "Consulta",
+  campo: "Campo", terraplanagem: "Terraplanagem", novo: "Novo serviço", admin: "Painel",
+};
+
+/**
+ * Para onde o "‹ Voltar" do celular leva: a tela anterior desta aba (pelo
+ * histórico do navegador, que mantém a rolagem e o estado) ou, sem nada antes,
+ * o pai da tela atual. `rotulo` é o nome da tela de destino.
+ */
+export function useVoltar(rota: Rota, ir: (r: Rota) => void): { rotulo: string; voltar: () => void } {
+  const [, setVersao] = useState(0);
+  useEffect(() => {
+    const f = () => setVersao((v) => v + 1);
+    ouvintesPilha.add(f);
+    return () => { ouvintesPilha.delete(f); };
+  }, []);
+  const anterior = atualN > 0 ? pilhaHashes[atualN - 1] : undefined;
+  if (anterior !== undefined) {
+    const r = hashParaRota(anterior);
+    return { rotulo: NOMES[r.t] ?? "Voltar", voltar: () => history.back() };
+  }
+  const pai = paiDe(rota);
+  return { rotulo: NOMES[pai.t] ?? "Início", voltar: () => ir(pai) };
+}
+
 /** Rota atual + navegação. `trocar` empilha no histórico; `substituir`, não. */
 export function useRota(): { rota: Rota; ir: (r: Rota) => void; substituir: (r: Rota) => void } {
   const [rota, setRota] = useState<Rota>(() => hashParaRota(location.hash));
@@ -121,7 +207,11 @@ export function useRota(): { rota: Rota; ir: (r: Rota) => void; substituir: (r: 
     // replace: usado quando a tela atual deixou de existir (ex.: serviço recém
     // criado assume o lugar da tela "novo"), para que voltar não retorne a ela
     substituir: (r) => {
-      history.replaceState(null, "", rotaParaHash(r));
+      // mantém o número da entrada (a pilha do "‹ Voltar") e troca o endereço dela
+      const h = rotaParaHash(r);
+      history.replaceState(history.state, "", h);
+      pilhaHashes[atualN] = h;
+      gravarPilha();
       setRota(r);
     },
   };

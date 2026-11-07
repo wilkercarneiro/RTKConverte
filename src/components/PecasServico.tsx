@@ -363,7 +363,7 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
           { rotulo: "Peças técnicas", estado: "futura" },
         ]} />
         <div className="upload-card">
-          <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para {voltarPara}</button>
+          <button className="fantasma voltar-para voltar-pagina" onClick={onVoltar}>← Voltar para {voltarPara}</button>
           <div>
             <h2>Peças a partir do PDF do SIGEF<Dica>Já tem o memorial do SIGEF em mãos? Envie o PDF de prévia/certificação:
               o sistema lê o imóvel, o proprietário e os confrontantes automaticamente.</Dica></h2>
@@ -464,7 +464,7 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
     <div className="conferencia" style={{ paddingBottom: 40 }}>
       <Avisos avisos={avisos} onFechar={fechar} />
       <header className="topo">
-        <button className="fantasma voltar" onClick={onVoltar}>
+        <button className="fantasma voltar voltar-pagina" onClick={onVoltar}>
           ← {servicoId ? "Serviços" : ({ "o cliente": "Cliente", "os serviços": "Serviços" } as Record<string, string>)[voltarPara] ?? "Início"}
         </button>
         <span className="sep" aria-hidden="true">/</span>

@@ -22,6 +22,8 @@ import type { MinhaCobranca } from "../lib/cobranca";
 import { PedidosGprol } from "./gprol/PedidosGprol";
 import type { PedidoGprol } from "../lib/gprol";
 import { GprolCartao } from "./gprol/GprolCartao";
+import { FerramentasCartoes } from "./Ferramentas";
+import type { Rota } from "../lib/rota";
 
 interface Props {
   onNovo: (chave: ChaveServico) => void;
@@ -42,6 +44,8 @@ interface Props {
   onConfigurarGprol?: () => void;
   /** "Ver todos" dos pedidos do GPROL: a página #/pedidos */
   onVerPedidos?: () => void;
+  /** abre uma ferramenta (Consultar imóvel, Medir no campo, Terraplanagem) */
+  onFerramenta?: (r: Rota) => void;
 }
 
 function saudacao(): string {
@@ -79,7 +83,7 @@ function Numero({ icone, rotulo, valor, onClick }: { icone: string; rotulo: stri
     : <div>{corpo}</div>;
 }
 
-export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, cobranca, onCobrancaMudou, onExecutarPedido, onConfigurarGprol, onVerPedidos }: Props) {
+export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtualizarCreditos, cobranca, onCobrancaMudou, onExecutarPedido, onConfigurarGprol, onVerPedidos, onFerramenta }: Props) {
   // null = carregando; erro separado: falha nunca aparece como "nenhum serviço"
   const [servicos, setServicos] = useState<Servico[] | null>(null);
   const [docs, setDocs] = useState<Record<string, DocsDoServico>>({});
@@ -160,9 +164,8 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
               <span className="rt-rotulo">Continuar de onde parou</span>
               <div className="rt-titulo">
                 {retomar.denominacao ?? retomar.nome_arquivo_txt ?? retomar.id.slice(0, 8)}
-                <span>
-                  {retomar.municipio ? ` · ${retomar.municipio}-${retomar.uf ?? ""}` : ""}
-                  {` · ${rotuloCurto[chaveDoServico(retomar)]}`}
+                <span className="rt-meta">
+                  {[retomar.municipio ? `${retomar.municipio}-${retomar.uf ?? ""}` : null, rotuloCurto[chaveDoServico(retomar)]].filter(Boolean).join(" · ")}
                 </span>
               </div>
             </div>
@@ -180,6 +183,8 @@ export function Inicio({ onNovo, onAbrir, onVerServicos, nome, creditos, onAtual
       {criar ? <NovoServico onNovo={onNovo} /> : (
         <p className="nota-permissao">Para abrir um serviço novo, peça a permissão “Criar serviços” a quem gerencia a equipe.</p>
       )}
+
+      {onFerramenta && <FerramentasCartoes onAbrir={onFerramenta} />}
 
       {/* convite (só quando a empresa não está conectada): abaixo do que se usa todo dia */}
       {onConfigurarGprol && <GprolCartao onConfigurar={onConfigurarGprol} />}

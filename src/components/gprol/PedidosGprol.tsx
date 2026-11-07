@@ -129,8 +129,8 @@ export function PaginaPedidosGprol({ onExecutar, onVoltar }: {
     <div className="pagina gp-pagina fade">
       <div className="gp-pagina-cabeca">
         <div>
-          <button type="button" className="link" onClick={onVoltar}>← Início</button>
-          <h1>A executar · GPROL</h1>
+          <button type="button" className="link voltar-pagina" onClick={onVoltar}>← Início</button>
+          <h1 className="sr-only">A executar · GPROL</h1>
           <p className="sub">Serviços vendidos no GPROL que ainda falta fazer aqui. Ao executar, as etapas de lá andam sozinhas.</p>
         </div>
       </div>

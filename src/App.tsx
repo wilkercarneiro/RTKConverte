@@ -511,7 +511,7 @@ export default function App() {
             onCobrancaMudou={() => { atualizarCobranca(); atualizarCreditos(); }}
             onExecutarPedido={(p, chave) => ir({ t: "novo", chave, clienteId: p.cliente_id ?? undefined, pedidoId: p.id })}
             onConfigurarGprol={() => { guardar("config.aba", "integracoes"); ir({ t: "config" }); }}
-            onVerPedidos={() => ir({ t: "pedidos" })} />
+            onVerPedidos={() => ir({ t: "pedidos" })} onFerramenta={ir} />
         </AppShell>
       );
   }

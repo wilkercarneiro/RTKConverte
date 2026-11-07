@@ -311,7 +311,7 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
   // `dica`: explicação de uso da fase, no "?" ao lado do título
   const cabecalhoCom = (dica?: ReactNode) => (
     <>
-      {onVoltar && <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
+      {onVoltar && <button className="fantasma voltar-para voltar-pagina" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
       <div>
         <h2>{definicao.titulo}{dica && <Dica>{dica}</Dica>}</h2>
         <p className="sub">{definicao.resumo}</p>

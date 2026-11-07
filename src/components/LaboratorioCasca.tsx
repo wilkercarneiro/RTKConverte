@@ -269,7 +269,7 @@ export function LaboratorioCasca() {
   if (tela === "pagamento") return <AguardandoPagamento nome="D'Prol Georreferenciamento" />;
   const rota: Rota = tela === "equipe" ? { t: "equipe" }
     : tela === "cliente" ? { t: "cliente", id: idCliente || "c1" }
-      : tela === "clientes" ? { t: "clientes" } : { t: "inicio" };
+      : tela === "clientes" ? { t: "clientes" } : tela === "pedidos" ? { t: "pedidos" } : { t: "inicio" };
   const ir = (r: Rota) => {
     const alvo = r.t === "equipe" ? "equipe" : r.t === "cliente" ? `cliente/${r.id}` : r.t === "clientes" ? "clientes" : "inicio";
     location.hash = `#/lab/casca/${alvo}${operador ? "?operador" : ""}`;
@@ -277,7 +277,7 @@ export function LaboratorioCasca() {
   };
   const escritorio = { estado: "ok" as const, escritorio: { id: "e1", nome: "D'Prol", papel: operador ? "membro" as const : "dono" as const, modelos_compartilhados: true } };
   return (
-    <AppShell rota={rota} ir={ir} usuario={{ nome: operador ? "Paulo Sena" : "Daniel Nascimento", papel: operador ? "Equipe · D'Prol" : "Dono · D'Prol" }} superadmin={!operador}>
+    <AppShell rota={rota} ir={ir} usuario={{ nome: operador ? "Paulo Sena" : "Daniel Nascimento", papel: operador ? "Equipe · D'Prol" : "Dono · D'Prol" }} superadmin={!operador} escritorioId="e1">
       {tela === "equipe" ? <Equipe escritorio={escritorio} />
         : tela === "creditos" ? <SemCreditos def={definicaoDe("car")} creditos={cred} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizar} />
         : tela === "aceite" ? <AceiteCreditoGeral def={definicaoDe("car")} creditos={cred} onAceitar={() => {}} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizar} />
@@ -289,7 +289,8 @@ export function LaboratorioCasca() {
           : <Inicio onNovo={() => {}} onAbrir={() => {}} onVerServicos={() => {}} nome="Daniel Nascimento" creditos={cred} onAtualizarCreditos={atualizar}
               cobranca={RPC.minha_cobranca as ReturnType<typeof cobrancaDeExemplo>}
               onExecutarPedido={() => avisar("ok", "Abriria o serviço novo do pedido.")} onVerPedidos={() => { location.hash = "#/lab/casca/pedidos"; }}
-              onConfigurarGprol={() => avisar("ok", "Abriria Configurações → Integrações.")} />}
+              onConfigurarGprol={() => avisar("ok", "Abriria Configurações → Integrações.")}
+              onFerramenta={(r) => avisar("ok", `Abriria a ferramenta ${r.t}.`)} />}
     </AppShell>
   );
 }

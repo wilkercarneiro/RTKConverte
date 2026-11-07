@@ -1610,7 +1610,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
           linha só e, fixo no topo, comia meia tela em monitor médio. */}
       <header className="topo topo-limpo">
         <div className="topo-linha">
-          <button className="fantasma voltar" onClick={onVoltar}>← Serviços</button>
+          <button className="fantasma voltar voltar-pagina" onClick={onVoltar}>← Serviços</button>
           <span className="sep" aria-hidden="true">/</span>
           <h1 className="titulo">{servico.denominacao || servico.nome_arquivo_txt || "Serviço"}</h1>
           <span className={`chip mod-${chave}`}>{rotuloCurto[chave]}</span>

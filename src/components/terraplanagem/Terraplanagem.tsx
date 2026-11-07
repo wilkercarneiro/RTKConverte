@@ -172,7 +172,7 @@ export function Terraplanagem({ ir, armazenamento = armazenamentoConta, inicial 
         emitente={emitente}
         topo={
           <div className="tp-topo-nome">
-            <button type="button" className="fantasma cp-voltar" onClick={() => { gravarPendente(); setProjeto(null); setAvisosLeitura([]); setGravacao({ estado: "ocioso", hora: null }); }}>← Terraplanagens</button>
+            <button type="button" className="fantasma cp-voltar" data-voltar-interno="Terraplanagens" onClick={() => { gravarPendente(); setProjeto(null); setAvisosLeitura([]); setGravacao({ estado: "ocioso", hora: null }); }}>← Terraplanagens</button>
             <input className="tp-nome" aria-label="Nome do projeto" value={projeto.nome} maxLength={120}
               onChange={(e) => editar({ ...projeto, nome: e.target.value })}
               onBlur={(e) => { if (!e.target.value.trim()) editar({ ...projeto, nome: "Terraplanagem" }); }} />
@@ -281,7 +281,7 @@ function Inicio({ armazenamento, versao, trocando, onCancelarTroca, onAbrir, onP
     <div className="pagina tp-inicio">
       <CabecalhoPagina olho="Ferramentas" titulo={trocando ? `Trocar os pontos de ${trocando.nome}` : "Terraplanagem"}
         descricao={trocando ? "A plataforma, a cota e os taludes continuam os mesmos; só o terreno muda." : "Quanto de corte e de aterro para deixar o terreno plano — e quantos caminhões. Envie o levantamento e o resultado aparece na hora."}
-        voltar={trocando ? { rotulo: trocando.nome, onClick: onCancelarTroca } : undefined} />
+        voltar={trocando ? { rotulo: trocando.nome, onClick: onCancelarTroca } : undefined} mostrarTitulo={!!trocando} />
 
       <div className="tp-entrada">
         <label className={`tp-soltar${arrastando ? " arrastando" : ""}${lendo ? " lendo" : ""}`}

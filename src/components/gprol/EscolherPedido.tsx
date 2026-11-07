@@ -71,7 +71,7 @@ export function EscolherPedido({ chave, clienteId, onEscolher, children }: {
   return (
     <div className="pagina fade gpe">
       <div className="gpe-centro">
-        <button type="button" className="link gpe-voltar" onClick={() => history.back()}>← Voltar</button>
+        <button type="button" className="link gpe-voltar voltar-pagina" onClick={() => history.back()}>← Voltar</button>
         <span className="gpe-olho">{titulo}</span>
         <h1>Este serviço é um pedido do GPROL?</h1>
         <p className="sub">

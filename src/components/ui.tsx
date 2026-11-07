@@ -477,8 +477,15 @@ function DialogoConfirmacao({ pedido, responder }: { pedido: PedidoConfirmacao; 
 // Cabeçalho de página e estados de lista
 // ---------------------------------------------------------------------------
 
-/** Olho (mono, ponto verde), título, descrição e as ações à direita. */
-export function CabecalhoPagina({ olho, titulo, descricao, acoes, voltar }: {
+/**
+ * Cabeçalho de página: a descrição em cinza e as ações à direita.
+ *
+ * O nome da página ("Serviços", "Clientes"…) e o olho NÃO aparecem (pedido do
+ * Wilker, 06/11: tela mais limpa — o menu já diz onde se está). O título fica
+ * só para leitor de tela; `mostrarTitulo` o exibe quando ele traz informação
+ * que a página não tem em outro lugar (ex.: "Trocar os pontos de X").
+ */
+export function CabecalhoPagina({ olho, titulo, descricao, acoes, voltar, mostrarTitulo = false }: {
   olho?: string;
   titulo: ReactNode;
   descricao?: ReactNode;
@@ -486,13 +493,14 @@ export function CabecalhoPagina({ olho, titulo, descricao, acoes, voltar }: {
   acoes?: ReactNode;
   /** link de volta acima do olho: `{ rotulo: "Serviços", onClick }` vira "← Serviços" */
   voltar?: { rotulo: string; onClick: () => void };
+  mostrarTitulo?: boolean;
 }) {
   return (
-    <header className="cabecalho-pagina">
+    <header className={mostrarTitulo ? "cabecalho-pagina" : "cabecalho-pagina sem-titulo"}>
       <div className="cp-texto">
-        {voltar && <button type="button" className="fantasma cp-voltar" onClick={voltar.onClick}>← {voltar.rotulo}</button>}
-        {olho && <span className="olho">{olho}</span>}
-        <h1>{titulo}</h1>
+        {voltar && <button type="button" className="fantasma cp-voltar" data-voltar-interno={voltar.rotulo} onClick={voltar.onClick}>← {voltar.rotulo}</button>}
+        {olho && mostrarTitulo && <span className="olho">{olho}</span>}
+        <h1 className={mostrarTitulo ? undefined : "sr-only"}>{titulo}</h1>
         {descricao && <p className="cp-descricao">{descricao}</p>}
       </div>
       {acoes && <div className="cp-acoes">{acoes}</div>}

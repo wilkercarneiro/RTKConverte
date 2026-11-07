@@ -672,8 +672,7 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
       {!estreita && (
         <aside className="campo-lado" aria-label="Medição">
           <header className="campo-lado-cabeca">
-            <span className="olho">Ferramentas</span>
-            <h1>Medir no campo</h1>
+            <h1 className="sr-only">Medir no campo</h1>
             <p className="campo-aviso">{AVISO_GPS}</p>
           </header>
           <div className="campo-lado-painel">{painel}</div>

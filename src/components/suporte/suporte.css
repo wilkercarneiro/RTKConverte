@@ -228,3 +228,22 @@
 @media (max-width: 700px) {
   body:has(.campo.tela-cheia) .sp-lancador { display: none; }
 }
+
+/* celular (06/11): no Início o botão fica logo acima da barra de abas, como o
+   botão de conversa do WhatsApp — quadrado arredondado; nas outras telas,
+   no canto, um pouco menor */
+@media (max-width: 900px) {
+  .sp-lancador { width: 52px; height: 52px; border-radius: 17px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .casca-dash .sp-lancador { width: 56px; height: 56px; border-radius: 18px; bottom: calc(var(--abas-cel) + 14px); background: var(--primaria); box-shadow: 0 10px 26px -8px rgb(23 133 82 / 60%), 0 2px 6px rgb(14 59 43 / 18%); }
+  .casca-dash .sp-lancador svg { color: #fff; }
+  .sp-lancador:hover:not(:disabled), .sp-lancador:focus-visible { width: 52px; padding: 0; gap: 0; }
+  .casca-dash .sp-lancador:hover:not(:disabled), .casca-dash .sp-lancador:focus-visible { width: 56px; background: var(--primaria-escura); }
+  .sp-lancador:hover .sp-lancador-tx, .sp-lancador:focus-visible .sp-lancador-tx { max-width: 0; }
+  .casca-dash .aviso-credito { bottom: calc(var(--abas-cel) + 14px); }
+}
+@media (max-width: 900px) {
+  /* serviço com a barra de gerar presa embaixo: o suporte fica acima dela */
+  body:has(.preview-fina) .sp-lancador { bottom: calc(158px + env(safe-area-inset-bottom, 0px)); }
+}
+/* folha de Ferramentas ou menu abertos: o botão sai da frente */
+body:has(.tr-folha) .sp-lancador, body:has(.tr-gaveta) .sp-lancador { display: none; }

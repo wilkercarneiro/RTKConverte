@@ -254,7 +254,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
   return (
     <div className="conferencia car-pagina tela-cheia">
       <header className="topo">
-        <button className="fantasma voltar" onClick={onVoltar}>← Serviços</button>
+        <button className="fantasma voltar voltar-pagina" onClick={onVoltar}>← Serviços</button>
         <span className="sep" aria-hidden="true">/</span>
         <h1 className="titulo">{projeto.nome}</h1>
         <span className="chip mod-car">{rotuloCurto.car}</span>

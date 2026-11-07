@@ -12,11 +12,11 @@
   .campo.tela-cheia { display: grid; grid-template-columns: minmax(0, 1fr) clamp(380px, calc(var(--vw) * 0.27), 470px); overflow: hidden; }
 }
 @media (max-width: 900px) {
-  .campo { display: flex; flex-direction: column; height: calc(var(--vh-d) - 58px); overflow: hidden; }
+  .campo { display: flex; flex-direction: column; height: calc(var(--vh-d) - var(--topo-cel, 52px) - env(safe-area-inset-top, 0px)); overflow: hidden; }
   .campo.em-tela-cheia { height: auto; }
-  /* a página não rola: a área de conteúdo tem a altura da tela menos o topo (58 px),
+  /* a página não rola: a área de conteúdo tem a altura da tela menos o topo (--topo-cel),
      senão a min-height da tela inteira somava com o topo e o polegar arrastava tudo 58 px */
-  .app-conteudo:has(> .campo) { min-height: 0; height: calc(var(--vh-d) - 58px); padding: 0; overflow: hidden; }
+  .app-conteudo:has(> .campo) { min-height: 0; height: calc(var(--vh-d) - var(--topo-cel, 52px) - env(safe-area-inset-top, 0px)); padding: 0; overflow: hidden; }
 }
 .campo-palco { position: relative; display: flex; flex-direction: column; min-height: 0; min-width: 0; flex: 1 1 auto; }
 

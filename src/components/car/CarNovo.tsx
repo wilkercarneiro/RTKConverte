@@ -194,8 +194,8 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
       ]} />
       <div className="upload-card">
         {veio?.volta
-          ? <button className="fantasma voltar-para" onClick={voltarParaOrigem}>← Voltar para {veio.volta.rotulo}</button>
-          : onVoltar && <button className="fantasma voltar-para" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
+          ? <button className="fantasma voltar-para voltar-pagina" onClick={voltarParaOrigem}>← Voltar para {veio.volta.rotulo}</button>
+          : onVoltar && <button className="fantasma voltar-para voltar-pagina" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
         <div>
           <h2>{definicao.titulo}<Dica>{definicao.resumo}</Dica></h2>
         </div>
