@@ -128,7 +128,7 @@ export function Campo(props: PropsCampo) {
     return lerAparelho(arm).registros[pedida]?.medicao ?? undefined;
   }, [props.abrir, pedida, arm]);
   // a sessão sai do aparelho em milissegundos: espera para não abrir o aparelho errado
-  if (doUsuario && usuario === undefined) return <div className="campo tela-cheia" data-tela-cheia aria-busy="true" />;
+  if (doUsuario && usuario === undefined) return <div className="campo tela-cheia" data-tela-cheia data-sem-toque aria-busy="true" />;
   return <CampoTela key={usuario ?? "-"} {...props} abrir={props.abrir ?? abrirPedida} abrirId={!props.abrir && !abrirPedida && pedida ? pedida : undefined} armazem={arm} />;
 }
 
@@ -635,7 +635,7 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   );
 
   return (
-    <div className="campo tela-cheia" data-tela-cheia>
+    <div className="campo tela-cheia" data-tela-cheia data-sem-toque>
       <div className="campo-palco">
         <MapaCampo
           vertices={verticesMapa} fechada={!!medicao?.fechada} posicao={leitura}

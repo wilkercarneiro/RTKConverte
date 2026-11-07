@@ -1,0 +1,212 @@
+/* ================================================================ áreas de trabalho no celular (TelaCheia.tsx)
+   Fora da tela cheia: PRÉVIA — o desenho limpo, sem ferramentas, com um véu
+   que recebe o toque (o mapa não rouba a rolagem e nada é mexido sem querer).
+   Na tela cheia: a barra .tc-barra no alto (✕ · nome · Pronto) e a área logo
+   abaixo dela, do tamanho da tela. */
+.tc-barra { display: none; }
+@media (max-width: 900px) {
+  :is(:is([data-tela-cheia], .lot-area-trabalho, .car-area-trabalho):not(.em-tela-cheia):not([data-sem-toque]):not([data-toque-parcial]), [data-toque-parcial]:not(.em-tela-cheia) [data-alvo-toque]) {
+    position: relative; isolation: isolate; cursor: pointer;
+  }
+  :is(:is([data-tela-cheia], .lot-area-trabalho, .car-area-trabalho):not(.em-tela-cheia):not([data-sem-toque]):not([data-toque-parcial]), [data-toque-parcial]:not(.em-tela-cheia) [data-alvo-toque])::after {
+    content: ""; position: absolute; inset: 0; z-index: 998; touch-action: pan-y;
+    border-radius: inherit;
+    background: linear-gradient(180deg, rgb(6 24 18 / 0%) 52%, rgb(6 24 18 / 34%) 100%);
+    -webkit-tap-highlight-color: transparent;
+  }
+  :is(:is([data-tela-cheia], .lot-area-trabalho, .car-area-trabalho):not(.em-tela-cheia):not([data-sem-toque]):not([data-toque-parcial]), [data-toque-parcial]:not(.em-tela-cheia) [data-alvo-toque])::before {
+    content: "Toque para ajustar em tela cheia";
+    position: absolute; left: 50%; bottom: 16px; z-index: 999; transform: translateX(-50%);
+    display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; pointer-events: none;
+    height: 40px; padding: 0 16px 0 40px; border-radius: 999px;
+    background: rgb(14 59 43 / 92%) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237BD3A6' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'/%3E%3C/svg%3E") no-repeat 14px center / 18px;
+    color: #fff; font: 600 13.5px/1 var(--fonte); letter-spacing: -0.005em;
+    box-shadow: 0 10px 24px -10px rgb(6 24 18 / 70%);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  /* rolar a página por cima do mapa da prévia */
+  :is(:is([data-tela-cheia], .lot-area-trabalho, .car-area-trabalho):not(.em-tela-cheia):not([data-sem-toque]):not([data-toque-parcial]), [data-toque-parcial]:not(.em-tela-cheia) [data-alvo-toque]) * { touch-action: pan-y !important; }
+  /* entrar é tocar; sair é o ✕ da barra: o botão pequeno sai (menos no Medir no campo) */
+  .botao-tela-cheia { display: none !important; }
+  [data-sem-toque] .botao-tela-cheia { display: grid !important; }
+
+  /* ---- tela cheia: a barra e a área abaixo dela */
+  html.com-tela-cheia-celular .em-tela-cheia { top: calc(54px + env(safe-area-inset-top, 0px)) !important; }
+  .tc-barra {
+    display: flex; align-items: center; gap: 6px;
+    position: fixed; left: 0; right: 0; top: 0; z-index: 86;
+    height: 54px; box-sizing: content-box; padding: env(safe-area-inset-top, 0px) 10px 0 4px;
+    background: var(--floresta); color: #fff;
+    box-shadow: 0 1px 0 rgb(255 255 255 / 6%), 0 8px 20px -14px rgb(0 0 0 / 60%);
+    animation: tc-entra 0.22s cubic-bezier(.2, .8, .2, 1) both;
+  }
+  .tc-fechar {
+    all: unset; cursor: pointer; flex: none; display: grid; place-items: center;
+    width: 46px; height: 46px; border-radius: 50%; color: #fff; -webkit-tap-highlight-color: transparent;
+  }
+  .tc-fechar:active { background: rgb(255 255 255 / 12%); }
+  .tc-titulo { flex: 1; min-width: 0; font: 600 16.5px/1.2 var(--fonte-titulo); letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tc-pronto {
+    all: unset; cursor: pointer; flex: none; height: 36px; padding: 0 16px; border-radius: 999px;
+    background: var(--acento, #7BD3A6); color: var(--floresta); font: 700 14px/36px var(--fonte);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tc-pronto:active { filter: brightness(0.92); }
+  .tc-fechar:focus-visible, .tc-pronto:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+}
+@keyframes tc-entra { from { transform: translateY(-100%); } }
+
+/* ================================================================ pranchetas (loteamento, divisão, glebas, CAR)
+   Prévia: só o desenho. Tela cheia: ferramentas numa coluna à esquerda, o
+   desenho no resto e o painel como folha embaixo (rola por dentro); com o
+   painel recolhido, as ações rápidas viram uma faixa embaixo. */
+@media (max-width: 900px) {
+  /* ---- prévia */
+  html :is(.lot-area-trabalho, .car-area-trabalho):not(.em-tela-cheia) {
+    display: grid; grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: minmax(0, 1fr) !important;
+    height: min(62vh, 480px) !important; min-height: 300px !important; contain: none !important;
+    border: 1px solid var(--borda); border-radius: 16px; overflow: hidden; background: #EEF1EC;
+  }
+  html :is(.lot-area-trabalho, .car-area-trabalho):not(.em-tela-cheia) > :not(.lot-centro):not(.car-centro) { display: none !important; }
+  html :is(.lot-area-trabalho, .car-area-trabalho):not(.em-tela-cheia) > :is(.lot-centro, .car-centro) { grid-row: 1; grid-column: 1; }
+  html :is(.lot-area-trabalho, .car-area-trabalho):not(.em-tela-cheia) :is(.lot-comando, .lot-faixa-importado, .lot-redes, .car-dica-mapa) { display: none !important; }
+
+  /* ---- tela cheia */
+  html.com-tela-cheia-celular :is(.lot-area-trabalho, .car-area-trabalho).em-tela-cheia {
+    display: grid !important;
+    grid-template-columns: 50px minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) auto auto !important;
+    background: #EEF1EC;
+  }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-ferramentas, .car-ferramentas) {
+    grid-column: 1; grid-row: 1; gap: 4px; padding: 8px 0; overflow-y: auto; scrollbar-width: none;
+    border-right: 1px solid var(--borda); background: var(--card);
+  }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-ferramentas, .car-ferramentas)::-webkit-scrollbar { display: none; }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-ferramentas, .car-ferramentas) button { width: 40px; height: 40px; flex: none; }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-centro, .car-centro) { grid-column: 2; grid-row: 1; min-height: 0; }
+  /* avisos dos lotes: por cima do desenho, no alto */
+  html.com-tela-cheia-celular .em-tela-cheia > .lot-avisos {
+    grid-column: 2; grid-row: 1; z-index: 8; align-self: start; max-height: 46%;
+    margin: 8px; border: 1px solid #F3B9B9; border-radius: 14px; overflow: hidden;
+    box-shadow: 0 14px 30px -16px rgb(0 0 0 / 45%);
+  }
+  /* painel: folha embaixo, com alça, rola por dentro */
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-painel, .car-painel) {
+    grid-column: 1 / -1; grid-row: 2; position: relative; z-index: 9;
+    max-height: 40%; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+    margin-top: -14px; padding: 18px 14px 14px;
+    border: 0; border-radius: 18px 18px 0 0; background: #FAFBFA;
+    box-shadow: 0 -10px 28px -16px rgb(6 24 18 / 45%);
+  }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-painel, .car-painel)::before {
+    content: ""; position: absolute; top: 7px; left: 50%; width: 38px; height: 4px; margin-left: -19px; border-radius: 4px; background: rgb(14 59 43 / 18%);
+  }
+  /* a folha não passa de 40% da altura (a grade mede pela área, não pelo conteúdo) */
+  html.com-tela-cheia-celular :is(.lot-area-trabalho, .car-area-trabalho).em-tela-cheia { grid-template-rows: minmax(0, 1fr) fit-content(42%) auto !important; }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-painel, .car-painel) { max-height: none; }
+  html.com-tela-cheia-celular .em-tela-cheia > .lot-rodape-etapa {
+    grid-column: 1 / -1; grid-row: 3; border: 0; border-top: 1px solid var(--borda); background: #FAFBFA;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  /* painel recolhido: as ações rápidas numa faixa embaixo */
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-rapido, .car-rapido, .rapido) {
+    grid-column: 1 / -1; grid-row: 2; flex-direction: row; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+    border: 0; border-top: 1px solid var(--borda); scrollbar-width: none;
+  }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-rapido, .car-rapido, .rapido) > * { flex: none; min-width: 72px; }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-rapido, .car-rapido, .rapido) .rapido-esticar { display: none; }
+  /* linha de comando: no celular só a faixa de sugestões e os recados */
+  html.com-tela-cheia-celular .em-tela-cheia .lot-cmd-linha { display: none; }
+  html.com-tela-cheia-celular .em-tela-cheia .lot-comando { padding: 6px 10px; gap: 0; }
+  html.com-tela-cheia-celular .em-tela-cheia .lot-cmd-sugestoes { height: 34px; }
+  html.com-tela-cheia-celular .em-tela-cheia .lot-cmd-sugestoes:empty { display: none; }
+  html.com-tela-cheia-celular .em-tela-cheia .lot-comando:has(.lot-cmd-sugestoes:empty) { display: none; }
+  /* redes de infraestrutura: largura da tela */
+  html.com-tela-cheia-celular .em-tela-cheia .lot-redes { left: 8px; right: 8px; top: 8px; width: auto; max-height: 60%; }
+}
+
+/* ---- ajustes finos por editor (celular) */
+@media (max-width: 900px) {
+  /* CAR: a dica do mapa sai da prévia (ela fica por baixo do "Toque para ajustar") */
+  html .car-area-trabalho:not(.em-tela-cheia) .car-escala,
+  html .car-area-trabalho:not(.em-tela-cheia) .car-enquadrar,
+  html .lot-area-trabalho:not(.em-tela-cheia) :is(.lot-zoom, .giro-mapa, .lot-coord) { display: none !important; }
+  html.com-tela-cheia-celular .em-tela-cheia .car-escala { left: 8px; right: 8px; bottom: 8px; max-width: none; font-size: 12px; }
+
+  /* avisos dos lotes: menores por cima do desenho */
+  html.com-tela-cheia-celular .em-tela-cheia > .lot-avisos { max-height: 34%; }
+
+  /* régua de giro (divisão, CAR, terraplanagem): da largura do desenho, sem passar da borda */
+  html.com-tela-cheia-celular .em-tela-cheia .giro-mapa {
+    left: 52px; right: 8px; transform: none; max-width: none; padding: 4px 6px 4px 10px; gap: 6px;
+  }
+  html.com-tela-cheia-celular .em-tela-cheia .giro-mapa input[type="range"] { flex: 1 1 auto; width: auto; min-width: 40px; }
+  html.com-tela-cheia-celular .em-tela-cheia .giro-mapa-valor input { width: 58px; }
+  html.com-tela-cheia-celular .em-tela-cheia .giro-mapa button { padding: 0 8px; flex: none; }
+  /* com a régua no alto, o norte desce */
+  html.com-tela-cheia-celular .em-tela-cheia .lot-centro:has(.giro-mapa) .lot-norte { top: 52px; }
+
+  /* botões sobre o desenho do tamanho do dedo */
+  html.com-tela-cheia-celular .em-tela-cheia .lot-zoom button { width: 38px; height: 38px; font-size: 18px; }
+
+  /* Terraplanagem: o mapa fica preso no alto e os números/etapas rolam por baixo */
+  html.com-tela-cheia-celular .tp-trabalho.em-tela-cheia {
+    display: flex !important; flex-direction: column; overflow-y: auto; overscroll-behavior: contain;
+    background: var(--bg); padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  html.com-tela-cheia-celular .tp-trabalho.em-tela-cheia .tp-mapa-caixa {
+    order: 0; position: sticky; top: 0; z-index: 6; flex: none; margin: 0; height: 62%; min-height: 0;
+    border-radius: 0; box-shadow: 0 12px 24px -16px rgb(6 24 18 / 55%);
+  }
+  html.com-tela-cheia-celular .tp-trabalho.em-tela-cheia .tp-kpis { order: 1; padding-top: 14px; }
+}
+
+/* ---- prévia honesta: o que parece botão mas está sob o véu sai da prévia
+   (fica tudo na tela cheia) */
+@media (max-width: 900px) {
+  html .lt-mapa:not(.em-tela-cheia) :is(.lt-barra button, .lt-zoom, .lt-zoom-ajustar, .lt-legenda, .lt-recado),
+  html .ct-editor:not(.em-tela-cheia) .ct-barra > :not(b),
+  html :is(.mapa-cert, .consulta-mapa, .relevo, .planta-cert):not(.em-tela-cheia) :is(.maplibregl-ctrl:not(.maplibregl-ctrl-attrib), .imgdata-controle, .cm-dica) { display: none !important; }
+  html .ct-editor:not(.em-tela-cheia) .ct-barra:not(:has(b)) { display: none; }
+  html .ct-editor:not(.em-tela-cheia) > .ct-svg { height: min(56vh, 440px); }
+
+  /* tela cheia da conferência do TXT e das glebas: a barra de ações rola de lado, o desenho ocupa o resto */
+  html.com-tela-cheia-celular .lt-mapa.em-tela-cheia { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); gap: 8px; }
+  html.com-tela-cheia-celular .ct-editor.em-tela-cheia > .ct-barra {
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 8px 10px; gap: 6px;
+  }
+  html.com-tela-cheia-celular .ct-editor.em-tela-cheia > .ct-barra > * { flex: none; }
+  html.com-tela-cheia-celular .ct-editor.em-tela-cheia > .ct-barra .esticar { display: none; }
+}
+@media (max-width: 900px) {
+  /* Terraplanagem: na prévia do mapa só o desenho (ferramentas, legenda, zoom e norte ficam na tela cheia) */
+  html .tp-trabalho:not(.em-tela-cheia) .tp-mapa-caixa :is(.tp-mapa-ferramentas, .tp-legenda, .tp-mapa-zoom, .tp-mapa-dica, .tp-mapa-giro, .giro-mapa) { display: none !important; }
+  /* conferência do TXT: zoom do tamanho do dedo */
+  html.com-tela-cheia-celular .lt-mapa.em-tela-cheia .lt-zoom button { width: 40px; height: 40px; font-size: 20px; }
+  html.com-tela-cheia-celular .lt-mapa.em-tela-cheia .lt-zoom button.lt-zoom-ajustar { width: auto; }
+}
+
+/* ---- celular deitado: pouca altura — o painel vai para a lateral e a barra de cima encolhe */
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 520px) {
+  .tc-barra { height: 44px; }
+  .tc-fechar { width: 40px; height: 40px; }
+  .tc-pronto { height: 32px; line-height: 32px; }
+  html.com-tela-cheia-celular .em-tela-cheia { top: calc(44px + env(safe-area-inset-top, 0px)) !important; }
+  html.com-tela-cheia-celular :is(.lot-area-trabalho, .car-area-trabalho).em-tela-cheia {
+    grid-template-columns: 50px minmax(0, 1fr) minmax(260px, 38%) !important;
+    grid-template-rows: minmax(0, 1fr) auto !important;
+  }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-ferramentas, .car-ferramentas) { grid-row: 1 / -1; }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-centro, .car-centro) { grid-row: 1 / -1; }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-painel, .car-painel) {
+    grid-column: 3; grid-row: 1; margin: 0; border-radius: 0; box-shadow: none; border-left: 1px solid var(--borda); padding-top: 12px;
+  }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-painel, .car-painel)::before { display: none; }
+  html.com-tela-cheia-celular .em-tela-cheia > .lot-rodape-etapa { grid-column: 3; grid-row: 2; border-left: 1px solid var(--borda); }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-rapido, .car-rapido, .rapido) { grid-column: 3; grid-row: 1 / -1; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
+  html.com-tela-cheia-celular .em-tela-cheia > :is(.lot-rapido, .car-rapido, .rapido) > * { min-width: 0; }
+  html.com-tela-cheia-celular :is(.lot-area-trabalho, .car-area-trabalho).em-tela-cheia.painel-recolhido { grid-template-columns: 50px minmax(0, 1fr) 84px !important; }
+  html.com-tela-cheia-celular .tp-trabalho.em-tela-cheia .tp-mapa-caixa { height: 78%; }
+}

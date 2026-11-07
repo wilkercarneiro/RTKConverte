@@ -15,6 +15,7 @@
 // avisos e os menus, que moram no <body>, sumiriam. Sair: o mesmo botão ou Esc
 // (o navegador sai da tela cheia e a área volta junto).
 import { useCallback, useEffect, useRef, useState } from "react";
+import "./telacheia.css";
 
 const ALVO = "[data-tela-cheia], .lot-area-trabalho, .car-area-trabalho";
 
@@ -50,18 +51,117 @@ function marcarAncestrais(el: HTMLElement | null, ligar: boolean): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Celular e tablet (até 900 px) — pedido do Wilker (06/11): "clicou na área,
+// fica em tela cheia para manusear pelo celular… botão de X para fechar".
+//  - fora da tela cheia a área é só uma PRÉVIA: um véu (::after, casca.css)
+//    recebe o toque — o mapa não rouba a rolagem da página e nada é mexido sem
+//    querer; tocar abre a tela cheia;
+//  - na tela cheia, uma barra própria no alto (fora do React, no <body>): ✕,
+//    o nome do que se ajusta e "Pronto";
+//  - o voltar do Android fecha a tela cheia em vez de sair do serviço (uma
+//    entrada no histórico, sem trocar o endereço).
+// Áreas com [data-sem-toque] (o Medir no campo, que já é a tela inteira) ficam fora.
+// ---------------------------------------------------------------------------
+const CELULAR = "(max-width: 900px)";
+export const ehCelular = (): boolean => typeof window !== "undefined" && window.matchMedia(CELULAR).matches;
+
+const TITULOS: [string, string][] = [
+  [".lot-area-trabalho.dv-prancheta", "Prancheta"],
+  [".lot-area-trabalho", "Prancheta do loteamento"],
+  [".car-area-trabalho", "Mapa do CAR"],
+  [".tp-trabalho", "Terraplanagem"],
+  [".ct-editor", "Pontos e ligações"],
+  [".lt-mapa", "Ajustar pontos"],
+  [".mapa-cert", "Mapa"],
+  [".planta-cert", "Planta certificada"],
+  [".relevo", "Relevo"],
+  [".consulta-mapa", "Mapa da consulta"],
+];
+function tituloDe(el: HTMLElement): string {
+  return el.dataset.tituloTelaCheia || TITULOS.find(([sel]) => el.matches(sel))?.[1] || "Tela cheia";
+}
+
+let barra: HTMLDivElement | null = null;
+function mostrarBarra(el: HTMLElement | null): void {
+  if (!el || el.matches("[data-sem-toque]")) { barra?.remove(); barra = null; return; }
+  if (!barra) {
+    barra = document.createElement("div");
+    barra.className = "tc-barra";
+    barra.setAttribute("role", "toolbar");
+    barra.innerHTML = '<button type="button" class="tc-fechar" aria-label="Fechar a tela cheia">'
+      + '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>'
+      + '<b class="tc-titulo"></b><button type="button" class="tc-pronto">Pronto</button>';
+    barra.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => fecharTelaCheia()));
+    document.body.appendChild(barra);
+  }
+  barra.querySelector(".tc-titulo")!.textContent = tituloDe(el);
+}
+
+/** Fecha a tela cheia ativa (o ✕ e o "Pronto" da barra do celular). */
+export function fecharTelaCheia(): void {
+  if (!ativa) return;
+  delete ativa.dataset.telaCheiaNavegador;
+  aplicar(null);
+  sairDoNavegador();
+}
+
 function aplicar(el: HTMLElement | null): void {
   if (ativa === el) return;
+  // avisa as áreas que vão mudar de tamanho ANTES da troca (o BotaoTelaCheia de
+  // cada uma chama o onAlternar: a prancheta guarda a vista para reescalar)
+  for (const a of [ativa, el]) a?.dispatchEvent(new CustomEvent("telacheia-antes"));
   ativa?.classList.remove("em-tela-cheia");
   marcarAncestrais(ativa, false);
   ativa = el;
   marcarAncestrais(ativa, true);
   ativa?.classList.add("em-tela-cheia");
   document.documentElement.classList.toggle("com-tela-cheia", !!ativa);
+  document.documentElement.classList.toggle("com-tela-cheia-celular", !!ativa && ehCelular() && !ativa.matches("[data-sem-toque]"));
+  mostrarBarra(ativa && ehCelular() ? ativa : null);
+  // voltar do Android: entra uma entrada no histórico (mesmo endereço); sair
+  // pelo ✕ consome essa entrada para o próximo voltar não ficar "morto"
+  if (ativa && ehCelular() && !(history.state as { telaCheia?: boolean } | null)?.telaCheia) {
+    history.pushState({ ...(history.state ?? {}), telaCheia: true }, "");
+  } else if (!ativa && (history.state as { telaCheia?: boolean } | null)?.telaCheia) {
+    voltandoPelaTelaCheia = true;
+    history.back();
+  }
   // mapas que só se medem no resize da janela (MapLibre) e os que se medem pelo
   // ResizeObserver (pranchetas) acompanham o tamanho novo
   requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
   avisar();
+}
+
+let voltandoPelaTelaCheia = false;
+if (typeof window !== "undefined") {
+  // o voltar do Android (ou do navegador) com a tela cheia aberta: só fecha
+  window.addEventListener("popstate", () => {
+    if (voltandoPelaTelaCheia) { voltandoPelaTelaCheia = false; return; }
+    if (ativa) { delete ativa.dataset.telaCheiaNavegador; aplicar(null); sairDoNavegador(); }
+  });
+  // toque na prévia (celular): abre a tela cheia em vez de mexer no desenho.
+  // Fase de captura: chega antes de qualquer ouvinte do mapa ou da prancheta.
+  const abrirPeloToque = (e: Event) => {
+    if (!ehCelular()) return;
+    const alvo = e.target as HTMLElement | null;
+    const area = alvo?.closest?.<HTMLElement>(ALVO);
+    if (!area || area === ativa || area.matches("[data-sem-toque]") || area.closest(".em-tela-cheia")) return;
+    // área com formulário e mapa juntos (Terraplanagem): só o toque no mapa abre
+    if (area.matches("[data-toque-parcial]") && !alvo?.closest("[data-alvo-toque]")) return;
+    // nada chega ao mapa/prancheta; o arrastar continua rolando a PÁGINA
+    // (sem preventDefault: o véu da prévia tem touch-action: pan-y)
+    e.stopPropagation();
+    if (e.type === "click") { e.preventDefault(); alternarTelaCheia(area); }
+  };
+  for (const tipo of ["pointerdown", "mousedown", "touchstart", "click"]) {
+    window.addEventListener(tipo, abrirPeloToque, { capture: true });
+  }
+  // girou o aparelho / mudou de tamanho: a barra acompanha
+  window.matchMedia(CELULAR).addEventListener?.("change", () => {
+    mostrarBarra(ativa && ehCelular() ? ativa : null);
+    document.documentElement.classList.toggle("com-tela-cheia-celular", !!ativa && ehCelular() && !ativa.matches("[data-sem-toque]"));
+  });
 }
 
 // Esc no navegador (ou F11 de volta): a área sai junto
@@ -128,7 +228,18 @@ export function BotaoTelaCheia({ className, onAlternar, rotulo = false }: {
 }) {
   const ref = useRef<HTMLButtonElement>(null);
   const cheia = useTelaCheia(ref);
-  const clicar = useCallback(() => { onAlternar?.(); alternarTelaCheia(ref.current); }, [onAlternar]);
+  const clicar = useCallback(() => { alternarTelaCheia(ref.current); }, []);
+  // entrar/sair por qualquer caminho (este botão, o toque na prévia do celular,
+  // o ✕, o Esc, o voltar do Android): a área avisa antes de mudar de tamanho
+  const alternou = useRef(onAlternar);
+  alternou.current = onAlternar;
+  useEffect(() => {
+    const area = ref.current?.closest<HTMLElement>(ALVO);
+    if (!area) return;
+    const f = () => alternou.current?.();
+    area.addEventListener("telacheia-antes", f);
+    return () => area.removeEventListener("telacheia-antes", f);
+  }, []);
   // a tela saiu do ar em tela cheia (trocou de rota, fechou o serviço): sem
   // isto a página ficava presa sem rolagem, com a classe no <html>
   useEffect(() => () => {
@@ -148,7 +259,7 @@ export function BotaoTelaCheia({ className, onAlternar, rotulo = false }: {
       onClick={clicar}>
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         {cheia
-          ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+          ? (ehCelular() ? <path d="M18 6 6 18M6 6l12 12" /> : <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />)
           : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}
       </svg>
       {rotulo && <span>{cheia ? "Sair da tela cheia" : "Tela cheia"}</span>}

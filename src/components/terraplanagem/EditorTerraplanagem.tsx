@@ -261,7 +261,7 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
         </div>
       </header>
 
-      <div className="tp-trabalho" data-tela-cheia>
+      <div className="tp-trabalho" data-tela-cheia data-toque-parcial>
         <aside className="tp-painel" aria-label="Dados do projeto">
           {/* no computador só esta parte rola; o "Pronto para o cliente" fica embaixo dela, sem cobrir nada */}
           <div className="tp-painel-rola">
@@ -416,7 +416,7 @@ export function EditorTerraplanagem({ projeto, onProjeto, onResultado, onTrocarP
             </div>
           </div>
 
-          <div className="tp-mapa-caixa">
+          <div className="tp-mapa-caixa" data-alvo-toque>
             <MapaTerraplanagem resultado={r ?? (erro ? fundo : null)} desatualizado={!r && !!erro} pontos={pontosXY} poligono={plat.modo === "poligono" ? plat.poligono : null} focoNaPlataforma={plat.modo !== "contorno"} retangulo={plat.modo === "retangulo" ? plat.retangulo : null}
               editavel={plat.modo === "retangulo"} ferramenta={ferramenta} onFerramenta={setFerramenta}
               onRetangulo={(rr) => aoRetangulo(rr)} onSecao={(c) => mudar({ secao: { ...projeto.secao, centro: c } })}

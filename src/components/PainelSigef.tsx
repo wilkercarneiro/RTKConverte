@@ -132,7 +132,7 @@ export function PainelSigef({ modo, aneis, pontos, destaques, ignorar, uf, altur
     : "Parcelas certificadas ao redor (SIGEF)";
 
   return (
-    <div className="mapa-cert" data-tela-cheia="">
+    <div className="mapa-cert" data-tela-cheia="" data-titulo-tela-cheia="Vizinhos no SIGEF">
       <BotaoTelaCheia className="mapa-cert-tela-cheia" />
       <MapaInterativo aneis={aneis ?? []} pontos={pontos} parcelas={resultado?.parcelas.features} sobreposicoes={sobre}
         destaques={destaques} restricoes={restricoes} foco={foco} altura={altura} semMapa={semMapa} />

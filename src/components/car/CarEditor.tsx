@@ -18,6 +18,7 @@ import { fmtNum } from "../../lib/car/motor.ts";
 import type { LonLat } from "../../lib/car/kml.ts";
 import { pontoNoElemento } from "../../lib/zoom";
 import { BotaoTelaCheia } from "../TelaCheia";
+import { usePinca } from "../../lib/pinca";
 
 export type FerramentaCar = "mover" | "lado" | "reserva" | "vegetacao" | "rio";
 export type SelecaoCar = { tipo: "reserva"; i: number } | { tipo: "vegetacao"; i: number } | { tipo: "rio"; id: string } | null;
@@ -65,7 +66,9 @@ const pathLinha = (l: Pt[]) => "M" + l.map(([x, y]) => `${x.toFixed(2)} ${y.toFi
 
 export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, onMudar, onFimArraste, onLado, alvoLado = "reserva", satelite, onMsg, sobreposto }: Props) {
   const caixaRef = useRef<HTMLDivElement>(null);
-  const [tam, setTam] = useState({ w: 900, h: 600 });
+  // começa em zero: o primeiro enquadramento espera a medida de verdade (com 900×600
+  // de palpite, no celular o desenho abria 2–3× ampliado)
+  const [tam, setTam] = useState({ w: 0, h: 0 });
   const [v, setV] = useState<Vista | null>(null);
   const [mouse, setMouse] = useState<Pt | null>(null);
   const [desenho, setDesenho] = useState<Pt[]>([]);
@@ -340,6 +343,23 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
     if (melhor >= 0) gravar(sel, [...pts.slice(0, melhor + 1), p, ...pts.slice(melhor + 1)]);
   }
 
+  /** tela de toque (celular, tablet): as dicas falam de toque e pinça */
+  const toque = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
+  // pinça no celular: dois dedos aproximam e arrastam (lib/pinca.ts)
+  usePinca(caixaRef, {
+    zoom: (f, x, y) => setV((v0) => {
+      if (!v0) return v0;
+      const p = [(x - W / 2) / v0.s + v0.cx, (H / 2 - y) / v0.s + v0.cy];
+      const s = Math.max(0.005, Math.min(400, v0.s * f));
+      return { s, cx: p[0] - (x - W / 2) / s, cy: p[1] + (y - H / 2) / s };
+    }),
+    mover: (dx, dy) => setV((v0) => (v0 ? { ...v0, cx: v0.cx - dx / v0.s, cy: v0.cy + dy / v0.s } : v0)),
+    cancelar: (recente) => {
+      arraste.current = null;
+      if (recente && (fechaPoligono(ferramenta) || ferramenta === "rio")) setDesenho((d) => d.slice(0, -1));
+    },
+  });
+
   function onWheel(e: RWheelEvent) {
     const [x, y] = pos(e);
     const p = mundo(x, y);
@@ -421,11 +441,14 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
       </svg>
       {sobreposto}
       <div className="car-escala">
-        {ferramenta === "reserva" && "Clique para marcar os pontos da reserva · clique no 1º ponto, Enter ou duplo clique fecha · Backspace volta · Shift solta o encaixe"}
-        {ferramenta === "rio" && "Clique ao longo do rio · Enter ou duplo clique termina · Backspace volta · Esc cancela"}
-        {ferramenta === "vegetacao" && "Clique para marcar os pontos da vegetação nativa · clique no 1º ponto, Enter ou duplo clique fecha · o que cair na reserva é cortado"}
-        {ferramenta === "lado" && `Clique no lado do imóvel onde a ${alvoLado === "vegetacao" ? "vegetação nativa" : "reserva"} vai encostar`}
-        {ferramenta === "mover" && (sel ? "Arraste os vértices · duplo clique na linha insere vértice, no vértice apaga" : "Clique na reserva, na vegetação ou num rio para editar · arraste para mover o mapa · roda do mouse aproxima")}
+        {/* no celular as dicas falam de toque e pinça (não de clique e roda do mouse) */}
+        {ferramenta === "reserva" && (toque ? "Toque para marcar os pontos da reserva · toque no 1º ponto para fechar · dois dedos aproximam" : "Clique para marcar os pontos da reserva · clique no 1º ponto, Enter ou duplo clique fecha · Backspace volta · Shift solta o encaixe")}
+        {ferramenta === "rio" && (toque ? "Toque ao longo do rio · toque duas vezes para terminar · dois dedos aproximam" : "Clique ao longo do rio · Enter ou duplo clique termina · Backspace volta · Esc cancela")}
+        {ferramenta === "vegetacao" && (toque ? "Toque para marcar os pontos da vegetação nativa · toque no 1º ponto para fechar" : "Clique para marcar os pontos da vegetação nativa · clique no 1º ponto, Enter ou duplo clique fecha · o que cair na reserva é cortado")}
+        {ferramenta === "lado" && `${toque ? "Toque" : "Clique"} no lado do imóvel onde a ${alvoLado === "vegetacao" ? "vegetação nativa" : "reserva"} vai encostar`}
+        {ferramenta === "mover" && (sel
+          ? (toque ? "Arraste os vértices · toque duas vezes na linha insere vértice, no vértice apaga" : "Arraste os vértices · duplo clique na linha insere vértice, no vértice apaga")
+          : (toque ? "Toque na reserva, na vegetação ou num rio para editar · um dedo move o mapa, dois aproximam" : "Clique na reserva, na vegetação ou num rio para editar · arraste para mover o mapa · roda do mouse aproxima"))}
       </div>
       <button className="car-enquadrar" title="Enquadrar o imóvel" onPointerDown={(e) => e.stopPropagation()} onClick={enquadrar}>⤢</button>
       <BotaoTelaCheia className="car-tela-cheia" onAlternar={marcarReescala} />

@@ -22,6 +22,7 @@ import type { Papel } from "../../supabase/functions/_shared/leitor/receita.ts";
 import { dividirDelimitado, dividirEspacos } from "../../supabase/functions/_shared/leitor/executor.ts";
 import { cruzamentos } from "../../supabase/functions/_shared/leitor/ordem.ts";
 import { BotaoTelaCheia } from "./TelaCheia";
+import { usePinca } from "../lib/pinca";
 import { VERSAO_TODAS } from "../../supabase/functions/_shared/leitor/versoes.ts";
 import { desenharEsboco, fmtArea, fmtM, medirEsboco } from "../lib/esboco";
 import type { Esboco, PontoEsboco } from "../lib/esboco";
@@ -854,6 +855,18 @@ function MapaAjuste({ leitura, situacao, selecionado, modo, onPonto, onLado }: {
     };
     el.addEventListener("wheel", roda, { passive: false });
     return () => el.removeEventListener("wheel", roda);
+  });
+  // pinça no celular: dois dedos aproximam e arrastam (lib/pinca.ts)
+  usePinca(svgRef, {
+    zoom: (f, x, y) => {
+      const r = svgRef.current!.getBoundingClientRect();
+      zoom(1 / f, x / (r.width || 1), y / (r.height || 1));
+    },
+    mover: (dx, dy) => setVista((v) => {
+      const r = svgRef.current!.getBoundingClientRect();
+      return limitar([v[0] - (dx / (r.width || 1)) * v[2], v[1] - (dy / (r.height || 1)) * v[3], v[2], v[3]]);
+    }),
+    cancelar: () => { arraste.current = null; acabouDeArrastar.current = true; setTimeout(() => { acabouDeArrastar.current = false; }, 400); },
   });
   const pts = leitura.pontos.filter((p) => Number.isFinite(p.e) && Number.isFinite(p.n));
   if (!pts.length) return <div className="lt-vazio">Sem coordenadas para desenhar.</div>;

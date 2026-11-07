@@ -11,6 +11,7 @@ import type { Vertice } from "../lib/types";
 import { desligar, excluirPonto, ligar, type Areas, type Ligacao } from "../lib/contorno";
 import { Dica } from "./ui";
 import { BotaoTelaCheia } from "./TelaCheia";
+import { usePinca } from "../lib/pinca";
 
 const CORES = ["#2E86AB", "#E07A1F", "#3BA55C", "#A23B72", "#C9A227", "#5B5FC7", "#D1495B", "#1B998B"];
 
@@ -110,6 +111,22 @@ export function ContornoEditor({ vertices, ligacoes, areas, nomes, onLigacoes, o
     el.addEventListener("wheel", h, { passive: false });
     return () => el.removeEventListener("wheel", h);
   }, [caixa]);
+
+  // pinça no celular: dois dedos aproximam e arrastam (lib/pinca.ts)
+  usePinca(svgRef, {
+    zoom: (f, x, y) => setVb((v) => {
+      const r = svgRef.current!.getBoundingClientRect();
+      const fx = x / (r.width || 1), fy = y / (r.height || 1);
+      const w = Math.min(caixa.w * 1.5, Math.max(5, v.w / f)), hh = (w / v.w) * v.h;
+      return { x: v.x + (v.w - w) * fx, y: v.y + (v.h - hh) * fy, w, h: hh };
+    }),
+    mover: (dx, dy) => setVb((v) => {
+      const r = svgRef.current!.getBoundingClientRect();
+      const k = Math.max(v.w / (r.width || 1), v.h / (r.height || 1));
+      return { ...v, x: v.x - dx * k, y: v.y - dy * k };
+    }),
+    cancelar: () => { arraste.current = null; },
+  });
 
   const pr = (o: number) => { const p = xy.get(o)!; return [p.e, -p.n] as const; };
   const raio = 5 * escala;

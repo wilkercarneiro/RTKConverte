@@ -24,6 +24,7 @@ import type { Rede, ResultadoInfra } from "../../lib/loteamento/infra/index.ts";
 import { DefsRedes, RedesGeo, RedesSimbolos } from "./Redes";
 import { pontoNoElemento } from "../../lib/zoom";
 import { BotaoTelaCheia } from "../TelaCheia";
+import { usePinca } from "../../lib/pinca";
 
 const proj = proj4mod as unknown as (from: string, to: string, c: [number, number]) => [number, number];
 
@@ -136,7 +137,9 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
   // divisão de imóvel: o contorno não recua (ver Parametros.bordaFixa)
   const bordaFixa = !!projeto.params.bordaFixa;
   const caixaRef = useRef<HTMLDivElement>(null);
-  const [tam, setTam] = useState({ w: 900, h: 600 });
+  // começa em zero: o primeiro enquadramento espera a medida de verdade (com 900×600
+  // de palpite, no celular o desenho abria 2–3× ampliado)
+  const [tam, setTam] = useState({ w: 0, h: 0 });
   const [v, setV] = useState<Vista | null>(null);
   const [mouse, setMouse] = useState<Pt | null>(null);
   const [hover, setHover] = useState<string | null>(null);
@@ -809,6 +812,24 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
     // o ponto sob o cursor fica parado
     setV({ s, cx: p[0] - (x - W / 2) / s, cy: p[1] + (y - H / 2) / s });
   }
+
+  // pinça no celular: dois dedos aproximam e arrastam (lib/pinca.ts)
+  usePinca(caixaRef, {
+    zoom: (f, x, y) => setV((v0) => {
+      if (!v0) return v0;
+      const p = [(x - W / 2) / v0.s + v0.cx, (H / 2 - y) / v0.s + v0.cy];
+      const s = Math.max(0.05, Math.min(80, v0.s * f));
+      return { s, cx: p[0] - (x - W / 2) / s, cy: p[1] + (y - H / 2) / s };
+    }),
+    mover: (dx, dy) => setV((v0) => (v0 ? { ...v0, cx: v0.cx - dx / v0.s, cy: v0.cy + dy / v0.s } : v0)),
+    cancelar: (recente) => {
+      arraste.current = null;
+      setArrastando(false);
+      setCaixaSel(null);
+      // o primeiro dedo pôs um ponto do desenho: era o começo da pinça, não um ponto
+      if (recente && (ferramenta === "rua" || ferramenta === "area" || ferramenta === "lote" || ferramenta === "cortar" || ferramenta === "medir")) setDesenho((d) => d.slice(0, -1));
+    },
+  });
 
   // impede o scroll da página com a roda sobre o desenho
   useEffect(() => {
