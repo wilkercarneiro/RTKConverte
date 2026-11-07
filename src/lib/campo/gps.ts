@@ -13,6 +13,12 @@ export interface ErroGps {
 export interface FonteGps {
   /** Começa a ouvir; devolve a função que para. */
   iniciar(aoLer: (l: Leitura) => void, aoErrar: (e: ErroGps) => void): () => void;
+  /**
+   * Pede uma leitura agora (entregue pelo mesmo aoLer do iniciar). Parado no
+   * canto, muito celular (iPhone, sobretudo) não manda posição nova pelo
+   * watchPosition — o "Marcar ponto" pede ativamente enquanto junta.
+   */
+  pedirAgora?(): void;
 }
 
 /** O que dizer ao usuário em cada falha (com o caminho para resolver). */
@@ -28,8 +34,23 @@ export const TEXTO_ERRO_GPS: Record<TipoErroGps, string> = {
 
 /** O GPS do aparelho. Precisa de https (ou localhost). */
 export function fonteDoNavegador(): FonteGps {
+  let ouvinte: ((l: Leitura) => void) | null = null;
+  const paraLeitura = (p: GeolocationPosition): Leitura => ({
+    lon: p.coords.longitude, lat: p.coords.latitude,
+    precisao: Number.isFinite(p.coords.accuracy) ? p.coords.accuracy : null,
+    alt: p.coords.altitude ?? null,
+    t: Date.now(),
+  });
   return {
+    pedirAgora() {
+      const geo = typeof navigator !== "undefined" ? navigator.geolocation : undefined;
+      if (!geo || !ouvinte) return;
+      const alvo = ouvinte;
+      // erro aqui é silencioso: o watchPosition já informa a falha de verdade
+      geo.getCurrentPosition((p) => { if (ouvinte === alvo) alvo(paraLeitura(p)); }, () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 4000 });
+    },
     iniciar(aoLer, aoErrar) {
+      ouvinte = aoLer;
       const geo = typeof navigator !== "undefined" ? navigator.geolocation : undefined;
       if (!geo) { aoErrar({ tipo: "indisponivel", mensagem: TEXTO_ERRO_GPS.indisponivel }); return () => {}; }
       if (typeof isSecureContext !== "undefined" && !isSecureContext) {
@@ -43,20 +64,16 @@ export function fonteDoNavegador(): FonteGps {
         aoErrar({ tipo: "indisponivel", mensagem: "A localização está desligada nesta página do Vertces (não é o seu aparelho). Avise o suporte; enquanto isso, dá para desenhar o contorno à mão no mapa." });
         return () => {};
       }
+      // t = hora em que CHEGOU (o timestamp do aparelho pode vir de leitura guardada)
       const id = geo.watchPosition(
-        (p) => aoLer({
-          lon: p.coords.longitude, lat: p.coords.latitude,
-          precisao: Number.isFinite(p.coords.accuracy) ? p.coords.accuracy : null,
-          alt: p.coords.altitude ?? null,
-          t: p.timestamp || Date.now(),
-        }),
+        (p) => aoLer(paraLeitura(p)),
         (e) => {
           const tipo: TipoErroGps = e.code === 1 ? "sem-permissao" : "sem-sinal";
           aoErrar({ tipo, mensagem: TEXTO_ERRO_GPS[tipo] });
         },
         { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
       );
-      return () => geo.clearWatch(id);
+      return () => { geo.clearWatch(id); if (ouvinte === aoLer) ouvinte = null; };
     },
   };
 }

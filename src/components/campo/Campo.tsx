@@ -257,16 +257,22 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   useEffect(() => {
     if (!marcando) return;
     const tique = setInterval(() => setTique((t) => t + 1), 200);
+    // parado no canto, o celular pode não mandar posição nova sozinho: pede uma por segundo
+    fonte.pedirAgora?.();
+    const pede = setInterval(() => fonte.pedirAgora?.(), 1000);
     const fim = setTimeout(() => {
-      const leituras = marcandoRef.current ?? [];
+      let leituras = marcandoRef.current ?? [];
       marcandoRef.current = null;
       setMarcando(null);
+      // nada chegou na janela, mas o GPS respondeu há pouco e a pessoa está parada: vale a última
+      const ultima = leituraRef.current;
+      if (!leituras.length && ultima && Date.now() - ultima.t < 20_000) leituras = [ultima];
       const p = combinarLeituras(leituras);
       if (!p) { avisar("alerta", "O GPS não mandou nenhuma posição nesses segundos. Vá para um lugar aberto e tente de novo."); return; }
       if (p.precisao == null || p.precisao > opcoesRef.current.limitePrecisaoM) { setPontoRuim(p); return; }
       registrarPonto(p);
     }, Math.max(0, marcando.fim - Date.now()));
-    return () => { clearInterval(tique); clearTimeout(fim); };
+    return () => { clearInterval(tique); clearInterval(pede); clearTimeout(fim); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marcando]);
 
@@ -428,11 +434,13 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
     setSeguir(true);
     setCaminhando(true);
     // a posição de agora já vira o 1º vértice (ou o próximo, se andou)
+    // (parado, o celular pode estar sem mandar posição: a última de até 20 s vale, e pede uma nova)
     const l = leituraRef.current;
-    if (l && Date.now() - l.t < 3000) {
+    if (l && Date.now() - l.t < 20_000) {
       const r = verticeAoCaminhar(m.vertices, l, opcoesRef.current);
       if (r) adicionar(r.vertice);
     }
+    fonte.pedirAgora?.();
   }
 
   function marcarPonto() {
