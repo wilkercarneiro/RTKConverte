@@ -68,6 +68,7 @@ const VerificarDocumento = lazy(() => import("./components/VerificarDocumento").
 const LaboratorioVerificar = lazy(() => import("./components/LaboratorioVerificar").then((m) => ({ default: m.LaboratorioVerificar })));
 const LaboratorioLeitura = lazy(() => import("./components/LaboratorioLeitura").then((m) => ({ default: m.LaboratorioLeitura })));
 const LaboratorioAssinar = lazy(() => import("./components/LaboratorioAssinar").then((m) => ({ default: m.LaboratorioAssinar })));
+const LaboratorioInstalar = lazy(() => import("./components/LaboratorioInstalar").then((m) => ({ default: m.LaboratorioInstalar })));
 // painel do superadmin: só quem administra o SaaS baixa este pedaço
 // Ferramentas sem serviço (plano em docs/plano-ferramentas-campo-consulta-terraplanagem.md)
 const ConsultaImovel = lazy(() => import("./components/consulta/ConsultaImovel").then((m) => ({ default: m.ConsultaImovel })));
@@ -231,6 +232,7 @@ export default function App() {
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/campo")) return <Suspense fallback={null}><LaboratorioCampo /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/terraplanagem")) return <Suspense fallback={null}><LaboratorioTerraplanagem /></Suspense>;
   if (import.meta.env.DEV && location.hash.startsWith("#/lab/imagem")) return <Suspense fallback={null}><LaboratorioImagemData /></Suspense>;
+  if (import.meta.env.DEV && location.hash.startsWith("#/lab/instalar")) return <Suspense fallback={null}><LaboratorioInstalar /></Suspense>;
 
   // Páginas públicas: abrem com ou sem login (o link vai no cadastro e no site).
   if (rota.t === "termos") return <PaginaDocumento texto={termos} voltar={{ rotulo: "Vertces", href: "#/" }} />;

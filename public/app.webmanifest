@@ -1,0 +1,18 @@
+{
+  "id": "/app/",
+  "name": "Vertces",
+  "short_name": "Vertces",
+  "description": "Georreferenciamento do levantamento à certificação.",
+  "lang": "pt-BR",
+  "start_url": "/app/",
+  "scope": "/app/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#0E3B2B",
+  "background_color": "#0E3B2B",
+  "icons": [
+    { "src": "/icones/icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icones/icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icones/icone-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

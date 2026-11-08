@@ -741,7 +741,7 @@ html.cenas .contato-curvas .cn { animation: ondula 13s ease-in-out infinite alte
   .dia { grid-template-columns: 1fr; }
   .baralho { grid-template-columns: 1fr 1fr; }
   .baralho li { min-height: 110px; font-size: 15.5px; }
-  .rod nav { margin-left: 0; width: 100%; }
+  .rod nav { margin-left: 0; width: 100%; flex-wrap: wrap; gap: 10px 20px; }
   .hero-t { font-size: clamp(42px, 12.4vw, 60px); }
   .acoes .bt { flex: 1 1 100%; }
   .quem-lista span { font-size: 11.5px; }

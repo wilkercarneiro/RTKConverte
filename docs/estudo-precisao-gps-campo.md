@@ -151,3 +151,23 @@ Para ocupação estática de marco sem rádio ou internet, o agrimensor grava o 
 5. **A.6 + C.1** (aceitar receptor RTK pela localização do sistema, com página de ajuda).
 6. **C.2** (Web Bluetooth com tipo de fix), se os agrimensores usarem receptor BLE.
 7. A.5 (Kalman) e D, só se os números da régua pedirem.
+
+---
+
+## 8. Situação (08/11/2026, à noite)
+
+Feito no código, com testes em `tests/campo_precisao.test.mjs`:
+
+| Item | Onde |
+|---|---|
+| A.1 posição repetida conta uma vez (`tGps`) | `motor.ts` (`semRepetidas`), `gps.ts` |
+| A.2 Marcar ponto de 20 s (máx. 300), convergência ao vivo, "+1 min" e "Pronto" quando o ponto assenta | `tipos.ts`, `filtro.ts` (`convergencia`), `Campo.tsx` |
+| A.3 aquecimento: o 1º vértice andando espera a precisão parar de melhorar (8 a 45 s); selo "Aquecendo" | `filtro.ts` (`estadoAquecimento`) |
+| A.4 **Ajustar a cerca**: reta média por lado, cantos no cruzamento, chanfro e zigue-zague fora | `ajuste.ts`. Na simulação, a cerca de 4 lados volta com 4 cantos; com sinal bom, o erro de canto cai de 1,05 m para 0,54 m. Com sinal ruim (erro que "passeia" ±1,5 m), o canto não melhora. É a régua que vai dizer quanto ganha no campo |
+| A.5 filtro de Kalman no Caminhar: recusa o salto impossível a pé | `filtro.ts` (`criarFiltroCaminhar`) |
+| A.6 pisos que acompanham a precisão (RTK de ±1 cm passa inteiro) | `motor.ts`, `simplificar.ts`, `geometria.ts` (texto em cm) |
+| A.7 raio de 95% (1,62×) no selo e no resultado | `geometria.ts` (`textoPrecisao95`) |
+| A.8 dicas na aba Precisão → Dicas | `Precisao.tsx` |
+| B calibração num marco (SIGEF da base, ou coordenada digitada), interpolada no tempo; os vértices guardam o bruto | `calibracao.ts`, migração `0048` (a coluna `calibracoes`; o site funciona sem ela) |
+| Régua: modo diagnóstico (grava as leituras e baixa JSON), laboratório toca o arquivo, `scripts/avaliar-gps.mjs` | `diagnostico.ts`, `LaboratorioCampo.tsx` |
+| C receptor RTK (Web Serial/Web Bluetooth + NTRIP pela VPS) | `nmea.ts`, `receptor.ts`, `ntrip.ts`, função `ntrip` |

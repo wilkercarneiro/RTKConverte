@@ -40,6 +40,10 @@ export function fonteDoNavegador(): FonteGps {
     precisao: Number.isFinite(p.coords.accuracy) ? p.coords.accuracy : null,
     alt: p.coords.altitude ?? null,
     t: Date.now(),
+    // a hora do fix segundo o aparelho: o watchPosition e o pedirAgora devolvem a
+    // MESMA posição; por ela o Marcar ponto conta cada uma só uma vez
+    tGps: Number.isFinite(p.timestamp) ? p.timestamp : null,
+    fonte: "celular",
   });
   return {
     pedirAgora() {

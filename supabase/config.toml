@@ -5,6 +5,12 @@ project_id = "rtkconverte-geo"
 
 # Todas as funções exigem o JWT do usuário logado (padrão do CLI), menos a
 # admin-setup, que é chamada pelo script de upload dos templates e se protege
-# com o segredo guardado em `config_setup`.
+# com o segredo guardado em `config_setup`, e a ntrip (abaixo).
 [functions.admin-setup]
+verify_jwt = false
+
+# Repasse NTRIP (correção RTK): o WebSocket do navegador não manda o cabeçalho
+# Authorization, então o portão do runtime não pode exigir o JWT. A função
+# confere o login ela mesma (token da query no WebSocket, cabeçalho no POST).
+[functions.ntrip]
 verify_jwt = false

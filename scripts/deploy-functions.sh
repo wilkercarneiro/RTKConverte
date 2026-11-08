@@ -8,8 +8,11 @@
 #
 # A lista de funções sai das pastas de `supabase/functions/` (menos `_shared`):
 # a lista fixa que havia aqui esqueceu `consultar-sigef` quando ela nasceu.
-# `verify_jwt` de cada função vem de `supabase/config.toml` (admin-setup é a
-# única sem JWT — é protegida pelo segredo de `config_setup`).
+# `verify_jwt` de cada função vem de `supabase/config.toml` (sem JWT: admin-setup,
+# protegida pelo segredo de `config_setup`, e ntrip, que confere o login ela
+# mesma porque o WebSocket do navegador não manda Authorization).
+# (Histórico: desde 2026-10-02 as funções rodam na VPS — publicar lá é com os
+# scripts/publicar-*.sh; a ntrip tem o scripts/publicar-ntrip.sh.)
 #
 # Uso:
 #   npx supabase login          # uma vez, abre o navegador

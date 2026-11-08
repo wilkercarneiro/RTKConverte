@@ -1,0 +1,78 @@
+// App Android do Vertces: uma Trusted Web Activity (TWA). Abre o sistema
+// (https://vertces.com.br/app/) dentro do Chrome do celular, em tela cheia,
+// sem barra de endereço — o motor é o Chrome, então Web Serial, Web Bluetooth
+// e a localização funcionam como no navegador. Ver android/LEIAME.md.
+import groovy.json.JsonSlurper
+
+plugins {
+    id "com.android.application"
+}
+
+// versão do app: um só lugar (android/versao.json), lido também pelo build do site
+def versao = new JsonSlurper().parse(rootProject.file("versao.json"))
+def host = "vertces.com.br"
+// ?versaoApp=… deixa o site saber qual APK está instalado (aviso de app desatualizado)
+def launchUrl = "https://${host}/app/?origem=android&versaoApp=${versao.versionCode}"
+
+// Chave de assinatura FORA do repositório: %USERPROFILE%\.vertces-android\
+// (vertces.keystore + senhas.txt no formato chave=valor). Dá para trocar a
+// pasta pela variável VERTCES_ANDROID_CHAVES.
+def pastaChaves = new File(System.getenv("VERTCES_ANDROID_CHAVES") ?: "${System.getProperty("user.home")}/.vertces-android")
+def senhas = new Properties()
+def arqSenhas = new File(pastaChaves, "senhas.txt")
+if (arqSenhas.exists()) arqSenhas.withInputStream { senhas.load(it) }
+
+android {
+    namespace "br.com.vertces.app"
+    compileSdk 36
+    buildToolsVersion "36.0.0"
+
+    defaultConfig {
+        applicationId "br.com.vertces.app"
+        minSdk 24
+        targetSdk 35
+        versionCode versao.versionCode as int
+        versionName versao.versionName as String
+
+        resValue "string", "launchUrl", launchUrl
+        resValue "string", "hostName", host
+        manifestPlaceholders = [hostName: host]
+    }
+
+    signingConfigs {
+        release {
+            storeFile new File(pastaChaves, senhas.getProperty("storeFile", "vertces.keystore"))
+            storePassword senhas.getProperty("storePassword")
+            keyAlias senhas.getProperty("keyAlias", "vertces")
+            keyPassword senhas.getProperty("keyPassword")
+        }
+    }
+
+    buildTypes {
+        release {
+            // R8 tira o que o androidx não usa (como o Bubblewrap faz): APK bem menor
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt")
+            signingConfig arqSenhas.exists() ? signingConfigs.release : null
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        resValues true
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation "com.google.androidbrowserhelper:androidbrowserhelper:2.7.4"
+}

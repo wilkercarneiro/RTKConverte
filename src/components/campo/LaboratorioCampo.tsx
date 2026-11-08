@@ -27,8 +27,9 @@ import { verticeAoCaminhar } from "../../lib/campo/motor.ts";
 import { repositorioMemoria } from "../../lib/campo/repositorio.ts";
 import type { TipoErroConta } from "../../lib/campo/repositorio.ts";
 import { CANTOS_EXEMPLO, TRAJETO_EXEMPLO } from "../../lib/campo/trajeto_exemplo.ts";
+import { lerArquivoDiagnostico } from "../../lib/campo/diagnostico.ts";
 import { OPCOES_PADRAO } from "../../lib/campo/tipos.ts";
-import type { Medicao, VerticeCampo } from "../../lib/campo/tipos.ts";
+import type { Leitura, Medicao, VerticeCampo } from "../../lib/campo/tipos.ts";
 
 const CENAS = ["inicio", "medindo", "fechada", "retomar", "mao", "sem-gps", "sem-permissao", "lista-vazia", "conta-fora", "sem-tabela", "conflito"] as const;
 type Cena = typeof CENAS[number];
@@ -103,11 +104,13 @@ export function LaboratorioCampo() {
   const [montagem, setMontagem] = useState(0);
   const [falhaConta, setFalhaConta] = useState<TipoErroConta | null>(cena === "conta-fora" ? "outro" : cena === "sem-tabela" ? "sem-tabela" : null);
 
+  // o trajeto tocado: o de exemplo ou um arquivo do modo diagnóstico (leituras reais do campo)
+  const [trajeto, setTrajeto] = useState<{ nome: string; leituras: Leitura[] } | null>(null);
   const sim = useMemo(() => {
-    const s = criarSimulador(TRAJETO_EXEMPLO, 1000);
-    s.irPara(preparo.inicioTrajeto);
+    const s = criarSimulador(trajeto?.leituras ?? TRAJETO_EXEMPLO, 1000);
+    s.irPara(trajeto ? 0 : preparo.inicioTrajeto);
     return s;
-  }, [preparo]);
+  }, [preparo, trajeto]);
   const est = useSyncExternalStore(sim.assinar, sim.estado, sim.estado);
 
   const fonte: FonteGps = useMemo(
@@ -158,6 +161,22 @@ export function LaboratorioCampo() {
             <div className="campo-lab-linha">
               <button type="button" onClick={() => setFalhaConta((f) => (f ? null : "sem-rede"))}>{falhaConta ? "Conta volta" : "Cortar a internet"}</button>
               <button type="button" onClick={() => { try { localStorage.removeItem(`lab:${CHAVE_APARELHO}`); } catch { /* */ } setMontagem((m) => m + 1); }}>Limpar o aparelho</button>
+            </div>
+            <div className="campo-lab-linha">
+              <label className="campo-lab-arquivo">
+                <span>{trajeto ? `Trajeto: ${trajeto.nome} (${trajeto.leituras.length})` : "Carregar trajeto (JSON do diagnóstico)"}</span>
+                <input type="file" accept=".json,application/json" onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  void f.text().then((t) => {
+                    const ls = lerArquivoDiagnostico(t);
+                    if (!ls) { avisar("erro", "Esse arquivo não tem leituras do GPS (use o Baixar do modo diagnóstico)."); return; }
+                    setTrajeto({ nome: f.name, leituras: ls });
+                    setMontagem((m) => m + 1);
+                  });
+                }} />
+              </label>
+              {trajeto && <button type="button" onClick={() => { setTrajeto(null); setMontagem((m) => m + 1); }}>Voltar ao exemplo</button>}
             </div>
             <div className="campo-lab-cenas">
               {CENAS.map((c) => <a key={c} href={`#/lab/campo?cena=${c}`} onClick={() => setTimeout(() => location.reload(), 0)} aria-current={c === cena || undefined}>{c}</a>)}

@@ -23,3 +23,15 @@ scripts/maquete-arvores/.modelos/
 
 # lockfile gerado pelo deno ao testar uma função localmente (não vai para o Git)
 supabase/functions/**/deno.lock
+
+# app Android (TWA): chave de assinatura NUNCA no Git (fica em %USERPROFILE%\.vertces-android\) e builds
+android/**/*.keystore
+android/**/*.jks
+*.keystore
+*.jks
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/**/senhas.txt

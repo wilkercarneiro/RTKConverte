@@ -1,0 +1,95 @@
+/* "Instalar app" (gaveta) e a pílula de versão nova — InstalarApp.tsx */
+
+.ia { display: flex; flex-direction: column; gap: 14px; font-size: 14.5px; color: var(--texto); }
+.ia p { margin: 2px 0 0; color: var(--texto-2); line-height: 1.45; }
+.ia b { color: var(--texto); }
+.ia code { font-family: var(--mono); font-size: 12.5px; background: var(--linha); padding: 1px 5px; border-radius: 5px; }
+
+.ia-topo { display: flex; align-items: center; gap: 14px; }
+.ia-topo img { border-radius: 14px; flex: none; box-shadow: 0 6px 18px -10px rgb(14 59 43 / 60%); }
+.ia-topo b { font-size: 16px; }
+.ia-topo-ico { width: 56px; height: 56px; flex: none; border-radius: 14px; display: grid; place-items: center; background: var(--primaria-clara); color: var(--primaria-escura); }
+.ia-topo-ico svg { width: 28px; height: 28px; }
+
+.ia-cartao { border: 1px solid var(--borda); border-radius: var(--raio); padding: 14px 16px; background: #fff; display: flex; flex-direction: column; gap: 6px; }
+.ia-cartao > button { align-self: flex-start; margin-top: 6px; display: inline-flex; align-items: center; gap: 8px; }
+.ia-alt { background: var(--bg); border-color: var(--linha); }
+.ia-alerta { background: var(--alerta-claro); border-color: #EBD9B4; }
+.ia-sub { font-size: 13.5px; }
+.ia-nota { font-size: 13px; padding-top: 6px; border-top: 1px dashed var(--borda); }
+.ia-bico { width: 17px; height: 17px; }
+
+/* botão grande de baixar (link) */
+.ia-baixar {
+  display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+  min-height: 52px; padding: 10px 18px; border-radius: var(--raio); text-decoration: none;
+  background: var(--floresta); color: #fff; font-weight: 700; font-size: 16px;
+  box-shadow: 0 10px 24px -14px rgb(14 59 43 / 80%);
+}
+.ia-baixar:hover { background: #0A2E21; color: #fff; }
+.ia-baixar svg { width: 20px; height: 20px; color: var(--acento); }
+.ia-baixar small { font-weight: 500; font-size: 12.5px; color: var(--floresta-texto); }
+
+.ia-passos { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ia-passos li { display: flex; gap: 10px; align-items: flex-start; line-height: 1.45; color: var(--texto-2); }
+.ia-num {
+  flex: none; width: 24px; height: 24px; border-radius: 999px; display: grid; place-items: center;
+  background: var(--primaria-clara); color: var(--primaria-escura); font-weight: 700; font-size: 12.5px; margin-top: 1px;
+}
+.ia-tecla {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; vertical-align: baseline;
+  padding: 1px 8px 1px 6px; border-radius: 7px; background: #fff; border: 1px solid var(--borda-forte);
+  color: var(--texto); font-weight: 600; font-size: 13.5px;
+}
+.ia-tecla svg { width: 15px; height: 15px; color: #0A84FF; }
+
+/* desenho do Safari */
+.ia-safari { margin-top: 8px; border-radius: 12px; background: #F2F2F4; border: 1px solid #E2E2E6; padding: 8px 10px 6px; max-width: 320px; align-self: center; width: 100%; }
+.ia-safari-url { background: #fff; border-radius: 9px; text-align: center; font-size: 12.5px; color: #3C3C43; padding: 6px; }
+.ia-safari-barra { display: flex; justify-content: space-around; align-items: center; padding: 8px 0 2px; color: #0A84FF; font-size: 20px; }
+.ia-safari-barra span { width: 34px; height: 30px; display: grid; place-items: center; border-radius: 8px; }
+.ia-safari-barra svg { width: 19px; height: 19px; }
+.ia-safari-alvo { background: rgb(10 132 255 / 14%); box-shadow: 0 0 0 2px #0A84FF; }
+
+.ia-feito { display: flex; gap: 12px; align-items: center; padding: 14px 16px; border-radius: var(--raio); background: var(--primaria-clara); }
+.ia-feito-ico { width: 40px; height: 40px; flex: none; border-radius: 999px; display: grid; place-items: center; background: var(--primaria); color: #fff; }
+.ia-feito-ico svg { width: 22px; height: 22px; }
+
+.ia-qr-cartao { flex-direction: row; align-items: center; gap: 18px; }
+.ia-qr { flex: none; border-radius: 8px; border: 1px solid var(--borda); }
+.ia-lista { margin: 8px 0 0; padding-left: 18px; color: var(--texto-2); line-height: 1.6; }
+@media (max-width: 520px) {
+  .ia-qr-cartao { flex-direction: column; align-items: flex-start; }
+}
+
+/* ── pílula "Nova versão" ─────────────────────────────────────────────── */
+.versao-faixa {
+  position: fixed; z-index: 75; left: 50%; bottom: 18px; transform: translateX(-50%);
+  width: max-content; max-width: calc(100vw - 24px);
+  display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 12px;
+  background: var(--floresta); color: #fff; border-radius: 999px;
+  box-shadow: 0 14px 34px -14px rgb(6 24 18 / 70%), 0 0 0 1px rgb(255 255 255 / 6%) inset;
+  animation: versao-entra 0.28s cubic-bezier(.2, .8, .2, 1) both;
+}
+.versao-faixa.solta { position: static; transform: none; animation: none; }
+@keyframes versao-entra { from { opacity: 0; transform: translate(-50%, 14px); } }
+.versao-ico { width: 32px; height: 32px; flex: none; border-radius: 999px; display: grid; place-items: center; background: rgb(123 211 166 / 16%); color: var(--acento); }
+.versao-ico svg { width: 17px; height: 17px; }
+.versao-tx { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.versao-tx b { font-size: 14px; color: #fff; }
+.versao-tx small { font-size: 12px; color: var(--floresta-texto); }
+button.versao-bt {
+  height: 36px; padding: 0 16px; border-radius: 999px; border: none; flex: none;
+  background: var(--acento); color: var(--floresta); font-weight: 700; font-size: 14px;
+}
+button.versao-bt:hover:not(:disabled) { background: #fff; color: var(--floresta); }
+button.versao-x { width: 30px; height: 30px; padding: 0; flex: none; border-radius: 999px; border: none; background: transparent; color: var(--floresta-texto); font-size: 13px; }
+button.versao-x:hover:not(:disabled) { background: rgb(255 255 255 / 10%); color: #fff; }
+
+@media (max-width: 900px) {
+  /* acima das abas do Início; nas outras telas, colada embaixo */
+  .versao-faixa { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: 12px; right: 12px; transform: none; width: auto; max-width: none; border-radius: 16px; }
+  @keyframes versao-entra { from { opacity: 0; transform: translateY(14px); } }
+  .casca-dash .versao-faixa { bottom: calc(var(--abas-cel, 64px) + 10px); }
+  .versao-tx small { display: none; }
+}

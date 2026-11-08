@@ -9,8 +9,11 @@ import { iniciarMonitoramento } from "./lib/monitoramento";
 import { ligarGradesBalanceadas } from "./lib/grade";
 import { VisualizadorPlantaHost } from "./components/planta/VisualizadorPlanta";
 import { BarreiraErro } from "./components/BarreiraErro";
+import { registrarOrigem } from "./lib/versao";
 
 iniciarMonitoramento();
+// aberto pelo app Android (?origem=android&versaoApp=N): guarda antes que a rota troque a URL
+registrarOrigem();
 // nenhuma grade de formulário deixa um campo sozinho na última linha
 ligarGradesBalanceadas();
 

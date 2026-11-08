@@ -9,7 +9,7 @@
 // perde: cada vértice vai para o aparelho na hora (lib/campo/aparelho.ts) e a
 // medição sobe sozinha para a conta quando há internet (0047). Fechada a área,
 // a próxima ação está à mão: criar o serviço de CAR, consultar, baixar.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import type { Rota } from "../../lib/rota";
 import { transferirArea } from "../../lib/area_transferida";
@@ -18,9 +18,21 @@ import {
   pendente, quando, removerMedicao, textoRetomada, textoUltimoVertice, textoVertices,
 } from "../../lib/campo/aparelho.ts";
 import type { Armazem, EstadoAparelho, ItemLista } from "../../lib/campo/aparelho.ts";
-import { areaSignificativa, classePrecisao, contornoSeCruza, medir, textoDistancia, textoHa, textoM2, textoPrecisao } from "../../lib/campo/geometria.ts";
+import { areaSignificativa, classePrecisao, contornoSeCruza, medir, textoDistancia, textoHa, textoM2, textoPrecisao, textoPrecisao95 } from "../../lib/campo/geometria.ts";
 import { combinarLeituras, leituraUtil, verticeAoCaminhar, verticeDoPonto } from "../../lib/campo/motor.ts";
 import type { PontoCombinado } from "../../lib/campo/motor.ts";
+import { convergencia, criarFiltroCaminhar, estadoAquecimento } from "../../lib/campo/filtro.ts";
+import type { Convergencia, EstadoAquecimento } from "../../lib/campo/filtro.ts";
+import { aplicarCalibracoes, calibrarVertice, novaCalibracao, textoDeslocamento } from "../../lib/campo/calibracao.ts";
+import type { MarcoProximo } from "../../lib/campo/calibracao.ts";
+import { ajustarCerca, valeAjustar } from "../../lib/campo/ajuste.ts";
+import type { AjusteCerca } from "../../lib/campo/ajuste.ts";
+import { apagarDiagnostico, arquivoDiagnostico, gravarDiagnostico, lerDiagnostico } from "../../lib/campo/diagnostico.ts";
+import { PainelPrecisao } from "./Precisao";
+import { PainelReceptor } from "./Receptor";
+import { criarReceptor } from "../../lib/campo/receptor.ts";
+import { abrirNtrip } from "../../lib/campo/ntrip.ts";
+import type { AbaPrecisao } from "./Precisao";
 import { fonteDoNavegador } from "../../lib/campo/gps.ts";
 import type { ErroGps, FonteGps } from "../../lib/campo/gps.ts";
 import { areaDaMedicao, esquecerMedicaoPedida, medicaoPedida } from "../../lib/campo/ponte.ts";
@@ -34,7 +46,7 @@ import { repositorioSupabase } from "../../lib/campo/conta.ts";
 import { conferirAjuste, LIMITES_OPCOES, OPCOES_PADRAO, opcoesValidas } from "../../lib/campo/tipos.ts";
 import { limpezaAindaVale, limparLinhaReta, valeLimpar } from "../../lib/campo/simplificar.ts";
 import type { Limpeza } from "../../lib/campo/simplificar.ts";
-import type { Leitura, LonLat, Medicao, OpcoesCampo, VerticeCampo } from "../../lib/campo/tipos.ts";
+import type { Calibracao, Leitura, LonLat, Medicao, OpcoesCampo, TipoFix, VerticeCampo } from "../../lib/campo/tipos.ts";
 import { avisar, confirmar, Dica, EstadoErro, EstadoVazio, Esqueleto, Gaveta, Rotulo } from "../ui";
 import { MapaCampo } from "./MapaCampo";
 import type { ControleImagemProps } from "./MapaCampo";
@@ -74,7 +86,19 @@ type EstadoGps =
 type EstadoEnvio = "ocioso" | "enviando" | "enviado" | TipoErroConta;
 
 const CHAVE_OPCOES = "vertces.campo.opcoes";
-export const AVISO_GPS = "GPS do celular: ±3 a 10 m. Serve para croqui, orçamento e CAR, não para georreferenciamento SIGEF.";
+const CHAVE_DIAG_LIGADO = "vertces.campo.diag.ligado";
+const CHAVE_EXIGIR_FIXO = "vertces.campo.exigirFixo";
+export const AVISO_GPS = "GPS do celular: ±3 a 10 m. Serve para croqui, orçamento e CAR, não para georreferenciamento SIGEF (para isso, ligue um receptor RTK em Precisão).";
+
+/** A oferta do fim da medição andada: ajustar a cerca (retas e cantos) ou só limpar os vértices em linha reta. */
+type OfertaCerca = (AjusteCerca & { tipo: "ajuste" }) | (Limpeza & { tipo: "limpeza" });
+
+const NOME_FIX: Record<TipoFix, string> = {
+  "rtk-fixo": "RTK fixo", "rtk-flutuante": "RTK flutuante", dgps: "DGPS", autonomo: "Autônomo", "sem-fix": "Sem solução",
+};
+
+/** O que está sendo juntado no Marcar ponto: um vértice, ou a ocupação de um marco (calibração). */
+interface Marcando { inicio: number; fim: number; calibrar?: { lon: number; lat: number; rotulo: string } }
 
 /** Imagem por data no mapa do campo: as datas são procuradas no lugar da medição. */
 function controleImagemPadrao(p: ControleImagemProps): ReactNode {
@@ -134,7 +158,12 @@ export function Campo(props: PropsCampo) {
 
 function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   const { ir } = props;
-  const fonte = useMemo(() => props.fonte ?? fonteDoNavegador(), [props.fonte]);
+  // o receptor RTK (Bluetooth) vive enquanto a tela está aberta; ligado, ele é a fonte
+  const receptor = useMemo(() => criarReceptor({ abrirNtrip }), []);
+  useEffect(() => () => { void receptor.desconectar(); }, [receptor]);
+  const receptorLigado = useSyncExternalStore(receptor.assinar, () => receptor.estado().conectado, () => false);
+  const navegador = useMemo(() => fonteDoNavegador(), []);
+  const fonte = props.fonte ?? (receptorLigado ? receptor : navegador);
   const repo = useMemo(() => props.repositorio ?? repositorioSupabase(), [props.repositorio]);
   const arm = props.armazem;
 
@@ -196,6 +225,14 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
     setOpcoesEstado(o);
     try { arm?.setItem(CHAVE_OPCOES, JSON.stringify(o)); } catch { /* fica só nesta visita */ }
   };
+  // receptor RTK: só aceitar vértice com solução RTK fixa (o "ponto de SIGEF")
+  const [exigirFixo, setExigirFixoEstado] = useState(() => { try { return arm?.getItem(CHAVE_EXIGIR_FIXO) === "1"; } catch { return false; } });
+  const exigirFixoRef = useRef(exigirFixo);
+  exigirFixoRef.current = exigirFixo;
+  const setExigirFixo = (v: boolean) => {
+    setExigirFixoEstado(v);
+    try { if (v) arm?.setItem(CHAVE_EXIGIR_FIXO, "1"); else arm?.removeItem(CHAVE_EXIGIR_FIXO); } catch { /* só nesta visita */ }
+  };
 
   // ------------------------------------------------------------ GPS
   const [gpsLigado, setGpsLigado] = useState(() => props.ligarGps ?? (!!props.fonte || ehCelular()));
@@ -208,32 +245,77 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   const caminhandoRef = useRef(false);
   const setCaminhando = (v: boolean) => { caminhandoRef.current = v; setCaminhandoEstado(v); };
   const [desenhando, setDesenhando] = useState(false);
-  const [marcando, setMarcando] = useState<{ inicio: number; fim: number } | null>(null);
+  const [marcando, setMarcandoEstado] = useState<Marcando | null>(null);
+  const marcandoInfoRef = useRef<Marcando | null>(null);
+  const setMarcando = (m: Marcando | null) => { marcandoInfoRef.current = m; setMarcandoEstado(m); };
   const marcandoRef = useRef<Leitura[] | null>(null);
   const [pontoRuim, setPontoRuim] = useState<PontoCombinado | null>(null);
   const [, setTique] = useState(0);
 
   const gpsDescansa = !!medicao?.fechada;
 
+  // o vértice novo do GPS já entra com a calibração da medição (à mão não muda)
   const adicionar = useCallback((v: VerticeCampo) => {
     const m = medicaoRef.current;
     if (!m || m.fechada) return;
-    mudar(alterar(m, { vertices: [...m.vertices, v] }));
+    mudar(alterar(m, { vertices: [...m.vertices, m.calibracoes?.length ? calibrarVertice(v, m.calibracoes) : v] }));
   }, [mudar]);
+
+  // ------------------------------------------------------------ precisão: aquecimento, filtro, diagnóstico
+  const historicoRef = useRef<Leitura[]>([]);
+  const filtroRef = useRef(criarFiltroCaminhar());
+  const [aquecimento, setAquecimento] = useState<EstadoAquecimento>({ pronto: false, segundos: 0, motivo: null });
+  const aquecidoRef = useRef(false);
+  const [diagLigado, setDiagLigadoEstado] = useState(() => { try { return arm?.getItem(CHAVE_DIAG_LIGADO) === "1"; } catch { return false; } });
+  const diagLigadoRef = useRef(diagLigado);
+  const diagBuffer = useRef<Leitura[]>([]);
+  const [diagQtd, setDiagQtd] = useState(() => lerDiagnostico(arm).length);
+  const setDiagLigado = (v: boolean) => {
+    diagLigadoRef.current = v; setDiagLigadoEstado(v);
+    try { if (v) arm?.setItem(CHAVE_DIAG_LIGADO, "1"); else arm?.removeItem(CHAVE_DIAG_LIGADO); } catch { /* só nesta visita */ }
+  };
+  useEffect(() => {
+    // o diagnóstico grava em lotes (a cada 5 s), não a cada leitura
+    const t = setInterval(() => {
+      if (!diagBuffer.current.length) return;
+      const lote = diagBuffer.current; diagBuffer.current = [];
+      setDiagQtd(gravarDiagnostico(arm, lote));
+    }, 5000);
+    return () => clearInterval(t);
+  }, [arm]);
 
   useEffect(() => {
     // área fechada e nada em andamento: o GPS descansa (bateria); volta em Continuar medindo / Nova
     if (!gpsLigado || gpsDescansa) { setGps({ tipo: "desligado" }); return; }
     setGps({ tipo: "procurando" });
+    historicoRef.current = [];
+    aquecidoRef.current = false;
+    filtroRef.current.zerar();
+    setAquecimento({ pronto: false, segundos: 0, motivo: null });
     const parar = fonte.iniciar(
       (l) => {
         leituraRef.current = l;
         setLeitura(l);
         setGps({ tipo: "ok" });
+        if (diagLigadoRef.current) diagBuffer.current.push(l);
+        // aquecimento: até o GPS assentar, a posição não vira o 1º vértice andando
+        const h = historicoRef.current;
+        h.push(l);
+        if (h.length > 120) h.splice(0, h.length - 120);
+        if (!aquecidoRef.current || l.fonte === "receptor") {
+          const e = estadoAquecimento(h, l.t);
+          aquecidoRef.current = e.pronto;
+          setAquecimento(e);
+        }
         if (marcandoRef.current) marcandoRef.current.push(l);
         const m = medicaoRef.current;
         if (caminhandoRef.current && m && !m.fechada) {
-          const r = verticeAoCaminhar(m.vertices, l, opcoesRef.current);
+          // o filtro recusa o salto impossível a pé (reflexo); o resto segue suavizado
+          const f = filtroRef.current.passar(l);
+          if (!f) return;
+          if (!m.vertices.length && !aquecidoRef.current) return;
+          if (exigirFixoRef.current && l.fonte === "receptor" && l.fix !== "rtk-fixo") return;
+          const r = verticeAoCaminhar(m.vertices, f, opcoesRef.current);
           if (r) adicionar(r.vertice);
         }
       },
@@ -253,28 +335,89 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
     avisar("ok", `P${m.vertices.length + 1} marcado · ${textoPrecisao(p.precisao)}${p.descartadas ? ` · ${p.descartadas} leitura(s) que pularam longe ficaram de fora` : ""}`);
   }
 
-  // Marcar ponto aqui: conta regressiva
+  /** Termina o Marcar ponto (no fim do tempo ou no "Pronto"): vira vértice ou calibração. */
+  function terminarMarcar() {
+    const info = marcandoInfoRef.current;
+    let leituras = marcandoRef.current ?? [];
+    marcandoRef.current = null;
+    setMarcando(null);
+    if (!info) return;
+    // nada chegou na janela, mas o GPS respondeu há pouco e a pessoa está parada: vale a última
+    const ultima = leituraRef.current;
+    if (!leituras.length && ultima && Date.now() - ultima.t < 20_000) leituras = [ultima];
+    const p = combinarLeituras(leituras);
+    if (!p) { avisar("alerta", "O GPS não mandou nenhuma posição nesses segundos. Vá para um lugar aberto e tente de novo."); return; }
+    if (info.calibrar) { registrarCalibracao(info.calibrar, p); return; }
+    if (exigirFixoRef.current && p.fonte === "receptor" && p.fix !== "rtk-fixo") { setPontoRuim(p); return; }
+    if (p.precisao == null || p.precisao > opcoesRef.current.limitePrecisaoM) { setPontoRuim(p); return; }
+    registrarPonto(p);
+  }
+  const terminarRef = useRef(terminarMarcar);
+  terminarRef.current = terminarMarcar;
+
+  // Marcar ponto aqui: conta regressiva (o fim pode mudar: "+1 min")
+  const [conv, setConv] = useState<Convergencia | null>(null);
   useEffect(() => {
-    if (!marcando) return;
-    const tique = setInterval(() => setTique((t) => t + 1), 200);
+    if (!marcando) { setConv(null); return; }
+    let n = 0;
+    const tique = setInterval(() => {
+      setTique((t) => t + 1);
+      // a convergência a cada segundo (reconta o ponto médio: não precisa a cada 200 ms)
+      if (++n % 5 === 0) setConv(convergencia(marcandoRef.current ?? []));
+    }, 200);
     // parado no canto, o celular pode não mandar posição nova sozinho: pede uma por segundo
     fonte.pedirAgora?.();
     const pede = setInterval(() => fonte.pedirAgora?.(), 1000);
-    const fim = setTimeout(() => {
-      let leituras = marcandoRef.current ?? [];
-      marcandoRef.current = null;
-      setMarcando(null);
-      // nada chegou na janela, mas o GPS respondeu há pouco e a pessoa está parada: vale a última
-      const ultima = leituraRef.current;
-      if (!leituras.length && ultima && Date.now() - ultima.t < 20_000) leituras = [ultima];
-      const p = combinarLeituras(leituras);
-      if (!p) { avisar("alerta", "O GPS não mandou nenhuma posição nesses segundos. Vá para um lugar aberto e tente de novo."); return; }
-      if (p.precisao == null || p.precisao > opcoesRef.current.limitePrecisaoM) { setPontoRuim(p); return; }
-      registrarPonto(p);
-    }, Math.max(0, marcando.fim - Date.now()));
+    const fim = setTimeout(() => terminarRef.current(), Math.max(0, marcando.fim - Date.now()));
     return () => { clearInterval(tique); clearInterval(pede); clearTimeout(fim); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marcando]);
+
+  // ------------------------------------------------------------ calibração
+  const [marcos, setMarcos] = useState<MarcoProximo[]>([]);
+  const [marcoEscolhido, setMarcoEscolhido] = useState<number | null>(null);
+  const [abaPrecisao, setAbaPrecisao] = useState<AbaPrecisao | null>(null);
+
+  function registrarCalibracao(marco: { lon: number; lat: number; rotulo: string }, p: PontoCombinado) {
+    const m = medicaoRef.current;
+    if (!m || m.fechada) { avisar("alerta", "Abra uma medição para calibrar."); return; }
+    // a média medida SEM correção (a calibração compara o GPS cru com o marco)
+    const cal = novaCalibracao(marco.rotulo, marco, { lon: p.lon, lat: p.lat, precisao: p.precisao, leituras: p.usadas }, Date.now());
+    const calibracoes = [...(m.calibracoes ?? []), cal];
+    mudar(alterar(m, { calibracoes, vertices: aplicarCalibracoes(m.vertices, calibracoes) }));
+    avisar("ok", `Calibrado em ${marco.rotulo}: o GPS estava ${textoDeslocamento({ dE: -cal.dE, dN: -cal.dN })}. Os vértices foram corrigidos.`);
+    setAbaPrecisao("calibrar");
+  }
+  function removerCalibracao(id: string) {
+    const m = medicaoRef.current;
+    if (!m) return;
+    const calibracoes = (m.calibracoes ?? []).filter((c) => c.id !== id);
+    mudar(alterar(m, { calibracoes, vertices: aplicarCalibracoes(m.vertices, calibracoes) }));
+  }
+  function calibrarNoMarco(marco: { lon: number; lat: number; rotulo: string }) {
+    if (!gpsLigado) setGpsLigado(true);
+    garantirMedicao();
+    setDesenhando(false); setCaminhando(false); setPontoRuim(null);
+    setAbaPrecisao(null);
+    const l = leituraRef.current;
+    marcandoRef.current = l && Date.now() - l.t < 1500 ? [l] : [];
+    const agora = Date.now();
+    // a ocupação do marco é longa: pelo menos 60 s (ou o tempo do Marcar ponto, se for maior)
+    setMarcando({ inicio: agora, fim: agora + Math.max(60, opcoesRef.current.segundosMarcar) * 1000, calibrar: marco });
+  }
+  function maisTempo() {
+    const mc = marcandoInfoRef.current;
+    if (mc) setMarcando({ ...mc, fim: mc.fim + 60_000 });
+  }
+  function baixarDiagnostico() {
+    const lista = [...lerDiagnostico(arm), ...diagBuffer.current];
+    const arq = arquivoDiagnostico(lista, typeof navigator !== "undefined" ? navigator.userAgent : "");
+    const url = URL.createObjectURL(new Blob([JSON.stringify(arq)], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `vertces-leituras-gps-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
 
   // ------------------------------------------------------------ tela acordada (Wake Lock)
   const medindo = !!medicao && !medicao.fechada && (caminhando || !!marcando || (gps.tipo === "ok" && medicao.vertices.length > 0));
@@ -573,14 +716,18 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
 
   // "Limpar vértices em linha reta": fechada a área andada (Caminhar), a cerca reta não precisa de um vértice a cada 5 m
   const [semLimpeza, setSemLimpeza] = useState<ReadonlySet<string>>(() => new Set());
-  const [limpou, setLimpou] = useState<{ id: string; antes: VerticeCampo[]; l: Limpeza } | null>(null);
+  const [limpou, setLimpou] = useState<{ id: string; antes: VerticeCampo[]; l: OfertaCerca } | null>(null);
   // a limpeza feita só vale enquanto o contorno for exatamente o que ela deixou
   const limpezaFeita = limpou && medicao?.fechada && limpou.id === medicao.id && limpezaAindaVale(limpou.l, medicao.vertices) ? limpou.l : null;
-  const limpeza = useMemo(() => {
+  // a oferta: "Ajustar a cerca" (retas médias por lado, cantos no cruzamento) quando
+  // ela vale; senão a limpeza simples (só tira os vértices em linha reta)
+  const limpeza = useMemo((): OfertaCerca | null => {
     if (!medicao?.fechada || semLimpeza.has(medicao.id) || limpezaFeita) return null;
     if (!medicao.vertices.some((v) => v.modo === "caminhar")) return null;
+    const a = ajustarCerca(medicao.vertices);
+    if (valeAjustar(a)) return { ...a, tipo: "ajuste" };
     const l = limparLinhaReta(medicao.vertices);
-    return valeLimpar(l) ? l : null;
+    return valeLimpar(l) ? { ...l, tipo: "limpeza" } : null;
   }, [medicao, semLimpeza, limpezaFeita]);
   function aplicarLimpeza() {
     const m = medicaoRef.current;
@@ -604,6 +751,11 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   // no celular, medindo (ou para começar): a barra de três botões com o do meio saltado
   const comDoca = estreita && !(oferta && !medicao);
 
+  // o painel do receptor RTK (Bluetooth + correção NTRIP) entra na aba Receptor
+  const painelReceptor: ReactNode = (
+    <PainelReceptor receptor={receptor} arm={arm} leitura={leitura} exigirFixo={exigirFixo} onExigirFixo={setExigirFixo} />
+  );
+
   const painel = (
     <PainelControle
       doca={comDoca}
@@ -613,6 +765,8 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
       gps={gps} gpsLigado={gpsLigado} leitura={leitura} sinalFraco={sinalFraco}
       caminhando={caminhando} desenhando={desenhando} marcando={marcando} pontoRuim={pontoRuim}
       opcoes={opcoes} acordada={acordada} nomeRef={nomeRef}
+      aquecimento={aquecimento} conv={conv} exigirFixo={exigirFixo}
+      onPronto={() => terminarRef.current()} onMaisTempo={maisTempo}
       onLigarGps={() => setGpsLigado(true)}
       onContinuarOferta={() => { if (oferta) { persistir(guardarMedicao(aparelhoRef.current, oferta, true)); mostrar(oferta); setOferta(null); setSeguir(true); } }}
       onOutraOferta={() => { persistir({ ...aparelhoRef.current, atualId: null }); setOferta(null); setSeguir(true); }}
@@ -650,9 +804,11 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
             if (!m) return;
             mudar(alterar(m, { vertices: m.vertices.map((v, k) => (k === i ? { ...v, lon: p[0], lat: p[1], modo: "mao" as const, precisao: null } : v)) }));
           }}
+          marcos={abaPrecisao === "calibrar" || marcando?.calibrar ? marcos.slice(0, 8).map((m, i) => ({ ...m, escolhido: i === marcoEscolhido })) : undefined}
+          onEscolherMarco={(i) => { setMarcoEscolhido(i); if (!abaPrecisao) setAbaPrecisao("calibrar"); }}
           enquadrar={enquadrar} voarPara={voarPara} controleImagem={props.controleImagem === undefined ? controleImagemPadrao : props.controleImagem ?? undefined}>
           <div className="campo-topo-linha">
-            <SeloGps gps={gps} leitura={leitura} descansa={gpsDescansa && gpsLigado} />
+            <SeloGps gps={gps} leitura={leitura} descansa={gpsDescansa && gpsLigado} aquecendo={!aquecimento.pronto && gps.tipo === "ok"} />
             <span className={`campo-salvo ${statusEnvio.tom}`} title={statusEnvio.dica}>
               <i aria-hidden="true" />{statusEnvio.texto}
             </span>
@@ -662,6 +818,11 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
                   Salvas{lista.length ? <b>{lista.length}</b> : null}
                 </button>
               )}
+              <button type="button" className={`campo-btn-mapa campo-btn-precisao${medicao?.calibracoes?.length ? " calibrado" : ""}`} onClick={() => setAbaPrecisao("calibrar")}
+                aria-label="Precisão do GPS: calibrar, receptor RTK, dicas" title="Precisão do GPS: calibrar num marco, receptor RTK, dicas">
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>
+                <span className="campo-so-largo">Precisão</span>
+              </button>
               <button type="button" className="campo-btn-mapa" onClick={() => setGavetaAjustes(true)} aria-label="Ajustes do medidor" title="Ajustes do medidor">
                 <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>
               </button>
@@ -696,6 +857,17 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
 
       {gavetaLista && estreita && <Gaveta olho="Medir no campo" titulo="Medições salvas" onFechar={() => setGavetaLista(false)}>{listaEl}</Gaveta>}
       {gavetaAjustes && <Ajustes opcoes={opcoes} onMudar={setOpcoes} onFechar={() => setGavetaAjustes(false)} />}
+      {abaPrecisao && (
+        <PainelPrecisao aba={abaPrecisao} onAba={setAbaPrecisao} onFechar={() => setAbaPrecisao(null)}
+          leitura={leitura} temMedicao={!medicao?.fechada}
+          calibracoes={medicao?.calibracoes ?? []}
+          marcos={marcos} onMarcos={setMarcos} escolhido={marcoEscolhido} onEscolher={setMarcoEscolhido}
+          onCalibrar={calibrarNoMarco} onRemoverCalibracao={removerCalibracao}
+          segundosCalibrar={Math.max(60, opcoes.segundosMarcar)}
+          diagnostico={{ ligado: diagLigado, leituras: diagQtd }} onDiagnostico={setDiagLigado}
+          onBaixarDiagnostico={baixarDiagnostico} onApagarDiagnostico={() => { apagarDiagnostico(arm); diagBuffer.current = []; setDiagQtd(0); }}
+          receptor={painelReceptor} />
+      )}
     </div>
   );
 }
@@ -720,7 +892,7 @@ function textoEnvio(m: Medicao | null, pend: boolean, envio: { estado: EstadoEnv
   return { texto: "Salvo no aparelho", tom: "aparelho", dica: "Salvo no aparelho; sobe para a conta em instantes." };
 }
 
-function SeloGps({ gps, leitura, descansa }: { gps: EstadoGps; leitura: Leitura | null; descansa: boolean }) {
+function SeloGps({ gps, leitura, descansa, aquecendo }: { gps: EstadoGps; leitura: Leitura | null; descansa: boolean; aquecendo?: boolean }) {
   if (descansa) return <span className="campo-gps-selo desligado" title="Área fechada: o GPS descansa para poupar a bateria. Volta em Continuar medindo ou Nova medição.">GPS em pausa</span>;
   if (gps.tipo === "desligado") return <span className="campo-gps-selo desligado">GPS desligado</span>;
   if (gps.tipo === "procurando") return <span className="campo-gps-selo procurando"><i aria-hidden="true" />Procurando o GPS…</span>;
@@ -731,9 +903,19 @@ function SeloGps({ gps, leitura, descansa }: { gps: EstadoGps; leitura: Leitura 
     return <span className={`campo-gps-selo ${gps.erro.tipo === "sem-permissao" ? "media" : "ruim"}`} title={gps.erro.mensagem}>{t}</span>;
   }
   const p = leitura?.precisao ?? null;
+  if (leitura?.fonte === "receptor") {
+    const fix = leitura.fix ?? "sem-fix";
+    const classe = fix === "rtk-fixo" ? "boa rtk" : fix === "rtk-flutuante" || fix === "dgps" ? "media" : "ruim";
+    return (
+      <span className={`campo-gps-selo ${classe}`} title={`Receptor externo · ${NOME_FIX[fix]}${leitura.sats != null ? ` · ${leitura.sats} satélites` : ""}${leitura.idadeCorrecaoS != null ? ` · correção de ${leitura.idadeCorrecaoS.toFixed(0)} s` : ""}. Até ${textoPrecisao(p == null ? null : p * 1.62)} em 95% das leituras.`}>
+        <i aria-hidden="true" />{NOME_FIX[fix]} {textoPrecisao(p)}{gps.tipo === "erro" ? " · sinal perdido" : ""}
+      </span>
+    );
+  }
   return (
-    <span className={`campo-gps-selo ${p == null ? "ruim" : classePrecisao(p)}`} title="Precisão informada pelo GPS do aparelho agora">
-      <i aria-hidden="true" />GPS {textoPrecisao(p)}{gps.tipo === "erro" ? " · sinal perdido" : ""}
+    <span className={`campo-gps-selo ${p == null ? "ruim" : classePrecisao(p)}${aquecendo ? " procurando" : ""}`}
+      title={`Precisão informada pelo GPS do aparelho agora: 2 de cada 3 leituras ficam dentro de ${textoPrecisao(p)}; 95% até ${textoPrecisao(p == null ? null : p * 1.62)}.${aquecendo ? " O GPS acabou de ligar e ainda está assentando." : ""}`}>
+      <i aria-hidden="true" />{aquecendo ? "Aquecendo · " : "GPS "}{textoPrecisao(p)}{gps.tipo === "erro" ? " · sinal perdido" : ""}
     </span>
   );
 }
@@ -749,10 +931,10 @@ interface PropsPainel {
   oferta: Medicao | null;
   md: ReturnType<typeof medir>;
   cruza: boolean;
-  /** oferta de "Limpar vértices em linha reta" (área fechada andando) */
-  limpeza: Limpeza | null;
-  /** a limpeza aplicada agora (com o Desfazer) */
-  limpezaFeita: Limpeza | null;
+  /** oferta de "Ajustar a cerca" / "Limpar vértices em linha reta" (área fechada andando) */
+  limpeza: OfertaCerca | null;
+  /** o ajuste/limpeza aplicado agora (com o Desfazer) */
+  limpezaFeita: OfertaCerca | null;
   onLimpar: () => void;
   onDesfazerLimpeza: () => void;
   onDispensarLimpeza: () => void;
@@ -762,11 +944,17 @@ interface PropsPainel {
   sinalFraco: boolean;
   caminhando: boolean;
   desenhando: boolean;
-  marcando: { inicio: number; fim: number } | null;
+  marcando: Marcando | null;
   pontoRuim: PontoCombinado | null;
   opcoes: OpcoesCampo;
   acordada: boolean;
   nomeRef: React.RefObject<HTMLInputElement>;
+  aquecimento: EstadoAquecimento;
+  /** como o ponto do Marcar ponto está assentando */
+  conv: Convergencia | null;
+  exigirFixo: boolean;
+  onPronto: () => void;
+  onMaisTempo: () => void;
   onLigarGps: () => void;
   onContinuarOferta: () => void;
   onOutraOferta: () => void;
@@ -845,19 +1033,34 @@ function Numeros({ md, aberta }: { md: ReturnType<typeof medir>; aberta: boolean
   );
 }
 
-/** "121 → 28 vértices · 2,7511 → 2,7546 ha": a cerca reta com um vértice só em cada canto/curva. */
-function OfertaLimpeza({ l, onLimpar, onDispensar }: { l: Limpeza; onLimpar: () => void; onDispensar: () => void }) {
+/**
+ * "121 → 4 vértices · 2,7511 → 2,7546 ha": a cerca reta com um vértice só em
+ * cada canto. O ajuste também recoloca os cantos no cruzamento das retas médias.
+ */
+function OfertaLimpeza({ l, onLimpar, onDispensar }: { l: OfertaCerca; onLimpar: () => void; onDispensar: () => void }) {
   const dif = l.areaDepoisM2 - l.areaAntesM2;
   const pct = l.areaAntesM2 > 0 ? (Math.abs(dif) / l.areaAntesM2) * 100 : 0;
+  const ajuste = l.tipo === "ajuste";
   return (
-    <div className="campo-limpar" role="region" aria-label="Limpar vértices em linha reta">
+    <div className="campo-limpar" role="region" aria-label={ajuste ? "Ajustar a cerca" : "Limpar vértices em linha reta"}>
       <div className="campo-limpar-texto">
-        <b>Limpar vértices em linha reta
+        <b>{ajuste ? "Ajustar a cerca" : "Limpar vértices em linha reta"}
           <Dica>
-            Andando, o celular pôs um vértice a cada poucos metros. Na cerca reta, os do meio sobram: saem os que ficam a menos de{" "}
-            {textoDistancia(l.toleranciaM)} da linha entre os vizinhos (Douglas–Peucker em UTM, da ordem da precisão do GPS). Os pontos que você marcou
-            parado ou tocou no mapa ficam sempre. A área muda {textoM2(Math.abs(dif))} ({pct.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%)
-            {l.incertezaM2 != null ? `, bem menos que a incerteza do próprio GPS (±${textoM2(l.incertezaM2)})` : ""}.
+            {l.tipo === "ajuste" ? (
+              <>
+                Andando, o celular pôs um vértice a cada poucos metros, cada um com o erro de uma leitura, e o canto de verdade ficou
+                cortado (o vértice nasce depois da esquina). O ajuste traça uma reta média por lado, com todos os vértices dele,
+                e põe cada canto no cruzamento das retas{l.cantosAjustados ? ` (${l.cantosAjustados} canto${l.cantosAjustados > 1 ? "s" : ""}; o que mais andou: ${textoDistancia(l.deslocMaxM)})` : ""}.
+                Os pontos que você marcou parado ou tocou no mapa não saem do lugar. A área muda {textoM2(Math.abs(dif))} ({pct.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%).
+              </>
+            ) : (
+              <>
+                Andando, o celular pôs um vértice a cada poucos metros. Na cerca reta, os do meio sobram: saem os que ficam a menos de{" "}
+                {textoDistancia(l.toleranciaM)} da linha entre os vizinhos (Douglas–Peucker em UTM, da ordem da precisão do GPS). Os pontos que você marcou
+                parado ou tocou no mapa ficam sempre. A área muda {textoM2(Math.abs(dif))} ({pct.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%)
+                {l.incertezaM2 != null ? `, bem menos que a incerteza do próprio GPS (±${textoM2(l.incertezaM2)})` : ""}.
+              </>
+            )}
           </Dica>
         </b>
         <span className="campo-limpar-num">
@@ -866,10 +1069,30 @@ function OfertaLimpeza({ l, onLimpar, onDispensar }: { l: Limpeza; onLimpar: () 
         </span>
       </div>
       <div className="campo-acoes-linha">
-        <button type="button" className="campo-btn-medio campo-limpar-sim" onClick={onLimpar}>Limpar</button>
+        <button type="button" className="campo-btn-medio campo-limpar-sim" onClick={onLimpar}>{ajuste ? "Ajustar" : "Limpar"}</button>
         <button type="button" className="campo-btn-medio" onClick={onDispensar}>Deixar como está</button>
       </div>
     </div>
+  );
+}
+
+/** Marcar ponto em andamento: o tempo, a precisão de agora, o ponto assentando e o "Pronto". */
+function TextoMarcando({ p, segundos }: { p: PropsPainel; segundos: number }) {
+  const c = p.conv;
+  const mc = p.marcando;
+  const passou = mc ? (Date.now() - mc.inicio) / 1000 : 0;
+  const assentou = !!c && c.n >= 5 && passou >= 10 && c.estavelHaS >= 8;
+  return (
+    <>
+      <span>
+        <b>{mc?.calibrar ? "Calibrando no marco" : "Fique parado"}</b> · {segundos} s
+        {c ? <> · {c.n} leituras · ponto {textoPrecisao(c.precisao)}{assentou ? " · assentou" : ""}</> : <> · agora {textoPrecisao(p.leitura?.precisao ?? null)}</>}
+      </span>
+      <span className="campo-marcando-acoes">
+        <button type="button" className="campo-btn-mini" onClick={p.onMaisTempo} title="Juntar leituras por mais 1 minuto">+1 min</button>
+        {assentou && <button type="button" className="campo-btn-mini principal" onClick={p.onPronto} title="O ponto parou de andar: terminar agora">Pronto</button>}
+      </span>
+    </>
   );
 }
 
@@ -916,13 +1139,13 @@ function PainelControle(p: PropsPainel) {
         </label>
         <Numeros md={p.md} aberta={false} />
         <p className="campo-detalhe">
-          {p.md.precisaoMediaM == null ? "Desenhada à mão" : `Precisão ${textoPrecisao(p.md.precisaoMediaM)}`} · {quando(m.criadaEm)} · fuso {p.md.fuso}
+          {p.md.precisaoMediaM == null ? "Desenhada à mão" : `Precisão ${textoPrecisao95(p.md.precisaoMediaM)}`}{textoCalibrada(m)}{textoFixos(m)} · {quando(m.criadaEm)} · fuso {p.md.fuso}
         </p>
         {p.cruza && <p className="campo-alerta" role="alert">O contorno se cruza: a área pode estar errada. Use "Continuar medindo" e desfaça os vértices do cruzamento.</p>}
         {p.limpeza && <OfertaLimpeza l={p.limpeza} onLimpar={p.onLimpar} onDispensar={p.onDispensarLimpeza} />}
         {p.limpezaFeita && (
           <p className="campo-limpo" role="status">
-            <span><b>Cerca limpa:</b> {p.limpezaFeita.antes} → {p.limpezaFeita.depois} vértices · {textoHa(p.limpezaFeita.areaDepoisM2)}</span>
+            <span><b>{p.limpezaFeita.tipo === "ajuste" ? "Cerca ajustada:" : "Cerca limpa:"}</b> {p.limpezaFeita.antes} → {p.limpezaFeita.depois} vértices · {textoHa(p.limpezaFeita.areaDepoisM2)}</span>
             <button type="button" className="link" onClick={p.onDesfazerLimpeza}>Desfazer</button>
           </p>
         )}
@@ -943,13 +1166,13 @@ function PainelControle(p: PropsPainel) {
         </label>
         <Numeros md={p.md} aberta={false} />
         <p className="campo-detalhe">
-          {p.md.precisaoMediaM == null ? "Desenhada à mão" : `Precisão média ${textoPrecisao(p.md.precisaoMediaM)}`} · medida {quando(m.criadaEm)} · fuso {p.md.fuso}
+          {p.md.precisaoMediaM == null ? "Desenhada à mão" : `Precisão média ${textoPrecisao95(p.md.precisaoMediaM)}`}{textoCalibrada(m)}{textoFixos(m)} · medida {quando(m.criadaEm)} · fuso {p.md.fuso}
         </p>
         {p.cruza && <p className="campo-alerta" role="alert">O contorno se cruza: a área pode estar errada. Use "Continuar medindo" e desfaça os vértices do cruzamento.</p>}
         {p.limpeza && <OfertaLimpeza l={p.limpeza} onLimpar={p.onLimpar} onDispensar={p.onDispensarLimpeza} />}
         {p.limpezaFeita && (
           <p className="campo-limpo" role="status">
-            <span><b>Cerca limpa:</b> {p.limpezaFeita.antes} → {p.limpezaFeita.depois} vértices · {textoHa(p.limpezaFeita.areaDepoisM2)}</span>
+            <span><b>{p.limpezaFeita.tipo === "ajuste" ? "Cerca ajustada:" : "Cerca limpa:"}</b> {p.limpezaFeita.antes} → {p.limpezaFeita.depois} vértices · {textoHa(p.limpezaFeita.areaDepoisM2)}</span>
             <button type="button" className="link" onClick={p.onDesfazerLimpeza}>Desfazer</button>
           </p>
         )}
@@ -982,8 +1205,7 @@ function PainelControle(p: PropsPainel) {
     return (
       <div className="campo-marcando" role="status" aria-live="polite">
         <div className="campo-marcando-texto">
-          <b>Parado aqui… juntando leituras</b>
-          <span>{Math.ceil(falta / 1000)} s · agora {textoPrecisao(p.leitura?.precisao ?? null)}</span>
+          <TextoMarcando p={p} segundos={Math.ceil(falta / 1000)} />
         </div>
         <div className="campo-barra" aria-hidden="true"><i style={{ width: `${100 - (falta / total) * 100}%` }} /></div>
         <button type="button" onClick={p.onCancelarMarcar}>Cancelar</button>
@@ -993,7 +1215,7 @@ function PainelControle(p: PropsPainel) {
 
   const pontoRuimEl = p.pontoRuim && (
     <div className="campo-ponto-ruim" role="alertdialog" aria-label="Precisão pior que o limite">
-      <b>A precisão ficou em {textoPrecisao(p.pontoRuim.precisao)}</b>
+      <b>{p.exigirFixo && p.pontoRuim.fonte === "receptor" && p.pontoRuim.fix !== "rtk-fixo" ? `O receptor não estava em RTK fixo (${NOME_FIX[p.pontoRuim.fix ?? "sem-fix"]})` : `A precisão ficou em ${textoPrecisao(p.pontoRuim.precisao)}`}</b>
       <span>O limite é ±{p.opcoes.limitePrecisaoM} m. Debaixo de árvore ou perto de parede o GPS piora: dois passos para o aberto costumam resolver.</span>
       <div className="campo-acoes-linha tres">
         <button type="button" className="principal" onClick={p.onPontoDeNovo}>Tentar de novo</button>
@@ -1083,6 +1305,7 @@ function PainelControle(p: PropsPainel) {
         <p className={`campo-estado${p.sinalFraco || !p.leitura ? " fraco" : ""}`} role="status" aria-live="polite">
           <i aria-hidden="true" />
           {!p.leitura ? "Esperando o sinal do GPS…"
+            : !p.aquecimento.pronto && !n ? `Aquecendo o GPS (${p.aquecimento.motivo ?? "assentando"}): o 1º vértice sai quando a precisão parar de melhorar`
             : p.sinalFraco ? `Sinal fraco (${textoPrecisao(p.leitura.precisao)}): esperando melhorar para pôr vértice`
               : `Caminhando · vértice a cada ${p.opcoes.passoM} m ou curva de ${p.opcoes.anguloGraus}°`}
           {p.acordada && <span className="campo-acordada" title="A tela não apaga enquanto mede">tela acordada</span>}
@@ -1177,8 +1400,8 @@ function PainelDoca(p: PropsPainel) {
     estado = (
       <p className="campo-estado marcando" role="status" aria-live="polite">
         <i aria-hidden="true" />
-        <span><b>Fique parado</b> · {segundos} s · agora {textoPrecisao(p.leitura?.precisao ?? null)}</span>
-        <Dica>Parado no canto, o celular junta as leituras de {p.opcoes.segundosMarcar} s e tira a média. As que pulam longe ficam de fora. Toque em Cancelar para desistir.</Dica>
+        <TextoMarcando p={p} segundos={segundos} />
+        <Dica>Parado no canto, o celular junta as leituras e tira a média; as que pulam longe ficam de fora. O erro do celular muda devagar: quanto mais tempo parado, melhor (+1 min estende). "Pronto" aparece quando o ponto parou de andar. Cancelar desiste.</Dica>
       </p>
     );
   } else if (p.caminhando) {
@@ -1186,6 +1409,7 @@ function PainelDoca(p: PropsPainel) {
       <p className={`campo-estado${p.sinalFraco || !p.leitura ? " fraco" : ""}`} role="status" aria-live="polite">
         <i aria-hidden="true" />
         <span>{!p.leitura ? "Esperando o sinal do GPS…"
+          : !p.aquecimento.pronto && !n ? <><b>Aquecendo o GPS</b> · {textoPrecisao(p.leitura.precisao)} · {Math.round(p.aquecimento.segundos)} s</>
           : p.sinalFraco ? <><b>Sinal fraco</b> · {textoPrecisao(p.leitura.precisao)} · esperando</>
             : <><b>Caminhando</b> · vértice a cada {p.opcoes.passoM} m</>}</span>
         <Dica>Ande rente à cerca: o celular põe um vértice sozinho a cada {p.opcoes.passoM} m ou a cada curva de {p.opcoes.anguloGraus}°. Com o sinal pior que ±{p.opcoes.limitePrecisaoM} m, ele espera melhorar. Pausar para quando precisar sair da linha.{p.acordada ? " A tela fica acordada enquanto mede." : ""}</Dica>
@@ -1217,7 +1441,7 @@ function PainelDoca(p: PropsPainel) {
       {!n && !p.leitura && (p.desenhando || semGps) && <IrPara onIr={(lugar) => { p.onIrPara(lugar); if (!p.desenhando) p.onDesenhar(); }} />}
       {p.pontoRuim && (
         <div className="campo-ponto-ruim" role="alertdialog" aria-label="Precisão pior que o limite">
-          <b>Precisão de {textoPrecisao(p.pontoRuim.precisao)} · o limite é ±{p.opcoes.limitePrecisaoM} m
+          <b>{p.exigirFixo && p.pontoRuim.fonte === "receptor" && p.pontoRuim.fix !== "rtk-fixo" ? `Sem RTK fixo (${NOME_FIX[p.pontoRuim.fix ?? "sem-fix"]}) · o ponto de SIGEF pede fixo` : <>Precisão de {textoPrecisao(p.pontoRuim.precisao)} · o limite é ±{p.opcoes.limitePrecisaoM} m</>}
             <Dica>Debaixo de árvore ou perto de parede o GPS piora: dois passos para o aberto costumam resolver. Marcar assim põe o vértice com essa precisão.</Dica>
           </b>
           <div className="campo-acoes-linha">
@@ -1367,4 +1591,18 @@ function Ajustes({ opcoes, onMudar, onFechar }: { opcoes: OpcoesCampo; onMudar: 
       <p className="campo-nota">Os ajustes ficam neste aparelho.</p>
     </Gaveta>
   );
+}
+
+/** " · calibrada em 2 marcos" */
+function textoCalibrada(m: Medicao): string {
+  const n = m.calibracoes?.length ?? 0;
+  return n ? ` · calibrada em ${n === 1 ? "1 marco" : `${n} marcos`}` : "";
+}
+
+/** " · 12 de 14 vértices em RTK fixo" (só com receptor) */
+function textoFixos(m: Medicao): string {
+  const doReceptor = m.vertices.filter((v) => v.fonte === "receptor");
+  if (!doReceptor.length) return "";
+  const fixos = doReceptor.filter((v) => v.fix === "rtk-fixo").length;
+  return ` · ${fixos} de ${m.vertices.length} vértices em RTK fixo`;
 }

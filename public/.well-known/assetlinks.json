@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "br.com.vertces.app",
+      "sha256_cert_fingerprints": [
+        "93:F8:12:C9:90:0C:00:12:5B:9D:4F:7A:19:0E:1D:EF:47:6C:23:18:4F:28:71:9C:51:44:6F:F2:0D:1F:67:F1"
+      ]
+    }
+  }
+]

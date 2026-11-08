@@ -17,7 +17,7 @@
 //    juntos), então o ponto leva a melhor precisão das leituras ou o
 //    espalhamento delas, o que for pior.
 import { difAngulo, distanciaM, rumoGraus } from "./geometria.ts";
-import type { Leitura, OpcoesCampo, VerticeCampo } from "./tipos.ts";
+import type { FonteLeitura, Leitura, OpcoesCampo, TipoFix, VerticeCampo } from "./tipos.ts";
 
 /** A leitura serve para medir? (posição válida e precisão dentro do limite) */
 export function leituraUtil(l: Leitura | null | undefined, limiteM: number): l is Leitura {
@@ -36,7 +36,10 @@ export function verticeAoCaminhar(
 ): { vertice: VerticeCampo; motivo: MotivoCaminhar } | null {
   if (!leituraUtil(l, op.limitePrecisaoM)) return null;
   const novo = (motivo: MotivoCaminhar) => ({
-    vertice: { lon: l.lon, lat: l.lat, precisao: l.precisao, t: l.t, modo: "caminhar" as const, ...(l.alt != null ? { alt: l.alt } : {}) },
+    vertice: {
+      lon: l.lon, lat: l.lat, precisao: l.precisao, t: l.t, modo: "caminhar" as const,
+      ...(l.alt != null ? { alt: l.alt } : {}), ...(l.fonte ? { fonte: l.fonte } : {}), ...(l.fix ? { fix: l.fix } : {}),
+    },
     motivo,
   });
   const ult = vertices[vertices.length - 1];
@@ -62,6 +65,9 @@ export interface PontoCombinado {
   usadas: number;
   descartadas: number;
   alt?: number | null;
+  /** o pior tipo de solução entre as leituras usadas (só receptor) */
+  fix?: TipoFix;
+  fonte?: FonteLeitura;
 }
 
 const mediana = (v: number[]): number => {
@@ -70,19 +76,43 @@ const mediana = (v: number[]): number => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
+/**
+ * A mesma posição chega duas vezes: o watchPosition e o pedirAgora (que pede uma
+ * por segundo no Marcar ponto) devolvem o último fix do aparelho. Repetida, ela
+ * pesava dobrado e o espalhamento saía menor que o de verdade. A chave é a hora
+ * do próprio GPS; sem ela, a posição idêntica (lon, lat e precisão).
+ */
+export function semRepetidas<T extends Leitura>(leituras: T[]): T[] {
+  const vistas = new Set<string>();
+  return leituras.filter((l) => {
+    const k = l.tGps != null && Number.isFinite(l.tGps) ? `t${l.tGps}|${l.lon}|${l.lat}` : `p${l.lon}|${l.lat}|${l.precisao}`;
+    if (vistas.has(k)) return false;
+    vistas.add(k);
+    return true;
+  });
+}
+
+/** Raio de 68% (o `accuracy` do Android) → raio de 95%, para erro circular normal: √(−2 ln 0,05) / √(−2 ln 0,32). */
+export const FATOR_95 = 1.62;
+export const precisao95 = (p: number | null): number | null => (p == null ? null : p * FATOR_95);
+
 /** Junta as leituras de "Marcar ponto aqui" num ponto só. null = nenhuma leitura válida. */
 export function combinarLeituras(leituras: Leitura[]): PontoCombinado | null {
-  const validas = leituras.filter((l) => Number.isFinite(l.lon) && Number.isFinite(l.lat) && Math.abs(l.lat) <= 90 && Math.abs(l.lon) <= 180);
+  const validas = semRepetidas(leituras.filter((l) => Number.isFinite(l.lon) && Number.isFinite(l.lat) && Math.abs(l.lat) <= 90 && Math.abs(l.lon) <= 180));
   if (!validas.length) return null;
   // centro robusto: a mediana de cada coordenada
   const centro = { lon: mediana(validas.map((l) => l.lon)), lat: mediana(validas.map((l) => l.lat)) };
   const dists = validas.map((l) => distanciaM(centro, l));
   const dMed = mediana(dists);
-  // fora: as que pularam mais que 2,5× o espalhamento típico (e mais de 1,5 m)
-  const corte = Math.max(1.5, 2.5 * dMed);
+  // fora: as que pularam mais que 2,5× o espalhamento típico. O piso acompanha a
+  // precisão das leituras: 1,5 m no celular (±3 m), 3 cm num receptor RTK (±1 cm)
+  const precsInf = validas.map((l) => l.precisao).filter((p): p is number => p != null && Number.isFinite(p));
+  const piso = precsInf.length ? Math.min(1.5, Math.max(0.03, 3 * mediana(precsInf))) : 1.5;
+  const corte = Math.max(piso, 2.5 * dMed);
   let usadas = validas.filter((_, i) => dists[i] <= corte);
   if (usadas.length < Math.ceil(validas.length / 2)) usadas = validas; // nunca jogar fora a maioria
-  const peso = (l: Leitura) => 1 / Math.max(0.5, l.precisao ?? 5) ** 2;
+  // peso 1/precisão²; o piso de 5 mm só evita divisão por zero (receptor RTK diz ±1 cm)
+  const peso = (l: Leitura) => 1 / Math.max(0.005, l.precisao ?? 5) ** 2;
   const somaP = usadas.reduce((s, l) => s + peso(l), 0);
   const lon = usadas.reduce((s, l) => s + l.lon * peso(l), 0) / somaP;
   const lat = usadas.reduce((s, l) => s + l.lat * peso(l), 0) / somaP;
@@ -92,13 +122,24 @@ export function combinarLeituras(leituras: Leitura[]): PontoCombinado | null {
     : 0;
   const precisao = precs.length ? Math.max(Math.min(...precs), espalhamento) : usadas.length > 1 ? espalhamento : null;
   const alts = usadas.map((l) => l.alt).filter((a): a is number => a != null && Number.isFinite(a));
+  // o tipo de solução do ponto é o PIOR das leituras usadas (receptor): um ponto
+  // "RTK fixo" só quando todas as leituras eram fixas
+  const ordem: TipoFix[] = ["sem-fix", "autonomo", "dgps", "rtk-flutuante", "rtk-fixo"];
+  const fixes = usadas.map((l) => l.fix).filter((f): f is TipoFix => !!f);
+  const fix = fixes.length === usadas.length && fixes.length ? fixes.reduce((a, b) => (ordem.indexOf(a) <= ordem.indexOf(b) ? a : b)) : null;
+  const fonte = usadas.every((l) => l.fonte === "receptor") ? "receptor" as const : usadas.some((l) => l.fonte) ? "celular" as const : undefined;
   return {
     lon, lat, precisao, usadas: usadas.length, descartadas: validas.length - usadas.length,
     ...(alts.length ? { alt: mediana(alts) } : {}),
+    ...(fix ? { fix } : {}),
+    ...(fonte ? { fonte } : {}),
   };
 }
 
 /** O vértice de "Marcar ponto aqui". */
 export function verticeDoPonto(p: PontoCombinado, t: number): VerticeCampo {
-  return { lon: p.lon, lat: p.lat, precisao: p.precisao, t, modo: "ponto", leituras: p.usadas, ...(p.alt != null ? { alt: p.alt } : {}) };
+  return {
+    lon: p.lon, lat: p.lat, precisao: p.precisao, t, modo: "ponto", leituras: p.usadas,
+    ...(p.alt != null ? { alt: p.alt } : {}), ...(p.fonte ? { fonte: p.fonte } : {}), ...(p.fix ? { fix: p.fix } : {}),
+  };
 }

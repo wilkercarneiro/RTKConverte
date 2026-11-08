@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="appName">Vertces</string>
+    <string name="providerAuthority">br.com.vertces.app.fileprovider</string>
+    <string name="assetStatements" translatable="false">[{ \"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": { \"namespace\": \"web\", \"site\": \"https://vertces.com.br\" } }]</string>
+</resources>

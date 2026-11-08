@@ -22,17 +22,33 @@ function erroDe(e: { message?: string; code?: string } | null): ErroConta {
   return new ErroConta("outro", msg);
 }
 
+// A coluna `calibracoes` chega na 0048. Até o banco recebê-la, a medição sobe sem
+// ela (os vértices já vão corrigidos, com o bruto e o deslocamento em cada um):
+// só recalibrar em OUTRO aparelho fica sem a lista.
+let semColunaCalibracoes = false;
+const colunaFaltando = (e: { code?: string; message?: string }) =>
+  e.code === "42703" || e.code === "PGRST204" || /calibracoes/.test(e.message ?? "");
+
+interface LinhaLida {
+  id: string; nome: string; vertices: unknown; fechada: boolean; criado_em: string; atualizado_em: string; calibracoes?: unknown;
+}
+
 export function repositorioSupabase(): RepositorioMedicoes {
   return {
     async listar() {
       if (!supabase) throw new ErroConta("outro", "Sistema sem configuração do banco.");
-      const { data, error } = await supabase.from(TABELA)
-        .select("id, nome, vertices, fechada, criado_em, atualizado_em")
+      const consultar = (colunas: string) => supabase!.from(TABELA)
+        .select(colunas)
         .order("atualizado_em", { ascending: false })
         .limit(LIMITE_LISTA);
+      const BASE = "id, nome, vertices, fechada, criado_em, atualizado_em";
+      let r = await consultar(semColunaCalibracoes ? BASE : `${BASE}, calibracoes`);
+      // banco ainda sem a 0048: lista sem as calibrações (os vértices já vêm corrigidos)
+      if (r.error && colunaFaltando(r.error)) { semColunaCalibracoes = true; r = await consultar(BASE); }
+      const { data, error } = r;
       if (error) throw erroDe(error);
-      return (data ?? [])
-        .map((l) => medicaoValida({ id: l.id, nome: l.nome, vertices: l.vertices, fechada: l.fechada, criadaEm: l.criado_em, atualizadaEm: l.atualizado_em }))
+      return ((data ?? []) as unknown as LinhaLida[])
+        .map((l) => medicaoValida({ id: l.id, nome: l.nome, vertices: l.vertices, fechada: l.fechada, criadaEm: l.criado_em, atualizadaEm: l.atualizado_em, calibracoes: l.calibracoes ?? undefined }))
         .filter((m): m is Medicao => m !== null)
         // o banco devolve a hora no formato dele; aqui volta para o ISO do aparelho (comparação por texto)
         .map((m) => ({ ...m, criadaEm: new Date(m.criadaEm).toISOString(), atualizadaEm: new Date(m.atualizadaEm).toISOString() }));
@@ -41,7 +57,14 @@ export function repositorioSupabase(): RepositorioMedicoes {
       if (!supabase) throw new ErroConta("outro", "Sistema sem configuração do banco.");
       // o gatilho medicoes_campo_mais_nova deixa de lado a versão mais velha sem
       // erro: sem linha de volta = a conta tem uma versão mais nova
-      const { data, error } = await supabase.from(TABELA).upsert(linhaDaMedicao(m), { onConflict: "id" }).select("atualizado_em");
+      const linha = linhaDaMedicao(m);
+      const comCal = !semColunaCalibracoes && m.calibracoes?.length ? { ...linha, calibracoes: m.calibracoes } : linha;
+      let r = await supabase.from(TABELA).upsert(comCal, { onConflict: "id" }).select("atualizado_em");
+      if (r.error && comCal !== linha && colunaFaltando(r.error)) {
+        semColunaCalibracoes = true;
+        r = await supabase.from(TABELA).upsert(linha, { onConflict: "id" }).select("atualizado_em");
+      }
+      const { data, error } = r;
       if (error) throw erroDe(error);
       return Array.isArray(data) && data.length === 0 ? "conta-mais-nova" : "ok";
     },

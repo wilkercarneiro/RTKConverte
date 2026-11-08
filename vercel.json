@@ -4,6 +4,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
+    { "source": "/app/versao.json", "destination": "/app/versao.json" },
     { "source": "/app", "destination": "/app/index.html" },
     { "source": "/app/(.*)", "destination": "/app/index.html" }
   ],
@@ -16,7 +17,35 @@
         { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
         { "key": "Content-Security-Policy", "value": "frame-ancestors 'self'; base-uri 'self'; object-src 'none'; form-action 'self'" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(self), payment=(), usb=()" }
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(self), serial=(self), bluetooth=(self), payment=(), usb=()" }
+      ]
+    },
+    {
+      "source": "/app/versao.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json; charset=utf-8" },
+        { "key": "Cache-Control", "value": "no-store, max-age=0" }
+      ]
+    },
+    {
+      "source": "/.well-known/assetlinks.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json" },
+        { "key": "Access-Control-Allow-Origin", "value": "*" }
+      ]
+    },
+    {
+      "source": "/baixar/(.*)\\.apk",
+      "headers": [
+        { "key": "Content-Type", "value": "application/vnd.android.package-archive" },
+        { "key": "Content-Disposition", "value": "attachment; filename=\"vertces.apk\"" },
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/app.webmanifest",
+      "headers": [
+        { "key": "Content-Type", "value": "application/manifest+json" }
       ]
     }
   ]

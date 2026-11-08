@@ -25,11 +25,16 @@ export interface Limpeza {
   incertezaM2: number | null;
 }
 
-/** Tolerância padrão: da ordem da precisão média do GPS, entre 0,5 e 1,5 m (cerca de 1 m). */
+/**
+ * Tolerância padrão: da ordem da precisão média do GPS. No celular (±2 a 5 m),
+ * entre 0,5 e 1,5 m. Com receptor RTK (±1 a 3 cm) o piso desce junto (2× a
+ * precisão, 2 cm no mínimo): meio metro apagaria canto de verdade.
+ */
 export function toleranciaPadrao(vertices: VerticeCampo[]): number {
   const p = medir(vertices).precisaoMediaM;
   if (p == null) return 1;
-  return Math.min(1.5, Math.max(0.5, Math.round(p * 0.3 * 10) / 10));
+  const piso = Math.min(0.5, Math.max(0.02, 2 * p));
+  return Math.min(1.5, Math.max(piso, Math.round(p * 0.3 * 100) / 100));
 }
 
 /** Distância do ponto p ao segmento a–b (metros, plano UTM). */
@@ -156,7 +161,7 @@ export function valeLimpar(l: Limpeza): boolean {
  * Desfazer, vértice novo), o aviso "Cerca limpa" e o Desfazer dele caducam: o
  * Desfazer poria de volta o contorno de antes e jogaria fora a edição.
  */
-export function limpezaAindaVale(l: Limpeza, vertices: readonly VerticeCampo[]): boolean {
+export function limpezaAindaVale(l: { vertices: readonly VerticeCampo[] }, vertices: readonly VerticeCampo[]): boolean {
   if (l.vertices === vertices) return true;
   if (l.vertices.length !== vertices.length) return false;
   return l.vertices.every((v, i) => v.lon === vertices[i].lon && v.lat === vertices[i].lat && v.modo === vertices[i].modo);

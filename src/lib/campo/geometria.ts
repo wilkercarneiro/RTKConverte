@@ -150,8 +150,16 @@ export const textoHa = (m2: number): string => `${fmtNum(m2 / 10000, 4)} ha`;
 export const textoM2 = (m2: number): string => `${fmtNum(m2, 0)} m²`;
 /** "642 m" / "1,24 km" */
 export const textoDistancia = (m: number): string => (m >= 1000 ? `${fmtNum(m / 1000, 2)} km` : `${fmtNum(m, m < 10 ? 1 : 0)} m`);
-/** "±2,8 m" */
-export const textoPrecisao = (m: number | null): string => (m == null ? "à mão" : `±${fmtNum(m, m < 10 ? 1 : 0)} m`);
+/** "±2,8 m"; abaixo de 1 m em centímetros ("±2 cm", receptor RTK) */
+export const textoPrecisao = (m: number | null): string =>
+  m == null ? "à mão" : m < 0.995 ? `±${Math.max(1, Math.round(m * 100))} cm` : `±${fmtNum(m, m < 10 ? 1 : 0)} m`;
+
+/**
+ * O raio de 68% que o aparelho informa e o de 95% (1,62×): "±3,1 m (até ±5,0 m)".
+ * Uma leitura em cada três fica FORA do raio de 68%; o de 95% é o que o técnico usa.
+ */
+export const textoPrecisao95 = (m: number | null): string =>
+  m == null ? "à mão" : `${textoPrecisao(m)} (até ${textoPrecisao(m * 1.62)})`;
 
 export type ClassePrecisao = "boa" | "media" | "ruim";
 /** Cor da precisão (plano): verde ≤ 3 m, âmbar ≤ 8 m, vermelho acima. */

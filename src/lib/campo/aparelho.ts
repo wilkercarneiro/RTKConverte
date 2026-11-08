@@ -10,7 +10,7 @@
 // O aparelho guarda também as medições ainda NÃO enviadas para a conta (no
 // campo quase nunca há internet): elas sobem sozinhas quando a rede voltar.
 // As já enviadas ficam como cópia (as 30 mais recentes) para abrir sem rede.
-import type { Medicao, VerticeCampo } from "./tipos.ts";
+import type { Calibracao, Medicao, VerticeCampo } from "./tipos.ts";
 
 /** O pedaço do Storage que se usa (o laboratório e os testes passam um falso). */
 export interface Armazem {
@@ -58,7 +58,16 @@ export function medicaoValida(m: unknown): Medicao | null {
     atualizadaEm: typeof x.atualizadaEm === "string" ? x.atualizadaEm : agora,
     vertices: x.vertices.filter(verticeOk),
     fechada: !!x.fechada && x.vertices.filter(verticeOk).length >= 3,
+    ...(calibracoesValidas(x.calibracoes) ? { calibracoes: calibracoesValidas(x.calibracoes)! } : {}),
   };
+}
+
+/** As calibrações gravadas (aparelho, banco) que servem; nenhuma = undefined. */
+function calibracoesValidas(c: unknown): Calibracao[] | undefined {
+  if (!Array.isArray(c)) return undefined;
+  const ok = (c as Calibracao[]).filter((x) => x && typeof x.id === "string" && Number.isFinite(x.dE) && Number.isFinite(x.dN) && Number.isFinite(x.t)
+    && x.conhecido && Number.isFinite(x.conhecido.lon) && Number.isFinite(x.conhecido.lat));
+  return ok.length ? ok.slice(0, 20) : undefined;
 }
 
 /** Lê o que o aparelho tem. Dado estragado (outra versão, gravação cortada) não derruba a tela. */

@@ -17,6 +17,45 @@ export interface Leitura {
   alt?: number | null;
   /** quando foi lida (ms desde 1970) */
   t: number;
+  /** a hora da posição segundo o próprio GPS (coords.timestamp / hora da GGA): reconhece a mesma posição repetida */
+  tGps?: number | null;
+  /** de onde veio: o GPS do celular (geolocalização do navegador) ou um receptor externo (NMEA) */
+  fonte?: FonteLeitura;
+  /** tipo de solução do receptor (só a fonte "receptor" sabe; o celular não diz) */
+  fix?: TipoFix | null;
+  /** satélites usados (receptor) */
+  sats?: number | null;
+  /** HDOP (receptor) */
+  hdop?: number | null;
+  /** idade da correção diferencial, em segundos (receptor com RTK/DGPS) */
+  idadeCorrecaoS?: number | null;
+}
+
+export type FonteLeitura = "celular" | "receptor";
+
+/** GGA: 4 = RTK fixo, 5 = RTK flutuante, 2 = DGPS/SBAS, 1 = autônomo, 0 = sem posição. */
+export type TipoFix = "rtk-fixo" | "rtk-flutuante" | "dgps" | "autonomo" | "sem-fix";
+
+/** Deslocamento aplicado por calibração num ponto conhecido (metros em UTM, leste/norte). */
+export interface CorrecaoAplicada {
+  dE: number;
+  dN: number;
+}
+
+/** Uma calibração: o GPS ocupou um ponto de coordenada conhecida (marco SIGEF, IBGE ou digitado). */
+export interface Calibracao {
+  id: string;
+  /** "SIGEF BA-1234… vértice 7", "Marco digitado" */
+  rotulo: string;
+  /** a coordenada verdadeira do marco */
+  conhecido: { lon: number; lat: number };
+  /** o que o GPS mediu sobre ele (média da ocupação, SEM correção) */
+  medido: { lon: number; lat: number; precisao: number | null; leituras: number };
+  /** deslocamento verdadeiro − medido, em metros (UTM do lugar) */
+  dE: number;
+  dN: number;
+  /** quando a ocupação terminou (ms) */
+  t: number;
 }
 
 /** Como o vértice entrou: andando, parado juntando leituras ou tocando no mapa. */
@@ -32,6 +71,15 @@ export interface VerticeCampo {
   /** quantas leituras formaram o ponto (Marcar ponto aqui) */
   leituras?: number;
   alt?: number | null;
+  /** fonte e tipo de solução de quando foi medido */
+  fonte?: FonteLeitura;
+  fix?: TipoFix | null;
+  /** a posição como o GPS deu, antes da calibração (lon/lat ficam com a corrigida) */
+  bruto?: { lon: number; lat: number };
+  /** o deslocamento da calibração aplicado neste vértice */
+  correcao?: CorrecaoAplicada;
+  /** canto recolocado pelo ajuste de retas (a posição antes fica em `bruto`) */
+  ajustado?: boolean;
 }
 
 export interface Medicao {
@@ -44,6 +92,8 @@ export interface Medicao {
   vertices: VerticeCampo[];
   /** "Fechar a área": o contorno está pronto para virar serviço ou arquivo */
   fechada: boolean;
+  /** calibrações em pontos conhecidos (a correção de cada vértice sai delas, interpolada no tempo) */
+  calibracoes?: Calibracao[];
 }
 
 /** Ajustes do medidor (Ajustes ⚙ na tela; ficam no aparelho). */
@@ -58,14 +108,16 @@ export interface OpcoesCampo {
   segundosMarcar: number;
 }
 
-export const OPCOES_PADRAO: OpcoesCampo = { passoM: 5, anguloGraus: 15, limitePrecisaoM: 8, segundosMarcar: 5 };
+// Marcar ponto: 20 s (eram 5). O erro do GPS do celular muda devagar — o reflexo
+// leva centenas de segundos para mudar — e 5 s de média valiam quase uma leitura só.
+export const OPCOES_PADRAO: OpcoesCampo = { passoM: 5, anguloGraus: 15, limitePrecisaoM: 8, segundosMarcar: 20 };
 
 /** Os limites de cada ajuste (a tela e a leitura do aparelho usam os mesmos). */
 export const LIMITES_OPCOES: Record<keyof OpcoesCampo, [number, number]> = {
   passoM: [1, 100],
   anguloGraus: [5, 90],
   limitePrecisaoM: [1, 50],
-  segundosMarcar: [1, 60],
+  segundosMarcar: [1, 300],
 };
 
 /** Ajustes lidos de qualquer lugar (aparelho, URL) voltam válidos: o que não serve vira o padrão. */

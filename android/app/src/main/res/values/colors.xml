@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- verde da marca (theme-color do site) -->
+    <color name="verde">#0E3B2B</color>
+</resources>

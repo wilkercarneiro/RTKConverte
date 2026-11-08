@@ -43,9 +43,14 @@ interface Props {
   /** "Ir para": voa até o ponto (k muda a cada pedido) */
   voarPara?: { p: LonLat; k: number } | null;
   controleImagem?: (p: ControleImagemProps) => ReactNode;
+  /** marcos conhecidos por perto (calibração): alvos tocáveis no mapa */
+  marcos?: MarcoNoMapa[];
+  onEscolherMarco?: (i: number) => void;
   /** por cima do mapa, no canto de cima (status, botões) */
   children?: ReactNode;
 }
+
+export interface MarcoNoMapa { lon: number; lat: number; rotulo: string; escolhido?: boolean }
 
 const VAZIO: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 const COR = { boa: "#22C55E", media: "#F59E0B", ruim: "#EF4444", mao: "#FFFFFF" };
@@ -145,6 +150,7 @@ export function MapaCampo(props: Props) {
   const gpsRef = useRef<maplibregl.Marker | null>(null);
   const rotulosRef = useRef<maplibregl.Marker[]>([]);
   const arrastaveisRef = useRef<maplibregl.Marker[]>([]);
+  const marcosRef = useRef<maplibregl.Marker[]>([]);
   const enquadradoRef = useRef("");
   const primeiroFixRef = useRef(true);
   const nivelRef = useRef(NIVEL_MAX);
@@ -327,6 +333,23 @@ export function MapaCampo(props: Props) {
       else m.easeTo({ center: p, duration: 400 });
     }
   }
+
+  // os marcos da calibração: um alvo por marco (o escolhido em destaque); tocar escolhe
+  useEffect(() => {
+    for (const x of marcosRef.current) x.remove();
+    marcosRef.current = [];
+    if (!mapa || !props.marcos?.length) return;
+    marcosRef.current = props.marcos.map((mc, i) => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = `campo-marco${mc.escolhido ? " escolhido" : ""}`;
+      el.title = mc.rotulo;
+      el.setAttribute("aria-label", `Marco: ${mc.rotulo}`);
+      el.addEventListener("click", (e) => { e.stopPropagation(); propsRef.current.onEscolherMarco?.(i); });
+      return new maplibregl.Marker({ element: el }).setLngLat([mc.lon, mc.lat]).addTo(mapa);
+    });
+    return () => { for (const x of marcosRef.current) x.remove(); marcosRef.current = []; };
+  }, [mapa, props.marcos]);
 
   useEffect(() => { desenhar(); }, [props.vertices, props.fechada, props.desenhando, props.enquadrar]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { posicionar(); }, [props.posicao, props.seguir]); // eslint-disable-line react-hooks/exhaustive-deps

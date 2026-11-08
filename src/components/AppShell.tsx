@@ -25,6 +25,7 @@ import { abrirCompraDeCreditos, AvisoCreditoGlobal, CompraDeCreditosGlobal } fro
 import { abrirSuporte, SuporteChat, useNaoLidasSuporte } from "./suporte/SuporteChat";
 import { contagemSuporte } from "../lib/suporte";
 import { useEnvioMedicoes } from "./campo/useEnvioMedicoes";
+import { abrirInstalarApp, FaixaVersao, InstalarAppGlobal } from "./InstalarApp";
 import "./casca.css";
 
 const I = {
@@ -44,6 +45,7 @@ const I = {
   terraplanagem: "M2 20h20M4 20l5-8 4 5 3-4 4 7M14 6l2-2 2 2M16 4v6",
   ferramentas: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z",
   voltar: "M15 18l-6-6 6-6",
+  instalar: "M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM12 7v7M9.5 11.5 12 14l2.5-2.5M11 18h2",
   fechar: "M18 6 6 18M6 6l12 12",
 };
 
@@ -90,6 +92,8 @@ function grupos(superadmin: boolean, suporte: number | null, esperando: number |
       titulo: "Suporte",
       itens: [
         { t: "ajuda", rotulo: "Ajuda e tutoriais", icone: I.ajuda },
+        // não navega: abre a gaveta "Instalar app" (Android baixa o APK, iPhone cria o atalho)
+        { t: "ajuda" as const, rotulo: "Instalar app", icone: I.instalar, acao: () => abrirInstalarApp() },
         // null = banco sem a central de suporte: o item some
         ...(suporte !== null ? [{ t: "ajuda" as const, rotulo: "Falar com o suporte", icone: I.chat, acao: () => abrirSuporte(), selo: suporte }] : []),
       ],
@@ -310,6 +314,9 @@ export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId
       <AvisosGlobais />
       <AvisoCreditoGlobal />
       <CompraDeCreditosGlobal />
+      <InstalarAppGlobal />
+      {/* "Nova versão do Vertces" → Atualizar (e a do app Android): em todas as telas */}
+      <FaixaVersao />
       <DialogosGlobais />
     </div>
   );
