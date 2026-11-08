@@ -601,9 +601,12 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
   const sinalFraco = !!leitura && !leituraUtil(leitura, opcoes.limitePrecisaoM);
   const estreita = useEstreita();
   const statusEnvio = textoEnvio(medicao, registroAtual ? pendente(registroAtual) : true, envio, conta.estado === "erro" ? conta.erro?.tipo ?? null : null);
+  // no celular, medindo (ou para começar): a barra de três botões com o do meio saltado
+  const comDoca = estreita && !(oferta && !medicao);
 
   const painel = (
     <PainelControle
+      doca={comDoca}
       medicao={medicao} oferta={oferta} md={md} cruza={cruza}
       limpeza={limpeza} limpezaFeita={limpezaFeita} onLimpar={aplicarLimpeza} onDesfazerLimpeza={desfazerLimpeza}
       onDispensarLimpeza={() => { const id = medicaoRef.current?.id; if (id) setSemLimpeza((s) => new Set(s).add(id)); }}
@@ -666,7 +669,13 @@ function CampoTela(props: PropsCampo & { armazem: Armazem | null }) {
           </div>
           {estreita && <p className="campo-aviso">{AVISO_GPS}</p>}
         </MapaCampo>
-        {estreita && <div className="campo-folha">{painel}</div>}
+        {estreita && (
+          <div className={`campo-folha${comDoca ? " com-doca" : ""}`}>
+            {/* o fundo branco com o recorte do botão do meio (máscara) e a sombra que segue o recorte */}
+            {comDoca && <div className="campo-folha-fundo" aria-hidden="true"><i /></div>}
+            {painel}
+          </div>
+        )}
       </div>
 
       {!estreita && (
@@ -734,6 +743,8 @@ function SeloGps({ gps, leitura, descansa }: { gps: EstadoGps; leitura: Leitura 
 // ---------------------------------------------------------------------------
 
 interface PropsPainel {
+  /** celular: a barra Marcar · Desenhar · Caminhar (PainelDoca) no lugar dos botões grandes */
+  doca?: boolean;
   medicao: Medicao | null;
   oferta: Medicao | null;
   md: ReturnType<typeof medir>;
@@ -791,6 +802,8 @@ const ICO = {
   mao: "M3 17l6-12 4 8 3-4 5 8M3 21h18",
   car: "M12 3l8 4v6c0 4.5-3.4 7.4-8 8-4.6-.6-8-3.5-8-8V7l8-4z",
   lupa: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4",
+  lapis: "M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z",
+  baixar: "M12 4v11M7 10l5 5 5-5M5 20h14",
 };
 
 /** "Ir para": sem GPS, o mapa chega ao imóvel por coordenada ou link do Google Maps. */
@@ -881,6 +894,45 @@ function PainelControle(p: PropsPainel) {
   }
 
   // 2) fechada: o resultado e a próxima ação
+  if (m && m.fechada && p.doca) {
+    // celular: a mesma barra, agora Consultar · Criar CAR (o botão verde) · Baixar
+    return (
+      <div className="campo-painel campo-painel-doca campo-resultado" role="region" aria-label="Área medida">
+        <div className="campo-doca" role="toolbar" aria-label="O que fazer com a área">
+          <button type="button" className="campo-doca-lado" onClick={p.onConsultar}><Ic d={ICO.lupa} tam={22} /><span>Consultar</span></button>
+          <span className="campo-doca-meio com-rotulo">
+            <button type="button" className="campo-doca-fab" onClick={p.onCriarCar} aria-label="Criar serviço de CAR com esta área" title="Criar serviço de CAR com esta área">
+              <Ic d={ICO.car} tam={26} />
+            </button>
+            <span className="campo-doca-rotulo" aria-hidden="true">Criar CAR</span>
+          </span>
+          <MenuBaixar medicao={m} className="campo-doca-lado"><Ic d={ICO.baixar} tam={22} /><span>Baixar</span></MenuBaixar>
+        </div>
+        <label className="campo-nome campo-nome-doca">
+          <span className="sr-only">Nome</span>
+          <Ic d={ICO.lapis} tam={16} />
+          <input ref={p.nomeRef} value={m.nome} maxLength={200} onChange={(e) => p.onRenomear(e.target.value)}
+            onBlur={(e) => { if (!e.target.value.trim()) p.onRenomear("Medição"); }} aria-label="Nome da medição" />
+        </label>
+        <Numeros md={p.md} aberta={false} />
+        <p className="campo-detalhe">
+          {p.md.precisaoMediaM == null ? "Desenhada à mão" : `Precisão ${textoPrecisao(p.md.precisaoMediaM)}`} · {quando(m.criadaEm)} · fuso {p.md.fuso}
+        </p>
+        {p.cruza && <p className="campo-alerta" role="alert">O contorno se cruza: a área pode estar errada. Use "Continuar medindo" e desfaça os vértices do cruzamento.</p>}
+        {p.limpeza && <OfertaLimpeza l={p.limpeza} onLimpar={p.onLimpar} onDispensar={p.onDispensarLimpeza} />}
+        {p.limpezaFeita && (
+          <p className="campo-limpo" role="status">
+            <span><b>Cerca limpa:</b> {p.limpezaFeita.antes} → {p.limpezaFeita.depois} vértices · {textoHa(p.limpezaFeita.areaDepoisM2)}</span>
+            <button type="button" className="link" onClick={p.onDesfazerLimpeza}>Desfazer</button>
+          </p>
+        )}
+        <div className="campo-acoes-rodape">
+          <button type="button" className="fantasma" onClick={p.onContinuarMedindo}>Continuar medindo</button>
+          <button type="button" className="fantasma" onClick={p.onNova}>Nova medição</button>
+        </div>
+      </div>
+    );
+  }
   if (m && m.fechada) {
     return (
       <div className="campo-painel campo-resultado" role="region" aria-label="Área medida">
@@ -916,6 +968,9 @@ function PainelControle(p: PropsPainel) {
       </div>
     );
   }
+
+  // celular: a barra de três botões
+  if (p.doca) return <PainelDoca {...p} />;
 
   const semGps = p.gps.tipo === "erro" && p.gps.erro.tipo !== "sem-sinal";
   const n = m?.vertices.length ?? 0;
@@ -1056,6 +1111,134 @@ function PainelControle(p: PropsPainel) {
             ? !semGps && <button type="button" className="fantasma" onClick={p.onPararDesenho}>Voltar a medir com o GPS</button>
             : <button type="button" className="fantasma" onClick={p.onDesenhar}>Pôr vértice à mão no mapa</button>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** O anel da contagem do Marcar ponto, dentro do próprio botão. */
+function AnelMarcar({ prog, s }: { prog: number; s: number }) {
+  const c = 2 * Math.PI * 11;
+  return (
+    <span className="campo-anel" aria-hidden="true">
+      <svg viewBox="0 0 26 26" width="26" height="26">
+        <circle cx="13" cy="13" r="11" className="trilho" />
+        <circle cx="13" cy="13" r="11" className="feito" strokeDasharray={c} strokeDashoffset={c * (1 - Math.min(1, Math.max(0, prog)))} />
+      </svg>
+      <b>{s}</b>
+    </span>
+  );
+}
+
+/**
+ * Celular: Marcar ponto · Desenhar (redondo, verde, saltado da borda) · Caminhar.
+ * Sem texto de explicação de saída: o que cada modo faz aparece na linha de estado,
+ * com o "?", quando ele é escolhido. Embaixo, só o que a medição pede (números,
+ * Desfazer, Fechar a área).
+ */
+function PainelDoca(p: PropsPainel) {
+  const m = p.medicao;
+  const n = m?.vertices.length ?? 0;
+  const semGps = p.gps.tipo === "erro" && p.gps.erro.tipo !== "sem-sinal";
+  const decidindo = !!p.pontoRuim;
+  const falta = p.marcando ? Math.max(0, p.marcando.fim - Date.now()) : 0;
+  const total = p.marcando ? Math.max(1, p.marcando.fim - p.marcando.inicio) : 1;
+  const segundos = Math.ceil(falta / 1000);
+
+  const doca = (
+    <div className="campo-doca" role="toolbar" aria-label="Como pôr os vértices">
+      <button type="button" className={`campo-doca-lado${p.marcando ? " ativo marcando" : ""}`}
+        onClick={p.marcando ? p.onCancelarMarcar : p.onMarcar} disabled={semGps || decidindo}
+        aria-label={p.marcando ? "Cancelar o Marcar ponto" : "Marcar ponto aqui"}>
+        {p.marcando ? <AnelMarcar prog={1 - falta / total} s={segundos} /> : <Ic d={ICO.ponto} tam={22} />}
+        <span>{p.marcando ? "Cancelar" : "Marcar ponto"}</span>
+      </button>
+      <span className="campo-doca-meio">
+        <button type="button" className={`campo-doca-fab${p.desenhando ? " ativo" : ""}`}
+          onClick={p.desenhando ? () => { if (!semGps) p.onPararDesenho(); } : p.onDesenhar}
+          disabled={!!p.marcando || decidindo} aria-pressed={p.desenhando}
+          aria-label={p.desenhando ? (semGps ? "Desenhando no mapa" : "Parar de desenhar e voltar ao GPS") : "Desenhar no mapa"}
+          title={p.desenhando ? (semGps ? "Desenhando no mapa" : "Voltar ao GPS") : "Desenhar no mapa"}>
+          <Ic d={ICO.lapis} tam={26} />
+        </button>
+      </span>
+      <button type="button" className={`campo-doca-lado${p.caminhando ? " ativo pausar" : ""}`}
+        onClick={p.caminhando ? p.onPausar : p.onCaminhar} disabled={semGps || !!p.marcando || decidindo}
+        aria-label={p.caminhando ? "Pausar a caminhada" : "Caminhar"}>
+        <Ic d={p.caminhando ? ICO.pausar : ICO.andar} tam={22} />
+        <span>{p.caminhando ? "Pausar" : "Caminhar"}</span>
+      </button>
+    </div>
+  );
+
+  // a linha de estado: o que o botão escolhido está fazendo, com o "?" explicando
+  let estado: ReactNode = null;
+  if (p.marcando) {
+    estado = (
+      <p className="campo-estado marcando" role="status" aria-live="polite">
+        <i aria-hidden="true" />
+        <span><b>Fique parado</b> · {segundos} s · agora {textoPrecisao(p.leitura?.precisao ?? null)}</span>
+        <Dica>Parado no canto, o celular junta as leituras de {p.opcoes.segundosMarcar} s e tira a média. As que pulam longe ficam de fora. Toque em Cancelar para desistir.</Dica>
+      </p>
+    );
+  } else if (p.caminhando) {
+    estado = (
+      <p className={`campo-estado${p.sinalFraco || !p.leitura ? " fraco" : ""}`} role="status" aria-live="polite">
+        <i aria-hidden="true" />
+        <span>{!p.leitura ? "Esperando o sinal do GPS…"
+          : p.sinalFraco ? <><b>Sinal fraco</b> · {textoPrecisao(p.leitura.precisao)} · esperando</>
+            : <><b>Caminhando</b> · vértice a cada {p.opcoes.passoM} m</>}</span>
+        <Dica>Ande rente à cerca: o celular põe um vértice sozinho a cada {p.opcoes.passoM} m ou a cada curva de {p.opcoes.anguloGraus}°. Com o sinal pior que ±{p.opcoes.limitePrecisaoM} m, ele espera melhorar. Pausar para quando precisar sair da linha.{p.acordada ? " A tela fica acordada enquanto mede." : ""}</Dica>
+      </p>
+    );
+  } else if (p.desenhando) {
+    estado = (
+      <p className="campo-estado mao" role="status">
+        <i aria-hidden="true" />
+        <span><b>Desenhando</b> · toque no mapa {n ? "para cada vértice" : "para pôr o 1º vértice"}</span>
+        <Dica>Toque no mapa em cada canto do imóvel; arraste um vértice para ajustar.{semGps ? "" : " Para voltar ao GPS, toque de novo no botão verde ou escolha Caminhar ou Marcar ponto."}</Dica>
+      </p>
+    );
+  } else if (semGps && p.gps.tipo === "erro") {
+    estado = (
+      <p className="campo-estado fraco" role="status">
+        <i aria-hidden="true" />
+        <span><b>{p.gps.erro.tipo === "sem-permissao" ? "Localização bloqueada" : "Sem GPS neste aparelho"}</b> · desenhe no mapa</span>
+        <Dica>{p.gps.erro.tipo === "sem-permissao" ? p.gps.erro.mensagem : "Cole a coordenada ou o link do Google Maps: o mapa vai até lá e você desenha o contorno tocando nos cantos (botão verde)."}</Dica>
+      </p>
+    );
+  }
+
+  return (
+    <div className={`campo-painel campo-painel-doca${n ? " medindo" : ""}`} role="region" aria-label={n ? "Medindo" : "Começar a medir"}>
+      {doca}
+      {estado}
+      {p.gps.tipo === "erro" && !semGps && !p.caminhando && !p.marcando && <p className="campo-alerta" role="alert">{p.gps.erro.mensagem}</p>}
+      {!n && !p.leitura && (p.desenhando || semGps) && <IrPara onIr={(lugar) => { p.onIrPara(lugar); if (!p.desenhando) p.onDesenhar(); }} />}
+      {p.pontoRuim && (
+        <div className="campo-ponto-ruim" role="alertdialog" aria-label="Precisão pior que o limite">
+          <b>Precisão de {textoPrecisao(p.pontoRuim.precisao)} · o limite é ±{p.opcoes.limitePrecisaoM} m
+            <Dica>Debaixo de árvore ou perto de parede o GPS piora: dois passos para o aberto costumam resolver. Marcar assim põe o vértice com essa precisão.</Dica>
+          </b>
+          <div className="campo-acoes-linha">
+            <button type="button" className="principal" onClick={p.onPontoDeNovo}>Tentar de novo</button>
+            <button type="button" onClick={p.onPontoAssimMesmo}>Marcar assim</button>
+            <button type="button" className="fantasma" onClick={p.onPontoCancelar}>Cancelar</button>
+          </div>
+        </div>
+      )}
+      {n > 0 && (
+        <>
+          <Numeros md={p.md} aberta />
+          {p.cruza && <p className="campo-alerta" role="alert">O contorno está se cruzando. Desfaça os últimos vértices se não for isso.</p>}
+          <div className="campo-acoes-linha campo-doca-acoes">
+            <button type="button" className="campo-btn-medio" onClick={p.onDesfazer}><Ic d={ICO.desfazer} tam={18} />Desfazer</button>
+            <button type="button" className={`campo-btn-medio${n >= 3 ? " fechar" : ""}`} onClick={p.onFechar} disabled={n < 3}
+              title={n < 3 ? "Precisa de pelo menos 3 vértices" : "Liga o último vértice ao primeiro"}>
+              <Ic d={ICO.fechar} tam={18} />{n < 3 ? `Fechar (faltam ${3 - n})` : "Fechar a área"}
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

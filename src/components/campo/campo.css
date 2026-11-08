@@ -294,3 +294,123 @@ button.campo-limpar-sim:hover:not(:disabled) { background: var(--primaria-escura
 .campo-limpo { margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 10px; background: #EEF8F2; font-size: 13px; color: var(--texto-2); font-variant-numeric: tabular-nums; }
 .campo-limpo b { color: var(--floresta); }
 .campo-limpo button.link { font-weight: 600; white-space: nowrap; }
+
+/* ---- Celular: barra Marcar ponto · Desenhar · Caminhar (08/11) ----
+   O botão do meio (Desenhar) é redondo, verde e salta da borda; a borda de cima
+   da folha faz a curva em volta dele. A curva é uma máscara no fundo
+   (.campo-folha-fundo > i): três retângulos + o recorte em SVG no meio. A sombra
+   fica no pai (filter: drop-shadow), por isso segue o recorte. Geometria: botão de
+   64 px com o centro 4 px abaixo da borda; recorte de raio 38 (6 px de folga). */
+.campo-folha.com-doca {
+  background: transparent; box-shadow: none; overflow: visible; max-height: none;
+  /* a folha avança 50 px sobre o mapa: pelo recorte em volta do botão aparece o mapa */
+  margin-top: -50px; padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+}
+.campo-folha.com-doca::before { display: none; }
+.campo-folha-fundo { position: absolute; inset: 0; z-index: 0; pointer-events: none; filter: drop-shadow(0 -1px 10px rgb(0 0 0 / 22%)); }
+.campo-folha-fundo > i {
+  position: absolute; inset: 0; background: var(--card); border-radius: 22px 22px 0 0;
+  --recorte: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 144 64'%3E%3Cpath d='M0 0H6C22 0 33.5 7.25 35.34 14A38 38 0 0 0 108.66 14C110.5 7.25 122 0 138 0H144V64H0Z'/%3E%3C/svg%3E");
+  -webkit-mask:
+    linear-gradient(#000 0 0) left top / calc(50% - 71px) 100% no-repeat,
+    linear-gradient(#000 0 0) right top / calc(50% - 71px) 100% no-repeat,
+    var(--recorte) 50% 0 / 144px 64px no-repeat,
+    linear-gradient(#000 0 0) 50% 63px / 144px calc(100% - 63px) no-repeat;
+  mask:
+    linear-gradient(#000 0 0) left top / calc(50% - 71px) 100% no-repeat,
+    linear-gradient(#000 0 0) right top / calc(50% - 71px) 100% no-repeat,
+    var(--recorte) 50% 0 / 144px 64px no-repeat,
+    linear-gradient(#000 0 0) 50% 63px / 144px calc(100% - 63px) no-repeat;
+}
+.campo-folha.com-doca > .campo-painel { position: relative; z-index: 1; }
+.campo-painel-doca { gap: 10px; }
+
+.campo-doca { display: grid; grid-template-columns: minmax(0, 1fr) 100px minmax(0, 1fr); align-items: center; }
+.campo-doca-meio { position: relative; align-self: stretch; }
+button.campo-doca-lado {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  width: 100%; height: 58px; padding: 0 6px; border-radius: 18px;
+  background: #fff; border: 1px solid var(--borda); color: var(--texto);
+  font-size: 12.5px; font-weight: 600; line-height: 1.1; white-space: nowrap;
+  box-shadow: 0 1px 2px rgb(14 59 43 / 6%), 0 6px 14px -10px rgb(14 59 43 / 35%);
+  transition: transform 0.12s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+button.campo-doca-lado > svg { color: var(--floresta); }
+button.campo-doca-lado:hover:not(:disabled) { background: #F7FAF8; border-color: var(--borda-forte); color: var(--texto); }
+button.campo-doca-lado:active:not(:disabled) { transform: scale(0.96); }
+button.campo-doca-lado.ativo.pausar, button.campo-doca-lado.ativo.pausar:hover:not(:disabled) { background: var(--alerta-claro); border-color: #E7C37E; color: var(--alerta-escuro); }
+button.campo-doca-lado.ativo.pausar > svg { color: var(--alerta-escuro); }
+button.campo-doca-lado.ativo.marcando, button.campo-doca-lado.ativo.marcando:hover:not(:disabled) { background: var(--primaria-clara); border-color: #A8D9BE; color: var(--floresta); }
+button.campo-doca-lado:disabled { opacity: 0.4; box-shadow: none; }
+
+button.campo-doca-fab {
+  position: absolute; left: 50%; top: -38px; transform: translateX(-50%);
+  width: 64px; height: 64px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; color: #fff;
+  background: radial-gradient(circle at 35% 25%, #2FB673, var(--primaria) 55%, #106A40);
+  box-shadow: 0 8px 18px -8px rgb(23 133 82 / 75%), 0 2px 5px rgb(14 59 43 / 22%), inset 0 1px 0 rgb(255 255 255 / 28%);
+  transition: transform 0.12s ease, background 0.2s ease;
+}
+button.campo-doca-fab:hover:not(:disabled) { color: #fff; border: 0; background: radial-gradient(circle at 35% 25%, #36C27D, #1A9259 55%, #106A40); }
+button.campo-doca-fab:active:not(:disabled) { transform: translateX(-50%) scale(0.94); }
+button.campo-doca-fab:disabled { opacity: 1; filter: grayscale(0.6) brightness(1.15); box-shadow: 0 6px 14px -10px rgb(0 0 0 / 50%); }
+/* desenhando: o botão escurece e pulsa um anel em volta */
+button.campo-doca-fab.ativo, button.campo-doca-fab.ativo:hover:not(:disabled) { background: radial-gradient(circle at 35% 25%, #1E5A43, var(--floresta) 60%, #072217); }
+button.campo-doca-fab.ativo::after {
+  content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 2px solid var(--primaria);
+  animation: campo-fab-onda 1.6s ease-out infinite; pointer-events: none;
+}
+@keyframes campo-fab-onda { from { transform: scale(0.92); opacity: 0.9; } to { transform: scale(1.22); opacity: 0; } }
+
+/* o anel da contagem do Marcar ponto */
+.campo-anel { position: relative; width: 26px; height: 26px; display: grid; place-items: center; }
+.campo-anel svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.campo-anel circle { fill: none; stroke-width: 2.5; }
+.campo-anel .trilho { stroke: rgb(23 133 82 / 20%); }
+.campo-anel .feito { stroke: var(--primaria); stroke-linecap: round; transition: stroke-dashoffset 0.2s linear; }
+.campo-anel b { font-size: 11.5px; font-weight: 700; color: var(--floresta); font-variant-numeric: tabular-nums; }
+
+/* a linha de estado embaixo da barra: o que o botão escolhido está fazendo + "?" */
+.campo-painel-doca .campo-estado { justify-content: center; text-align: center; font-size: 13px; min-height: 22px; }
+.campo-painel-doca .campo-estado > span { min-width: 0; }
+.campo-painel-doca .campo-estado b { color: var(--texto); font-weight: 600; }
+.campo-painel-doca .campo-estado.fraco b { color: var(--alerta-escuro); }
+.campo-estado.marcando > i { background: var(--primaria); }
+.campo-painel-doca .campo-acordada { margin-left: 2px; }
+.campo-painel-doca .campo-ponto-ruim { padding: 12px; gap: 10px; }
+.campo-painel-doca .campo-ponto-ruim > b { display: inline-flex; align-items: center; gap: 2px; font-size: 14px; }
+.campo-painel-doca .campo-ponto-ruim .campo-acoes-linha { grid-auto-flow: row; grid-template-columns: 1.2fr 1fr auto; gap: 8px; }
+.campo-painel-doca .campo-ponto-ruim button { height: 40px; padding: 0 10px; white-space: nowrap; }
+.campo-painel-doca .campo-numeros > div { padding: 8px 11px; }
+.campo-doca-acoes .campo-btn-medio { height: 44px; font-weight: 600; }
+button.campo-btn-medio.fechar { background: var(--floresta); border-color: var(--floresta); color: #fff; }
+button.campo-btn-medio.fechar:hover:not(:disabled) { background: #0A2C20; border-color: #0A2C20; color: #fff; }
+
+/* com a barra, a folha cobre 50 px do pé do mapa e o botão do meio sobe mais 28:
+   escala e "i" da atribuição (recolhida no celular, MapaCampo) ficam logo acima da
+   folha, nos cantos; o seletor de imagem sobe acima do botão. A dica do desenho
+   vira a linha de estado da folha. */
+.campo:has(.campo-folha.com-doca) .campo-mapa .maplibregl-ctrl-bottom-right,
+.campo:has(.campo-folha.com-doca) .campo-mapa .maplibregl-ctrl-bottom-left { bottom: 54px; }
+.campo:has(.campo-folha.com-doca) .campo-mapa-imagem { bottom: 88px; }
+.campo:has(.campo-folha.com-doca) .campo-mapa .imgdata-controle { bottom: 88px; }
+.campo:has(.campo-folha.com-doca) .campo-mapa .imgdata-cortina-barra { bottom: 92px; }
+.campo:has(.campo-folha.com-doca) .campo-dica-mao { display: none; }
+@media (prefers-reduced-motion: reduce) { button.campo-doca-fab.ativo::after { animation: none; } }
+
+/* o resultado no celular: a barra vira Consultar · Criar CAR · Baixar; o nome é um
+   campo enxuto com o lápis, e Continuar medindo / Nova medição vão para o rodapé */
+.campo-doca-meio.com-rotulo { display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px; }
+.campo-doca-rotulo { font-size: 12.5px; font-weight: 700; color: var(--primaria); white-space: nowrap; line-height: 1.1; }
+.campo-painel-doca.campo-resultado { gap: 10px; }
+.campo-nome-doca { position: relative; flex-direction: row; align-items: center; margin-top: 4px; }
+.campo-nome-doca > svg { position: absolute; left: 12px; color: var(--texto-3); pointer-events: none; }
+.campo-nome-doca input { height: 42px; padding-left: 36px; border-radius: 12px; background: #F7FAF8; border-color: transparent; }
+.campo-nome-doca input:focus { background: #fff; border-color: var(--primaria); }
+.campo-painel-doca.campo-resultado .campo-detalhe { margin: -4px 0 0; text-align: center; }
+.campo-painel-doca .campo-acoes-rodape { gap: 4px 22px; }
+@media (max-width: 380px) {
+  .campo-painel-doca .campo-numeros dt { font-size: 10.5px; letter-spacing: 0.02em; }
+  .campo-painel-doca .campo-numeros > div { padding: 7px 8px; }
+  button.campo-doca-lado { font-size: 12px; }
+}

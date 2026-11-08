@@ -3,7 +3,7 @@
 // do exportar.css e vai para o <body> com position: fixed (zoom .8 da raiz →
 // lib/zoom.ts). No celular ele abre para CIMA quando o botão está embaixo.
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent as TeclaReact } from "react";
+import type { KeyboardEvent as TeclaReact, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { FORMATOS_AREA } from "../../lib/exportar/formatos.ts";
 import type { FormatoArea } from "../../lib/exportar/formatos.ts";
@@ -16,7 +16,7 @@ import "../exportar.css";
 
 const LARGURA = 300;
 
-export function MenuBaixar({ medicao, className }: { medicao: Medicao; className?: string }) {
+export function MenuBaixar({ medicao, className, children }: { medicao: Medicao; className?: string; children?: ReactNode }) {
   const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
   const [gerando, setGerando] = useState(false);
   const botao = useRef<HTMLButtonElement>(null);
@@ -77,7 +77,7 @@ export function MenuBaixar({ medicao, className }: { medicao: Medicao; className
     <>
       <button ref={botao} type="button" className={className} aria-haspopup="menu" aria-expanded={aberto}
         disabled={gerando || medicao.vertices.length === 0} onClick={() => (aberto ? setPos(null) : abrir())}>
-        {gerando ? "Gerando…" : "Baixar ▾"}
+        {gerando ? "Gerando…" : children ?? "Baixar ▾"}
       </button>
       {pos && createPortal(
         <div ref={menu} className="exportar-menu campo-menu-baixar" role="menu" aria-label="Baixar a medição"

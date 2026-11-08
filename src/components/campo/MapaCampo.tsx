@@ -167,6 +167,13 @@ export function MapaCampo(props: Props) {
     m.touchZoomRotate.disableRotation();
     m.on("webglcontextlost", () => setFalha("O navegador interrompeu o desenho do mapa. A medição continua gravando; toque em \"Tentar de novo\"."));
     m.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: ATRIBUICAO }), "bottom-right");
+    // no celular a atribuição começa recolhida no "i" (como faz sozinha ao arrastar o mapa):
+    // aberta, a faixa cruzava o botão do meio da barra do Campo. Um toque no "i" mostra.
+    m.once("idle", () => {
+      if (typeof matchMedia !== "undefined" && matchMedia("(max-width: 900px)").matches) {
+        m.getContainer().querySelector(".maplibregl-ctrl-attrib.maplibregl-compact-show")?.classList.remove("maplibregl-compact-show");
+      }
+    });
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     m.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
     // o usuário arrastou o mapa: para de seguir o ponto azul (o botão "centralizar" aparece)
