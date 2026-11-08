@@ -29,6 +29,7 @@ export const VERSAO_ATUAL: string = typeof __VERSAO__ !== "undefined" ? __VERSAO
 
 export const URL_APK = "/baixar/vertces.apk";
 export const URL_BAIXAR = "https://vertces.com.br/baixar/";
+export const URL_APP = "https://vertces.com.br/app/";
 
 // ─── plataforma ───────────────────────────────────────────────────────────────
 

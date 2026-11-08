@@ -1,65 +1,183 @@
-/* "Instalar app" (gaveta) e a pílula de versão nova — InstalarApp.tsx */
+/* "Instalar app" (gaveta) e a pílula de versão nova — InstalarApp.tsx
+   O mesmo desenho, em HTML puro, está em public/baixar/index.html. */
 
-.ia { display: flex; flex-direction: column; gap: 14px; font-size: 14.5px; color: var(--texto); }
+.ia { display: flex; flex-direction: column; gap: 16px; font-size: 14.5px; color: var(--texto); }
 .ia p { margin: 2px 0 0; color: var(--texto-2); line-height: 1.45; }
 .ia b { color: var(--texto); }
-.ia code { font-family: var(--mono); font-size: 12.5px; background: var(--linha); padding: 1px 5px; border-radius: 5px; }
-
-.ia-topo { display: flex; align-items: center; gap: 14px; }
-.ia-topo img { border-radius: 14px; flex: none; box-shadow: 0 6px 18px -10px rgb(14 59 43 / 60%); }
-.ia-topo b { font-size: 16px; }
-.ia-topo-ico { width: 56px; height: 56px; flex: none; border-radius: 14px; display: grid; place-items: center; background: var(--primaria-clara); color: var(--primaria-escura); }
-.ia-topo-ico svg { width: 28px; height: 28px; }
 
 .ia-cartao { border: 1px solid var(--borda); border-radius: var(--raio); padding: 14px 16px; background: #fff; display: flex; flex-direction: column; gap: 6px; }
 .ia-cartao > button { align-self: flex-start; margin-top: 6px; display: inline-flex; align-items: center; gap: 8px; }
-.ia-alt { background: var(--bg); border-color: var(--linha); }
-.ia-alerta { background: var(--alerta-claro); border-color: #EBD9B4; }
-.ia-sub { font-size: 13.5px; }
-.ia-nota { font-size: 13px; padding-top: 6px; border-top: 1px dashed var(--borda); }
 .ia-bico { width: 17px; height: 17px; }
 
-/* botão grande de baixar (link) */
-.ia-baixar {
-  display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
-  min-height: 52px; padding: 10px 18px; border-radius: var(--raio); text-decoration: none;
-  background: var(--floresta); color: #fff; font-weight: 700; font-size: 16px;
-  box-shadow: 0 10px 24px -14px rgb(14 59 43 / 80%);
-}
-.ia-baixar:hover { background: #0A2E21; color: #fff; }
-.ia-baixar svg { width: 20px; height: 20px; color: var(--acento); }
-.ia-baixar small { font-weight: 500; font-size: 12.5px; color: var(--floresta-texto); }
-
-.ia-passos { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.ia-passos li { display: flex; gap: 10px; align-items: flex-start; line-height: 1.45; color: var(--texto-2); }
-.ia-num {
-  flex: none; width: 24px; height: 24px; border-radius: 999px; display: grid; place-items: center;
-  background: var(--primaria-clara); color: var(--primaria-escura); font-weight: 700; font-size: 12.5px; margin-top: 1px;
-}
-.ia-tecla {
-  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; vertical-align: baseline;
-  padding: 1px 8px 1px 6px; border-radius: 7px; background: #fff; border: 1px solid var(--borda-forte);
-  color: var(--texto); font-weight: 600; font-size: 13.5px;
-}
-.ia-tecla svg { width: 15px; height: 15px; color: #0A84FF; }
-
-/* desenho do Safari */
-.ia-safari { margin-top: 8px; border-radius: 12px; background: #F2F2F4; border: 1px solid #E2E2E6; padding: 8px 10px 6px; max-width: 320px; align-self: center; width: 100%; }
-.ia-safari-url { background: #fff; border-radius: 9px; text-align: center; font-size: 12.5px; color: #3C3C43; padding: 6px; }
-.ia-safari-barra { display: flex; justify-content: space-around; align-items: center; padding: 8px 0 2px; color: #0A84FF; font-size: 20px; }
-.ia-safari-barra span { width: 34px; height: 30px; display: grid; place-items: center; border-radius: 8px; }
-.ia-safari-barra svg { width: 19px; height: 19px; }
-.ia-safari-alvo { background: rgb(10 132 255 / 14%); box-shadow: 0 0 0 2px #0A84FF; }
-
+/* já no app */
 .ia-feito { display: flex; gap: 12px; align-items: center; padding: 14px 16px; border-radius: var(--raio); background: var(--primaria-clara); }
 .ia-feito-ico { width: 40px; height: 40px; flex: none; border-radius: 999px; display: grid; place-items: center; background: var(--primaria); color: #fff; }
 .ia-feito-ico svg { width: 22px; height: 22px; }
 
-.ia-qr-cartao { flex-direction: row; align-items: center; gap: 18px; }
+/* computador: QR */
+.ia-qr-cartao { flex-direction: row; align-items: center; gap: 16px; background: var(--bg); border-color: var(--linha); }
 .ia-qr { flex: none; border-radius: 8px; border: 1px solid var(--borda); }
-.ia-lista { margin: 8px 0 0; padding-left: 18px; color: var(--texto-2); line-height: 1.6; }
-@media (max-width: 520px) {
+
+/* ── Android | iPhone ─────────────────────────────────────────────────── */
+.ia-escolha { display: flex; flex-direction: column; gap: 8px; }
+.ia .ia-pergunta { margin: 0; font-weight: 700; font-size: 15px; color: var(--texto); }
+.ia-sos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+button.ia-so {
+  position: relative; height: auto; min-height: 112px; padding: 14px 10px 12px; border-radius: 14px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center;
+  background: #fff; border: 1.5px solid var(--borda-forte); color: var(--texto);
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+button.ia-so:hover:not(:disabled) { border-color: var(--primaria); color: var(--texto); background: #FAFCFB; }
+button.ia-so.ativo, button.ia-so.ativo:hover:not(:disabled) {
+  border-color: var(--primaria); background: var(--primaria-clara);
+  box-shadow: 0 0 0 3px rgb(23 133 82 / 14%);
+}
+.ia-so-ico { width: 46px; height: 46px; flex: none; border-radius: 11px; display: grid; place-items: center; background: var(--bg); color: var(--texto-2); transition: background .15s, color .15s; }
+.ia-so-ico svg { width: 28px; height: 28px; }
+.ia-so.ativo .ia-so-ico { background: var(--floresta); color: var(--acento); }
+.ia-so-tx { display: flex; flex-direction: column; align-items: center; min-width: 0; line-height: 1.2; }
+.ia-junto { white-space: nowrap; }
+.ia-so-tx b { font-size: 16px; }
+.ia-so-tx small { font-size: 12px; color: var(--texto-3, var(--texto-2)); font-weight: 500; margin-top: 3px; }
+.ia-so-este {
+  position: absolute; top: -9px; right: 10px; padding: 1px 8px; border-radius: 999px;
+  background: var(--floresta); color: var(--acento); font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
+}
+
+/* conteúdo do aparelho escolhido */
+.ia-guia { display: flex; flex-direction: column; gap: 12px; animation: ia-entra .22s ease-out both; }
+@keyframes ia-entra { from { opacity: 0; transform: translateY(6px); } }
+.ia .ia-intro { margin: 0; font-size: 14px; }
+
+/* botão grande de baixar (link) */
+.ia-baixar {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  min-height: 54px; padding: 10px 18px; border-radius: 14px; text-decoration: none;
+  background: var(--floresta); color: #fff; font-weight: 700; font-size: 16.5px;
+  box-shadow: 0 10px 24px -14px rgb(14 59 43 / 80%);
+}
+.ia-baixar:hover { background: #0A2E21; color: #fff; }
+.ia-baixar svg { width: 21px; height: 21px; color: var(--acento); }
+.ia .ia-baixar-info { margin: -4px 0 0; text-align: center; font-size: 12.5px; }
+
+/* trilha de passos */
+.ia-trilha { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; }
+.ia-passo { position: relative; display: flex; gap: 12px; padding-bottom: 16px; }
+.ia-passo:last-child { padding-bottom: 0; }
+.ia-passo::before { content: ""; position: absolute; left: 13px; top: 30px; bottom: 2px; width: 2px; border-radius: 2px; background: var(--linha); }
+.ia-passo:last-child::before { display: none; }
+.ia-num {
+  flex: none; width: 28px; height: 28px; border-radius: 999px; display: grid; place-items: center;
+  background: var(--primaria-clara); color: var(--primaria-escura); font-weight: 700; font-size: 13.5px;
+}
+.ia-passo:last-child .ia-num { background: var(--primaria); color: #fff; }
+.ia-passo-tx { flex: 1; min-width: 0; padding-top: 3px; }
+.ia-passo-tx > b { font-size: 15px; display: block; }
+.ia-passo-tx > p { font-size: 13.5px; }
+.ia-desenho { margin-top: 8px; }
+.ia-tecla {
+  display: inline-flex; align-items: center; padding: 0 6px; border-radius: 6px; line-height: 1.35;
+  background: #fff; border: 1px solid var(--borda-forte); color: var(--texto); font-weight: 700;
+}
+
+/* ── desenhos: o que aparece na tela ─────────────────────────────────── */
+.ia-d { max-width: 300px; border-radius: 12px; font-size: 12.5px; line-height: 1.25; color: #1C1C1E; }
+.ia-d svg { width: 17px; height: 17px; flex: none; fill: none; }
+.ia-d-icone { border-radius: 22%; flex: none; display: block; }
+.ia-d-alvo { position: relative; box-shadow: 0 0 0 2px var(--alvo, #0A84FF); }
+.ia-d-alvo::after {
+  content: ""; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none;
+  animation: ia-pulso 1.8s ease-out infinite;
+}
+@keyframes ia-pulso {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--alvo, #0A84FF) 45%, transparent); }
+  100% { box-shadow: 0 0 0 7px transparent; }
+}
+.ia-d-txt { font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+
+/* Android: aviso do download */
+.ia-d-aviso { --alvo: #1A73E8; display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #fff; border: 1px solid #E2E5E9; box-shadow: 0 4px 14px -8px rgb(0 0 0 / 30%); border-radius: 16px; }
+.ia-d-aviso-ico { width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center; background: #E8F0FE; color: #1A73E8; flex: none; }
+.ia-d-aviso-tx { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ia-d-aviso-tx small { color: #5F6368; font-size: 11.5px; }
+.ia-d-aviso .ia-d-txt { color: #1A73E8; }
+
+/* Android: janela de instalar */
+.ia-d-dialogo { --alvo: #1A73E8; padding: 14px 16px 10px; background: #F3F6FC; border: 1px solid #E2E7F0; border-radius: 20px; }
+.ia-d-dialogo-app { display: flex; align-items: center; gap: 8px; }
+.ia-d-dialogo-app b { font-size: 13.5px; }
+.ia .ia-d-dialogo p { margin: 8px 0 6px; color: #3C4043; font-size: 12.5px; }
+.ia-d-botoes { display: flex; justify-content: flex-end; gap: 14px; align-items: center; color: #1A73E8; font-weight: 600; }
+
+/* tela de início (os dois) */
+.ia-d-inicio { --alvo: var(--primaria); display: flex; align-items: flex-start; gap: 14px; padding: 12px 14px 8px; background: linear-gradient(135deg, #CFE6DA, #E8EFE9 55%, #DCE6F2); width: max-content; }
+.ia-d-app { width: 36px; height: 36px; border-radius: 22%; flex: none; opacity: .75; }
+.ia-d-inicio.ios .ia-d-app { border-radius: 24%; }
+.ia-d-app.c1 { background: #F5B94A; } .ia-d-app.c2 { background: #6E9CF0; } .ia-d-app.c3 { background: #E86C6C; }
+.ia-d-app-v { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.ia-d-app-v .ia-d-icone { box-shadow: 0 0 0 2px var(--alvo); }
+.ia-d-app-v small { font-size: 10.5px; font-weight: 600; color: #1C1C1E; }
+
+/* iPhone: barra do Safari */
+.ia-d-safari { background: #F2F2F7; border: 1px solid #E2E2E8; padding: 8px 10px 6px; }
+.ia-d-safari-url { background: #fff; border-radius: 10px; text-align: center; padding: 6px; color: #3C3C43; }
+.ia-d-safari-barra { display: flex; justify-content: space-between; align-items: center; padding: 7px 4px 1px; color: #0A84FF; }
+.ia-d-safari-barra span { width: 34px; height: 30px; display: grid; place-items: center; border-radius: 9px; }
+.ia-d-safari-barra svg { width: 19px; height: 19px; }
+.ia-d-safari-barra .ia-d-alvo { background: rgb(10 132 255 / 12%); }
+
+/* iPhone: lista do Compartilhar */
+.ia-d-folha { background: #F2F2F7; border: 1px solid #E2E2E8; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.ia-d-folha span { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; background: #fff; border-radius: 8px; }
+.ia-d-folha span:first-child { opacity: .55; }
+.ia-d-folha em { font-style: normal; }
+.ia-d-folha .ia-d-alvo { font-weight: 700; }
+.ia-d-folha svg { color: #1C1C1E; }
+
+/* iPhone: Adicionar */
+.ia-d-add { --alvo: #0A84FF; background: #F2F2F7; border: 1px solid #E2E2E8; overflow: visible; }
+.ia-d-add-topo { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 8px 8px 8px 10px; color: #0A84FF; }
+.ia-d-add-topo b { color: #1C1C1E; font-size: 11px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ia-d-add-topo > span { flex: none; }
+.ia-d-add-topo .ia-d-txt { background: #fff; }
+.ia-d-add-app { display: flex; align-items: center; gap: 10px; margin: 0 8px 8px; padding: 8px 10px; background: #fff; border-radius: 10px; }
+.ia-d-add-app span { display: flex; flex-direction: column; }
+.ia-d-add-app small { color: #8E8E93; font-size: 11px; }
+
+/* ── ajuda e alternativas ─────────────────────────────────────────────── */
+.ia-ajuda { border: 1px solid var(--borda); border-radius: var(--raio); background: #fff; }
+.ia-ajuda > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px;
+  padding: 11px 14px; font-weight: 600; font-size: 14px; color: var(--texto);
+}
+.ia-ajuda > summary::-webkit-details-marker { display: none; }
+.ia-ajuda > summary::after { content: "›"; margin-left: auto; font-size: 20px; line-height: 1; color: var(--texto-2); transition: transform .15s; }
+.ia-ajuda[open] > summary::after { transform: rotate(90deg); }
+.ia-ajuda > summary svg { width: 17px; height: 17px; color: var(--alerta); flex: none; }
+.ia-ajuda > div { padding: 0 14px 12px; }
+.ia-ajuda > div > p { font-size: 13.5px; }
+.ia-ajuda ul { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ia-ajuda li { font-size: 13.5px; color: var(--texto-2); line-height: 1.45; padding-left: 10px; border-left: 3px solid var(--alerta-claro); }
+.ia-ajuda-aviso { display: block; font-weight: 600; color: var(--texto); font-style: italic; }
+
+.ia-alt-linha { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 8px; font-size: 13.5px; color: var(--texto-2); }
+button.ia-atalho { height: auto; padding: 4px 8px; border: 0; background: none; color: var(--primaria); font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+button.ia-atalho:hover:not(:disabled) { background: var(--primaria-clara); color: var(--primaria-escura); border: 0; }
+button.ia-atalho svg { width: 16px; height: 16px; }
+
+.ia-safari-aviso { display: flex; gap: 10px; padding: 12px 14px; border-radius: var(--raio); background: var(--alerta-claro); border: 1px solid #EBD9B4; }
+.ia-safari-aviso > svg { width: 20px; height: 20px; flex: none; color: var(--alerta); margin-top: 1px; }
+.ia-safari-aviso p { font-size: 13.5px; }
+button.ia-copiar { margin-top: 8px; height: 34px; display: inline-flex; align-items: center; gap: 6px; background: #fff; border-color: #E0CFA6; color: var(--alerta-escuro); font-weight: 600; }
+button.ia-copiar:hover:not(:disabled) { border-color: var(--alerta); color: var(--alerta-escuro); background: #fff; }
+button.ia-copiar svg { width: 16px; height: 16px; }
+
+@media (max-width: 380px) {
   .ia-qr-cartao { flex-direction: column; align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ia-d-alvo::after, .ia-guia { animation: none; }
 }
 
 /* ── pílula "Nova versão" ─────────────────────────────────────────────── */

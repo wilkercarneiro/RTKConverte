@@ -5,72 +5,201 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0E3B2B" />
   <title>Baixar o app — Vertces</title>
-  <meta name="description" content="App Vertces para Android e atalho na tela de início do iPhone." />
+  <meta name="description" content="App Vertces para Android e ícone na tela de início do iPhone, passo a passo." />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
   <link rel="canonical" href="https://vertces.com.br/baixar/" />
   <!-- Página estática (public/baixar/): o link "Baixar o app" do site e o QR do
-       "Instalar app" do sistema caem aqui. Mesmo texto de src/components/InstalarApp.tsx. -->
+       "Instalar app" do sistema caem aqui. Mesmo conteúdo e desenho de
+       src/components/InstalarApp.tsx + instalar.css. #android / #iphone abre direto. -->
   <style>
-    :root { --verde: #0E3B2B; --acento: #7BD3A6; --texto: #12201A; --texto-2: #5B6B63; --borda: #E3E8E5; --claro: #E4F3EB; --primaria: #178552; }
+    :root { --verde: #0E3B2B; --acento: #7BD3A6; --texto: #12201A; --texto-2: #5B6B63; --texto-3: #8A978F; --borda: #E3E8E5; --borda-forte: #D5DDD8; --linha: #EEF2F0; --claro: #E4F3EB; --primaria: #178552; --primaria-escura: #126B42; --bg: #F4F6F5; --alerta: #B7791F; --alerta-escuro: #7A5410; --alerta-claro: #FBF3E3; }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texto); background: #F4F6F5; line-height: 1.45; }
-    header { background: var(--verde); color: #fff; padding: 22px 20px 64px; }
-    header a { color: #fff; text-decoration: none; display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; }
-    header svg { width: 30px; height: 30px; }
-    main { max-width: 560px; margin: -44px auto 40px; padding: 0 16px; display: flex; flex-direction: column; gap: 14px; }
-    .cartao { background: #fff; border: 1px solid var(--borda); border-radius: 14px; padding: 18px; }
-    h1 { font-size: 22px; margin: 0 0 4px; }
-    h2 { font-size: 16px; margin: 0 0 6px; }
-    p { margin: 4px 0; color: var(--texto-2); }
+    body { margin: 0; font-family: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--texto); background: var(--bg); line-height: 1.45; -webkit-text-size-adjust: 100%; }
+    header { background: var(--verde); color: #fff; padding: 20px 20px 70px; }
+    .marca { color: #fff; text-decoration: none; display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; }
+    .marca svg { width: 30px; height: 30px; }
+    header h1 { margin: 22px auto 0; max-width: 528px; font-size: 25px; line-height: 1.2; }
+    header p { margin: 6px auto 0; max-width: 528px; color: #A9CBBA; font-size: 15px; }
+    main { max-width: 560px; margin: -46px auto 40px; padding: 0 16px; display: flex; flex-direction: column; gap: 14px; }
+    .cartao { background: #fff; border: 1px solid var(--borda); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 10px 30px -22px rgb(14 59 43 / 50%); }
+    p { margin: 2px 0 0; color: var(--texto-2); }
     b { color: var(--texto); }
-    .baixar { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; margin: 14px 0 4px; border-radius: 12px; background: var(--verde); color: #fff; font-weight: 700; font-size: 16px; text-decoration: none; }
-    .baixar small { font-weight: 500; color: #A9CBBA; font-size: 12.5px; }
-    ol { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 10px; counter-reset: p; }
-    ol li { display: flex; gap: 10px; color: var(--texto-2); counter-increment: p; }
-    ol li::before { content: counter(p); flex: none; width: 24px; height: 24px; border-radius: 999px; display: grid; place-items: center; background: var(--claro); color: var(--primaria); font-weight: 700; font-size: 12.5px; }
-    .tecla { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px 0 5px; border: 1px solid #D5DDD8; border-radius: 7px; font-weight: 600; color: var(--texto); white-space: nowrap; }
-    .tecla svg { width: 15px; height: 15px; stroke: #0A84FF; }
-    .nota { font-size: 13px; border-top: 1px dashed var(--borda); padding-top: 8px; margin-top: 10px; }
+    [hidden] { display: none !important; }
+
+    .pergunta { margin: 0 0 8px; font-weight: 700; font-size: 15px; color: var(--texto); }
+    .sos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .so { position: relative; font: inherit; cursor: pointer; min-height: 112px; padding: 14px 10px 12px; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: #fff; border: 1.5px solid var(--borda-forte); color: var(--texto); transition: border-color .15s, background .15s, box-shadow .15s; -webkit-tap-highlight-color: transparent; }
+    .so:hover { border-color: var(--primaria); }
+    .so[aria-selected="true"] { border-color: var(--primaria); background: var(--claro); box-shadow: 0 0 0 3px rgb(23 133 82 / 14%); }
+    .so-ico { width: 46px; height: 46px; border-radius: 11px; display: grid; place-items: center; background: var(--bg); color: var(--texto-2); }
+    .so-ico svg { width: 28px; height: 28px; }
+    .so[aria-selected="true"] .so-ico { background: var(--verde); color: var(--acento); }
+    .so b { font-size: 16px; line-height: 1.2; }
+    .so small { font-size: 12px; color: var(--texto-3); font-weight: 500; margin-top: -4px; }
+    .este { position: absolute; top: -9px; right: 10px; padding: 1px 8px; border-radius: 999px; background: var(--verde); color: var(--acento); font-size: 10.5px; font-weight: 700; }
+
+    .guia { display: flex; flex-direction: column; gap: 12px; animation: entra .22s ease-out both; }
+    @keyframes entra { from { opacity: 0; transform: translateY(6px); } }
+    .intro { margin: 0; font-size: 14.5px; }
+    .baixar { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 54px; padding: 10px 18px; border-radius: 14px; background: var(--verde); color: #fff; font-weight: 700; font-size: 16.5px; text-decoration: none; box-shadow: 0 10px 24px -14px rgb(14 59 43 / 80%); }
+    .baixar svg { width: 21px; height: 21px; stroke: var(--acento); }
+    .baixar-info { margin: -4px 0 0; text-align: center; font-size: 12.5px; }
+
+    ol.trilha { list-style: none; margin: 4px 0 0; padding: 0; }
+    .passo { position: relative; display: flex; gap: 12px; padding-bottom: 16px; }
+    .passo:last-child { padding-bottom: 0; }
+    .passo::before { content: ""; position: absolute; left: 13px; top: 30px; bottom: 2px; width: 2px; border-radius: 2px; background: var(--linha); }
+    .passo:last-child::before { display: none; }
+    .num { flex: none; width: 28px; height: 28px; border-radius: 999px; display: grid; place-items: center; background: var(--claro); color: var(--primaria-escura); font-weight: 700; font-size: 13.5px; }
+    .passo:last-child .num { background: var(--primaria); color: #fff; }
+    .passo-tx { flex: 1; min-width: 0; padding-top: 3px; }
+    .passo-tx > b { display: block; font-size: 15px; }
+    .passo-tx > p { font-size: 14px; }
+    .desenho { margin-top: 8px; }
+    .tecla { display: inline-flex; padding: 0 6px; border-radius: 6px; line-height: 1.35; background: #fff; border: 1px solid var(--borda-forte); color: var(--texto); font-weight: 700; }
+    .junto { white-space: nowrap; }
+
+    /* desenhos */
+    .d { max-width: 300px; border-radius: 12px; font-size: 12.5px; line-height: 1.25; color: #1C1C1E; }
+    .d svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .d-icone { border-radius: 22%; display: block; flex: none; }
+    .alvo { position: relative; box-shadow: 0 0 0 2px var(--alvo, #0A84FF); }
+    .alvo::after { content: ""; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none; animation: pulso 1.8s ease-out infinite; }
+    @keyframes pulso { 0% { box-shadow: 0 0 0 0 rgb(10 132 255 / 45%); } 100% { box-shadow: 0 0 0 7px rgb(10 132 255 / 0%); } }
+    .txt { font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+    .d-aviso { --alvo: #1A73E8; display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #fff; border: 1px solid #E2E5E9; box-shadow: 0 4px 14px -8px rgb(0 0 0 / 30%); border-radius: 16px; }
+    .d-aviso-ico { width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center; background: #E8F0FE; color: #1A73E8; flex: none; }
+    .d-aviso-tx { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+    .d-aviso-tx small { color: #5F6368; font-size: 11.5px; }
+    .d-aviso .txt { color: #1A73E8; }
+    .d-dialogo { --alvo: #1A73E8; padding: 14px 16px 10px; background: #F3F6FC; border: 1px solid #E2E7F0; border-radius: 20px; }
+    .d-dialogo-app { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+    .d-dialogo p { margin: 8px 0 6px; color: #3C4043; font-size: 12.5px; }
+    .d-botoes { display: flex; justify-content: flex-end; gap: 14px; align-items: center; color: #1A73E8; font-weight: 600; }
+    .d-inicio { --alvo: var(--primaria); display: flex; align-items: flex-start; gap: 14px; padding: 12px 14px 8px; width: max-content; background: linear-gradient(135deg, #CFE6DA, #E8EFE9 55%, #DCE6F2); }
+    .d-app { width: 36px; height: 36px; border-radius: 22%; opacity: .75; flex: none; }
+    .c1 { background: #F5B94A; } .c2 { background: #6E9CF0; } .c3 { background: #E86C6C; }
+    .d-app-v { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+    .d-app-v img { box-shadow: 0 0 0 2px var(--alvo); }
+    .d-app-v small { font-size: 10.5px; font-weight: 600; }
+    .d-safari { background: #F2F2F7; border: 1px solid #E2E2E8; padding: 8px 10px 6px; }
+    .d-safari-url { background: #fff; border-radius: 10px; text-align: center; padding: 6px; color: #3C3C43; }
+    .d-safari-barra { display: flex; justify-content: space-between; align-items: center; padding: 7px 4px 1px; color: #0A84FF; }
+    .d-safari-barra span { width: 34px; height: 30px; display: grid; place-items: center; border-radius: 9px; }
+    .d-safari-barra svg { width: 19px; height: 19px; }
+    .d-safari-barra .alvo { background: rgb(10 132 255 / 12%); }
+    .d-folha { background: #F2F2F7; border: 1px solid #E2E2E8; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+    .d-folha span { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; background: #fff; border-radius: 8px; }
+    .d-folha span:first-child { opacity: .55; }
+    .d-folha .alvo { font-weight: 700; }
+    .d-add { --alvo: #0A84FF; background: #F2F2F7; border: 1px solid #E2E2E8; }
+    .d-add-topo { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 8px 8px 8px 10px; color: #0A84FF; }
+    .d-add-topo > span { flex: none; }
+    .d-add-topo b { color: #1C1C1E; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .d-add-topo .txt { background: #fff; }
+    .d-add-app { display: flex; align-items: center; gap: 10px; margin: 0 8px 8px; padding: 8px 10px; background: #fff; border-radius: 10px; }
+    .d-add-app span { display: flex; flex-direction: column; }
+    .d-add-app small { color: #8E8E93; font-size: 11px; }
+
+    details.ajuda { border: 1px solid var(--borda); border-radius: 12px; background: #fff; }
+    details.ajuda > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; padding: 11px 14px; font-weight: 600; font-size: 14px; }
+    details.ajuda > summary::-webkit-details-marker { display: none; }
+    details.ajuda > summary::after { content: "›"; margin-left: auto; font-size: 20px; line-height: 1; color: var(--texto-2); transition: transform .15s; }
+    details.ajuda[open] > summary::after { transform: rotate(90deg); }
+    .alerta-ico { width: 17px; height: 17px; flex: none; fill: none; stroke: var(--alerta); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    details.ajuda > div { padding: 0 14px 12px; font-size: 13.5px; }
+    details.ajuda ul { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+    details.ajuda li { color: var(--texto-2); padding-left: 10px; border-left: 3px solid var(--alerta-claro); }
+    .aviso-txt { display: block; font-weight: 600; font-style: italic; color: var(--texto); }
+
+    .safari-aviso { display: flex; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--alerta-claro); border: 1px solid #EBD9B4; }
+    .safari-aviso .alerta-ico { width: 20px; height: 20px; margin-top: 1px; }
+    .safari-aviso p { font-size: 13.5px; }
+    .copiar { margin-top: 8px; font: inherit; font-weight: 600; font-size: 14px; height: 34px; padding: 0 12px; border-radius: 9px; display: inline-flex; align-items: center; gap: 6px; background: #fff; border: 1px solid #E0CFA6; color: var(--alerta-escuro); cursor: pointer; }
+
+    .pc { display: flex; gap: 12px; align-items: center; padding: 14px 16px; border-radius: 12px; background: var(--bg); border: 1px solid var(--linha); }
+    .pc svg { width: 28px; height: 28px; flex: none; fill: none; stroke: var(--primaria-escura); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
     .voltar { text-align: center; font-size: 14px; }
     .voltar a { color: var(--primaria); }
-    [hidden] { display: none !important; }
+    @media (prefers-reduced-motion: reduce) { .alvo::after, .guia { animation: none; } }
   </style>
 </head>
 <body>
-  <header><a href="/"><svg viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="7" fill="#0E3B2B" stroke="#7BD3A6" stroke-opacity=".25"/><path d="M6 21 14 7l8 14" stroke="#7BD3A6" stroke-width="2.4" stroke-linejoin="round" fill="none"/><circle cx="14" cy="7" r="2.6" fill="#7BD3A6"/><circle cx="6" cy="21" r="2" fill="#fff"/><circle cx="22" cy="21" r="2" fill="#fff"/></svg>Vertces</a></header>
+  <header>
+    <a class="marca" href="/"><svg viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="7" fill="#0E3B2B" stroke="#7BD3A6" stroke-opacity=".25"/><path d="M6 21 14 7l8 14" stroke="#7BD3A6" stroke-width="2.4" stroke-linejoin="round" fill="none"/><circle cx="14" cy="7" r="2.6" fill="#7BD3A6"/><circle cx="6" cy="21" r="2" fill="#fff"/><circle cx="22" cy="21" r="2" fill="#fff"/></svg>Vertces</a>
+    <h1>Vertces no seu celular</h1>
+    <p>Um ícone na tela de início que abre o sistema em tela cheia.</p>
+  </header>
   <main>
-    <section class="cartao" data-so="android">
-      <h1>App Vertces para Android</h1>
-      <p>Abre o sistema em tela cheia, direto do ícone. Usa o Chrome do celular.</p>
-      <a class="baixar" href="/baixar/vertces.apk" download="vertces.apk" data-apk>Baixar o app <small data-versao></small></a>
-      <h2 style="margin-top:14px">Como instalar</h2>
-      <p>O app ainda não está na Play Store. Por isso o Android pede uma permissão a mais.</p>
-      <ol>
-        <li><span>Toque em <b>Baixar o app</b>. O Chrome baixa o arquivo <b>vertces.apk</b>.</span></li>
-        <li><span>Toque em <b>Abrir</b> no aviso do download (ou abra o arquivo na pasta <b>Downloads</b>).</span></li>
-        <li><span>Se aparecer <i>“Por segurança, o celular não permite instalar apps desta fonte”</i>: toque em <b>Configurações</b>, ligue <b>Permitir desta fonte</b> e volte.</span></li>
-        <li><span>Toque em <b>Instalar</b>. Se o Play Protect avisar, toque em <b>Mais detalhes</b> → <b>Instalar mesmo assim</b>.</span></li>
-        <li><span>Pronto: o ícone <b>Vertces</b> aparece na tela de início.</span></li>
-      </ol>
-      <p class="nota">Precisa do <b>Google Chrome</b> atualizado no celular.</p>
-    </section>
+    <section class="cartao">
+      <div class="pc" data-pc hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM11 18h2"/></svg>
+        <p><b>Está no computador?</b> Abra <b>vertces.com.br/baixar</b> no celular. Ou escolha abaixo para ver o passo a passo.</p>
+      </div>
 
-    <section class="cartao" data-so="ios">
-      <h1>No iPhone</h1>
-      <p><b>Ainda não temos app para iPhone.</b> Dá para criar um atalho na tela de início que abre o Vertces como um app:</p>
-      <ol>
-        <li><span>Abra <b>vertces.com.br/app</b> no <b>Safari</b>.</span></li>
-        <li><span>Toque no botão <span class="tecla"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 7l4-4 4 4M7 10H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1"/></svg>Compartilhar</span> (na barra de baixo; no iPad, no alto).</span></li>
-        <li><span>Role a lista e toque em <span class="tecla"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM12 8v8M8 12h8"/></svg>Adicionar à Tela de Início</span>.</span></li>
-        <li><span>Toque em <b>Adicionar</b>, no canto de cima.</span></li>
-      </ol>
-      <p class="nota">No <b>Chrome do iPhone</b> (iOS 16.4 ou mais novo) também dá: toque em Compartilhar na barra de endereço (ou no menu ⋯) e em <b>Adicionar à Tela de Início</b>. Se não aparecer, use o Safari.</p>
-    </section>
+      <div>
+        <p class="pergunta">Qual é o seu celular?</p>
+        <div class="sos" role="tablist" aria-label="Qual é o seu celular?">
+          <button class="so" type="button" role="tab" id="tab-android" aria-controls="guia-android" aria-selected="false" data-so="android">
+            <span class="so-ico"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22a10 10 0 0 1 20 0z"/><path d="M10.5 10.5 8 6.5M21.5 10.5 24 6.5"/><circle cx="12" cy="17" r="1.3" fill="currentColor" stroke="none"/><circle cx="20" cy="17" r="1.3" fill="currentColor" stroke="none"/></svg></span>
+            <b>Android</b><small>Samsung, Motorola…</small>
+          </button>
+          <button class="so" type="button" role="tab" id="tab-ios" aria-controls="guia-ios" aria-selected="false" data-so="ios">
+            <span class="so-ico"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="16" height="26" rx="4"/><rect x="13.2" y="5.6" width="5.6" height="1.9" rx=".95" fill="currentColor" stroke="none"/><path d="M13.5 25.5h5"/></svg></span>
+            <b>iPhone</b><small>e iPad</small>
+          </button>
+        </div>
+      </div>
 
-    <section class="cartao" data-so="computador" hidden>
-      <h2>Está no computador?</h2>
-      <p>O app é para o celular. Abra <b>vertces.com.br/baixar</b> no celular. No computador, use o Vertces pelo navegador.</p>
+      <!-- Android -->
+      <div class="guia" id="guia-android" role="tabpanel" aria-labelledby="tab-android" hidden>
+        <a class="baixar" href="/baixar/vertces.apk" download="vertces.apk" data-apk><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Baixar o app</a>
+        <p class="baixar-info">Grátis<span data-versao></span> · abre no Chrome do celular</p>
+        <ol class="trilha">
+          <li class="passo"><span class="num">1</span><div class="passo-tx"><b>Baixe o app</b><p>Toque no botão verde acima. O celular baixa o arquivo <b>vertces.apk</b>.</p></div></li>
+          <li class="passo"><span class="num">2</span><div class="passo-tx"><b>Abra o arquivo</b><p>Quando terminar, toque em <b>Abrir</b> no aviso. Sumiu? Abra pela pasta <b>Downloads</b>.</p>
+            <div class="desenho" aria-hidden="true"><div class="d d-aviso"><span class="d-aviso-ico"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></span><span class="d-aviso-tx"><b>vertces.apk</b><small>Download concluído</small></span><span class="alvo txt">Abrir</span></div></div></div></li>
+          <li class="passo"><span class="num">3</span><div class="passo-tx"><b>Toque em Instalar</b>
+            <div class="desenho" aria-hidden="true"><div class="d d-dialogo"><div class="d-dialogo-app"><img class="d-icone" src="/icones/icone-192.png" alt="" width="28" height="28"><b>Vertces</b></div><p>Quer instalar este app?</p><div class="d-botoes"><span>Cancelar</span><span class="alvo txt">Instalar</span></div></div></div></div></li>
+          <li class="passo"><span class="num">4</span><div class="passo-tx"><b>Pronto</b><p>Abra o Vertces pelo ícone na tela de início.</p>
+            <div class="desenho" aria-hidden="true"><div class="d d-inicio"><span class="d-app c1"></span><span class="d-app c2"></span><span class="d-app-v"><img class="d-icone" src="/icones/icone-192.png" alt="" width="36" height="36"><small>Vertces</small></span><span class="d-app c3"></span></div></div></div></li>
+        </ol>
+        <details class="ajuda">
+          <summary><svg class="alerta-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>O celular bloqueou a instalação?</summary>
+          <div>
+            <p>É normal: o app ainda não está na Play Store, então o Android pede confirmação.</p>
+            <ul>
+              <li><span class="aviso-txt">“Não é permitido instalar apps desta fonte”</span>Toque em <b>Configurações</b>, ligue <b>Permitir desta fonte</b> e volte.</li>
+              <li><span class="aviso-txt">“Bloqueado pelo Play Protect”</span>Toque em <b>Mais detalhes</b> e em <b>Instalar mesmo assim</b>.</li>
+              <li><span class="aviso-txt">Não abre ou fica em branco</span>Atualize o <b>Google Chrome</b> pela Play Store.</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+
+      <!-- iPhone -->
+      <div class="guia" id="guia-ios" role="tabpanel" aria-labelledby="tab-ios" hidden>
+        <div class="safari-aviso" data-fora-safari hidden>
+          <svg class="alerta-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          <div>
+            <b>Abra no Safari</b>
+            <p data-fora-texto>Este navegador não cria o ícone. Copie o link e cole no <b>Safari</b>.</p>
+            <button class="copiar" type="button" data-copiar>Copiar link</button>
+          </div>
+        </div>
+        <p class="intro">Sem App Store e sem baixar nada: o Vertces vira um ícone na tela de início e abre em tela cheia, como um app.</p>
+        <ol class="trilha">
+          <li class="passo"><span class="num">1</span><div class="passo-tx"><b>Toque em Compartilhar</b><p>No <b>Safari</b>, em <b>vertces.com.br/app</b>. Fica na barra de baixo. Não achou? <span class="junto">Toque antes em <span class="tecla">⋯</span></span></p>
+            <div class="desenho" aria-hidden="true"><div class="d d-safari"><div class="d-safari-url">vertces.com.br/app</div><div class="d-safari-barra"><span><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></span><span><svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></span><span class="alvo"><svg viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M7 10H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1"/></svg></span><span><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/></svg></span><span><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg></span></div></div></div></div></li>
+          <li class="passo"><span class="num">2</span><div class="passo-tx"><b>Adicionar à Tela de Início</b><p>Role a lista para baixo até achar.</p>
+            <div class="desenho" aria-hidden="true"><div class="d d-folha"><span>Copiar<svg viewBox="0 0 24 24"><path d="M9 9h11v11H9zM5 15H4V4h11v1"/></svg></span><span>Adicionar aos Favoritos<svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg></span><span class="alvo">Adicionar à Tela de Início<svg viewBox="0 0 24 24"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM12 8v8M8 12h8"/></svg></span></div></div></div></li>
+          <li class="passo"><span class="num">3</span><div class="passo-tx"><b>Toque em Adicionar</b><p>No canto de cima, à direita.</p>
+            <div class="desenho" aria-hidden="true"><div class="d d-add"><div class="d-add-topo"><span>Cancelar</span><b>Adicionar à Tela de Início</b><span class="alvo txt">Adicionar</span></div><div class="d-add-app"><img class="d-icone" src="/icones/icone-192.png" alt="" width="30" height="30"><span><b>Vertces</b><small>vertces.com.br</small></span></div></div></div></div></li>
+          <li class="passo"><span class="num">4</span><div class="passo-tx"><b>Pronto</b><p>Abra o Vertces pelo ícone na tela de início.</p>
+            <div class="desenho" aria-hidden="true"><div class="d d-inicio"><span class="d-app c1"></span><span class="d-app c2"></span><span class="d-app-v"><img class="d-icone" src="/icones/icone-192.png" alt="" width="36" height="36"><small>Vertces</small></span><span class="d-app c3"></span></div></div></div></li>
+        </ol>
+      </div>
     </section>
 
     <p class="voltar"><a href="/app/">Entrar no sistema</a> · <a href="/">Conhecer o Vertces</a></p>
@@ -79,18 +208,44 @@
     (function () {
       var ua = navigator.userAgent;
       var so = /android/i.test(ua) ? "android" : (/iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) ? "ios" : "computador";
-      // no celular, só o que serve para ele; no computador, tudo (com o aviso no alto)
-      if (so !== "computador") {
-        document.querySelectorAll("[data-so]").forEach(function (el) { el.hidden = el.getAttribute("data-so") !== so; });
-      } else {
-        var c = document.querySelector('[data-so="computador"]');
-        c.hidden = false;
-        c.parentNode.insertBefore(c, c.parentNode.firstChild);
+      var botoes = document.querySelectorAll("[data-so]");
+      function escolher(id) {
+        botoes.forEach(function (b) { b.setAttribute("aria-selected", String(b.getAttribute("data-so") === id)); });
+        document.getElementById("guia-android").hidden = id !== "android";
+        document.getElementById("guia-ios").hidden = id !== "ios";
       }
+      botoes.forEach(function (b) {
+        var id = b.getAttribute("data-so");
+        if (id === so) { var t = document.createElement("span"); t.className = "este"; t.textContent = "Este celular"; b.appendChild(t); }
+        b.addEventListener("click", function () {
+          escolher(id);
+          try { history.replaceState(null, "", id === "ios" ? "#iphone" : "#android"); } catch (e) { /* sem history */ }
+        });
+      });
+      // #android / #iphone vencem; sem isso, o aparelho de quem abriu; no computador, nenhum
+      var h = location.hash.toLowerCase();
+      var inicial = h === "#android" ? "android" : (h === "#iphone" || h === "#ios") ? "ios" : so === "computador" ? null : so;
+      if (inicial) escolher(inicial);
+      if (so === "computador") document.querySelector("[data-pc]").hidden = false;
+
+      // iPhone fora do Safari: o atalho só sai pelo Safari
+      if (so === "ios" && /CriOS|FxiOS|EdgiOS|OPiOS|GSA\/|FBAN|FBAV|Instagram|Line\//i.test(ua)) {
+        document.querySelector("[data-fora-safari]").hidden = false;
+        if (/CriOS/i.test(ua)) document.querySelector("[data-fora-texto]").innerHTML = "No Chrome do iPhone o passo a passo pode não aparecer. Copie o link e cole no <b>Safari</b>.";
+      }
+      var copiar = document.querySelector("[data-copiar]");
+      copiar.addEventListener("click", function () {
+        if (!navigator.clipboard) return;
+        navigator.clipboard.writeText("https://vertces.com.br/app/").then(function () {
+          copiar.textContent = "Link copiado";
+          setTimeout(function () { copiar.textContent = "Copiar link"; }, 2500);
+        }).catch(function () {});
+      });
+
       fetch("/app/versao.json", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (v) {
         if (!v || !v.android) return;
         document.querySelector("[data-apk]").setAttribute("href", v.android.url);
-        document.querySelector("[data-versao]").textContent = "versão " + v.android.versionName;
+        document.querySelector("[data-versao]").textContent = " · versão " + v.android.versionName;
       }).catch(function () {});
     })();
   </script>
