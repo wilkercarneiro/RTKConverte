@@ -28,6 +28,8 @@ import { desenharEsboco, fmtArea, fmtM, medirEsboco } from "../lib/esboco";
 import type { Esboco, PontoEsboco } from "../lib/esboco";
 import { Dica } from "./ui";
 import { lonLatDeUtm, PreviaRestricoes } from "./RestricoesImovel";
+import { estimarAltitudes } from "../lib/altitude_terreno";
+import type { AltitudesEstimadas } from "../lib/altitude_terreno";
 import "./leitura.css";
 
 const proj4: Proj4 = (de, para, c) => (proj4lib as unknown as Proj4)(de, para, c);
@@ -53,6 +55,8 @@ export interface LeituraConfirmada {
   ordem: "auto" | "id" | "arquivo";
   excluir: number[];
   sigma_padrao: { pos: number; h: number } | null;
+  /** Altitude estimada pela coordenada (idx do ponto → m) para quem veio sem; null = nenhuma. */
+  altura_padrao: Record<number, number> | null;
   confirmados: string[];
   /** Versão dos pontos que entra no perímetro ("" = levantamento, "postp_"…);
    *  null quando o arquivo tem uma versão só. */
@@ -191,11 +195,19 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
     return pos > 0 && h > 0 && pos <= 10 && h <= 10 ? { pos, h } : null;
   }, [sigmaTexto]);
 
+  // altitude pela coordenada para os pontos sem altitude no arquivo (modelo de terreno)
+  // (os valores são por índice do ponto: só valem para a mesma receita)
+  const [alturas, setAlturas] = useState<{ chave: string; receita: string; est: AltitudesEstimadas } | null>(null);
+  const [buscandoAlt, setBuscandoAlt] = useState(false);
+  const [erroAlt, setErroAlt] = useState<string | null>(null);
+  const receitaChave = useMemo(() => JSON.stringify(receita), [receita]);
+  const alturaPadrao = alturas && alturas.receita === receitaChave && Object.keys(alturas.est.valores).length ? alturas.est.valores : null;
+
   const leitura: Leitura | null = useMemo(() => {
     try {
-      return executarReceita(linhas, receita, { proj4, ordem, excluir: [...excluir], sigmaPadrao, versao, incluir: [...incluir], ligacao }, resposta.confianca, resposta.duvidas);
+      return executarReceita(linhas, receita, { proj4, ordem, excluir: [...excluir], sigmaPadrao, alturaPadrao, versao, incluir: [...incluir], ligacao }, resposta.confianca, resposta.duvidas);
     } catch { return null; }
-  }, [linhas, receita, ordem, excluir, incluir, ligacao, sigmaPadrao, versao, resposta.confianca, resposta.duvidas]);
+  }, [linhas, receita, ordem, excluir, incluir, ligacao, sigmaPadrao, alturaPadrao, versao, resposta.confianca, resposta.duvidas]);
   // a versão que o sistema escolheria sozinho (marcada "sugerida" na lista)
   const versaoSugerida = useMemo(() => {
     if (versao === null) return leitura?.versoes.escolhida ?? null;
@@ -344,6 +356,38 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
   const anelChave = leitura ? JSON.stringify(leitura.blocos.map((b) => b.map((k) => [leitura.anel[k].e, leitura.anel[k].n]))) : "";
   const fusos = useMemo(() => (leitura ? fusosPossiveis(leitura.anel, uf) : []), [leitura, uf]);
   const fusoEsboco = leitura?.fusoGeo ?? fuso ?? (fusos.length === 1 ? fusos[0].zone : null);
+
+  // Pontos sem altitude no arquivo: o sistema busca pela coordenada, sozinho.
+  // A chave é a leitura (receita) + o fuso: mudou, busca de novo; igual, não repete.
+  const pedemAltura = useMemo(() => (leitura ? leitura.pontos.filter((p) => p.h === null || p.hEstimada) : []), [leitura]);
+  const precisaGeo = pedemAltura.some((p) => !p.geo);
+  const chaveAlt = pedemAltura.length ? `${receitaChave}|${precisaGeo ? fusoEsboco : "geo"}` : "";
+  const tentouAlt = useRef("");
+  async function buscarAltitudes() {
+    if (!leitura || !chaveAlt) return;
+    const chave = chaveAlt, rc = receitaChave;
+    tentouAlt.current = chave;
+    setBuscandoAlt(true);
+    setErroAlt(null);
+    try {
+      const est = await estimarAltitudes(
+        leitura.pontos.map((p) => ({ idx: p.idx, e: p.e, n: p.n, geo: p.geo, h: p.hEstimada ? null : p.h })),
+        precisaGeo ? fusoEsboco : null,
+      );
+      setAlturas({ chave, receita: rc, est });
+      setConfirmados(new Set());
+    } catch (err) {
+      setAlturas(null);
+      setErroAlt(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBuscandoAlt(false);
+    }
+  }
+  useEffect(() => {
+    if (!chaveAlt || buscandoAlt || alturas?.chave === chaveAlt || tentouAlt.current === chaveAlt) return;
+    if (precisaGeo && fusoEsboco === null) return; // espera o fuso
+    void buscarAltitudes();
+  });
   const [esboco, setEsboco] = useState<{ e: Esboco; chave: string } | null>(null);
   const [gerando, setGerando] = useState(false);
   const [erroEsboco, setErroEsboco] = useState<string | null>(null);
@@ -410,7 +454,7 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
   function prosseguir() {
     if (!leitura) return;
     onConfirmar({
-      receita, ordem, excluir: [...excluir], sigma_padrao: sigmaPadrao, confirmados: [...confirmados], versao: leitura.versoes.escolhida,
+      receita, ordem, excluir: [...excluir], sigma_padrao: sigmaPadrao, altura_padrao: alturaPadrao, confirmados: [...confirmados], versao: leitura.versoes.escolhida,
       incluir: [...incluir], ligacao,
       resumo: { pontos: leitura.anel.length, partes: leitura.blocos.length, areaHa: medidas?.areaHa ?? null, perimetroM: medidas?.perimetroM ?? null },
     });
@@ -630,6 +674,32 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
                   </label>
                 ))}
               </div>
+            </div>
+          )}
+
+          {pedemAltura.length > 0 && (
+            <div className="lt-bloco" data-testid="altitude-coordenada">
+              <h4>Altitude pela coordenada<Dica>O arquivo veio sem a altitude de alguns pontos. O sistema busca a de cada um no modelo digital de terreno pela latitude/longitude (o mesmo do relevo e do loteamento) e, se houver pontos com altitude medida, calibra o modelo por eles (erro típico de 1–4 m; sem nenhum ponto medido sai a cota do terreno, que pode diferir 10–20 m da altitude elipsoidal). Serve para planta, memorial e relevo; para o SIGEF, o ideal é a altitude do receptor.</Dica></h4>
+              {buscandoAlt && <p className="sub pequeno"><span className="spinner" /> buscando a altitude de {pedemAltura.length} ponto(s) pela coordenada…</p>}
+              {!buscandoAlt && precisaGeo && fusoEsboco === null && (
+                <div className="lt-fuso" role="group" aria-label="Fuso para buscar a altitude">
+                  <b>Em qual fuso UTM o levantamento foi feito?</b>
+                  <span className="sub pequeno">Sem o fuso o sistema não sabe onde fica o imóvel para buscar a altitude.</span>
+                  <div className="lt-fuso-opcoes">
+                    {fusos.map((f) => (
+                      <button key={f.zone} type="button" onClick={() => onEscolherFuso?.(f.zone)}>{f.zone}S — imóvel em {fmtLon(f.lon)}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!buscandoAlt && erroAlt && (
+                <div className="erro" role="alert">{erroAlt} <button type="button" onClick={() => void buscarAltitudes()}>Tentar de novo</button></div>
+              )}
+              {!buscandoAlt && !erroAlt && alturaPadrao && (
+                <p className="sub pequeno">
+                  Altitude preenchida em {Object.keys(alturaPadrao).length} ponto(s){alturas?.est.calibracao !== null && alturas?.est.calibracao !== undefined ? `, calibrada pelos pontos medidos (${alturas.est.calibracao >= 0 ? "+" : ""}${alturas.est.calibracao.toLocaleString("pt-BR")} m)` : " pelo modelo de terreno"}. Confira e marque “conferi” no aviso.
+                </p>
+              )}
             </div>
           )}
 

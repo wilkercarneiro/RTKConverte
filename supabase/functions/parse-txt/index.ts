@@ -80,7 +80,21 @@ async function textoDoPdf(bytes: Uint8Array): Promise<string> {
   return Array.isArray(text) ? text.join("\n") : text;
 }
 
-interface LeituraPedida { receita?: unknown; ordem?: unknown; excluir?: unknown; sigma_padrao?: unknown; confirmados?: unknown; versao?: unknown; incluir?: unknown; ligacao?: unknown }
+interface LeituraPedida { receita?: unknown; ordem?: unknown; excluir?: unknown; sigma_padrao?: unknown; altura_padrao?: unknown; confirmados?: unknown; versao?: unknown; incluir?: unknown; ligacao?: unknown }
+
+/** Altitudes estimadas pela coordenada na prévia (idx → m); o leitor só usa nos pontos sem altitude. */
+function alturaPadraoDe(v: unknown): Record<number, number> | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out: Record<number, number> = {};
+  let n = 0;
+  for (const [k, h] of Object.entries(v as Record<string, unknown>)) {
+    const idx = Number(k);
+    if (!Number.isInteger(idx) || idx < 0 || typeof h !== "number" || !Number.isFinite(h) || h < -100 || h > 3100) continue;
+    out[idx] = h;
+    if (++n >= 20000) break;
+  }
+  return n ? out : null;
+}
 
 /** Linhas (inteiros > 0) de uma lista vinda da tela; o resto é descartado. */
 const linhasDe = (v: unknown): number[] => Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
@@ -116,14 +130,15 @@ function lerPedido(linhas: string[], pedido: LeituraPedida | null, fusoTela: num
   const sigmaPadrao = sp && Number(sp.pos) > 0 && Number(sp.h) > 0 && Number(sp.pos) <= 10 && Number(sp.h) <= 10 ? { pos: Number(sp.pos), h: Number(sp.h) } : null;
   // versão dos pontos escolhida na prévia ("" = levantamento; "postp_"…); ausente = automática
   const versao = typeof pedido.versao === "string" && pedido.versao.length <= 40 ? pedido.versao : null;
-  const leitura = executarReceita(linhas, receita, { proj4, ordem, excluir, sigmaPadrao, versao, incluir, ligacao });
+  const alturaPadrao = alturaPadraoDe(pedido.altura_padrao);
+  const leitura = executarReceita(linhas, receita, { proj4, ordem, excluir, sigmaPadrao, alturaPadrao, versao, incluir, ligacao });
   const confirmados = new Set(Array.isArray(pedido.confirmados) ? pedido.confirmados.map(String) : []);
   const faltam = leitura.aConfirmar.filter((c) => !confirmados.has(c));
   if (faltam.length) {
     const msgs = leitura.avisos.filter((a) => faltam.includes(a.codigo)).map((a) => a.mensagem);
     return { erro: `Confirme na prévia antes de criar o serviço: ${msgs.join(" | ")}`, status: 422, faltam };
   }
-  return { leitura, pedido: { ...pedido, ordem, excluir, sigma_padrao: sigmaPadrao, versao, incluir, ligacao } };
+  return { leitura, pedido: { ...pedido, ordem, excluir, sigma_padrao: sigmaPadrao, altura_padrao: alturaPadrao, versao, incluir, ligacao } };
 }
 
 /**
@@ -348,6 +363,8 @@ Deno.serve(async (req) => {
       versao: 1, formato: formatoArquivo, codificacao,
       receita: leitura.receita, criterio: leitura.criterio, blocos: leitura.blocos,
       ordem: lido.pedido?.ordem ?? null, excluir: lido.pedido?.excluir ?? [], sigma_padrao: lido.pedido?.sigma_padrao ?? null,
+      // altitudes estimadas pela coordenada (modelo de terreno) dos pontos que vieram sem
+      altura_padrao: lido.pedido?.altura_padrao ?? null,
       // ajustes de pontos da prévia (a regressão dos perfis relê com eles)
       incluir: lido.pedido?.incluir ?? [], ligacao: lido.pedido?.ligacao ?? null,
       // a versão dos pontos que entrou (a regressão dos perfis relê com ela)

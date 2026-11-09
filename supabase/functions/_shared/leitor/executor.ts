@@ -29,6 +29,8 @@ export interface PontoLido {
   e: number;
   n: number;
   h: number | null;
+  /** `h` não veio do arquivo: foi estimada pela coordenada na prévia (index.ts). */
+  hEstimada?: boolean;
   sigmaPos: number | null;
   sigmaH: number | null;
   /** Coordenada geográfica lida (graus decimais), quando o arquivo a trazia. */

@@ -65,6 +65,9 @@ function caso(nome: string): { arquivo: string; linhas: string[]; receita?: Rece
       const ce = base.reduce((s, p) => s + p.e, 0) / base.length, cn = base.reduce((s, p) => s + p.n, 0) / base.length;
       return { arquivo: `FAZENDA_${nome.toUpperCase()}.csv`, linhas: base.map((p) => `${p.num},${(p.n - cn + n0).toFixed(3)},${(p.e - ce + e0).toFixed(3)},${p.h.toFixed(3)},${p.rotulo ?? ""}`) };
     }
+    case "semaltura":
+      // planilha só com E/N (KML do Google Earth, DXF 2D…): a altitude vem da coordenada
+      return { arquivo: "pontos_sem_altitude.csv", linhas: base.map((p) => `${p.num};${p.e.toFixed(3).replace(".", ",")};${p.n.toFixed(3).replace(".", ",")}`) };
     case "semsigma":
       return { arquivo: "pontos_pnezd.csv", linhas: base.map((p) => `${p.num},${p.n.toFixed(3)},${p.e.toFixed(3)},${p.h.toFixed(3)},${p.rotulo ?? ""}`) };
     case "manual":

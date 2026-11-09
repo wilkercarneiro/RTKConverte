@@ -69,7 +69,7 @@ async function paraBase64(f: File): Promise<string> {
 function fusosNaUf(linhas: string[], l: LeituraConfirmada, uf: string): { zone: number; lon: number }[] {
   const proj4 = proj4lib as unknown as Proj4;
   try {
-    const lt = executarReceita(linhas, l.receita, { proj4, ordem: l.ordem, excluir: l.excluir, sigmaPadrao: l.sigma_padrao ?? undefined, versao: l.versao ?? undefined, incluir: l.incluir, ligacao: l.ligacao });
+    const lt = executarReceita(linhas, l.receita, { proj4, ordem: l.ordem, excluir: l.excluir, sigmaPadrao: l.sigma_padrao ?? undefined, alturaPadrao: l.altura_padrao ?? null, versao: l.versao ?? undefined, incluir: l.incluir, ligacao: l.ligacao });
     if (lt.fusoGeo || lt.anel.length < 3) return [];
     const bb = uf ? UF_BBOX[uf] : undefined;
     return detectZoneCandidates(lt.anel.map((p) => ({ e: p.e, n: p.n })), proj4)

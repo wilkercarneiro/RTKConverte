@@ -32,6 +32,9 @@ export interface OpcoesLeitura {
   excluir?: number[];
   /** Precisão declarada pelo operador para pontos sem σ no arquivo. */
   sigmaPadrao?: { pos: number; h: number } | null;
+  /** Altitude estimada pela coordenada (modelo de terreno) para os pontos que
+   *  vieram sem altitude: `idx` do ponto → h (m). Só preenche quem está sem. */
+  alturaPadrao?: Record<number, number> | null;
   /** Versão dos pontos escolhida na prévia ("" = levantamento, "postp_"…);
    *  ausente = automática (a mais completa). Ver versoes.ts. */
   versao?: string | null;
@@ -57,6 +60,8 @@ export interface PontoAnel {
   /** Índice do ponto lido (`PontoLido.idx`): é por ele que a ligação manual se refere. */
   idx: number;
   sigmaDeclarado: boolean;
+  /** Altitude estimada pela coordenada (não veio no arquivo). */
+  alturaEstimada: boolean;
 }
 
 export interface Leitura {
@@ -86,8 +91,11 @@ export interface Leitura {
 /** Avisos de alerta que exigem confirmação explícita (nunca seguem calados). */
 export const AVISOS_A_CONFIRMAR = new Set([
   "desenho_cruza", "linhas_ilegiveis", "V5_utm_geo", "lat_sem_sinal", "sigma_95", "apoio_fora", "ordem_do_arquivo", "ordem_ambigua", "texto_livre", "dxf_nomes_por_texto", "dxf_nomes_ambiguos", "gpx_trilha", "receita_ia", "receita_operador",
-  "versoes", "versao_incompleta", "fora_da_ligacao",
+  "versoes", "versao_incompleta", "fora_da_ligacao", "altura_estimada",
 ]);
+
+/** Altitude aceitável vinda da prévia (mesma faixa do V3 do validador). */
+const alturaValida = (h: unknown): h is number => typeof h === "number" && Number.isFinite(h) && h >= -100 && h <= 3100;
 
 /** Avisos que tiram a confiança "alta" da leitura (dedução, não leitura direta). */
 const AVISOS_DE_DUVIDA = new Set(["dxf_nomes_ambiguos", "texto_livre"]);
@@ -115,6 +123,15 @@ export function executarReceita(linhas: string[], receita: Receita, op: OpcoesLe
     }
   }
 
+  // altitude estimada pela coordenada para quem veio sem (nunca sobrescreve a medida)
+  const alturaEstimada = new Set<number>();
+  if (op.alturaPadrao) {
+    for (const p of exec.pontos) {
+      const h = op.alturaPadrao[p.idx];
+      if (p.h === null && alturaValida(h)) { p.h = h; p.hEstimada = true; alturaEstimada.add(p.idx); }
+    }
+  }
+
   const ordem = montarAnel(exec.pontos, op.ordem ?? receita.ordem, new Set(op.excluir ?? []), { incluir: new Set(op.incluir ?? []), ligacao: op.ligacao ?? null });
   const ignoradas = [...exec.ignoradas, ...ordem.ignoradas];
   const validacao = validar({
@@ -131,6 +148,15 @@ export function executarReceita(linhas: string[], receita: Receita, op: OpcoesLe
   if (sigmaDeclarado.size) {
     avisos.push({ codigo: "sigma_declarado", nivel: "info", mensagem: `Precisão declarada na prévia (${op.sigmaPadrao!.pos} m / ${op.sigmaPadrao!.h} m) aplicada a ${sigmaDeclarado.size} ponto(s) que vieram sem σ.` });
   }
+  const estimadosNoAnel = ordem.anel.filter((i) => alturaEstimada.has(exec.pontos[i].idx));
+  if (estimadosNoAnel.length) {
+    const todos = estimadosNoAnel.length === ordem.anel.length;
+    avisos.push({
+      codigo: "altura_estimada", nivel: "alerta",
+      mensagem: `${todos ? "O arquivo não traz altitude: a de todos os pontos" : `${estimadosNoAnel.length} ponto(s) sem altitude no arquivo: a altitude`} foi preenchida pela coordenada (modelo digital de terreno${todos ? ": é a cota do terreno, pode diferir 10–20 m da altitude elipsoidal do GNSS" : ", calibrado pelos pontos medidos: erro típico de 1–4 m"}). Serve para planta, memorial e relevo; para protocolar no SIGEF, prefira a altitude medida pelo receptor.`,
+      linhas: estimadosNoAnel.map((i) => exec.pontos[i].linha),
+    });
+  }
   const ok = !avisos.some((a) => a.nivel === "bloqueio");
   // leituras que dependem de dedução (nome pelo texto vizinho, texto corrido) nunca são "alta"
   for (const a of avisos) {
@@ -142,7 +168,7 @@ export function executarReceita(linhas: string[], receita: Receita, op: OpcoesLe
     return {
       num: nn.num, numSintetico: nn.sintetico, nome: p.nome, rotulo: p.rotulo,
       e: p.e, n: p.n, h: p.h as number, sigmaPos: p.sigmaPos as number, sigmaH: p.sigmaH as number,
-      linha: p.linha, idx: p.idx, sigmaDeclarado: sigmaDeclarado.has(i),
+      linha: p.linha, idx: p.idx, sigmaDeclarado: sigmaDeclarado.has(i), alturaEstimada: alturaEstimada.has(p.idx),
     };
   });
   return {
