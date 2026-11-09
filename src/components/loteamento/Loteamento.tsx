@@ -547,7 +547,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
         <div className="conferencia-corpo fade">
           <Entregas servico={servico} projeto={projeto} res={res} perimetro={perimetro} onExportou={marcarExportado}
             onSalvar={() => armazenamento.salvar(servico.id, projeto)} onAbrir3D={temRecurso("loteamento.maquete3d") ? () => setVer3d(true) : undefined}
-            onMudarInfra={(infra) => mudar({ ...projeto, infra })} />
+            onMudarInfra={(infra) => mudar({ ...projeto, infra })} onServico={(p) => setServico((s) => ({ ...s, ...p }))} />
           <div><button onClick={() => setEtapa("projeto")}>← Voltar ao projeto</button></div>
         </div>
       )}

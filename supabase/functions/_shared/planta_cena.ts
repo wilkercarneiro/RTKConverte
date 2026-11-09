@@ -110,6 +110,14 @@ export const CAMADAS: Record<string, string> = {
   "quadro-confrontantes": "Quadro de confrontantes",
   selo: "Selo",
   area: "Área total",
+  // planta do loteamento
+  "rotulo-lote": "Números e áreas dos lotes",
+  quadra: "Letras das quadras",
+  "area-publica": "Áreas públicas e remanescentes",
+  secao: "Seção da rua",
+  titulo: "Título e escala",
+  detalhe: "Detalhe de esquina",
+  convencoes: "Convenções",
   anotacao: "Suas anotações",
   desenho: "Desenho",
 };

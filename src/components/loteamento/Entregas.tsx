@@ -3,8 +3,8 @@
 // locação por lote) e o que vai para a coletora do técnico (arquivo de locação).
 // Tudo sai do MESMO resultado que está na tela — os nomes de ponto da locação
 // são os mesmos da planta e dos memoriais.
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../../lib/supabase";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { arquivoDaFuncao, supabase } from "../../lib/supabase";
 import { carregarEscritorio, pastaDoEscritorio } from "../../lib/escritorio";
 import { fmt } from "../../lib/loteamento/calculo.ts";
 import type { Perimetro, Resultado } from "../../lib/loteamento/calculo.ts";
@@ -15,6 +15,9 @@ import { escalaPara } from "../../lib/loteamento/planta.ts";
 import type { DadosCarimbo, Folha } from "../../lib/loteamento/planta.ts";
 import { imagemSituacao } from "../../lib/loteamento/situacao.ts";
 import { baixarEntrega, carimboParaEnvio } from "../../lib/entregas";
+import { abrirPlanta } from "../planta/VisualizadorPlanta";
+import { DadosCliente } from "./DadosCliente";
+import type { DadosClienteRef } from "./DadosCliente";
 import { Dica } from "../ui";
 import type { RT, Servico } from "../../lib/types";
 import { Miniatura } from "./Assistente";
@@ -37,7 +40,15 @@ interface Props {
   onAbrir3D?: () => void;
   /** muda os parâmetros dos projetos de infraestrutura */
   onMudarInfra?: (p: Partial<ParametrosInfra>) => void;
+  /** dados do cliente/imóvel editados aqui (a tela de cima guarda o serviço) */
+  onServico?: (patch: Partial<Servico>) => void;
 }
+
+/** Os textos do carimbo que vêm do serviço — sempre os da tela, que o operador acabou de editar. */
+const textosDoServico = (s: Servico): Partial<DadosCarimbo> => ({
+  proprietario: s.detentor_nome ?? "", cpfProprietario: s.detentor_cpf ?? "", imovel: s.denominacao ?? "",
+  municipio: s.municipio ?? "", uf: s.uf ?? "", matricula: s.matricula ?? "", fuso: s.fuso_utm ?? 24,
+});
 
 async function carregarCarimbo(s: Servico): Promise<DadosCarimbo> {
   try { return await lerCarimbo(s); } catch {
@@ -76,7 +87,7 @@ async function lerCarimbo(s: Servico): Promise<DadosCarimbo> {
   };
 }
 
-export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalvar, onAbrir3D, onMudarInfra }: Props) {
+export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalvar, onAbrir3D, onMudarInfra, onServico }: Props) {
   const [folha, setFolha] = useState<Folha>("A1");
   const [formato, setFormato] = useState<FormatoLocacao>("csv-nome-e-n");
   const [op, setOp] = useState<OpcoesLocacao>(LOCACAO_PADRAO);
@@ -84,7 +95,10 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalva
   const [erro, setErro] = useState<string | null>(null);
   const [carimbo, setCarimbo] = useState<DadosCarimbo | null>(null);
 
-  useEffect(() => { carregarCarimbo(servico).then(setCarimbo).catch(() => setCarimbo(null)); }, [servico]);
+  const dadosRef = useRef<DadosClienteRef>(null);
+  // empresa, logo e RT: relidos quando muda o RT ou o credenciado (os textos do
+  // cliente entram na hora do pedido, de `textosDoServico`)
+  useEffect(() => { carregarCarimbo(servico).then(setCarimbo).catch(() => setCarimbo(null)); }, [servico.id, servico.rt_id, servico.credenciado_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fuso = servico.fuso_utm ?? 24;
   // PVs, postes, hidrantes e o reservatório também vão para a coletora, se pedido
@@ -113,17 +127,28 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalva
   }
 
   /** Grava o projeto e pede o arquivo ao servidor (que gera a partir do banco). */
-  async function doServidor(saida: string, extra: Record<string, unknown> = {}) {
+  async function antesDoServidor() {
+    await dadosRef.current?.salvar();
     await onSalvar();
+  }
+  async function doServidor(saida: string, extra: Record<string, unknown> = {}) {
+    await antesDoServidor();
     await baixarEntrega({ servico_id: servico.id, saida, ...extra });
   }
   const comCarimbo = async (situacao = false) => {
-    const c = carimbo ?? await carregarCarimbo(servico);
+    const c = { ...(carimbo ?? await carregarCarimbo(servico)), ...textosDoServico(servico) };
     // planta de situação: satélite com o loteamento por cima (sem rede, sai sem)
     return carimboParaEnvio(situacao ? { ...c, situacao: await imagemSituacao(res, fuso) } : c);
   };
 
-  const planta = () => fazer("planta", async () => doServidor("planta", { folha, carimbo: await comCarimbo(true) }));
+  // a planta abre no visualizador do sistema: dali se baixa, edita e salva no histórico
+  const planta = () => fazer("planta", async () => {
+    const corpo = { servico_id: servico.id, saida: "planta", folha, carimbo: await comCarimbo(true) };
+    await antesDoServidor();
+    const { blob, nome } = await arquivoDaFuncao("entregar", corpo);
+    const base = nome.replace(/\.pdf$/i, "");
+    abrirPlanta({ bytes: new Uint8Array(await blob.arrayBuffer()), nome: base, titulo: `Planta do loteamento · ${projeto.nome} · ${folha}`, servicoId: servico.id });
+  });
   const locacao = () => fazer("locacao", () => doServidor("locacao", { formato, op, locarRedes }));
   const memoriais = () => fazer("memoriais", () => doServidor("memoriais"));
   const memorialGeral = () => fazer("memorial", async () => doServidor("memorial", { carimbo: await comCarimbo() }));
@@ -139,6 +164,8 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalva
         </div>
       )}
       {erro && <div className="lot-alerta erro">{erro}</div>}
+
+      <DadosCliente ref={dadosRef} servico={servico} onMudar={(p) => onServico?.(p)} />
 
       {onAbrir3D && (
         <section className="lot-3d-chamada" onClick={onAbrir3D} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onAbrir3D(); } }}>
@@ -176,13 +203,13 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalva
           <div className="lot-entrega-itens">
             <div className="lot-item">
               <div>
-                <b>Planta do loteamento (PDF)<Dica>No padrão das plantas da equipe: legendas, convenções, quadro de áreas, planta de situação com satélite, carimbo com a logo, seção da rua e detalhe de esquina; lotes cotados e quadro de lotes nas folhas seguintes.</Dica></b>
+                <b>Planta do loteamento (PDF)<Dica>No padrão das plantas da equipe: legendas, convenções, quadro de áreas, planta de situação com satélite, carimbo com a logo, seção da rua e detalhe de esquina; lotes cotados e quadro de lotes nas folhas seguintes. Abre no visualizador: lá tem Editar planta (mover e trocar textos, quadros e carimbo), Baixar PDF e Salvar no histórico.</Dica></b>
                 <span>Escala 1:{den}</span>
               </div>
               <select value={folha} onChange={(e) => setFolha(e.target.value as Folha)}>
                 {(["A0", "A1", "A2", "A3"] as Folha[]).map((f) => <option key={f} value={f}>{f}</option>)}
               </select>
-              <button className="principal" disabled={!!ocupado} onClick={planta}>{ocupado === "planta" ? "Gerando…" : "Baixar"}</button>
+              <button className="principal" disabled={!!ocupado} onClick={planta}>{ocupado === "planta" ? "Gerando…" : "Abrir"}</button>
             </div>
             <div className="lot-item">
               <div><b>Memorial descritivo do loteamento (DOCX)<Dica>Identificação, quadro de áreas, quadras, vias, áreas públicas (art. 9º §2º e art. 22 da Lei 6.766).</Dica></b></div>
@@ -208,7 +235,7 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalva
         </div>
       </section>
 
-      <EntregasLotes servicoId={servico.id} res={res} base={nomeArquivo(projeto.nome)} onSalvar={onSalvar} carimbo={() => comCarimbo()} onExportou={onExportou} />
+      <EntregasLotes servicoId={servico.id} res={res} base={nomeArquivo(projeto.nome)} onSalvar={antesDoServidor} carimbo={() => comCarimbo()} onExportou={onExportou} />
 
       <EntregasInfra projeto={projeto} res={res} onExportou={onExportou} onMudarInfra={onMudarInfra}
         pedir={async (saida, extra) => doServidor(saida, { ...extra, carimbo: await comCarimbo() })} />

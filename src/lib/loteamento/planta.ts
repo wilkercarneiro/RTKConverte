@@ -14,11 +14,15 @@
 // largura das ruas, quadras numeradas, áreas públicas e, nas folhas seguintes,
 // o quadro de lotes.
 //
-// Gerado no navegador com pdf-lib: a planta acompanha o desenho na hora, sem
-// ida ao servidor (a VPS não é sobrecarregada com isto).
+// Gerado com pdf-lib (hoje no servidor, função `entregar`). A folha 1 é
+// desenhada através do GravadorCena e leva a CENA embutida (planta_cena.ts):
+// o visualizador abre a planta com o botão EDITAR, como as plantas do GEO. O
+// traçado do loteamento fica travado; textos, quadros e carimbo se editam.
 import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 import type { PDFFont, PDFImage, PDFPage, RGB } from "pdf-lib";
 import { textoWinAnsi } from "../../../supabase/functions/_shared/texto.ts";
+import { GravadorCena, embutirCena, marcarObjeto } from "../../../supabase/functions/_shared/planta_cena.ts";
+import type { PaginaPlanta } from "../../../supabase/functions/_shared/planta_cena.ts";
 import { areaPol, caixa, centroide, dist, esquerda, pontoDoRotulo, sub, unit } from "./geom.ts";
 import { pontoInterno } from "./auto.ts";
 import type { Anel, Poligono, Pt } from "./geom.ts";
@@ -103,7 +107,11 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
 
   const M = moldura(folha);
   const { W, H, k, mL, mO, larguraBarra, barraX, area } = M;
-  const page = pdf.addPage([W, H]);
+  const page = new GravadorCena(pdf.addPage([W, H]));
+  if (logo && c.logo) page.registrarImagem(logo, c.logo.bytes, c.logo.tipo);
+  if (situacao && c.situacao) page.registrarImagem(situacao, c.situacao, "png");
+  const obj = (id: string, cat: string, rotulo: string, travado = false) => marcarObjeto(page, id, cat, rotulo, travado);
+  obj("moldura", "moldura", "Molduras");
   page.drawRectangle({ x: mL, y: mO, width: W - mL - mO, height: H - 2 * mO, borderWidth: 2, borderColor: CINZA(0) });
   page.drawLine({ start: { x: barraX, y: mO }, end: { x: barraX, y: H - mO }, thickness: 1.2 });
 
@@ -122,6 +130,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
     page.drawSvgPath(svg(pg), { x: ox, y: oy, color: o.cor, borderColor: o.borda, borderWidth: o.esp ?? 0, opacity: o.opac });
 
   // ruas projetadas (cinza) com o alinhamento predial em vermelho
+  obj("terreno", "terreno", "Traçado do loteamento", true);
   for (const v of viarioDe(res)) pol(v, { cor: CINZA(0.86), borda: VERMELHO, esp: 0.7 });
   for (const a of res.publicas) pol(a.pol, { cor: COR_AREA[a.tipo], borda: CINZA(0.3), esp: 0.5 });
   // terra que não virou lote nem área pública (projeto sem área verde): fica do proprietário
@@ -149,14 +158,17 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   const rotuloFaixa = maisLongoDaSequencia(res.faixasRestricao.map((f) => f.lado), (i) => { const f = res.faixasRestricao.find((x) => x.lado === i)!; return dist(f.linha[0], f.linha[1]); });
   for (const f of res.faixasRestricao) {
     const A = P(f.linha[0]), B = P(f.linha[1]);
+    obj("terreno", "terreno", "Traçado do loteamento", true);
     page.drawLine({ start: { x: A[0], y: A[1] }, end: { x: B[0], y: B[1] }, thickness: 0.6, color: LARANJA, dashArray: [6, 4] });
     if (!rotuloFaixa.has(f.lado)) continue;
     const m: Pt = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
     let ang = (Math.atan2(B[1] - A[1], B[0] - A[0]) * 180) / Math.PI;
     if (ang > 90) ang -= 180; if (ang < -90) ang += 180;
+    obj(`faixa:${f.lado}`, "rotulo-via", "Faixa non aedificandi");
     textoCentrado(page, fonte, T(`FAIXA NON AEDIFICANDI ${fmt(f.largura, 0)} m`), m[0], m[1] + 4, 5.5 * k, LARANJA, ang);
   }
   // perímetro: divisa em azul-marinho, estrada/acesso em laranja
+  obj("terreno", "terreno", "Traçado do loteamento", true);
   res.ladosGleba.forEach((l) => {
     const A = P(l.a), B = P(l.b);
     page.drawLine({ start: { x: A[0], y: A[1] }, end: { x: B[0], y: B[1] }, thickness: ehAcesso(l.tipo) ? 2.2 : 1.6, color: ehAcesso(l.tipo) ? LARANJA : MARINHO });
@@ -173,11 +185,14 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   const rotuloAcesso = maisLongoDaSequencia(acessos, (i) => dist(res.ladosGleba[i].a, res.ladosGleba[i].b));
   res.ladosGleba.forEach((l, i) => {
     const A = P(l.a);
+    obj("terreno", "terreno", "Traçado do loteamento", true);
     page.drawCircle({ x: A[0], y: A[1], size: 1.4, color: CINZA(1), borderColor: MARINHO, borderWidth: 0.6 });
     const nome = perimetro.nomes?.[i];
+    obj(`vertice:${i}`, "codigo-vertice", nome ?? `Vértice ${i + 1}`);
     if (nome) texto(page, fonte, nome, A[0] + 2.5, A[1] + 2.5, 4.5 * k, CINZA(0.3));
     const comp = dist(l.a, l.b);
     if (comp * ptm < 70) return;
+    obj(`lado:${i}`, "rotulo-confrontante", `Lado ${i + 1} — confrontante e medida`);
     if (ehAcesso(l.tipo) && !rotuloAcesso.has(i)) { // só a medida
       const d0 = unit(sub(l.b, l.a));
       const f0 = sentidoIgual ? [d0[1], -d0[0]] as Pt : [-d0[1], d0[0]] as Pt;
@@ -203,6 +218,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   const cotadas = new Set<string>();
   for (const l of res.lotes) {
     const c2 = P(centroide(l.pol.ext));
+    obj(`lote:${l.id}`, "rotulo-lote", `Lote ${l.numero}`);
     textoCentrado(page, fonte, String(l.numero), c2[0], c2[1] + tamNum * 0.25, tamNum, CINZA(0));
     textoCentrado(page, negrito, `${fmt(l.area)}m²`, c2[0], c2[1] - tamNum * 0.75, tamNum * 0.55, CINZA(0.1));
     for (const lado of l.lados) {
@@ -210,6 +226,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
       if (cotadas.has(kk)) continue;
       cotadas.add(kk);
       if (lado.comp * ptm < fonte.widthOfTextAtSize(fmt(lado.comp), tamCota) + 5) continue;
+      obj(`cota:${kk}`, "metragem", `Cota ${fmt(lado.comp)} m`);
       const d = unit(sub(lado.b, lado.a));
       const dentro = esquerda(d);
       const m = P([(lado.a[0] + lado.b[0]) / 2, (lado.a[1] + lado.b[1]) / 2]);
@@ -222,11 +239,13 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   for (const q of res.quadras) {
     const ctr = q.fundo ? P([(q.fundo.a[0] + q.fundo.b[0]) / 2, (q.fundo.a[1] + q.fundo.b[1]) / 2]) : P(q.centro);
     const r = Math.max(7, Math.min(15, tamNum * 1.3));
+    obj(`quadra:${q.nome}`, "quadra", `Quadra ${q.nome}`);
     page.drawCircle({ x: ctr[0], y: ctr[1], size: r, color: CINZA(1), borderColor: CINZA(0), borderWidth: 0.8 });
     textoCentrado(page, negrito, q.nome, ctr[0], ctr[1], r, CINZA(0));
   }
   // nome e largura das ruas ao longo do eixo
   for (const r of res.ruas) {
+    obj(`rua:${r.nome}`, "rotulo-via", r.nome);
     // rua importada sem eixo: o nome vai deitado no meio do maior pedaço dela
     if (r.eixo.length < 2) {
       const maior = [...r.pols].sort((a, b) => areaPol(b) - areaPol(a))[0];
@@ -252,6 +271,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   }
   for (const a of res.publicas) {
     if (a.area < 100) continue;
+    obj(`publica:${a.nome}`, "area-publica", a.nome);
     // dentro da própria área (faixa em L: o centroide cai em cima dos lotes)
     const c2 = P(pontoDoRotulo(a.pol, (Math.max(a.nome.length, 12) * 0.6) / 2.4));
     textoCentrado(page, negrito, T(a.nome), c2[0], c2[1] + 3, 7 * k, CINZA(0.1));
@@ -260,19 +280,23 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   for (const sb of res.sobras) {
     const area = areaPol(sb);
     if (area < 100) continue;
+    obj(`sobra:${Math.round(area)}`, "area-publica", "Área remanescente");
     const c2 = P(pontoInterno(sb));
     textoCentrado(page, negrito, "ÁREA REMANESCENTE", c2[0], c2[1] + 3, 6.5 * k, CINZA(0.15));
     textoCentrado(page, fonte, `${fmt(area)} m²`, c2[0], c2[1] - 6, 6 * k, CINZA(0.25));
   }
 
   // rosa dos ventos (alto, à esquerda, como na planta da equipe)
+  obj("bussola", "bussola", "Rosa dos ventos");
   rosaDosVentos(page, negrito, mL + 40 * MM * k, H - mO - 38 * MM * k, 26 * MM * k);
 
   // ---------------------------------------------------- faixa de baixo do desenho
   const yBase = mO + 8 * MM;
   // seção típica da rua
+  obj("secao", "secao", "Seção típica da rua");
   secaoDaRua(page, fonte, negrito, mL + 12 * MM, yBase + 30 * MM * k, pr.params.ruaPista, (pr.params.ruaLargura - pr.params.ruaPista) / 2, k);
   // título PLANTA BAIXA
+  obj("titulo", "titulo", "Título e escala");
   texto(page, fonte, "PLANTA BAIXA", mL + 12 * MM, yBase + 10 * MM * k, 22 * k, CINZA(0));
   page.drawRectangle({ x: mL + 12 * MM, y: yBase + 6.5 * MM * k, width: 70 * MM * k, height: 2.2 * k, color: rgb(0.1, 0.85, 0.1) });
   page.drawRectangle({ x: mL + 12 * MM, y: yBase + 5.4 * MM * k, width: 70 * MM * k, height: 0.6, color: rgb(0.1, 0.85, 0.1) });
@@ -286,6 +310,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   }
   texto(page, fonte, `${passoEsc * 4} m`, ex + 4 * passoEsc * ptm - 3, ey + 7, 6, CINZA(0));
   // detalhe de esquina
+  obj("detalhe", "detalhe", "Detalhe de esquina");
   detalheEsquina(page, fonte, negrito, barraX - 70 * MM * k, yBase - 2 * MM, 60 * MM * k, pr, k);
 
   // ================================================================ barra lateral
@@ -298,6 +323,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   // LEGENDAS / ABREVIATURAS
   {
     const { y0, h } = proxima(caixas.legenda);
+    obj("legenda", "legenda", "Legendas / abreviaturas");
     page.drawLine({ start: { x: bx, y: y0 }, end: { x: bx + bw, y: y0 }, thickness: 1 });
     tituloCaixa(page, fonte, "LEGENDAS / ABREVIATURAS", bx + bw / 2, y0 + h - 14 * k, 12 * k, bw * 0.62);
     const itens: [string, (x: number, yy: number, w: number) => void][] = [
@@ -330,6 +356,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   // CONVENÇÕES
   {
     const { y0, h } = proxima(caixas.convencoes);
+    obj("convencoes", "convencoes", "Convenções");
     page.drawLine({ start: { x: bx, y: y0 }, end: { x: bx + bw, y: y0 }, thickness: 1 });
     texto(page, fonte, "C O N V E N Ç Õ E S", bx + bw / 2 - fonte.widthOfTextAtSize(T("C O N V E N Ç Õ E S"), 12 * k) / 2, y0 + h - 16 * k, 12 * k, CINZA(0));
     page.drawLine({ start: { x: bx + 10, y: y0 + h - 21 * k }, end: { x: bx + bw - 10, y: y0 + h - 21 * k }, thickness: 1 });
@@ -355,6 +382,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   // QUADRO DE ÁREAS (o que as nossas plantas já trazem)
   {
     const { y0, h } = proxima(caixas.quadro);
+    obj("quadro", "quadro", "Quadro de áreas");
     page.drawLine({ start: { x: bx, y: y0 }, end: { x: bx + bw, y: y0 }, thickness: 1 });
     const q = res.quadro;
     const pct = (v: number) => `${fmt((100 * v) / q.gleba)}%`;
@@ -375,6 +403,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   // PLANTA DE SITUAÇÃO
   {
     const { y0, h } = proxima(caixas.situacao);
+    obj("situacao", "situacao", "Planta de situação");
     page.drawLine({ start: { x: bx, y: y0 }, end: { x: bx + bw, y: y0 }, thickness: 1 });
     tituloCaixa(page, fonte, "PLANTA DE SITUAÇÃO", bx + bw / 2, y0 + h - 13 * k, 11 * k, bw * 0.5);
     const iw = bw - 12, ih = h - 26 * k;
@@ -396,6 +425,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   // CARIMBO DA EMPRESA (logo grande)
   {
     const { y0, h } = proxima(caixas.carimbo);
+    obj("carimbo", "carimbo", "Carimbo da empresa");
     page.drawLine({ start: { x: bx, y: y0 }, end: { x: bx + bw, y: y0 }, thickness: 1 });
     textoCentrado(page, fonte, "CARIMBO DA EMPRESA", bx + bw / 2, y0 + h - 9 * k, 11 * k, CINZA(0));
     page.drawLine({ start: { x: bx, y: y0 + h - 17 * k }, end: { x: bx + bw, y: y0 + h - 17 * k }, thickness: 0.6 });
@@ -412,6 +442,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   // BLOCO DE IDENTIFICAÇÃO
   {
     const { y0, h } = proxima(caixas.titulo);
+    obj("identificacao", "identificacao", "Identificação: proprietário, RT, escala");
     const pad = 5, x0 = bx + pad, w0 = bw - 2 * pad;
     let yy = y0 + h - 4;
     const caixaR = (x: number, ytop: number, w: number, hh: number) => page.drawRectangle({ x, y: ytop - hh, width: w, height: hh, borderColor: CINZA(0), borderWidth: 0.7 });
@@ -475,6 +506,9 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
     void y;
   }
 
+  // a folha 1 vira editável no visualizador (as folhas do quadro seguem como estão)
+  embutirCena(pdf, { ...page.cena(), nomeFolha: folha });
+
   // ================================================================ quadro de lotes
   desenharQuadroDeLotes(pdf, res, pr, fonte, negrito, folha, den);
   return pdf.save();
@@ -484,13 +518,13 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
 // Peças gráficas das plantas da equipe
 // ---------------------------------------------------------------------------
 
-function tituloCaixa(page: PDFPage, f: PDFFont, t: string, cx: number, cy: number, tam: number, largura: number) {
+function tituloCaixa(page: PaginaPlanta, f: PDFFont, t: string, cx: number, cy: number, tam: number, largura: number) {
   page.drawRectangle({ x: cx - largura / 2, y: cy - tam * 0.75, width: largura, height: tam * 1.9, color: CINZA(1), borderColor: CINZA(0), borderWidth: 0.9 });
   textoCentrado(page, f, T(t), cx, cy + tam * 0.18, tam, CINZA(0));
 }
 
 /** Rosa dos ventos de oito pontas com o N, como a das plantas da equipe. */
-export function rosaDosVentos(page: PDFPage, f: PDFFont, cx: number, cy: number, r: number) {
+export function rosaDosVentos(page: PaginaPlanta, f: PDFFont, cx: number, cy: number, r: number) {
   const ponta = (ang: number, comp: number, larg: number, cheia: boolean) => {
     const a = (ang * Math.PI) / 180;
     const d: Pt = [Math.sin(a), Math.cos(a)];
@@ -508,7 +542,7 @@ export function rosaDosVentos(page: PDFPage, f: PDFFont, cx: number, cy: number,
 }
 
 /** Seção típica da rua: calçada | pista | calçada, com postes, carros e pedestres (traço). */
-function secaoDaRua(page: PDFPage, f: PDFFont, fb: PDFFont, x: number, y: number, pista: number, calcada: number, k: number) {
+function secaoDaRua(page: PaginaPlanta, f: PDFFont, fb: PDFFont, x: number, y: number, pista: number, calcada: number, k: number) {
   const esc = 15 * k; // pontos por metro no desenho da seção
   const wC = calcada * esc, wP = pista * esc;
   const cor = VERMELHO;
@@ -548,7 +582,7 @@ function secaoDaRua(page: PDFPage, f: PDFFont, fb: PDFFont, x: number, y: number
 }
 
 /** Caixa "DETALHES DE ESQUINAS": alinhamento do lote, meio-fio e o raio/chanfro. */
-function detalheEsquina(page: PDFPage, f: PDFFont, fb: PDFFont, x: number, y: number, lado: number, pr: Projeto, k: number) {
+function detalheEsquina(page: PaginaPlanta, f: PDFFont, fb: PDFFont, x: number, y: number, lado: number, pr: Projeto, k: number) {
   const p = pr.params;
   page.drawRectangle({ x, y, width: lado, height: lado, borderColor: CINZA(0), borderWidth: 0.7 });
   texto(page, fb, "DETALHES DE ESQUINAS", x + 8, y + lado - 14 * k, 7.5 * k, CINZA(0));
@@ -653,11 +687,11 @@ function recortar(a: Pt, b: Pt, res: Resultado): [Pt | null, Pt | null] {
 }
 
 // (texto, textoCentrado e fit também servem à planta do lote, plantaLote.ts)
-export function texto(page: PDFPage, f: PDFFont, t: string, x: number, y: number, tam: number, cor: RGB, rot = 0) {
+export function texto(page: PaginaPlanta, f: PDFFont, t: string, x: number, y: number, tam: number, cor: RGB, rot = 0) {
   page.drawText(T(t), { x, y, size: tam, font: f, color: cor, rotate: rot ? degrees(rot) : undefined });
 }
 
-export function textoCentrado(page: PDFPage, f: PDFFont, t: string, x: number, y: number, tam: number, cor: RGB, rot = 0) {
+export function textoCentrado(page: PaginaPlanta, f: PDFFont, t: string, x: number, y: number, tam: number, cor: RGB, rot = 0) {
   const s = T(t);
   const w = f.widthOfTextAtSize(s, tam);
   const a = (rot * Math.PI) / 180;
@@ -668,7 +702,7 @@ export function textoCentrado(page: PDFPage, f: PDFFont, t: string, x: number, y
   page.drawText(s, { x: x0, y: y0, size: tam, font: f, color: cor, rotate: rot ? degrees(rot) : undefined });
 }
 
-function tabela(page: PDFPage, f: PDFFont, fb: PDFFont, x: number, y: number, larg: number[], cab: string[], linhas: string[][], tam: number, destacar = -1): number {
+function tabela(page: PaginaPlanta, f: PDFFont, fb: PDFFont, x: number, y: number, larg: number[], cab: string[], linhas: string[][], tam: number, destacar = -1): number {
   const alt = tam + 4.2;
   let xx = x;
   page.drawRectangle({ x, y: y - 3, width: larg.reduce((s, v) => s + v, 0), height: alt, color: CINZA(0.9) });

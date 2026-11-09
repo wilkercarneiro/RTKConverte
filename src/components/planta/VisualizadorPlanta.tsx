@@ -6,12 +6,13 @@
 //
 // O editor trabalha sobre a CENA embutida no PDF (planta_cena.ts). Ao concluir,
 // o PDF é refeito aqui no navegador; baixar e salvar no histórico partem dele.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cenaParaPdf, lerCena, type Cena } from "../../../supabase/functions/_shared/planta_cena.ts";
 import { textoWinAnsi } from "../../../supabase/functions/_shared/texto.ts";
 import { supabase } from "../../lib/supabase";
 import { avisarHistoricoAtualizado, tituloPlantaEditada } from "../../lib/historico";
 import { EditorPlanta } from "./EditorPlanta";
+import { comFolhasSeguintes } from "../../lib/planta_folhas";
 import { temRecurso } from "../../lib/recursos";
 
 export interface PedidoPlanta {
@@ -73,6 +74,8 @@ export function VisualizadorPlanta({ pedido, onFechar }: { pedido: PedidoPlanta;
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [salvo, setSalvo] = useState<string | null>(null);
   const [urlPdf, setUrlPdf] = useState<string | null>(null);
+  const bytesRef = useRef<Uint8Array | null>(bytes);
+  bytesRef.current = bytes;
 
   // carrega o PDF e a cena dele
   useEffect(() => {
@@ -120,7 +123,7 @@ export function VisualizadorPlanta({ pedido, onFechar }: { pedido: PedidoPlanta;
     setOcupado("Gerando o PDF editado…");
     setErro(null);
     try {
-      const b = await cenaParaPdf(nova, textoWinAnsi);
+      const b = await comFolhasSeguintes(await cenaParaPdf(nova, textoWinAnsi), bytesRef.current);
       setCena(nova);
       setBytes(b);
       setEditada(true);
