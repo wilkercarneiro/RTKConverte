@@ -416,7 +416,8 @@ Deno.serve(async (req) => {
       inventarianteCpf: servico.inventariante_cpf ?? null,
       inventarianteRg: servico.inventariante_rg ?? null,
     }];
-    if (servico.requerente2_nome && !posse) {
+    // casal: o segundo assina também — na matrícula e na posse
+    if (servico.requerente2_nome) {
       requerentes.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "", genero: servico.requerente2_genero === "F" ? "F" : "M" });
     }
     const dados: DadosPecas = {
