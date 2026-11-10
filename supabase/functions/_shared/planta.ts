@@ -1647,6 +1647,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
   // p/ o nome interno acompanhar o tamanho da propriedade sem vazar das bordas
   // Em modo PARTES cada parte tem o seu bloco de identificação (o das glebas);
   // o bloco geral não tem anel onde caber.
+  // retângulo do bloco geral: os blocos das glebas (desenhados no fim) desviam
+  // dele — antes caíam por cima e os nomes dos proprietários ficavam ilegíveis
+  let blocoGeral: Ret | null = null;
   if (!partes.length && centroLinhas.length) {
     // O bloco é ancorado no ponto interior mais afastado das divisas e encolhe
     // até caber INTEIRO dentro do polígono, com margem para não encostar nas
@@ -1677,6 +1680,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     for (const [li, lt] of centroLinhas.entries()) {
       texto(c, lt, bx0, byTopo - tam - li * esp, tam, { bold: li === 1 });
     }
+    blocoGeral = { x1: bx0 - 4, y1: byTopo - centroLinhas.length * esp - 4, x2: bx0 + larguraUnit * tam + 4, y2: byTopo + 4 };
   }
   // ------------------- códigos dos vértices, por último -------------------
   // Reservados lá em cima e desenhados só agora: o nome do vizinho tem posição
@@ -1693,6 +1697,8 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     obj(c, `cod:${ci}`, "codigo-vertice", cp.codigo);
     texto(c, cp.codigo, cp.lx, cp.ly, VERT_TAM, { cor: PRETO });
   }
+  // só depois dos códigos: eles continuam como sempre saíram
+  if (blocoGeral) ocupado.push(blocoGeral);
 
   // ------------------- metragem dos lados (opcional) -------------------
   // Depois de tudo: a medida é o rótulo que cede. Divisa compartilhada por
@@ -2275,7 +2281,9 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
 
     // selo: dois campos por linha, três linhas
     const campos: [string, string][] = [
-      ["PROPRIETÁRIO", d.proprietarios[0]?.nome || "—"],
+      // todos os donos (casal: o requerente e o segundo requerente), não só o primeiro
+      [d.proprietarios.length > 1 ? "PROPRIETÁRIOS" : "PROPRIETÁRIO",
+        d.proprietarios.map((p) => p.nome.trim()).filter(Boolean).join(" E ") || "—"],
       ["RESPONSÁVEL TÉCNICO", d.rt.nome || "—"],
       ["MUNICÍPIO", d.municipioUf],
       ["ESCALA", `1:${fmtMilhar(escala)}`],

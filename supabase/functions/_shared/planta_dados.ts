@@ -45,6 +45,8 @@ export function servicoDaGleba<S extends ServicoRow>(s: S, g: GlebaRow | null | 
     detentor_cpf: (g!.detentor_cpf ?? "").trim() || null,
     detentor_rg: null,
     is_espolio: false, inventariante_nome: null, inventariante_cpf: null, inventariante_rg: null,
+    // o segundo requerente é co-dono do imóvel de origem, não da parte do herdeiro
+    requerente2_nome: null, requerente2_cpf: null,
   };
 }
 
@@ -154,6 +156,12 @@ function identificacaoDaGleba(s0: ServicoRow, nomeGleba: string, g?: GlebaRow | 
   if (s.is_espolio && s.inventariante_nome) {
     linhas.push(`INVENTARIANTE:${s.inventariante_nome.toUpperCase()}`);
     if (s.inventariante_cpf) linhas.push(`CPF:${s.inventariante_cpf}`);
+  }
+  // co-dono (casal): a gleba é dos dois, como no planimétrico e nas assinaturas
+  // — mesma regra de montarDadosPlanta (na posse não há segundo requerente)
+  if ((s.requerente2_nome ?? "").trim() && s.tipo_imovel !== "posse") {
+    linhas.push(s.requerente2_nome!.trim().toUpperCase());
+    if (s.requerente2_cpf) linhas.push(`CPF:${s.requerente2_cpf}`);
   }
   return linhas;
 }
