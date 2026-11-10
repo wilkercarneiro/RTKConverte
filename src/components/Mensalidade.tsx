@@ -6,7 +6,7 @@
 //   AvisoMensalidade    — faixa no Início quando a mensalidade venceu
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { conferirPagamentos, minhaCobranca } from "../lib/cobranca";
+import { conferirPagamentos, esperaPrimeiroCredito, minhaCobranca } from "../lib/cobranca";
 import type { MinhaCobranca } from "../lib/cobranca";
 import { fmtPreco } from "../lib/creditos";
 import { dataBr, nomeDaCobranca } from "../../supabase/functions/_shared/mensagens_cobranca.ts";
@@ -127,6 +127,18 @@ export function AguardandoPagamento({ nome }: { nome: string }) {
 
 /** Faixa do Início: a mensalidade venceu (ou a 1ª ainda está em aberto). Só para o dono. */
 export function AvisoMensalidade({ cobranca }: { cobranca: MinhaCobranca | null }) {
+  // 0049: o cliente escolhido ainda não gastou o 1º crédito (a mensalidade não começou)
+  if (cobranca?.sou_dono && esperaPrimeiroCredito(cobranca) && !cobranca.primeiro_credito_em) {
+    const mensal = Number(cobranca.mensalidade ?? cobranca.valor ?? 0);
+    return (
+      <div className="mens-aviso combinado" role="status">
+        <span>
+          <b>Nada a pagar por enquanto.</b>
+          {" "}A {nomeDaCobranca(cobranca.ciclo)}{mensal > 0 ? ` (${fmtPreco(mensal)})` : ""} só começa a contar no dia em que você usar o primeiro crédito; nesse dia a cobrança chega no WhatsApp e os créditos passam a renovar na mesma data.
+        </span>
+      </div>
+    );
+  }
   if (!cobranca?.sou_dono || !cobranca.link || (cobranca.situacao !== "atrasada" && cobranca.situacao !== "aguardando")) return null;
   const atrasada = cobranca.situacao === "atrasada";
   return (

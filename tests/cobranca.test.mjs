@@ -1290,3 +1290,190 @@ test("adesão no painel: autocadastro_salvar grava valor e texto e confere os li
   assert.match(zaps.find((z) => z.corpo.number === "5571988887777").corpo.text, /adesão de R\$\s500,00, cobrada uma vez só: total de R\$\s4\.098,80/);
   assert.match(zaps.find((z) => z.corpo.number === "5571977776666").corpo.text, /\+ adesão R\$\s500,00/);
 });
+
+// ------------------------------------------------------------------ mensalidade no 1º crédito (0049)
+
+/** A empresa escolhida: ativa, com a condição gravada; `gastou` = o dia do 1º crédito (o gatilho do banco grava). */
+function cenarioPrimeiroCredito({ cfg = { ...ASAAS_OK, ...ZAP, whatsapp_avisos: "71977776666" }, gastou = null, superadmin = false } = {}) {
+  const c = cenario({ cfg, superadmin });
+  c.banco.empresas[EMPRESA.id].status = "ativo";
+  c.banco.cobrancas[EMPRESA.id] = { situacao: "sem_assinatura", ciclo: "MONTHLY", inicio_no_primeiro_credito: true, primeiro_credito_em: gastou, mensalidade_iniciada_em: null };
+  c.deps.limite = limiteFalso();
+  c.banco.mensalidadesAIniciar = async () => Object.entries(c.banco.cobrancas)
+    .filter(([, x]) => x.inicio_no_primeiro_credito && x.primeiro_credito_em && !x.mensalidade_iniciada_em).map(([id]) => id);
+  return c;
+}
+
+test("1º crédito: antes dele nada vai ao Asaas; depois, a assinatura nasce vencendo no dia do 1º crédito e o WhatsApp avisa", async () => {
+  const s = cenarioPrimeiroCredito();
+  let r = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
+  assert.equal(r.corpo.acao, "esperando");
+  assert.equal(s.asaas.chamadas.length, 0, "sem o 1º crédito, nem o cliente do Asaas é criado");
+
+  // gastou às 23h30 de Brasília do dia 30 (02h30 UTC do dia 31): vale o dia 30
+  s.banco.cobrancas[EMPRESA.id].primeiro_credito_em = "2026-10-31T02:30:00Z";
+  r = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.acao, "iniciada");
+  const sub = s.asaas.chamadas.find((c) => c.caminho === "/subscriptions" && c.metodo === "POST").corpo;
+  assert.deepEqual({ valor: sub.value, venc: sub.nextDueDate, ciclo: sub.cycle, forma: sub.billingType },
+    { valor: 199.9, venc: "2026-10-30", ciclo: "MONTHLY", forma: "UNDEFINED" }, "vence no dia do 1º crédito (horário de Brasília), na mensalidade da empresa");
+  const cob = s.banco.cobrancas[EMPRESA.id];
+  assert.match(cob.asaas_assinatura_id, /^sub_/, "a assinatura fica gravada");
+  assert.equal(cob.situacao, "aguardando");
+  assert.equal(cob.proximo_vencimento, "2026-10-30");
+  assert.ok(cob.mensalidade_iniciada_em, "a condição está cumprida");
+  assert.equal(cob.link_pagamento, r.corpo.link);
+  assert.equal(s.banco.pagamentos.filter((p) => p.finalidade === "mensalidade").length, 1, "a 1ª mensalidade entra na lista de pagamentos");
+  const zaps = s.asaas.chamadas.filter((c) => c.whatsapp);
+  assert.match(zaps.find((z) => z.corpo.number === "5571999990000").corpo.text, /usou o primeiro crédito no Vertces em 30\/10\/2026.*R\$\s199,90, vence em 30\/10\/2026/s);
+  assert.match(zaps.find((z) => z.corpo.number === "5571977776666").corpo.text, /gastou o 1º crédito em 30\/10\/2026/);
+  assert.equal(s.banco.atividades.at(-1).acao, "cobranca.iniciada");
+
+  // a tela chama de novo (outra aba, outro carregamento): não cria outra assinatura
+  r = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
+  assert.equal(r.corpo.acao, "ja_iniciada");
+  assert.equal(s.asaas.chamadas.filter((c) => c.caminho === "/subscriptions" && c.metodo === "POST").length, 1);
+});
+
+test("1º crédito: a cobrança que sai dias depois vence hoje (o Asaas não aceita vencimento no passado)", async () => {
+  const s = cenarioPrimeiroCredito({ gastou: "2026-10-27T15:00:00Z" });
+  const r = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
+  assert.equal(r.corpo.vencimento, "2026-10-30");
+  assert.equal(s.asaas.chamadas.find((c) => c.caminho === "/subscriptions").corpo.nextDueDate, "2026-10-30");
+});
+
+test("1º crédito: duas chamadas ao mesmo tempo criam uma assinatura só", async () => {
+  const s = cenarioPrimeiroCredito({ gastou: "2026-10-30T15:00:00Z" });
+  const [a, b] = await Promise.all([
+    tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" }),
+    tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" }),
+  ]);
+  assert.deepEqual([a.corpo.acao, b.corpo.acao].sort(), ["em_andamento", "iniciada"]);
+  assert.equal(s.asaas.chamadas.filter((c) => c.caminho === "/subscriptions" && c.metodo === "POST").length, 1);
+});
+
+test("1º crédito: empresa sem a condição, sem Asaas ou sem mensalidade não gera nada", async () => {
+  let s = cenario({ cfg: ASAAS_OK });
+  s.deps.limite = limiteFalso();
+  assert.equal((await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" })).corpo.acao, "sem_condicao");
+  s = cenarioPrimeiroCredito({ cfg: {}, gastou: "2026-10-30T15:00:00Z" });
+  assert.equal((await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" })).corpo.acao, "sem_asaas");
+  s = cenarioPrimeiroCredito({ gastou: "2026-10-30T15:00:00Z" });
+  s.banco.empresas[EMPRESA.id].mensalidade = 0;
+  assert.equal((await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" })).corpo.acao, "sem_mensalidade");
+  assert.ok(!s.asaas.chamadas.some((c) => c.caminho === "/subscriptions"), "nada no Asaas");
+});
+
+test("1º crédito: o cartão antes dele é recusado sem ir ao Asaas; depois dele, o cartão gera e paga a 1ª mensalidade", async () => {
+  const s = cenarioPrimeiroCredito();
+  let r = await tratarAcao(s.deps, s.usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 409);
+  assert.match(r.corpo.erro, /só começa no dia em que você usar o primeiro crédito/);
+  assert.equal(s.asaas.chamadas.length, 0, "nem o cartão nem a assinatura vão ao Asaas antes da hora");
+  assert.equal(s.banco.cartoes[EMPRESA.id], undefined);
+
+  s.banco.cobrancas[EMPRESA.id].primeiro_credito_em = "2026-10-30T15:00:00Z";
+  r = await tratarAcao(s.deps, s.usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.pagas, 1, "a 1ª mensalidade (vence hoje) é paga com o cartão na hora");
+  assert.ok(s.banco.cobrancas[EMPRESA.id].mensalidade_iniciada_em);
+  const subs = s.asaas.chamadas.filter((c) => c.caminho === "/subscriptions" && c.metodo === "POST");
+  assert.deepEqual(subs.map((x) => x.corpo.billingType), ["UNDEFINED", "CREDIT_CARD"], "nasce a do 1º crédito e passa para o cartão");
+  assert.equal(subs[1].corpo.nextDueDate, "2026-11-30", "a próxima no cartão vence um mês depois do 1º crédito");
+});
+
+test("1º crédito: gerar a cobrança à mão no painel encerra a condição (o 1º crédito não cria outra)", async () => {
+  const s = cenarioPrimeiroCredito({ superadmin: true });
+  const r = await tratarAcao(s.deps, s.usuario, { acao: "cobrar_empresa", escritorio_id: EMPRESA.id, enviar_whatsapp: false });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.ok(s.banco.cobrancas[EMPRESA.id].mensalidade_iniciada_em, "a condição acaba");
+  s.banco.cobrancas[EMPRESA.id].primeiro_credito_em = "2026-10-30T15:00:00Z";
+  const r2 = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
+  assert.equal(r2.corpo.acao, "ja_iniciada");
+  assert.equal(s.asaas.chamadas.filter((c) => c.caminho === "/subscriptions" && c.metodo === "POST").length, 1);
+});
+
+test("1º crédito: a conferência do superadmin gera a mensalidade de quem gastou e ficou sem cobrança", async () => {
+  const s = cenarioPrimeiroCredito({ gastou: "2026-10-30T15:00:00Z" });
+  const r = await tratarAcao(s.deps, SA, { acao: "conferir" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.deepEqual(r.corpo.mudancas, ["mensalidade iniciada"]);
+  assert.match(s.banco.cobrancas[EMPRESA.id].asaas_assinatura_id, /^sub_/);
+  // a empresa não inicia a de outra: o escritorio_id do pedido só vale para o superadmin
+  const k = cenarioPrimeiroCredito({ gastou: "2026-10-30T15:00:00Z" });
+  k.banco.empresas.outra = { ...EMPRESA, id: "outra" };
+  k.banco.cobrancas.outra = { ...k.banco.cobrancas[EMPRESA.id] };
+  await tratarAcao(k.deps, k.usuario, { acao: "iniciar_mensalidade", escritorio_id: "outra" });
+  assert.ok(!k.banco.cobrancas.outra.mensalidade_iniciada_em, "a outra empresa fica intocada");
+  assert.ok(k.banco.cobrancas[EMPRESA.id].mensalidade_iniciada_em, "vale a empresa de quem chamou");
+});
+
+// ------------------------------------------------------------------ o convite (0049)
+
+const TOKEN = "ab".repeat(32);
+function cenarioConvite(cfg = { ...ASAAS_OK, ...ZAP, whatsapp_avisos: "71977776666", cadastro_aberto: "false", adesao_valor: "500" }) {
+  const c = cenarioCadastro(cfg);
+  // o plano do convite não precisa estar à venda no site (a equipe escolheu)
+  c.banco.planos["pl-convite"] = { id: "pl-convite", nome: "Profissional", preco_mensal: 599.9, ativo: true, vende_no_site: false };
+  c.banco.convites = { [TOKEN]: { id: "cv-1", plano_id: "pl-convite", nome: "Ana (reunião 10/11)", usado: false, escritorio_id: null } };
+  c.banco.reservarConvite = async (t) => {
+    const v = c.banco.convites[t];
+    if (!v || v.usado) return null;
+    v.usado = true;
+    return { id: v.id, plano_id: v.plano_id, nome: v.nome };
+  };
+  c.banco.devolverConvite = async (id) => { for (const v of Object.values(c.banco.convites)) if (v.id === id) v.usado = false; };
+  c.banco.concluirConvite = async (id, esc) => { for (const v of Object.values(c.banco.convites)) if (v.id === id) v.escritorio_id = esc; };
+  return c;
+}
+
+test("convite: conta ativa já, origem convite, plano do convite, sem adesão, cobrança só no 1º crédito — mesmo com o cadastro do site fechado", async () => {
+  const { asaas, banco, deps } = cenarioConvite();
+  const r = await tratarPublico(deps, "200.1.2.3", { ...DADOS, ciclo: "mensal", convite: TOKEN.toUpperCase() });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.liberada, true);
+  assert.equal(r.corpo.adesao, 0, "o convite não cobra adesão (como a empresa criada no painel)");
+  const e = banco.empresas[r.corpo.escritorio_id];
+  assert.deepEqual({ status: e.status, origem: e.origem, plano: e.plano_id }, { status: "ativo", origem: "convite", plano: "pl-convite" },
+    "o plano é o do convite (o plano_id da página não vale)");
+  assert.deepEqual(banco.cobrancas[e.id], { situacao: "sem_assinatura", ciclo: "MONTHLY", valor: 599.9, inicio_no_primeiro_credito: true });
+  assert.equal(banco.convites[TOKEN].escritorio_id, e.id, "o convite fica ligado à empresa");
+  assert.ok(!asaas.chamadas.some((c) => !c.whatsapp), "nada vai ao Asaas no cadastro");
+  const zaps = asaas.chamadas.filter((c) => c.whatsapp);
+  assert.match(zaps.find((z) => z.corpo.number === "5571988887777").corpo.text, /acesso já está liberado.*não paga nada agora.*primeiro crédito/s);
+  assert.match(zaps.find((z) => z.corpo.number === "5571977776666").corpo.text, /pelo convite.*Ana \(reunião 10\/11\)/s);
+  assert.equal(banco.atividades.at(-1).acao, "empresa.cadastro_convite");
+
+  // o mesmo link de novo: não vale
+  const r2 = await tratarPublico(deps, "200.1.2.4", { ...DADOS, email: "outra@geo.test", documento: "86288366757", convite: TOKEN });
+  assert.equal(r2.status, 410);
+  assert.match(r2.corpo.erro, /não vale mais/);
+});
+
+test("convite: token torto ou desconhecido dá 410; falha na criação devolve o convite", async () => {
+  let k = cenarioConvite();
+  for (const t of ["123", "zz".repeat(32), "cd".repeat(32)]) {
+    const r = await tratarPublico(k.deps, "200.1.2.3", { ...DADOS, convite: t });
+    assert.equal(r.status, 410, t);
+  }
+  assert.equal(k.banco.contas.length, 0);
+  k = cenarioConvite();
+  k.banco.falharEm = "membro";
+  const r = await tratarPublico(k.deps, "200.1.2.3", { ...DADOS, convite: TOKEN });
+  assert.equal(r.status, 500);
+  assert.equal(k.banco.convites[TOKEN].usado, false, "a conta não saiu: o convite volta a valer");
+  k.banco.falharEm = null;
+  const r2 = await tratarPublico(k.deps, "200.1.2.9", { ...DADOS, convite: TOKEN });
+  assert.equal(r2.status, 200, JSON.stringify(r2.corpo));
+});
+
+test("link público sem convite continua cobrando no cadastro (a condição não sai de parâmetro)", async () => {
+  const { banco, deps } = cenarioConvite({ ...ABERTO });
+  const r = await tratarPublico(deps, "200.1.2.3", { ...DADOS, inicio_no_primeiro_credito: true, origem: "convite", status: "ativo" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const e = banco.empresas[r.corpo.escritorio_id];
+  assert.equal(e.status, "aguardando_pagamento");
+  assert.equal(e.origem, "site");
+  assert.equal(banco.cobrancas[e.id].inicio_no_primeiro_credito, undefined);
+});

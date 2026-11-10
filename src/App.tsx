@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { configOk, supabase } from "./lib/supabase";
 import { Login } from "./components/Login";
@@ -29,7 +29,7 @@ import { AceiteCreditoGeral, SemCreditos } from "./components/Creditos";
 import { AguardandoPagamento } from "./components/Mensalidade";
 import { avisarConsumo, aVenda, carregarCreditos, precisaAceite, temCredito } from "./lib/creditos";
 import type { Creditos } from "./lib/creditos";
-import { minhaCobranca } from "./lib/cobranca";
+import { esperaPrimeiroCredito, iniciarMensalidade, minhaCobranca } from "./lib/cobranca";
 import { cartaoAdiado, TelaCartao, useRecargaAutomatica } from "./components/Cartao";
 import type { MinhaCobranca } from "./lib/cobranca";
 import type { Cliente, Servico, Trecho, Vertice } from "./lib/types";
@@ -180,6 +180,19 @@ export default function App() {
     atualizarCobranca();
     atualizarCreditos();
   }, [escritorioOk]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 0049: empresa que só paga a partir do 1º crédito. Os créditos mudaram (gastou)
+  // e ela ainda espera: relê a cobrança; o banco marcou o 1º crédito, a mensalidade
+  // nasce no Asaas (o servidor decide e não cria duas) e a tela relê.
+  const pedindoInicio = useRef(false);
+  useEffect(() => {
+    if (escritorioOk && cobranca && esperaPrimeiroCredito(cobranca) && !cobranca.mensalidade_a_iniciar) atualizarCobranca();
+  }, [creditos]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!escritorioOk || !cobranca?.mensalidade_a_iniciar || pedindoInicio.current) return;
+    pedindoInicio.current = true;
+    iniciarMensalidade().then((r) => { if (r.acao === "iniciada" || r.acao === "ja_iniciada") atualizarCobranca(); })
+      .catch(() => {}).finally(() => { pedindoInicio.current = false; });
+  }, [escritorioOk, cobranca?.mensalidade_a_iniciar]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A rota é a fonte da verdade da navegação: o serviço da URL é carregado aqui,
   // e não empurrado por quem clicou. É isso que faz atualizar a página (F5) e o
@@ -251,7 +264,7 @@ export default function App() {
   }
   // Autocadastro (0040): público, com ou sem login. A própria página entra com a
   // conta que cria e leva ao pagamento; quem já está conectado vê o aviso de lá.
-  if (rota.t === "assinar") return <Suspense fallback={null}><Assinar plano={rota.plano} ciclo={rota.ciclo} /></Suspense>;
+  if (rota.t === "assinar") return <Suspense fallback={null}><Assinar plano={rota.plano} ciclo={rota.ciclo} convite={rota.convite} /></Suspense>;
   // verificação pública do QR da planta: abre com ou sem login
   if (rota.t === "verificar") return <Suspense fallback={null}><VerificarDocumento codigo={rota.codigo} /></Suspense>;
   if (logado === null) return <div className="centro">Carregando...</div>;

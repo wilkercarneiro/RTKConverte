@@ -13,6 +13,8 @@
 //               cancelar_compra { credito_id } · conferir
 //               pagar_cadastro { forma: pix|cartao, ciclo, parcelas?, cartao?, titular? }
 //                 (o dono da empresa do autocadastro paga o 1º período; 0040)
+//               iniciar_mensalidade { escritorio_id? (só superadmin) }
+//                 (0049: gastou o 1º crédito, a assinatura nasce no Asaas)
 //   superadmin: config_status · config_salvar · whatsapp_testar { telefone }
 //               cobrar_empresa { escritorio_id, enviar_whatsapp?, login?, senha? }
 //               atualizar_assinatura · cancelar_assinatura · conferir { escritorio_id? }
@@ -32,9 +34,10 @@ import { soDigitos, telefoneValido } from "../_shared/cnpj.ts";
 import { enviarWhatsApp, estadoWhatsApp, qrcodeWhatsApp, whatsappConfigurado } from "../_shared/whatsapp.ts";
 import type { ConfigWhatsApp } from "../_shared/whatsapp.ts";
 import {
-  mensagemAcessoLiberado, mensagemAcessoSuspenso, mensagemCobranca, mensagemCreditosPagos, mensagemEstornoParcela,
-  mensagemPagamentoRecusado, mensagemRecargaRecusada, textoCreditos,
+  dataBr, mensagemAcessoLiberado, mensagemAcessoSuspenso, mensagemCobranca, mensagemCreditosPagos, mensagemEstornoParcela,
+  mensagemMensalidadeIniciada, mensagemPagamentoRecusado, mensagemRecargaRecusada, nomeDaCobranca, textoCreditos,
 } from "../_shared/mensagens_cobranca.ts";
+import { fmtReais } from "../_shared/precos.ts";
 import type { CarteiraDoPlano } from "../_shared/mensagens_cobranca.ts";
 import {
   cicloDe, configDasRegras, descricaoDaCompra, escolherParcelas, maxParcelas, MESES, NOME_CICLO, normalizarRegras,
@@ -71,8 +74,18 @@ export interface EmpresaCobranca {
     link_pagamento: string | null; valor: number | null; proximo_vencimento: string | null;
     /** período da assinatura (0040); ausente = mensal */
     ciclo?: string | null;
+    /** 0049: a mensalidade só começa no 1º crédito gasto (cliente escolhido pela equipe) */
+    inicio_no_primeiro_credito?: boolean | null;
+    /** quando o 1º crédito foi gasto (o gatilho do banco grava) */
+    primeiro_credito_em?: string | null;
+    /** quando a cobrança foi criada no Asaas (null = ainda não) */
+    mensalidade_iniciada_em?: string | null;
   } | null;
 }
+
+/** A empresa ainda espera o 1º crédito (0049): nada a cobrar, nem cartão a cadastrar. */
+export const esperaPrimeiroCredito = (e: EmpresaCobranca | null | undefined): boolean =>
+  !!e?.cobranca?.inicio_no_primeiro_credito && !e.cobranca.mensalidade_iniciada_em;
 
 export interface ResultadoPagamento {
   acao: string; escritorio_id?: string; credito_id?: string | null;
@@ -136,6 +149,15 @@ export interface Banco {
    * 'mensalidade' com adesão, no Pix, PENDING/OVERDUE.
    */
   comprasAvulsasAbertas?(escritorioId: string): Promise<{ id: string; asaas_id: string; valor: number; ciclo: string | null; link: string | null }[]>;
+  // ---- mensalidade no 1º crédito (0049)
+  /** empresas que gastaram o 1º crédito e ainda não têm a cobrança no Asaas */
+  mensalidadesAIniciar?(): Promise<string[]>;
+  /** reserva o convite de cadastro (uso único); null = não vale (usado, cancelado, vencido, inexistente) */
+  reservarConvite?(token: string): Promise<{ id: string; plano_id: string; nome: string | null } | null>;
+  /** a conta não foi criada: o convite volta a valer */
+  devolverConvite?(id: string): Promise<void>;
+  /** o convite virou esta empresa */
+  concluirConvite?(id: string, escritorioId: string): Promise<void>;
 }
 
 export interface CartaoSalvo {
@@ -369,6 +391,12 @@ export async function tratarAcao(d: Deps, u: Usuario, b: Record<string, unknown>
       case "cancelar_compra": return await cancelarCompra(d, cfg, u, b);
       case "conferir": return await conferir(d, cfg, u, b);
       case "pagar_cadastro": return await pagarCadastro(d, cfg, u, b);
+      case "iniciar_mensalidade": {
+        // a tela da empresa chama quando minha_cobranca() diz mensalidade_a_iniciar; o superadmin, por empresa
+        const alvo = u.superadmin && b.escritorio_id ? String(b.escritorio_id) : u.escritorioId;
+        if (!alvo) throw new ErroUsuario("Sua conta não está ligada a uma empresa.", 403);
+        return ok(await iniciarMensalidade(d, cfg, alvo));
+      }
       case "autocadastro_salvar": return await superadmin(() => autocadastroSalvar(d, cfg, b));
       case "config_status": return await superadmin(() => configStatus(d, cfg));
       case "config_salvar": return await superadmin(() => configSalvar(d, cfg, u, b));
@@ -479,7 +507,92 @@ async function conferir(d: Deps, cfg: Record<string, string>, u: Usuario, b: Rec
     const r = await aplicarEAvisar(d, cfg, cob.deleted ? "PAYMENT_DELETED" : "CONFERENCIA", cob);
     mudancas.push(r.acao);
   }
+  // 0049: a conferência do superadmin também gera a mensalidade de quem gastou o
+  // 1º crédito e ficou sem a cobrança (a tela não chegou a chamar, o Asaas falhou…)
+  if (u.superadmin) {
+    const ids = alvo ? [alvo] : ((await d.banco.mensalidadesAIniciar?.().catch(() => [])) ?? []);
+    for (const id of ids) {
+      try {
+        const r = await iniciarMensalidade(d, cfg, id);
+        if (r.acao === "iniciada") mudancas.push("mensalidade iniciada");
+      } catch { /* segue para a próxima: a empresa continua na lista */ }
+    }
+  }
   return ok({ conferidos: pendentes.length, mudancas });
+}
+
+// ---------------------------------------------------------------- a mensalidade que começa no 1º crédito (0049)
+//
+// A empresa escolhida pela equipe entra sem pagar. O banco marca o dia do 1º
+// crédito gasto (gatilho marcar_primeiro_credito) e muda o mês dos créditos para
+// começar nele; aqui nasce a assinatura no Asaas, com a 1ª mensalidade vencendo
+// nesse dia (ou hoje, se a cobrança sair depois), e o aviso no WhatsApp. Daí
+// para frente é a cobrança de sempre: vence no mesmo dia a cada período,
+// vencida suspende, paga reativa. Quem chama: a tela (minha_cobranca diz
+// mensalidade_a_iniciar), o cadastro do cartão e a conferência do superadmin.
+
+/** "aaaa-mm-dd" do instante no horário de Brasília. */
+export function diaBrasil(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date(iso));
+}
+
+export type InicioMensalidade = {
+  /** iniciada · esperando (sem o 1º crédito) · sem_condicao · ja_iniciada · sem_asaas · sem_mensalidade · em_andamento */
+  acao: string;
+  link?: string | null; valor?: number; vencimento?: string | null; whatsapp?: boolean;
+};
+
+export async function iniciarMensalidade(d: Deps, cfg: Record<string, string>, escritorioId: string): Promise<InicioMensalidade> {
+  const e = await d.banco.empresa(escritorioId);
+  if (!e) throw new ErroUsuario("Empresa não encontrada.", 404);
+  const c = e.cobranca;
+  if (!c?.inicio_no_primeiro_credito) return { acao: "sem_condicao" };
+  if (c.mensalidade_iniciada_em) return { acao: "ja_iniciada" };
+  if (!c.primeiro_credito_em) return { acao: "esperando" };
+  const asaas = asaasDe(cfg, d.fetch);
+  if (!asaas) return { acao: "sem_asaas" };
+  const { ciclo, valor } = cobrancaDaEmpresa(cfg, e);
+  if (!(valor > 0)) return { acao: "sem_mensalidade" };
+  // duas abas (ou a tela e o painel) ao mesmo tempo criariam duas assinaturas
+  if (d.limite && !(await d.limite(`iniciar-mensalidade:${e.id}`, 1, 30))) return { acao: "em_andamento" };
+  const agora = new Date().toISOString();
+  // já tem assinatura viva (gerada à mão no painel): só fecha a condição
+  if (c.asaas_assinatura_id && c.situacao !== "cancelada") {
+    await d.banco.salvarCobranca(e.id, { mensalidade_iniciada_em: agora });
+    return { acao: "ja_iniciada" };
+  }
+  const hoje = d.hoje();
+  const dia = diaBrasil(c.primeiro_credito_em);
+  // o Asaas não aceita vencimento no passado: cobrança que sai depois vence hoje
+  const vencimento = dia > hoje ? dia : hoje;
+  const cliente = await garantirCliente(d, asaas, e.id);
+  const sub = await asaas.criarAssinatura({
+    customer: cliente, billingType: "UNDEFINED", value: valor, nextDueDate: vencimento, cycle: ciclo,
+    description: descricaoAssinatura(e, ciclo), externalReference: e.id,
+  });
+  // a assinatura existe: daqui para frente a condição está cumprida (mesmo se o resto falhar)
+  await d.banco.salvarCobranca(e.id, {
+    asaas_cliente_id: cliente, asaas_assinatura_id: sub.id, valor, ciclo, situacao: "aguardando",
+    proximo_vencimento: vencimento, mensalidade_iniciada_em: agora,
+  });
+  const primeira = (await asaas.cobrancasDaAssinatura(sub.id).catch((): CobrancaAsaas[] => [])).filter((x) => !x.deleted).sort(porVencimento)[0];
+  let link: string | null = null;
+  if (primeira) {
+    await d.banco.inserirPagamento({
+      escritorio_id: e.id, finalidade: "mensalidade", asaas_id: primeira.id, valor: primeira.value ?? valor,
+      status: primeira.status || "PENDING", link: primeira.invoiceUrl ?? null, vencimento: primeira.dueDate, ciclo,
+    });
+    link = primeira.invoiceUrl ?? null;
+    await d.banco.salvarCobranca(e.id, { link_pagamento: link, proximo_vencimento: primeira.dueDate || vencimento });
+  }
+  const venc = primeira?.dueDate || vencimento;
+  await d.banco.atividade(e.id, "cobranca.iniciada", `1º crédito em ${dataBr(dia)}: ${nomeDaCobranca(ciclo)} de ${fmtReais(valor)} vence ${dataBr(venc)}`, null).catch(() => {});
+  const texto = mensagemMensalidadeIniciada({
+    responsavel: e.responsavel, empresa: e.nome, plano: e.plano, valor, link, vencimento: venc, url: urlApp(cfg), ciclo, dia,
+  });
+  const zap = await avisarEmpresa(d, cfg, e, texto, true).catch(() => ({ enviado: false }));
+  await avisarSuperadmin(d, cfg, `Vertces: a ${e.nome} gastou o 1º crédito em ${dataBr(dia)}. A ${nomeDaCobranca(ciclo)} de ${fmtReais(valor)} começou e vence ${dataBr(venc)}.`);
+  return { acao: "iniciada", link, valor, vencimento: venc, whatsapp: zap.enviado };
 }
 
 // ---------------------------------------------------------------- superadmin: configuração
@@ -672,6 +785,9 @@ async function cobrarEmpresa(d: Deps, cfg: Record<string, string>, b: Record<str
     vencimento = primeira.dueDate;
   }
   if (!link) throw new ErroAsaas("O Asaas não devolveu o link da cobrança.", 502);
+  // 0049: a equipe cobrou à mão a empresa que esperava o 1º crédito: a condição acaba aqui
+  // (sem isto, o 1º crédito criaria uma segunda assinatura)
+  if (esperaPrimeiroCredito(e)) await d.banco.salvarCobranca(e.id, { mensalidade_iniciada_em: new Date().toISOString() });
   e = (await d.banco.empresa(id)) ?? e;
   const texto = mensagemCobranca({
     responsavel: e.responsavel, empresa: e.nome, plano: e.plano, valor, link, vencimento, url: urlApp(cfg),
@@ -899,6 +1015,19 @@ async function cadastrarCartao(d: Deps, cfg: Record<string, string>, asaas: Clie
   const hoje = d.hoje();
   const ip = ipDe(u);
   const dados = paraAsaas(cartao, titular, hoje);
+  // 0049: a mensalidade que começa no 1º crédito. Gastou e a cobrança ainda não
+  // saiu: sai agora (e o cartão paga). Ainda não gastou: o cartão criaria a
+  // assinatura antes da hora — fica para depois.
+  const antes = await d.banco.empresa(esc);
+  if (esperaPrimeiroCredito(antes)) {
+    if (!antes!.cobranca!.primeiro_credito_em) {
+      throw new ErroUsuario("A mensalidade da sua conta só começa no dia em que você usar o primeiro crédito. Cadastre o cartão a partir daí: ele paga a primeira mensalidade e as próximas.", 409);
+    }
+    const r = await iniciarMensalidade(d, cfg, esc);
+    if (r.acao !== "iniciada" && r.acao !== "ja_iniciada") {
+      throw new ErroUsuario("A primeira mensalidade da sua conta está sendo gerada. Tente de novo em alguns segundos.", 409);
+    }
+  }
   const cliente = await garantirCliente(d, asaas, esc);
 
   // 1. o cartão fica guardado no Asaas (token), sem cobrar nada

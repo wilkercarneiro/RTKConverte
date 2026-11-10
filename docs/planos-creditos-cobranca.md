@@ -132,3 +132,48 @@ não liberada". Liberada, quem cadastrar o cartão de novo ganha a compra autom�
 cartão em `tests/cobranca.test.mjs`. Telas: `#/lab/cartao/{tela,aviso,painel,
 painel-mensal,pagamento,comprar,semcredito}` e `#/lab/admin/config` (QR do WhatsApp).
 Publicação: `bash scripts/publicar-cartao.sh [--executar]` e depois o push.
+
+## Mensalidade a partir do 1º crédito + convite (0049, 10/11/2026)
+
+**Pedido:** para clientes escolhidos pela equipe, o acesso é liberado já e a
+mensalidade só começa a contar no dia em que a empresa gasta o **primeiro**
+crédito. Vale uma vez; depois é a cobrança de sempre.
+
+**Duas portas (as duas da equipe; o cliente nunca escolhe sozinho):**
+- Painel → Empresas → Nova empresa → **"Liberar agora; cobrar a partir do 1º
+  crédito usado"** (precisa do Asaas e da mensalidade).
+- Painel → Configurações → **Convites**: plano, para quem e validade (1–90 dias,
+  padrão 30) → link `/cadastro/?convite=<token>` para copiar ou mandar no
+  WhatsApp. Uso único; vale mesmo com o cadastro pelo site fechado; não cobra
+  adesão; a pessoa escolhe só o período. O link público `?plano=` continua
+  cobrando no cadastro: a condição só sai do token gravado no banco.
+
+**Como funciona:**
+- `cobranca_empresas.inicio_no_primeiro_credito` marca a condição; a empresa
+  nasce `ativo` (origem `convite` quando veio pelo link).
+- Gatilho `consumos_zz_primeiro_credito` (no 1º `consumos_credito`): grava
+  `primeiro_credito_em` e muda `escritorios.dia_renovacao` para o dia (créditos e
+  mensalidade andam juntos).
+- A função `cobranca`, ação `iniciar_mensalidade`, cria a assinatura no Asaas
+  (Pix/boleto/cartão na fatura) **vencendo no dia do 1º crédito** (ou hoje, se
+  sair depois), grava `mensalidade_iniciada_em` e manda o link no WhatsApp da
+  empresa (+ aviso ao superadmin). Quem chama: o app (quando `minha_cobranca()`
+  diz `mensalidade_a_iniciar`), o cadastro do cartão e "Conferir" do superadmin
+  (que pega todas as pendentes). Trava de 30 s contra duas assinaturas.
+- Antes do 1º crédito: não aparece "Cadastre o cartão" e o cartão é recusado
+  (criaria a assinatura antes da hora). O Início mostra "Nada a pagar por
+  enquanto…".
+- "Cobrar já" na aba Cobrança da empresa encerra a condição (a mensalidade começa
+  no dia).
+- Daí em diante: vencida suspende, paga reativa (como qualquer empresa).
+
+**Painel:** a lista de empresas mostra "Cobra no 1º crédito" / "1º crédito gasto
+· gerar cobrança"; a aba Cobrança explica o estado e tem "Gerar a mensalidade
+agora".
+
+**Testes:** `tests/rls/cobranca_primeiro_credito.sql` (no `npm run test:rls`) e
+os cenários "1º crédito" e "convite" em `tests/cobranca.test.mjs`. Telas:
+`#/lab/assinar/convite[-plano|-vencido]`, `#/lab/admin/config` (Convites),
+`#/lab/admin/empresas/e6` e `/e7`, `#/lab/casca/inicio?primeirocredito`.
+Publicação: `bash scripts/publicar-primeiro-credito.sh [--executar]` e logo
+depois o push da main.

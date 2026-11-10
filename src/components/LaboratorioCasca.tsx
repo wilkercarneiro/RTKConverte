@@ -167,6 +167,9 @@ const RPC: Record<string, unknown> = {
   minha_cobranca: TELA === "pagamento" ? (location.hash.includes("vencida")
     ? cobrancaDeExemplo("atrasada", "aguardando_pagamento")
     : { ...cobrancaDeExemplo("aguardando", "aguardando_pagamento"), vencimento: "2026-10-30" })
+    // inicio?primeirocredito (0049): o cliente escolhido que ainda não gastou o 1º crédito
+    : TELA === "inicio" && location.hash.includes("primeirocredito")
+      ? { ...cobrancaDeExemplo("sem_assinatura"), link: null, vencimento: null, inicio_no_primeiro_credito: true, primeiro_credito_em: null, mensalidade_iniciada_em: null, mensalidade_a_iniciar: false, precisa_cartao: false }
     : TELA === "inicio" ? cobrancaDeExemplo("atrasada") : cobrancaDeExemplo("em_dia"),
   listar_membros: MEMBROS,
   listar_atividades: ATIVIDADES,

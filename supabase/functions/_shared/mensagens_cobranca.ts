@@ -77,6 +77,58 @@ export function mensagemCobranca(o: {
   return linhas.join("\n");
 }
 
+/**
+ * 0049: a empresa gastou o 1º crédito e a mensalidade começou (vence no dia do
+ * 1º crédito). Vai para o WhatsApp da empresa com o link da fatura.
+ */
+export function mensagemMensalidadeIniciada(o: {
+  responsavel: string | null; empresa: string; plano: string | null; valor: number; link: string | null;
+  vencimento: string; url: string; ciclo?: string | null;
+  /** o dia do 1º crédito ("aaaa-mm-dd") */
+  dia: string;
+}): string {
+  const nome = nomeDaCobranca(o.ciclo);
+  return [
+    ola(o.responsavel),
+    "",
+    `A ${o.empresa} usou o primeiro crédito no Vertces em ${dataBr(o.dia)}: a partir desse dia começa a contar a ${nome}${o.plano ? ` do plano ${o.plano}` : ""}, como combinado.`,
+    `A primeira ${nome}, de ${fmtReais(o.valor)}, vence em ${dataBr(o.vencimento)}${o.link ? ":" : "."}`,
+    ...(o.link ? [o.link] : []),
+    "",
+    "Dá para pagar por Pix, boleto ou cartão. Se preferir, cadastre o cartão no sistema (Configurações → Plano e uso): ele paga esta e as próximas sozinho.",
+    `As próximas vencem no mesmo dia, a cada ${o.ciclo === "YEARLY" ? "ano" : o.ciclo === "SEMIANNUALLY" ? "semestre" : "mês"}, e os créditos do plano renovam junto. ${o.url}`,
+  ].join("\n");
+}
+
+/** 0049: conta criada pelo convite. A mensalidade só começa no 1º crédito gasto. */
+export function mensagemCadastroConvite(o: {
+  responsavel: string | null; empresa: string; plano: string; periodo: string; valor: number; url: string; login: string; creditos?: string;
+}): string {
+  return [
+    ola(o.responsavel),
+    "",
+    `A conta da ${o.empresa} no Vertces está criada no plano ${o.plano}${o.creditos ? ` (${o.creditos})` : ""} e o acesso já está liberado.`,
+    `Como combinado, você não paga nada agora: a ${o.periodo === "mensal" ? "mensalidade" : `cobrança ${o.periodo}`} (${fmtReais(o.valor)}) só começa a contar no dia em que você usar o primeiro crédito.`,
+    "",
+    `Entre em ${o.url} com o login ${o.login} e a senha que você criou.`,
+  ].join("\n");
+}
+
+/** 0049: aviso para o número do superadmin quando o convite vira conta. */
+export function mensagemNovoConvite(o: {
+  empresa: string; documento: string; responsavel: string; email: string; telefone: string; plano: string; periodo: string; valor: number; convite: string | null;
+}): string {
+  return [
+    "Novo cadastro pelo convite do Vertces 🆕",
+    "",
+    `${o.empresa} (${o.documento})${o.convite ? ` · convite: ${o.convite}` : ""}`,
+    `Responsável: ${o.responsavel} · ${o.telefone} · ${o.email}`,
+    `Plano ${o.plano}, ${o.periodo}: ${fmtReais(o.valor)}`,
+    "",
+    "O acesso já está liberado; a cobrança começa no 1º crédito gasto.",
+  ].join("\n");
+}
+
 export function mensagemAcessoLiberado(o: { responsavel: string | null; empresa: string; url: string; login?: string | null; creditos?: string }): string {
   return [
     ola(o.responsavel),

@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { atualizarEmpresa, cobrancaDaEmpresa } from "../../lib/admin";
 import type { CobrancaEmpresa as Dados, Empresa } from "../../lib/admin";
 import {
-  atualizarAssinatura, cancelarAssinatura, cobrarEmpresa, conferirPagamentos, FORMA, ROTULO_SITUACAO, rotuloPagamento,
+  atualizarAssinatura, cancelarAssinatura, cobrarEmpresa, conferirPagamentos, FORMA, iniciarMensalidadeDaEmpresa, ROTULO_SITUACAO, rotuloPagamento,
 } from "../../lib/cobranca";
 import type { ResultadoCobranca } from "../../lib/cobranca";
 import { fmtPreco } from "../../lib/creditos";
@@ -60,6 +60,9 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
   const ciclo = cicloDe(a?.ciclo) ?? "MONTHLY";
   const valorDiferente = ciclo === "MONTHLY" && viva && a!.valor !== null && c.mensalidade !== null && Number(a!.valor) !== Number(c.mensalidade);
   const semMensalidade = !(Number(c.mensalidade ?? 0) > 0);
+  // 0049: a mensalidade que começa no 1º crédito gasto
+  const esperando = !!a?.inicio_no_primeiro_credito && !a.mensalidade_iniciada_em;
+  const aIniciar = esperando && !!a?.primeiro_credito_em;
 
   const gerar = () => agir("gerar", async () => {
     const r = await cobrarEmpresa({ escritorio_id: e.id });
@@ -77,7 +80,8 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
       <section className="sa-card">
         <header>
           <h3>Mensalidade<Dica>a assinatura mensal no Asaas: Pix, boleto ou cartão. Paga a 1ª, a empresa é liberada sozinha.</Dica></h3>
-          <span className={`sa-pill ${CLASSE[a?.situacao ?? "sem_assinatura"]}`} style={{ marginLeft: "auto" }}>{ROTULO_SITUACAO[a?.situacao ?? "sem_assinatura"]}</span>
+          <span className={`sa-pill ${esperando ? (aIniciar ? "suspenso" : "ativo") : CLASSE[a?.situacao ?? "sem_assinatura"]}`} style={{ marginLeft: "auto" }}>
+            {esperando ? (aIniciar ? "1º crédito gasto" : "Começa no 1º crédito") : ROTULO_SITUACAO[a?.situacao ?? "sem_assinatura"]}</span>
         </header>
         <div className="sa-cobranca">
           <div><span>Mensalidade que vale</span><b>{c.mensalidade === null ? "não definida" : fmtPreco(Number(c.mensalidade))}</b></div>
@@ -93,7 +97,16 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
               <small className="sub">{r.limite_periodo ? `limite ${fmtPreco(Number(r.limite_periodo))}/mês · ` : ""}gasto {fmtPreco(Number(r.gasto_periodo))}</small></div>
           ))}
         </div>
-        {c.cartao?.recusa_em && <div className="sa-aviso erro" style={{ marginTop: 12 }}>Compra automática recusada em {fmtData(c.cartao.recusa_em)}: {c.cartao.recusa_motivo}</div>}
+        {a?.inicio_no_primeiro_credito && (
+          <div className={`sa-aviso ${a.primeiro_credito_em && !a.mensalidade_iniciada_em ? "erro" : "info"}`} style={{ marginTop: 12 }}>
+            {a.mensalidade_iniciada_em
+              ? <>Cliente que paga a partir do 1º crédito: {a.primeiro_credito_em ? <>gastou o 1º crédito em <b>{fmtData(a.primeiro_credito_em)}</b> e </> : null}a mensalidade começou em <b>{fmtData(a.mensalidade_iniciada_em)}</b>. Daqui para frente, cobrança normal.</>
+              : a.primeiro_credito_em
+                ? <>Gastou o 1º crédito em <b>{fmtData(a.primeiro_credito_em)}</b>, mas a mensalidade ainda não foi gerada no Asaas. Use “Gerar a mensalidade agora”.</>
+                : <>A mensalidade começa no dia em que a empresa gastar o 1º crédito. Até lá ela usa o sistema sem pagar; nesse dia a assinatura nasce no Asaas (vencendo no mesmo dia) e o link vai no WhatsApp dela.</>}
+          </div>
+        )}
+        {c.cartao?.recusa_em &&<div className="sa-aviso erro" style={{ marginTop: 12 }}>Compra automática recusada em {fmtData(c.cartao.recusa_em)}: {c.cartao.recusa_motivo}</div>}
         {a?.whatsapp_erro && <div className="sa-aviso erro" style={{ marginTop: 12 }}>Último envio no WhatsApp falhou: {a.whatsapp_erro}</div>}
         {valorDiferente && (
           <div className="sa-aviso info" style={{ marginTop: 12 }}>
@@ -134,9 +147,20 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
               return `Assinatura atualizada para ${fmtPreco(r.valor)} (as mensalidades em aberto também).`;
             })}>Atualizar valor no Asaas</button>
           )}
-          {c.pagamento_online && (
-            <button type="button" className="principal" disabled={!!ocupado || semMensalidade} title={semMensalidade ? "Defina a mensalidade do plano ou desta empresa" : undefined} onClick={gerar}>
-              {ocupado === "gerar" ? "Gerando…" : viva ? "Reenviar a fatura no WhatsApp" : "Gerar cobrança e enviar no WhatsApp"}
+          {c.pagamento_online && aIniciar && (
+            <button type="button" className="principal" disabled={!!ocupado} onClick={() => agir("iniciar", async () => {
+              const r = await iniciarMensalidadeDaEmpresa(e.id);
+              return r.acao === "iniciada" ? `Mensalidade gerada${r.vencimento ? `, vence em ${dataBr(r.vencimento)}` : ""}${r.whatsapp ? " e enviada no WhatsApp" : ""}.`
+                : r.acao === "ja_iniciada" ? "A mensalidade já tinha sido gerada." : `Não gerou: ${r.acao}.`;
+            })}>{ocupado === "iniciar" ? "Gerando…" : "Gerar a mensalidade agora"}</button>
+          )}
+          {c.pagamento_online && !aIniciar && (
+            <button type="button" className="principal" disabled={!!ocupado || semMensalidade} title={semMensalidade ? "Defina a mensalidade do plano ou desta empresa" : undefined}
+              onClick={async () => {
+                if (esperando && !(await confirmar({ titulo: "Cobrar sem esperar o 1º crédito?", texto: `A ${e.nome} ainda não gastou o 1º crédito. Gerar a cobrança agora encerra a condição combinada: a mensalidade começa hoje.`, confirmar: "Cobrar agora" }))) return;
+                gerar();
+              }}>
+              {ocupado === "gerar" ? "Gerando…" : viva ? "Reenviar a fatura no WhatsApp" : esperando ? "Cobrar já (sem esperar o 1º crédito)" : "Gerar cobrança e enviar no WhatsApp"}
             </button>
           )}
         </div>

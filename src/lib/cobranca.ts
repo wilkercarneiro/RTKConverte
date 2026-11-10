@@ -61,7 +61,21 @@ export interface MinhaCobranca {
   assinatura?: boolean;
   regras?: RegrasPagamento;
   ultimo_pagamento?: { status: string; forma: string | null; parcelas: number | null; valor: number; ciclo: Ciclo | null; adesao?: number | null; criado_em: string } | null;
+  /** 0049: a mensalidade só começa no 1º crédito gasto (cliente escolhido pela equipe) */
+  inicio_no_primeiro_credito?: boolean;
+  primeiro_credito_em?: string | null;
+  mensalidade_iniciada_em?: string | null;
+  /** gastou o 1º crédito e a cobrança ainda não existe: a tela chama iniciarMensalidade */
+  mensalidade_a_iniciar?: boolean;
 }
+
+/** 0049: a empresa ainda espera o 1º crédito para a mensalidade começar. */
+export const esperaPrimeiroCredito = (c: MinhaCobranca | null | undefined): boolean =>
+  !!c?.inicio_no_primeiro_credito && !c.mensalidade_iniciada_em;
+
+/** 0049: gastou o 1º crédito — cria a mensalidade no Asaas (o servidor decide; repetir não cria outra). */
+export const iniciarMensalidade = () =>
+  chamar<{ acao: string; link?: string | null; valor?: number; vencimento?: string | null }>({ acao: "iniciar_mensalidade" });
 
 // ---------------------------------------------------------------- o autocadastro (0040)
 
@@ -88,17 +102,43 @@ export async function planosDoCadastro(): Promise<CadastroPlanos> {
   };
 }
 
+/** 0049: o convite de cadastro (link com token): o plano e a condição, ou por que não vale. */
+export interface ConviteCadastro {
+  valido: boolean;
+  /** inexistente · usado · cancelado · expirado · plano */
+  motivo?: string;
+  expira_em?: string;
+  plano?: PlanoAVenda;
+  regras?: RegrasPagamento;
+}
+/** RPC pública convite_cadastro (funciona sem login). */
+export async function conviteDoCadastro(token: string): Promise<ConviteCadastro> {
+  const d = falsa
+    ? (await falsa({ acao: "convite_cadastro", token })) as ConviteCadastro
+    : await (async () => {
+      const { data, error } = await supabase.rpc("convite_cadastro", { p_token: token });
+      if (error) throw new Error(error.message);
+      return data as ConviteCadastro;
+    })();
+  if (!d?.valido || !d.plano) return { valido: false, motivo: d?.motivo ?? "inexistente" };
+  const p = d.plano;
+  return { ...d, plano: { ...p, mensalidade: Number(p.mensalidade), creditos: p.creditos ?? [], extra: p.extra ?? {} }, regras: normalizarRegras(d.regras) };
+}
+
 export interface DadosCadastro {
   empresa: string; documento: string; responsavel: string; email: string; telefone: string; senha: string;
   plano_id: string; ciclo: Ciclo; aceite_termos: boolean; versao_termos: string;
   /** campo escondido: só robô preenche */
   site: string;
+  /** 0049: o token do convite (o servidor usa o plano dele e libera já) */
+  convite?: string;
 }
-/** Cria a conta e a empresa (sem login). Erro com `status` (409 = já existe; 429 = muitas tentativas). */
+type CadastroCriado = { escritorio_id: string; login: string; liberada?: boolean };
+/** Cria a conta e a empresa (sem login). Erro com `status` (409 = já existe; 410 = convite que não vale; 429 = muitas tentativas). */
 export const criarCadastro = (d: DadosCadastro) =>
   falsa
-    ? (falsa({ acao: "cadastro_criar", ...d }) as Promise<{ escritorio_id: string; login: string }>)
-    : chamarFuncaoPublica<{ escritorio_id: string; login: string }>("cobranca", { acao: "cadastro_criar", ...d });
+    ? (falsa({ acao: "cadastro_criar", ...d }) as Promise<CadastroCriado>)
+    : chamarFuncaoPublica<CadastroCriado>("cobranca", { acao: "cadastro_criar", ...d });
 
 export interface ResultadoPagarCadastro {
   forma: "pix" | "cartao"; ciclo: Ciclo; valor: number;
@@ -178,7 +218,10 @@ export interface ResultadoCobranca {
 }
 export const cobrarEmpresa = (d: { escritorio_id: string; enviar_whatsapp?: boolean; login?: string; senha?: string; liberada?: boolean }) =>
   chamar<ResultadoCobranca>({ acao: "cobrar_empresa", ...d });
-export const atualizarAssinatura = (escritorioId: string) => chamar<{ valor: number }>({ acao: "atualizar_assinatura", escritorio_id: escritorioId });
+/** 0049: o superadmin gera a mensalidade de quem já gastou o 1º crédito (a tela não chegou a gerar). */
+export const iniciarMensalidadeDaEmpresa = (escritorioId: string) =>
+  chamar<{ acao: string; link?: string | null; valor?: number; vencimento?: string | null; whatsapp?: boolean }>({ acao: "iniciar_mensalidade", escritorio_id: escritorioId });
+export const atualizarAssinatura =(escritorioId: string) => chamar<{ valor: number }>({ acao: "atualizar_assinatura", escritorio_id: escritorioId });
 export const cancelarAssinatura = (escritorioId: string) => chamar<{ ok: true }>({ acao: "cancelar_assinatura", escritorio_id: escritorioId });
 
 /** Onde o Asaas avisa os pagamentos: a função, com o marcador de origem. */

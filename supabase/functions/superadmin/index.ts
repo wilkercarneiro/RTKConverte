@@ -10,7 +10,9 @@
 //                      → empresa + conta de login (e-mail da empresa, senha padrão)
 //                        como dona, marcada para trocar a senha no 1º acesso.
 //                        aguardando_pagamento: nasce sem acesso até pagar a
-//                        1ª mensalidade (a cobrança sai da função `cobranca`)
+//                        1ª mensalidade (a cobrança sai da função `cobranca`).
+//                        inicio_no_primeiro_credito (0049): nasce ativa e a
+//                        mensalidade só começa no 1º crédito gasto
 //   adicionar_usuario  { escritorio_id, email, senha, papel? }
 //   redefinir_senha    { user_id, senha }   → volta a ser provisória
 //   remover_usuario    { user_id }          → apaga a conta do Auth
@@ -65,7 +67,9 @@ async function criarEmpresa(svc: Svc, b: Record<string, unknown>) {
   const email = String(b.email ?? "").trim().toLowerCase();
   const senha = String(b.senha ?? "");
   const planoId = b.plano_id ? String(b.plano_id) : null;
-  const status = b.aguardando_pagamento === true ? "aguardando_pagamento" : "ativo";
+  // 0049: entra já e a mensalidade só começa no 1º crédito gasto (a cobrança nasce na função `cobranca`)
+  const noPrimeiroCredito = b.inicio_no_primeiro_credito === true;
+  const status = b.aguardando_pagamento === true && !noPrimeiroCredito ? "aguardando_pagamento" : "ativo";
 
   if (!cnpjValido(cnpj)) return json({ erro: "CNPJ inválido." }, 400);
   if (nome.length < 2) return json({ erro: "Informe o nome da empresa." }, 400);
@@ -96,10 +100,12 @@ async function criarEmpresa(svc: Svc, b: Record<string, unknown>) {
     { escritorio_id: escId, key: "razao_social", value: nome },
     { escritorio_id: escId, key: "cnpj", value: cnpj },
   ]);
-  if (eMem || eProv || eCfg) {
+  const { error: eCob } = eMem || eProv || eCfg || !noPrimeiroCredito ? { error: null }
+    : await svc.from("cobranca_empresas").insert({ escritorio_id: escId, ciclo: "MONTHLY", situacao: "sem_assinatura", inicio_no_primeiro_credito: true });
+  if (eMem || eProv || eCfg || eCob) {
     await svc.from("escritorios").delete().eq("id", escId);
     await svc.auth.admin.deleteUser(conta.id);
-    return json({ erro: `Não foi possível concluir o cadastro: ${(eMem ?? eProv ?? eCfg)!.message}` }, 500);
+    return json({ erro: `Não foi possível concluir o cadastro: ${(eMem ?? eProv ?? eCfg ?? eCob)!.message}` }, 500);
   }
   return json({ ok: true, escritorio_id: escId, user_id: conta.id, login: email });
 }

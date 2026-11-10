@@ -101,7 +101,9 @@ export function Empresas({ d }: { d: DadosAdmin }) {
                     {e.mensalidade != null && <div className="sub" style={{ fontSize: 12 }}>{fmtPreco(Number(e.mensalidade))}/mês</div>}
                     {e.excecoes > 0 && <div className="sub" style={{ fontSize: 12 }}>+{e.excecoes} exceção(ões)</div>}</td>
                   <td><StatusPill status={e.status} />
-                    {e.cobranca === "atrasada" && <div><span className="sa-pill cancelado" style={{ marginTop: 4 }}>Mensalidade atrasada</span></div>}</td>
+                    {e.cobranca === "atrasada" && <div><span className="sa-pill cancelado" style={{ marginTop: 4 }}>Mensalidade atrasada</span></div>}
+                    {e.inicio_cobranca && <div><span className={`sa-pill ${e.inicio_cobranca === "a_iniciar" ? "suspenso" : "neutro"}`} style={{ marginTop: 4 }}
+                      title="a mensalidade começa no dia do 1º crédito gasto">{e.inicio_cobranca === "a_iniciar" ? "1º crédito gasto · gerar cobrança" : "Cobra no 1º crédito"}</span></div>}</td>
                   <td className="num">{fmtNum(e.usuarios)}</td>
                   <td className="num">{fmtNum(e.servicos_30d)}<div className="sub" style={{ fontSize: 12 }}>{fmtNum(e.servicos)} no total</div></td>
                   <td>{quando(e.ultimo_acesso)}</td>
@@ -120,7 +122,11 @@ export function Empresas({ d }: { d: DadosAdmin }) {
   );
 }
 
-interface Criada { empresa: string; responsavel: string; login: string; senha: string; id: string; telefone: string; cobranca: ResultadoCobranca | null; liberada?: boolean }
+interface Criada {
+  empresa: string; responsavel: string; login: string; senha: string; id: string; telefone: string; cobranca: ResultadoCobranca | null; liberada?: boolean;
+  /** 0049: a mensalidade (R$) que começa no 1º crédito gasto; null = não é esse caso */
+  primeiroCredito?: number | null;
+}
 
 function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
   const planoPadrao = d.planos.find((p) => p.ativo)?.id ?? "";
@@ -135,7 +141,8 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
   const [porMesPlanos, setPorMesPlanos] = useState<Record<string, Record<string, number | null>>>({});
   const [pagamentos, setPagamentos] = useState<StatusPagamentos | null | undefined>(undefined);
   // pos_pagamento: só entra depois de pagar · liberada_cobrando: entra já e recebe o link · liberada: sem cobrança
-  const [modo, setModo] = useState<"pos_pagamento" | "liberada_cobrando" | "liberada">("pos_pagamento");
+  // primeiro_credito (0049): entra já e a mensalidade começa no dia do 1º crédito gasto
+  const [modo, setModo] = useState<"pos_pagamento" | "liberada_cobrando" | "primeiro_credito" | "liberada">("pos_pagamento");
 
   useEffect(() => { lerSenhaPadrao().then((s) => setF((x) => (x.senha ? x : { ...x, senha: s }))).catch(() => {}); }, []);
   useEffect(() => { creditosDosPlanos().then(setPorMesPlanos).catch(() => {}); }, []);
@@ -151,7 +158,9 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
   const asaasLigado = !!pagamentos?.asaas.configurado;
   const zapLigado = !!pagamentos?.whatsapp.configurado;
   const podeCobrar = asaasLigado && mensal !== null && mensal > 0;
-  const vaiCobrar = modo !== "liberada" && podeCobrar;
+  const noPrimeiroCredito = modo === "primeiro_credito" && podeCobrar;
+  // cobrar agora (gera o link já); no 1º crédito a cobrança nasce depois, sozinha
+  const vaiCobrar = (modo === "pos_pagamento" || modo === "liberada_cobrando") && podeCobrar;
   const esperaPagar = modo === "pos_pagamento" && vaiCobrar;
   const porMesDoPlano = (t: string): number | null => (!plano ? null : t in (porMesPlanos[plano.id] ?? {}) ? porMesPlanos[plano.id][t] : 0);
   const resumoCreditos = d.tipos.filter((t) => porMesDoPlano(t.chave) !== 0)
@@ -178,7 +187,8 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
     setErro(null);
     try {
       const { mensal: _mensal, ...dados } = f;
-      const r = await criarEmpresa({ ...dados, plano_id: f.plano_id || null, aguardando_pagamento: esperaPagar });
+      const r = await criarEmpresa({ ...dados, plano_id: f.plano_id || null, aguardando_pagamento: esperaPagar,
+        ...(noPrimeiroCredito ? { inicio_no_primeiro_credito: true } : {}) });
       // o combinado com a empresa (a conta já existe: se falhar aqui, ajusta-se na página dela)
       const falhas: string[] = [];
       if (f.mensal.trim() !== "") await atualizarEmpresa(r.escritorio_id, { mensalidade: reais(f.mensal) }).catch((x) => falhas.push(`mensalidade (${x.message ?? x})`));
@@ -195,7 +205,8 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
         catch (x) { falhas.push(`cobrança no Asaas (${x instanceof Error ? x.message : x}) — gere de novo na aba Cobrança da empresa`); }
       }
       if (falhas.length) setErro(`Empresa criada, mas não foi possível gravar: ${falhas.join("; ")}.`);
-      setCriada({ empresa: f.nome.trim(), responsavel: f.responsavel.trim(), login: r.login, senha: f.senha, id: r.escritorio_id, telefone: f.telefone, cobranca, liberada: !esperaPagar });
+      setCriada({ empresa: f.nome.trim(), responsavel: f.responsavel.trim(), login: r.login, senha: f.senha, id: r.escritorio_id, telefone: f.telefone, cobranca, liberada: !esperaPagar,
+        primeiroCredito: noPrimeiroCredito ? mensal : null });
       await d.recarregar();
     } catch (err) {
       setErro(err instanceof Error ? err.message : String(err));
@@ -205,7 +216,11 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
   }
 
   const url = `${location.origin}/app/`;
-  const texto = criada ? mensagemDeAcesso({ ...criada, url }) : "";
+  const texto = criada
+    ? mensagemDeAcesso({ ...criada, url }) + (criada.primeiroCredito
+      ? `\n\nComo combinado, você não paga nada agora: a mensalidade (${fmtPreco(criada.primeiroCredito)}) só começa a contar no dia em que você usar o primeiro crédito.`
+      : "")
+    : "";
 
   return (
     <>
@@ -244,6 +259,12 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
               ) : (
                 <>
                   <p style={{ marginTop: 0 }}>A <b>{criada.empresa}</b> já pode entrar. Mande os dados abaixo ao responsável: no primeiro acesso o sistema pede uma senha nova.</p>
+                  {criada.primeiroCredito ? (
+                    <div className="sa-aviso info">
+                      Nada é cobrado agora. No dia em que a empresa gastar o 1º crédito, a mensalidade de {fmtPreco(criada.primeiroCredito)} começa:
+                      a assinatura nasce no Asaas vencendo nesse dia, o link vai no WhatsApp dela e os créditos passam a renovar no mesmo dia do mês.
+                    </div>
+                  ) : null}
                   <div className="sa-credenciais">
                     <div className="linha"><span>Endereço</span><b>{url}</b></div>
                     <div className="linha"><span>Login</span><b>{criada.login}</b></div>
@@ -343,7 +364,14 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
                       </span>
                     </label>
                     <label className="sa-opcao">
-                      <input type="radio" name="cobrar" checked={!vaiCobrar} onChange={() => setModo("liberada")} />
+                      <input type="radio" name="cobrar" checked={noPrimeiroCredito} disabled={!podeCobrar} onChange={() => setModo("primeiro_credito")} />
+                      <span>
+                        <b>Liberar agora; cobrar a partir do 1º crédito usado</b>
+                        <small>{podeCobrar ? `Entra na hora e não paga nada até gastar o primeiro crédito. Nesse dia a mensalidade (${fmtPreco(mensal!)}) começa a contar: o link vai no WhatsApp dela, vencendo no mesmo dia, e os créditos passam a renovar nessa data.` : "Precisa do Asaas e da mensalidade."}</small>
+                      </span>
+                    </label>
+                    <label className="sa-opcao">
+                      <input type="radio" name="cobrar" checked={!vaiCobrar && !noPrimeiroCredito} onChange={() => setModo("liberada")} />
                       <span><b>Liberar agora, sem cobrança</b><small>Para cortesia, teste ou pagamento combinado por fora.</small></span>
                     </label>
                   </>

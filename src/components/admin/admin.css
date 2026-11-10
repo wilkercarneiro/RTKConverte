@@ -718,3 +718,6 @@ button.sa-kpi:hover, button.sa-kpi:focus-visible { transform: translateY(-2px); 
 
 /* a regra global button:hover (styles.css) deixava o texto verde sobre o menu escuro */
 button.sa-nav:hover:not(:disabled) { color: #fff; }
+
+/* convite recém-gerado (0049): destaque até recarregar */
+.sa-fatura.sa-convite-novo { box-shadow: 0 0 0 2px var(--primaria-clara, #cfe8da); border-color: var(--primaria, #178552); }

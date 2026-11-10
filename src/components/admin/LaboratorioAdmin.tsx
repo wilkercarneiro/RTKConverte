@@ -51,6 +51,18 @@ const EMPRESAS = [
   mensalidade: i === 1 ? 199.9 : PLANOS.find((p) => p.id === plano)?.preco_mensal ?? null,
   cobranca, vencimento: cobranca ? dia(i === 2 ? 6 : -20).slice(0, 10) : null,
 }));
+// 0049: clientes que pagam a partir do 1º crédito (e6 ainda não gastou; e7 gastou hoje e falta a cobrança)
+(EMPRESAS as Record<string, unknown>[]).push(
+  { ...EMPRESAS[1], id: "e6", nome: "GEO VALE DO SÃO FRANCISCO", cnpj: "04252011000110", responsavel: "Lucas Moreira", status: "ativo", servicos: 0, servicos_30d: 0,
+    ultimo_servico: null, ultimo_acesso: dia(0.1), excecoes: 0, mensalidade: 249.9, cobranca: null, vencimento: null, created_at: dia(2), inicio_cobranca: "esperando" },
+  { ...EMPRESAS[1], id: "e7", nome: "TOPOGRAFIA CHAPADA", cnpj: "08332161000155", responsavel: "Carla Dias", status: "ativo", servicos: 1, servicos_30d: 1,
+    ultimo_servico: dia(0.2), ultimo_acesso: dia(0.2), excecoes: 0, mensalidade: 249.9, cobranca: null, vencimento: null, created_at: dia(9), inicio_cobranca: "a_iniciar" },
+);
+// convites (0049): em memória, como o resto do laboratório
+const CONVITES: Record<string, unknown>[] = [
+  { id: "cv1", token: "3f9a".repeat(16), nome: "João — Geo Sertão (reunião 10/11)", plano_id: "p2", plano: "Profissional", criado_em: dia(1), expira_em: dia(-29), usado_em: null, cancelado_em: null, escritorio_id: null, empresa: null, situacao: "aberto" },
+  { id: "cv2", token: "7c1e".repeat(16), nome: "Lucas Moreira", plano_id: "p2", plano: "Profissional", criado_em: dia(4), expira_em: dia(-26), usado_em: dia(2), cancelado_em: null, escritorio_id: "e6", empresa: "GEO VALE DO SÃO FRANCISCO", situacao: "usado" },
+];
 const MATRIZ = PLANOS.flatMap((p) => RECURSOS.filter((r) => r.chave !== "sigef.mapa").map((r) => ({
   plano_id: p.id, recurso_chave: r.chave,
   liberado: p.id !== "p4" || ["servico.car", "empresa.equipe", "integracao.gprol"].includes(r.chave),
@@ -125,7 +137,25 @@ const RPC: Record<string, (a: Record<string, unknown>) => unknown> = {
       ],
     };
   },
+  sa_convites: () => CONVITES,
+  sa_criar_convite: (a) => {
+    const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), (x) => x.toString(16).padStart(2, "0")).join("");
+    const plano = PLANOS.find((p) => p.id === a.p_plano);
+    const c = { id: crypto.randomUUID(), token, nome: a.p_nome ?? null, plano_id: a.p_plano, plano: plano?.nome ?? null, criado_em: dia(0),
+      expira_em: dia(-Number(a.p_dias ?? 30)), usado_em: null, cancelado_em: null, escritorio_id: null, empresa: null, situacao: "aberto" };
+    CONVITES.unshift(c);
+    return { id: c.id, token, expira_em: c.expira_em };
+  },
+  sa_cancelar_convite: (a) => { const c = CONVITES.find((x) => x.id === a.p_id); if (c) Object.assign(c, { cancelado_em: dia(0), situacao: "cancelado" }); return null; },
   sa_cobranca_empresa: (a) => {
+    if (a.p_escritorio === "e6" || a.p_escritorio === "e7") {
+      return {
+        mensalidade: 249.9, pagamento_online: true, cartao: null, recarga: {}, pagamentos: [],
+        assinatura: { asaas_cliente_id: null, asaas_assinatura_id: null, valor: null, situacao: "sem_assinatura", link_pagamento: null, proximo_vencimento: null,
+          ultimo_pagamento_em: null, whatsapp_em: null, whatsapp_erro: null, ciclo: "MONTHLY",
+          inicio_no_primeiro_credito: true, primeiro_credito_em: a.p_escritorio === "e7" ? dia(0.2) : null, mensalidade_iniciada_em: null },
+      };
+    }
     const e = EMPRESAS.find((x) => x.id === a.p_escritorio) ?? EMPRESAS[1];
     const nova = e.status === "aguardando_pagamento";
     return {
@@ -248,6 +278,7 @@ function instalar() {
       };
     }
     if (b.acao === "conferir") return { conferidos: 2, mudancas: [] };
+    if (b.acao === "iniciar_mensalidade") return { acao: "iniciada", valor: 249.9, vencimento: dia(0).slice(0, 10), link: "https://sandbox.asaas.com/i/abc123", whatsapp: true };
     // o QR aparece; o "celular" lê depois de 9 s e a instância conecta
     if (b.acao === "whatsapp_qrcode") {
       (window as { _qrEm?: number })._qrEm ??= Date.now();

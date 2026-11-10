@@ -2,7 +2,13 @@
 // pela página #/assinar sem login.
 //
 //   cadastro_criar { empresa, documento, responsavel, email, telefone, senha,
-//                    plano_id, ciclo, aceite_termos, versao_termos, site }
+//                    plano_id, ciclo, aceite_termos, versao_termos, site, convite? }
+//
+// Com `convite` (0049, o token do link /cadastro/?convite=…, gerado pela equipe):
+// o plano é o do convite, a empresa nasce ATIVA (origem 'convite') e a cobrança
+// só começa no 1º crédito gasto (cobranca_empresas.inicio_no_primeiro_credito).
+// O convite é de uso único: reservado no banco antes de criar a conta e
+// devolvido se a criação falhar. Vale mesmo com o cadastro pelo site fechado.
 //
 // Cria a conta e a empresa do mesmo jeito que o superadmin cria (superadmin/
 // index.ts → criarEmpresa): conta no Auth já confirmada (a VPS não manda e-mail;
@@ -23,7 +29,9 @@ import type { Deps, Resposta } from "./fluxos.ts";
 import { ErroAsaas } from "../_shared/asaas.ts";
 import { formatarDocumento, formatarTelefone, problemasDoCadastro, soDigitos } from "../_shared/cnpj.ts";
 import { enviarWhatsApp } from "../_shared/whatsapp.ts";
-import { mensagemCadastroCriado, mensagemNovoCadastro } from "../_shared/mensagens_cobranca.ts";
+import {
+  mensagemCadastroConvite, mensagemCadastroCriado, mensagemNovoCadastro, mensagemNovoConvite, textoCreditos,
+} from "../_shared/mensagens_cobranca.ts";
 import { cicloDe, maxParcelas, NOME_CICLO, regrasDe, valorDoPeriodo } from "../_shared/parcelas.ts";
 import type { Ciclo } from "../_shared/parcelas.ts";
 
@@ -91,9 +99,16 @@ async function avisarTetoDoDia(d: Deps, cfg: Record<string, string>): Promise<vo
 
 const texto = (v: unknown, max: number) => String(v ?? "").trim().replace(/\s+/g, " ").slice(0, max);
 
+/** O convite (0049) não vale: usado, cancelado, vencido ou desconhecido. */
+export const CONVITE_INVALIDO = "Este convite não vale mais: já foi usado, foi cancelado ou venceu. Peça um novo à equipe do Vertces.";
+
 async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unknown>): Promise<Resposta> {
   // robô: o campo escondido veio preenchido
   if (String(b.site ?? "").trim()) throw new ErroUsuario("Não foi possível concluir o cadastro. Recarregue a página e tente de novo.");
+  // 0049: o convite (link com token, gerado pela equipe) libera já e cobra só a partir do 1º crédito gasto
+  const token = String(b.convite ?? "").trim().toLowerCase();
+  const porConvite = token !== "";
+  if (porConvite && (!/^[0-9a-f]{64}$/.test(token) || !d.banco.reservarConvite)) throw new ErroUsuario(CONVITE_INVALIDO, 410);
   const f = {
     empresa: texto(b.empresa, 200), documento: soDigitos(String(b.documento ?? "")), responsavel: texto(b.responsavel, 200),
     email: String(b.email ?? "").trim().toLowerCase(), telefone: soDigitos(String(b.telefone ?? "")).replace(/^55(?=\d{10,11}$)/, ""),
@@ -106,11 +121,12 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
   const ciclo = cicloDe(b.ciclo);
   if (!ciclo) throw new ErroUsuario("Escolha o período: mensal, semestral ou anual.");
   const planoId = String(b.plano_id ?? "");
-  if (!/^[0-9a-f-]{36}$/i.test(planoId)) throw new ErroUsuario("Escolha um plano.");
+  if (!porConvite && !/^[0-9a-f-]{36}$/i.test(planoId)) throw new ErroUsuario("Escolha um plano.");
 
   const cfg = await d.banco.config();
   const regras = regrasDe(cfg);
-  if (!regras.cadastro_aberto || !asaasDe(cfg, d.fetch)) {
+  // o convite vale mesmo com o cadastro pelo site fechado: foi a equipe que mandou
+  if (!porConvite && (!regras.cadastro_aberto || !asaasDe(cfg, d.fetch))) {
     throw new ErroUsuario("O cadastro pelo site está fechado no momento. Fale com o Vertces para assinar.", 403);
   }
   // por IP e no total: depois da validação (erro de digitação não gasta a vez de ninguém)
@@ -123,10 +139,25 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
     }
   }
   if (!regras.ciclos[ciclo].ativo) throw new ErroUsuario(`O período ${NOME_CICLO[ciclo].toLowerCase()} não está disponível. Escolha outro.`);
+  // o convite é de uso único: reservado aqui (sob trava no banco) e devolvido se a conta não sair
+  const convite = porConvite ? await d.banco.reservarConvite!(token) : null;
+  if (porConvite && !convite) throw new ErroUsuario(CONVITE_INVALIDO, 410);
+  try {
+    return await criarContaEEmpresa(d, cfg, regras, f, versao, ciclo, convite ? convite.plano_id : planoId, convite);
+  } catch (e) {
+    if (convite) await d.banco.devolverConvite?.(convite.id).catch(() => {});
+    throw e;
+  }
+}
+
+async function criarContaEEmpresa(d: Deps, cfg: Record<string, string>, regras: ReturnType<typeof regrasDe>,
+  f: { empresa: string; documento: string; responsavel: string; email: string; telefone: string; senha: string },
+  versao: string, ciclo: Ciclo, planoId: string, convite: { id: string; nome: string | null } | null): Promise<Resposta> {
   const plano = await d.banco.planoParaVenda(planoId);
   const mensalidade = Number(plano?.preco_mensal ?? 0);
-  if (!plano || !plano.ativo || !plano.vende_no_site || !(mensalidade > 0)) {
-    throw new ErroUsuario("Este plano não está disponível para assinatura pelo site. Escolha outro.");
+  // pelo convite vale qualquer plano ativo com mensalidade (a equipe escolheu); pelo site, só os à venda
+  if (!plano || !plano.ativo || (!convite && !plano.vende_no_site) || !(mensalidade > 0)) {
+    throw new ErroUsuario(convite ? "O plano deste convite não está mais disponível. Peça um novo à equipe do Vertces." : "Este plano não está disponível para assinatura pelo site. Escolha outro.");
   }
   // cadastro antigo com este documento ou e-mail que nunca pagou: dá lugar a este
   await liberarAbandonados(d, cfg, f.documento, f.email);
@@ -142,12 +173,15 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
   try {
     escId = await d.banco.inserirEmpresa({
       nome: f.empresa, cnpj: f.documento, responsavel: f.responsavel, telefone: f.telefone, email: f.email,
-      plano_id: plano.id, status: "aguardando_pagamento", origem: "site",
+      plano_id: plano.id,
+      // pelo convite (0049) entra já; a cobrança nasce no 1º crédito gasto
+      status: convite ? "ativo" : "aguardando_pagamento", origem: convite ? "convite" : "site",
     });
     await d.banco.inserirMembro(escId, conta.id, f.responsavel);
     // a razão social e o documento também vão para Configurações (memorial e planta leem de lá)
     await d.banco.inserirConfigEmpresa(escId, { razao_social: f.empresa, cnpj: f.documento });
-    await d.banco.salvarCobranca(escId, { ciclo, valor, situacao: "sem_assinatura" });
+    await d.banco.salvarCobranca(escId, { ciclo, valor, situacao: "sem_assinatura", ...(convite ? { inicio_no_primeiro_credito: true } : {}) });
+    if (convite) await d.banco.concluirConvite?.(convite.id, escId);
   } catch (e) {
     if (escId) await d.banco.removerEmpresa(escId).catch(() => {});
     await d.banco.removerConta(conta.id).catch(() => {});
@@ -155,9 +189,38 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
     if ((e as { codigo?: string }).codigo === "23505") throw new ErroUsuario(JA_EXISTE, 409);
     throw e;
   }
+  if (convite) {
+    await d.banco.atividade(escId, "empresa.cadastro_convite", `${plano.nome} · ${NOME_CICLO[ciclo].toLowerCase()} · cobra a partir do 1º crédito`, conta.id).catch(() => {});
+    const whatsapp = await avisarConvite(d, cfg, { ...f, plano: plano.nome, ciclo, valor, convite: convite.nome, escritorioId: escId });
+    return ok({ escritorio_id: escId, login: f.email, ciclo, valor, adesao: 0, liberada: true, inicio_no_primeiro_credito: true, whatsapp });
+  }
   await d.banco.atividade(escId, "empresa.cadastro_site", `${plano.nome} · ${NOME_CICLO[ciclo].toLowerCase()}`, conta.id).catch(() => {});
   const whatsapp = await avisarCadastro(d, cfg, { ...f, plano: plano.nome, ciclo, valor, adesao: regras.adesao, parcelas: maxParcelas(regras, ciclo) });
   return ok({ escritorio_id: escId, login: f.email, ciclo, valor, adesao: regras.adesao, whatsapp });
+}
+
+/** Convite (0049): "conta criada, nada a pagar agora" para a pessoa e o aviso para o superadmin. Nunca derruba o cadastro. */
+async function avisarConvite(d: Deps, cfg: Record<string, string>, c: {
+  empresa: string; documento: string; responsavel: string; email: string; telefone: string; plano: string; ciclo: Ciclo; valor: number;
+  convite: string | null; escritorioId: string;
+}): Promise<boolean> {
+  const zap = zapDe(cfg);
+  if (!zap) return false;
+  const periodo = NOME_CICLO[c.ciclo].toLowerCase();
+  const emp = await d.banco.empresa(c.escritorioId).catch(() => null);
+  const [pessoa] = await Promise.all([
+    enviarWhatsApp(zap, c.telefone, mensagemCadastroConvite({
+      responsavel: c.responsavel, empresa: c.empresa, plano: c.plano, periodo, valor: c.valor, url: urlApp(cfg), login: c.email,
+      creditos: emp ? textoCreditos(emp.creditos) : undefined,
+    }), d.fetch).catch(() => ({ ok: false as const })),
+    cfg.whatsapp_avisos
+      ? enviarWhatsApp(zap, cfg.whatsapp_avisos, mensagemNovoConvite({
+        empresa: c.empresa, documento: formatarDocumento(c.documento), responsavel: c.responsavel, email: c.email,
+        telefone: formatarTelefone(c.telefone), plano: c.plano, periodo, valor: c.valor, convite: c.convite,
+      }), d.fetch).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+  return pessoa.ok;
 }
 
 /** "Cadastro criado, falta o pagamento" para a pessoa e, se houver, o aviso para o superadmin. Nunca derruba o cadastro. */

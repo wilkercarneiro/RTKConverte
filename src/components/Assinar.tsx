@@ -10,14 +10,14 @@
 // Quem confere tudo é o servidor; aqui a validação é só para avisar cedo.
 import { useEffect, useMemo, useState } from "react";
 import { supabase, ErroFuncao } from "../lib/supabase";
-import { criarCadastro, minhaCobranca, planosDoCadastro } from "../lib/cobranca";
+import { conviteDoCadastro, criarCadastro, minhaCobranca, planosDoCadastro } from "../lib/cobranca";
 import type { CadastroPlanos, MinhaCobranca, PlanoAVenda } from "../lib/cobranca";
 import { SUPORTE_WHATSAPP, VERSAO_TERMOS } from "../lib/config";
 import {
   formatarDocumento, formatarTelefone, problemasDoCadastro, soDigitos,
 } from "../../supabase/functions/_shared/cnpj.ts";
 import {
-  cicloDe, ciclosAtivos, economia, maxParcelas, MESES, NOME_CICLO, totalComAdesao, valorDoPeriodo,
+  cicloDe, ciclosAtivos, economia, maxParcelas, MESES, NOME_CICLO, normalizarRegras, totalComAdesao, valorDoPeriodo,
 } from "../../supabase/functions/_shared/parcelas.ts";
 import type { Ciclo } from "../../supabase/functions/_shared/parcelas.ts";
 import { fmtReais } from "../../supabase/functions/_shared/precos.ts";
@@ -58,12 +58,25 @@ function textoExtra(p: PlanoAVenda): string {
     .join(" · ");
 }
 
-export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
+/** Por que o convite não abre (0049). */
+const MOTIVO_CONVITE: Record<string, string> = {
+  usado: "Este convite já foi usado para criar uma conta.",
+  cancelado: "Este convite foi cancelado.",
+  expirado: "Este convite venceu.",
+  plano: "O plano deste convite não está mais disponível.",
+  inexistente: "Não encontramos este convite. Confira se o link chegou inteiro.",
+};
+
+export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicial }: {
   plano?: string; ciclo?: string;
+  /** 0049: o token do convite — o plano é o dele, a conta entra já e a mensalidade começa no 1º crédito */
+  convite?: string;
   /** só o laboratório (#/lab/assinar/plano) abre direto no passo 2 */
   passoInicial?: 1 | 2;
 }) {
   const [dados, setDados] = useState<CadastroPlanos | null | undefined>(undefined);
+  // o convite que não vale: o motivo (null = vale ou não é convite)
+  const [conviteRuim, setConviteRuim] = useState<string | null>(null);
   const [passo, setPasso] = useState<1 | 2 | 3>(passoInicial ?? 1);
   // conectado com outra conta: pergunta antes de trocar
   const [outraConta, setOutraConta] = useState<string | null | undefined>(undefined);
@@ -79,7 +92,14 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
   const etapa = pago ? 4 : passo;
 
   useEffect(() => {
-    planosDoCadastro().then((d) => {
+    // pelo convite: só o plano dele (vale mesmo com o cadastro do site fechado)
+    const carregar: Promise<CadastroPlanos> = convite
+      ? conviteDoCadastro(convite).then((c) => {
+        if (!c.valido || !c.plano || !c.regras) { setConviteRuim(c.motivo ?? "inexistente"); return { aberto: false, planos: [], regras: normalizarRegras(c.regras) }; }
+        return { aberto: true, planos: [c.plano], regras: c.regras };
+      })
+      : planosDoCadastro();
+    carregar.then((d) => {
       setDados(d);
       const ativos = ciclosAtivos(d.regras);
       setCiclo((c) => (ativos.includes(c) ? c : ativos[0] ?? "MONTHLY"));
@@ -119,17 +139,19 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
     if (!escolhido) { setErro({ texto: "Escolha um plano." }); return; }
     setEnviando(true); setErro(null);
     try {
-      await criarCadastro({
+      const r = await criarCadastro({
         empresa: f.empresa.trim(), documento: soDigitos(f.documento), responsavel: f.responsavel.trim(), email: f.email.trim(),
         telefone: soDigitos(f.telefone), senha: f.senha, plano_id: escolhido.id, ciclo, aceite_termos: f.aceite,
-        versao_termos: VERSAO_TERMOS, site: f.site,
+        versao_termos: VERSAO_TERMOS, site: f.site, ...(convite ? { convite } : {}),
       });
       const { error } = await supabase.auth.signInWithPassword({ email: f.email.trim(), password: f.senha });
       if (error) {
-        setErro({ texto: "A conta foi criada, mas não deu para entrar agora. Entre com o e-mail e a senha para pagar.", entrar: true });
+        setErro({ texto: r.liberada ? "A conta foi criada, mas não deu para entrar agora. Entre com o e-mail e a senha." : "A conta foi criada, mas não deu para entrar agora. Entre com o e-mail e a senha para pagar.", entrar: true });
         return;
       }
       try { sessionStorage.removeItem(GUARDADO); } catch { /* nada */ }
+      // convite (0049): nada a pagar agora — direto para o sistema
+      if (r.liberada) { location.hash = "#/"; return; }
       setCobranca(await minhaCobranca());
       setPasso(3);
     } catch (x) {
@@ -156,7 +178,7 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
 
       <main className="as-caixa">
         <ol className="as-passos" aria-label="Passos do cadastro">
-          {["Seus dados", "Plano", "Pagamento"].map((nome, i) => (
+          {(convite ? ["Seus dados", "Seu plano"] : ["Seus dados", "Plano", "Pagamento"]).map((nome, i) => (
             <li key={nome} className={etapa === i + 1 ? "atual" : etapa > i + 1 ? "feito" : ""} aria-current={etapa === i + 1 ? "step" : undefined}>
               <span>{etapa > i + 1 ? "✓" : i + 1}</span>{nome}
             </li>
@@ -182,6 +204,11 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
               <button type="button" className="principal" onClick={sair}>Sair e criar outra conta</button>
             </div>
           </section>
+        ) : conviteRuim ? (
+          <section>
+            <h1>Este convite não vale mais</h1>
+            <p className="as-sub">{MOTIVO_CONVITE[conviteRuim] ?? MOTIVO_CONVITE.inexistente} Fale com a equipe do Vertces{zap} para receber um novo. Se já tem conta, <a href="#/">entre por aqui</a>.</p>
+          </section>
         ) : !dados || !dados.aberto || !dados.planos.length ? (
           <section>
             <h1>O cadastro pelo site está fechado no momento</h1>
@@ -189,9 +216,15 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
           </section>
         ) : passo === 1 ? (
           <form onSubmit={continuar} noValidate>
-            <h1>Assine o Vertces</h1>
+            <h1>{convite ? "Seu convite para o Vertces" : "Assine o Vertces"}</h1>
+            {convite ? (
+              <div className="as-convite" role="note">
+                <b>Plano {escolhido?.nome ?? ""} · nada a pagar agora</b>
+                <span>O acesso é liberado assim que a conta for criada. A mensalidade só começa a contar no dia em que você usar o primeiro crédito.</span>
+              </div>
+            ) : null}
             <p className="as-sub">
-              {escolhido ? <>Plano <b>{escolhido.nome}</b> · {NOME_CICLO[ciclo].toLowerCase()}. </> : null}
+              {escolhido && !convite ? <>Plano <b>{escolhido.nome}</b> · {NOME_CICLO[ciclo].toLowerCase()}. </> : null}
               Comece pelos seus dados: o e-mail e a senha são o seu acesso.
             </p>
             <div className="grade">
@@ -236,20 +269,27 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
             </label>
             {msg("aceite_termos")}
             <div className="as-botoes">
-              <button type="submit" className="principal">Continuar: escolher o plano</button>
+              <button type="submit" className="principal">{convite ? "Continuar: ver o plano" : "Continuar: escolher o plano"}</button>
             </div>
           </form>
         ) : (
           <section>
-            <h1>Escolha o plano</h1>
-            <p className="as-sub">Os créditos do plano renovam todo mês. Pague por Pix ou no cartão{maxParcelas(dados.regras, "YEARLY") > 1 ? `, em até ${maxParcelas(dados.regras, "YEARLY")}x no anual` : ""}.
-              {dados.regras.adesao > 0 && <> O primeiro pagamento inclui a taxa de adesão de {fmtReais(dados.regras.adesao)}, cobrada uma vez só.</>}</p>
+            <h1>{convite ? "Seu plano" : "Escolha o plano"}</h1>
+            {convite ? (
+              <p className="as-sub">Os créditos do plano renovam todo mês. Escolha o período da cobrança: ela só começa no dia em que você usar o primeiro crédito, e os créditos passam a renovar nesse mesmo dia.</p>
+            ) : (
+              <p className="as-sub">Os créditos do plano renovam todo mês. Pague por Pix ou no cartão{maxParcelas(dados.regras, "YEARLY") > 1 ? `, em até ${maxParcelas(dados.regras, "YEARLY")}x no anual` : ""}.
+                {dados.regras.adesao > 0 && <> O primeiro pagamento inclui a taxa de adesão de {fmtReais(dados.regras.adesao)}, cobrada uma vez só.</>}</p>
+            )}
             {ativos.length > 1 && (
               <div className="as-periodos" role="radiogroup" aria-label="Período" style={{ ["--periodos" as string]: ativos.length } as React.CSSProperties}>
                 {ativos.map((c) => (
                   <button key={c} type="button" role="radio" aria-checked={c === ciclo} className={`as-periodo${c === ciclo ? " sel" : ""}`} onClick={() => setCiclo(c)}>
                     <b>{NOME_CICLO[c]}</b>
-                    <span>{maxParcelas(dados.regras, c) > 1 ? `até ${maxParcelas(dados.regras, c)}x no cartão` : "Pix ou cartão"}</span>
+                    <span>{convite
+                      // pelo convite a cobrança é uma fatura (Pix, boleto ou cartão à vista): sem parcelar
+                      ? (c === "MONTHLY" ? "cobrado todo mês" : c === "SEMIANNUALLY" ? "a cada 6 meses" : "uma vez por ano")
+                      : maxParcelas(dados.regras, c) > 1 ? `até ${maxParcelas(dados.regras, c)}x no cartão` : "Pix ou cartão"}</span>
                     {dados.regras.ciclos[c].desconto > 0 && <em>−{String(dados.regras.ciclos[c].desconto).replace(".", ",")}%</em>}
                   </button>
                 ))}
@@ -281,7 +321,16 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
                 );
               })}
             </div>
-            {escolhido && (
+            {escolhido && convite && (
+              <div className="as-total">
+                <span>Plano <b>{escolhido.nome}</b> · {NOME_CICLO[ciclo].toLowerCase()}
+                  <Dica>no dia do primeiro crédito usado, a primeira cobrança chega no WhatsApp; paga por Pix, boleto ou cartão. Dá para cadastrar o cartão no sistema e ele paga sozinho.</Dica>
+                </span>
+                <b>R$ 0,00 agora</b>
+                <small>depois, {fmtReais(valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto))} por {ciclo === "YEARLY" ? "ano" : ciclo === "SEMIANNUALLY" ? "semestre" : "mês"} a partir do 1º crédito usado</small>
+              </div>
+            )}
+            {escolhido && !convite && (
               <div className="as-total">
                 <span>Plano <b>{escolhido.nome}</b> · {NOME_CICLO[ciclo].toLowerCase()}
                   <Dica>o acesso é liberado quando o pagamento confirmar; no cartão, acima de {dados.regras.parcelas_sem_juros}x há juros de {String(dados.regras.juros_mes).replace(".", ",")}% ao mês, mostrados antes de pagar</Dica>
@@ -290,7 +339,7 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
                 <small>{dados.regras.adesao > 0 ? "primeiro pagamento, com a adesão · " : ""}Pix ou cartão{maxParcelas(dados.regras, ciclo) > 1 ? ` em até ${maxParcelas(dados.regras, ciclo)}x` : ""}</small>
               </div>
             )}
-            {escolhido && (
+            {escolhido && !convite && (
               <ResumoAdesao plano={escolhido.nome} periodo={NOME_CICLO[ciclo].toLowerCase()} adesao={dados.regras.adesao} texto={dados.regras.adesao_texto}
                 valorPeriodo={valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto)} />
             )}
@@ -302,7 +351,7 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, passoInicial }: {
             <div className="as-botoes">
               <button type="button" className="fantasma" onClick={() => { setPasso(1); setErro(null); }} disabled={enviando}>Voltar</button>
               <button type="button" className="principal" onClick={criar} disabled={enviando || !escolhido}>
-                {enviando ? "Criando a conta…" : "Criar conta e ir para o pagamento"}
+                {enviando ? "Criando a conta…" : convite ? "Criar conta e entrar" : "Criar conta e ir para o pagamento"}
               </button>
             </div>
           </section>

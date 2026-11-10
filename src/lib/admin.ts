@@ -20,6 +20,8 @@ export interface Empresa {
   /** situação da assinatura no Asaas (null = sem cobrança) */
   cobranca?: SituacaoCobranca | null;
   vencimento?: string | null;
+  /** 0049: a mensalidade começa no 1º crédito — 'esperando' (ainda não gastou) ou 'a_iniciar' (gastou, falta a cobrança) */
+  inicio_cobranca?: "esperando" | "a_iniciar" | null;
 }
 
 export interface Plano {
@@ -217,6 +219,10 @@ export interface CobrancaEmpresa {
     whatsapp_em: string | null; whatsapp_erro: string | null;
     /** 0040: período da assinatura (valor = o do período) */
     ciclo?: string | null;
+    /** 0049: a mensalidade começa no 1º crédito gasto */
+    inicio_no_primeiro_credito?: boolean;
+    primeiro_credito_em?: string | null;
+    mensalidade_iniciada_em?: string | null;
   } | null;
   /** 0037: o cartão (sem o token) e a compra automática */
   cartao?: CartaoPublico | null;
@@ -250,9 +256,27 @@ export interface NovaEmpresa {
   cnpj: string; nome: string; responsavel: string; telefone: string; email: string; senha: string; plano_id: string | null;
   /** nasce sem acesso até pagar a 1ª mensalidade (0034) */
   aguardando_pagamento?: boolean;
+  /** 0049: entra já e a mensalidade só começa no 1º crédito gasto */
+  inicio_no_primeiro_credito?: boolean;
 }
 export const criarEmpresa = (d: NovaEmpresa) =>
   chamarFuncao<{ ok: true; escritorio_id: string; user_id: string; login: string }>("superadmin", { acao: "criar_empresa", ...d });
+
+// ---------------------------------------------------------------- convites de cadastro (0049)
+
+/** Link de cadastro de uso único: libera já e a mensalidade começa no 1º crédito gasto. */
+export interface Convite {
+  id: string; token: string; nome: string | null; plano_id: string; plano: string | null;
+  criado_em: string; expira_em: string; usado_em: string | null; cancelado_em: string | null;
+  escritorio_id: string | null; empresa: string | null;
+  situacao: "aberto" | "usado" | "expirado" | "cancelado";
+}
+export const listarConvites = async (): Promise<Convite[]> => ok(await supabase.rpc("sa_convites")) ?? [];
+export const criarConvite = async (plano: string, nome: string, dias: number): Promise<{ id: string; token: string; expira_em: string }> =>
+  ok(await supabase.rpc("sa_criar_convite", { p_plano: plano, p_nome: nome || null, p_dias: dias }));
+export const cancelarConvite = async (id: string): Promise<void> => { ok(await supabase.rpc("sa_cancelar_convite", { p_id: id })); };
+/** O endereço que vai para o cliente (a página /cadastro/ leva ao #/assinar com o token). */
+export const linkDoConvite = (token: string, origem = location.origin) => `${origem}/cadastro/?convite=${token}`;
 export const adicionarUsuario = (escritorio_id: string, email: string, senha: string, papel: "dono" | "membro") =>
   chamarFuncao<{ ok: true; login: string }>("superadmin", { acao: "adicionar_usuario", escritorio_id, email, senha, papel });
 export const redefinirSenha = (user_id: string, senha: string) =>

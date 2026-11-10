@@ -3,6 +3,7 @@
 //   #/lab/assinar/plano      — passo 2 (os planos e o período) com o anual escolhido
 //   #/lab/assinar/pagamento  — passo 3, conectado como a dona da conta nova
 //   #/lab/assinar/pix        — passo 3 com o Pix já gerado
+//   #/lab/assinar/convite[-plano|-vencido] — o convite (0049): sem pagamento, cobra no 1º crédito
 // "Criar conta" e "Pagar" respondem falso: cartão até 6x aprova; acima disso,
 // fica em análise.
 import { supabase } from "../lib/supabase";
@@ -43,8 +44,10 @@ function instalar(tela: string) {
   const conectado = tela === "pagamento" || tela === "pix";
   definirCobrancaFalsa(async (b) => {
     if (b.acao === "cadastro_planos") return { aberto: true, regras: REGRAS, planos: PLANOS };
+    // 0049: o convite (vencido em #/lab/assinar/convite-vencido)
+    if (b.acao === "convite_cadastro") return tela === "convite-vencido" ? { valido: false, motivo: "expirado" } : { valido: true, expira_em: "2026-12-10T12:00:00Z", plano: PLANOS[1], regras: REGRAS };
     await espera(700);
-    if (b.acao === "cadastro_criar") return { escritorio_id: "lab", login: b.email };
+    if (b.acao === "cadastro_criar") return { escritorio_id: "lab", login: b.email, ...(b.convite ? { liberada: true } : {}) };
     if (b.acao === "pagar_cadastro" && b.forma === "pix") {
       return { forma: "pix", ciclo: b.ciclo, valor: 6478.92, link: "https://www.asaas.com/i/exemplo", vencimento: "2026-11-05",
         pix: { encodedImage: QR, payload: "00020101021226820014br.gov.bcb.pix2560qrpix.asaas.com/qr/cobv/exemplo5204000053039865406478.925802BR" } };
@@ -70,8 +73,12 @@ function instalar(tela: string) {
 export function LaboratorioAssinar() {
   const tela = location.hash.replace(/^#\/lab\/assinar\/?/, "").split("?")[0] || "dados";
   instalar(tela);
-  if (tela === "plano") {
+  if (tela === "plano" || tela === "convite-plano") {
     try { sessionStorage.setItem("vertces.assinar", JSON.stringify({ empresa: "Geo Lima Topografia", documento: "529.982.247-25", responsavel: "Ana Lima", telefone: "(71) 98888-7777", email: "ana@geolima.com.br" })); } catch { /* nada */ }
+  }
+  // 0049: #/lab/assinar/convite (passo 1), convite-plano (passo 2), convite-vencido
+  if (tela.startsWith("convite")) {
+    return <Assinar convite={"3f9a".repeat(16)} passoInicial={tela === "convite-plano" ? 2 : undefined} />;
   }
   return <Assinar plano={tela === "dados" ? undefined : PLANOS[1].id} ciclo={tela === "dados" ? undefined : "anual"} passoInicial={tela === "plano" ? 2 : undefined} />;
 }

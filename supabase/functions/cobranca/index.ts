@@ -83,7 +83,7 @@ function banco(svc: Svc): Banco {
         status: string; mensalidade: number | null; origem: string | null; plano: { nome: string; preco_mensal: number | null } | null;
       };
       const [cob, dono, sit, renova] = await Promise.all([
-        svc.from("cobranca_empresas").select("asaas_cliente_id, asaas_assinatura_id, situacao, link_pagamento, valor, proximo_vencimento, ciclo")
+        svc.from("cobranca_empresas").select("asaas_cliente_id, asaas_assinatura_id, situacao, link_pagamento, valor, proximo_vencimento, ciclo, inicio_no_primeiro_credito, primeiro_credito_em, mensalidade_iniciada_em")
           .eq("escritorio_id", id).maybeSingle(),
         svc.from("membros_escritorio").select("user_id").eq("escritorio_id", id).eq("papel", "dono").order("created_at").limit(1).maybeSingle(),
         svc.rpc("situacao_creditos", { p_escritorio: id }),
@@ -236,6 +236,24 @@ function banco(svc: Svc): Banco {
         out.push({ escritorioId: id, contas: (m.data ?? []).map((x) => (x as { user_id: string }).user_id) });
       }
       return out;
+    },
+    // ---- mensalidade no 1º crédito (0049)
+    async mensalidadesAIniciar() {
+      const r = await svc.from("cobranca_empresas").select("escritorio_id")
+        .eq("inicio_no_primeiro_credito", true).not("primeiro_credito_em", "is", null).is("mensalidade_iniciada_em", null).limit(50);
+      falhou(r, "cobranças");
+      return (r.data ?? []).map((x) => (x as { escritorio_id: string }).escritorio_id);
+    },
+    async reservarConvite(token) {
+      const r = await svc.rpc("reservar_convite", { p_token: token });
+      falhou(r, "convite");
+      return (r.data as { id: string; plano_id: string; nome: string | null } | null) ?? null;
+    },
+    async devolverConvite(id) {
+      await svc.from("convites_cadastro").update({ usado_em: null }).eq("id", id);
+    },
+    async concluirConvite(id, escritorioId) {
+      falhou(await svc.from("convites_cadastro").update({ escritorio_id: escritorioId }).eq("id", id), "convite");
     },
   };
 }
