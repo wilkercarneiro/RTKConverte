@@ -102,14 +102,22 @@ if $ENTREGAR; then
   node scripts/empacotar-entregar.mjs
   mkdir -p "$PACOTE/entregar" && cp build/funcoes/entregar/index.ts build/funcoes/entregar/deno.json "$PACOTE/entregar/"
 fi
+porta_livre() { node -e "require('net').connect(8000,'127.0.0.1').on('connect',()=>process.exit(1)).on('error',()=>process.exit(0))"; }
 for f in "${FUNCOES[@]}" $($ENTREGAR && echo entregar); do
+  # outra sessão pode estar testando a função dela na 8000: espera (até 5 min), não derruba
+  for _ in $(seq 1 300); do porta_livre && break; sleep 1; done
+  porta_livre || { echo "   porta 8000 ocupada por outro processo há 5 min — pare e confira"; exit 1; }
   ( cd "$PACOTE/$f"
     SUPABASE_URL="https://$HOST" SUPABASE_ANON_KEY="$ANON" SUPABASE_SERVICE_ROLE_KEY=x PORT=0 \
       timeout 120 deno run --no-check -A --config deno.json index.ts > "$PACOTE/$f.log" 2>&1 & echo $! > "$PACOTE/$f.pid" )
   ok=false
   for _ in $(seq 1 90); do grep -q "Listening" "$PACOTE/$f.log" && { ok=true; break; }; sleep 1; done
-  pid="$(cat "$PACOTE/$f.pid")"; pkill -P "$pid" 2>/dev/null || true; kill "$pid" 2>/dev/null || true
-  for _ in $(seq 1 20); do node -e "require('net').connect(8000,'127.0.0.1').on('connect',()=>process.exit(1)).on('error',()=>process.exit(0))" && break; sleep 1; done
+  pid="$(cat "$PACOTE/$f.pid")"
+  # Windows (Git Bash): o kill do MSYS não derruba o deno.exe filho — taskkill na árvore pelo PID do Windows
+  wpid="$(cat "/proc/$pid/winpid" 2>/dev/null || true)"
+  [ -n "$wpid" ] && taskkill //F //T //PID "$wpid" >/dev/null 2>&1 || true
+  pkill -P "$pid" 2>/dev/null || true; kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 20); do porta_livre && break; sleep 1; done
   if $ok; then echo "   $f: sobe no Deno (Listening)"; else echo "   $f: NÃO subiu:"; tail -8 "$PACOTE/$f.log"; exit 1; fi
 done
 
