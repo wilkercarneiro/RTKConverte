@@ -22,9 +22,11 @@ FN="$BASE/volumes/functions"
 DATA="$(date +%Y%m%d-%H%M)"
 BKF="$BASE/backup-funcoes-$DATA-primeiro-credito"
 BKB="$BASE/backup-banco-$DATA-primeiro-credito"
-ANTES="6756bed"  # só a cobrança no 1º crédito (o 6756bed, da planta, é de outra sessão e sai à parte)
+ANTES="${ANTES:-6756bed}"  # o que está no ar (ANTES=<commit> para um ajuste depois da 1ª publicação)
 HOST="utxqkbgfgpbczqjtieyu.supabase.agenteselevex.top"
 MIGRACOES=(supabase/migrations/0049_cobranca_primeiro_credito.sql)
+# SEM_MIGRACAO=1: só as funções (a 0049 já está no ar)
+[ "${SEM_MIGRACAO:-}" = "1" ] && MIGRACOES=()
 EXEC=false
 [ "${1:-}" = "--executar" ] && EXEC=true
 

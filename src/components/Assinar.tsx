@@ -276,7 +276,7 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
           <section>
             <h1>{convite ? "Seu plano" : "Escolha o plano"}</h1>
             {convite ? (
-              <p className="as-sub">Os créditos do plano renovam todo mês. Escolha o período da cobrança: ela só começa no dia em que você usar o primeiro crédito, e os créditos passam a renovar nesse mesmo dia.</p>
+              <p className="as-sub">Os créditos do plano renovam todo mês. Escolha o período da cobrança: ela só começa a contar no dia em que você usar o primeiro crédito, e a primeira vence um mês depois desse dia; os créditos passam a renovar nesse mesmo dia.</p>
             ) : (
               <p className="as-sub">Os créditos do plano renovam todo mês. Pague por Pix ou no cartão{maxParcelas(dados.regras, "YEARLY") > 1 ? `, em até ${maxParcelas(dados.regras, "YEARLY")}x no anual` : ""}.
                 {dados.regras.adesao > 0 && <> O primeiro pagamento inclui a taxa de adesão de {fmtReais(dados.regras.adesao)}, cobrada uma vez só.</>}</p>
@@ -324,10 +324,10 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
             {escolhido && convite && (
               <div className="as-total">
                 <span>Plano <b>{escolhido.nome}</b> · {NOME_CICLO[ciclo].toLowerCase()}
-                  <Dica>no dia do primeiro crédito usado, a primeira cobrança chega no WhatsApp; paga por Pix, boleto ou cartão. Dá para cadastrar o cartão no sistema e ele paga sozinho.</Dica>
+                  <Dica>a primeira cobrança vence um mês depois do primeiro crédito usado e chega no WhatsApp; paga por Pix, boleto ou cartão. Dá para cadastrar o cartão no sistema e ele paga sozinho.</Dica>
                 </span>
                 <b>R$ 0,00 agora</b>
-                <small>depois, {fmtReais(valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto))} por {ciclo === "YEARLY" ? "ano" : ciclo === "SEMIANNUALLY" ? "semestre" : "mês"} a partir do 1º crédito usado</small>
+                <small>depois, {fmtReais(valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto))} por {ciclo === "YEARLY" ? "ano" : ciclo === "SEMIANNUALLY" ? "semestre" : "mês"}; a 1ª vence um mês depois do 1º crédito usado</small>
               </div>
             )}
             {escolhido && !convite && (

@@ -92,7 +92,7 @@ export function mensagemMensalidadeIniciada(o: {
     ola(o.responsavel),
     "",
     `A ${o.empresa} usou o primeiro crédito no Vertces em ${dataBr(o.dia)}: a partir desse dia começa a contar a ${nome}${o.plano ? ` do plano ${o.plano}` : ""}, como combinado.`,
-    `A primeira ${nome}, de ${fmtReais(o.valor)}, vence em ${dataBr(o.vencimento)}${o.link ? ":" : "."}`,
+    `A primeira ${nome}, de ${fmtReais(o.valor)}, vence em ${dataBr(o.vencimento)}, um mês depois${o.link ? ". O link já fica aqui:" : "."}`,
     ...(o.link ? [o.link] : []),
     "",
     "Dá para pagar por Pix, boleto ou cartão. Se preferir, cadastre o cartão no sistema (Configurações → Plano e uso): ele paga esta e as próximas sozinho.",
@@ -108,7 +108,7 @@ export function mensagemCadastroConvite(o: {
     ola(o.responsavel),
     "",
     `A conta da ${o.empresa} no Vertces está criada no plano ${o.plano}${o.creditos ? ` (${o.creditos})` : ""} e o acesso já está liberado.`,
-    `Como combinado, você não paga nada agora: a ${o.periodo === "mensal" ? "mensalidade" : `cobrança ${o.periodo}`} (${fmtReais(o.valor)}) só começa a contar no dia em que você usar o primeiro crédito.`,
+    `Como combinado, você não paga nada agora: a ${o.periodo === "mensal" ? "mensalidade" : `cobrança ${o.periodo}`} (${fmtReais(o.valor)}) só começa a contar no dia em que você usar o primeiro crédito, e a primeira vence um mês depois desse dia.`,
     "",
     `Entre em ${o.url} com o login ${o.login} e a senha que você criou.`,
   ].join("\n");

@@ -134,8 +134,21 @@ export function AvisoMensalidade({ cobranca }: { cobranca: MinhaCobranca | null 
       <div className="mens-aviso combinado" role="status">
         <span>
           <b>Nada a pagar por enquanto.</b>
-          {" "}A {nomeDaCobranca(cobranca.ciclo)}{mensal > 0 ? ` (${fmtPreco(mensal)})` : ""} só começa a contar no dia em que você usar o primeiro crédito; nesse dia a cobrança chega no WhatsApp e os créditos passam a renovar na mesma data.
+          {" "}A {nomeDaCobranca(cobranca.ciclo)}{mensal > 0 ? ` (${fmtPreco(mensal)})` : ""} só começa a contar no dia em que você usar o primeiro crédito, e a primeira vence um mês depois desse dia; os créditos passam a renovar na mesma data.
         </span>
+      </div>
+    );
+  }
+  // 0049: gastou o 1º crédito; o 1º mês corre e a primeira mensalidade vence um mês depois
+  if (cobranca?.sou_dono && cobranca.inicio_no_primeiro_credito && cobranca.mensalidade_iniciada_em && cobranca.primeiro_credito_em
+      && cobranca.situacao === "em_dia" && cobranca.vencimento && cobranca.ultimo_pagamento?.status === "PENDING") {
+    return (
+      <div className="mens-aviso combinado" role="status">
+        <span>
+          <b>A {nomeDaCobranca(cobranca.ciclo)} começou a contar em {new Date(cobranca.primeiro_credito_em).toLocaleDateString("pt-BR")}.</b>
+          {" "}A primeira{cobranca.valor !== null ? ` (${fmtPreco(Number(cobranca.valor))})` : ""} vence em {dataBr(cobranca.vencimento)}.
+        </span>
+        {cobranca.link && <a href={cobranca.link} target="_blank" rel="noreferrer" className="link">Ver a fatura</a>}
       </div>
     );
   }

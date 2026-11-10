@@ -103,7 +103,7 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
               ? <>Cliente que paga a partir do 1º crédito: {a.primeiro_credito_em ? <>gastou o 1º crédito em <b>{fmtData(a.primeiro_credito_em)}</b> e </> : null}a mensalidade começou em <b>{fmtData(a.mensalidade_iniciada_em)}</b>. Daqui para frente, cobrança normal.</>
               : a.primeiro_credito_em
                 ? <>Gastou o 1º crédito em <b>{fmtData(a.primeiro_credito_em)}</b>, mas a mensalidade ainda não foi gerada no Asaas. Use “Gerar a mensalidade agora”.</>
-                : <>A mensalidade começa no dia em que a empresa gastar o 1º crédito. Até lá ela usa o sistema sem pagar; nesse dia a assinatura nasce no Asaas (vencendo no mesmo dia) e o link vai no WhatsApp dela.</>}
+                : <>A mensalidade começa no dia em que a empresa gastar o 1º crédito. Até lá ela usa o sistema sem pagar; a contagem começa nesse dia e a 1ª mensalidade vence um mês depois (o link vai no WhatsApp dela no dia do 1º crédito).</>}
           </div>
         )}
         {c.cartao?.recusa_em &&<div className="sa-aviso erro" style={{ marginTop: 12 }}>Compra automática recusada em {fmtData(c.cartao.recusa_em)}: {c.cartao.recusa_motivo}</div>}

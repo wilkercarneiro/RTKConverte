@@ -1304,7 +1304,7 @@ function cenarioPrimeiroCredito({ cfg = { ...ASAAS_OK, ...ZAP, whatsapp_avisos: 
   return c;
 }
 
-test("1º crédito: antes dele nada vai ao Asaas; depois, a assinatura nasce vencendo no dia do 1º crédito e o WhatsApp avisa", async () => {
+test("1º crédito: antes dele nada vai ao Asaas; depois, a assinatura nasce com a 1ª vencendo um mês depois do 1º crédito e o WhatsApp avisa", async () => {
   const s = cenarioPrimeiroCredito();
   let r = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
   assert.equal(r.corpo.acao, "esperando");
@@ -1317,16 +1317,16 @@ test("1º crédito: antes dele nada vai ao Asaas; depois, a assinatura nasce ven
   assert.equal(r.corpo.acao, "iniciada");
   const sub = s.asaas.chamadas.find((c) => c.caminho === "/subscriptions" && c.metodo === "POST").corpo;
   assert.deepEqual({ valor: sub.value, venc: sub.nextDueDate, ciclo: sub.cycle, forma: sub.billingType },
-    { valor: 199.9, venc: "2026-10-30", ciclo: "MONTHLY", forma: "UNDEFINED" }, "vence no dia do 1º crédito (horário de Brasília), na mensalidade da empresa");
+    { valor: 199.9, venc: "2026-11-30", ciclo: "MONTHLY", forma: "UNDEFINED" }, "conta do dia do 1º crédito (horário de Brasília) e a 1ª vence um mês depois");
   const cob = s.banco.cobrancas[EMPRESA.id];
   assert.match(cob.asaas_assinatura_id, /^sub_/, "a assinatura fica gravada");
-  assert.equal(cob.situacao, "aguardando");
-  assert.equal(cob.proximo_vencimento, "2026-10-30");
+  assert.equal(cob.situacao, "em_dia", "nada vencido no 1º mês: sem aviso de mensalidade em aberto");
+  assert.equal(cob.proximo_vencimento, "2026-11-30");
   assert.ok(cob.mensalidade_iniciada_em, "a condição está cumprida");
   assert.equal(cob.link_pagamento, r.corpo.link);
   assert.equal(s.banco.pagamentos.filter((p) => p.finalidade === "mensalidade").length, 1, "a 1ª mensalidade entra na lista de pagamentos");
   const zaps = s.asaas.chamadas.filter((c) => c.whatsapp);
-  assert.match(zaps.find((z) => z.corpo.number === "5571999990000").corpo.text, /usou o primeiro crédito no Vertces em 30\/10\/2026.*R\$\s199,90, vence em 30\/10\/2026/s);
+  assert.match(zaps.find((z) => z.corpo.number === "5571999990000").corpo.text, /usou o primeiro crédito no Vertces em 30\/10\/2026.*R\$\s199,90, vence em 30\/11\/2026, um mês depois/s);
   assert.match(zaps.find((z) => z.corpo.number === "5571977776666").corpo.text, /gastou o 1º crédito em 30\/10\/2026/);
   assert.equal(s.banco.atividades.at(-1).acao, "cobranca.iniciada");
 
@@ -1336,11 +1336,20 @@ test("1º crédito: antes dele nada vai ao Asaas; depois, a assinatura nasce ven
   assert.equal(s.asaas.chamadas.filter((c) => c.caminho === "/subscriptions" && c.metodo === "POST").length, 1);
 });
 
-test("1º crédito: a cobrança que sai dias depois vence hoje (o Asaas não aceita vencimento no passado)", async () => {
-  const s = cenarioPrimeiroCredito({ gastou: "2026-10-27T15:00:00Z" });
-  const r = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
+test("1º crédito: a cobrança que sai dias depois vence um mês depois do 1º crédito; mais de um mês depois, vence hoje", async () => {
+  let s = cenarioPrimeiroCredito({ gastou: "2026-10-27T15:00:00Z" });
+  let r = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
+  assert.equal(r.corpo.vencimento, "2026-11-27", "vale o dia do 1º crédito, não o dia em que a cobrança saiu");
+  // o Asaas não aceita vencimento no passado
+  s = cenarioPrimeiroCredito({ gastou: "2026-09-20T15:00:00Z" });
+  r = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
   assert.equal(r.corpo.vencimento, "2026-10-30");
-  assert.equal(s.asaas.chamadas.find((c) => c.caminho === "/subscriptions").corpo.nextDueDate, "2026-10-30");
+  assert.equal(s.banco.cobrancas[EMPRESA.id].situacao, "aguardando", "vence hoje: aparece como em aberto");
+  // dia 31: o mês seguinte sem 31 vence no último dia
+  s = cenarioPrimeiroCredito({ gastou: "2027-01-31T15:00:00Z" });
+  s.deps.hoje = () => "2027-01-31";
+  r = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
+  assert.equal(r.corpo.vencimento, "2027-02-28");
 });
 
 test("1º crédito: duas chamadas ao mesmo tempo criam uma assinatura só", async () => {
@@ -1365,7 +1374,7 @@ test("1º crédito: empresa sem a condição, sem Asaas ou sem mensalidade não 
   assert.ok(!s.asaas.chamadas.some((c) => c.caminho === "/subscriptions"), "nada no Asaas");
 });
 
-test("1º crédito: o cartão antes dele é recusado sem ir ao Asaas; depois dele, o cartão gera e paga a 1ª mensalidade", async () => {
+test("1º crédito: o cartão antes dele é recusado sem ir ao Asaas; depois dele, o cartão gera a mensalidade e passa a assinatura para o cartão", async () => {
   const s = cenarioPrimeiroCredito();
   let r = await tratarAcao(s.deps, s.usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
   assert.equal(r.status, 409);
@@ -1376,7 +1385,7 @@ test("1º crédito: o cartão antes dele é recusado sem ir ao Asaas; depois del
   s.banco.cobrancas[EMPRESA.id].primeiro_credito_em = "2026-10-30T15:00:00Z";
   r = await tratarAcao(s.deps, s.usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
   assert.equal(r.status, 200, JSON.stringify(r.corpo));
-  assert.equal(r.corpo.pagas, 1, "a 1ª mensalidade (vence hoje) é paga com o cartão na hora");
+  assert.equal(r.corpo.pagas, 0, "nada vence agora: o cartão fica para a 1ª mensalidade, daqui a um mês");
   assert.ok(s.banco.cobrancas[EMPRESA.id].mensalidade_iniciada_em);
   const subs = s.asaas.chamadas.filter((c) => c.caminho === "/subscriptions" && c.metodo === "POST");
   assert.deepEqual(subs.map((x) => x.corpo.billingType), ["UNDEFINED", "CREDIT_CARD"], "nasce a do 1º crédito e passa para o cartão");

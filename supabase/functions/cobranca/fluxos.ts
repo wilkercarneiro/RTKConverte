@@ -563,8 +563,11 @@ export async function iniciarMensalidade(d: Deps, cfg: Record<string, string>, e
   }
   const hoje = d.hoje();
   const dia = diaBrasil(c.primeiro_credito_em);
-  // o Asaas não aceita vencimento no passado: cobrança que sai depois vence hoje
-  const vencimento = dia > hoje ? dia : hoje;
+  // o 1º mês é usado e pago no fim (pedido do Wilker, 10/11/2026): a 1ª mensalidade
+  // vence um mês depois do 1º crédito, no mesmo dia (31 → último dia do mês); o
+  // Asaas não aceita vencimento no passado, então cobrança que sai muito depois vence hoje
+  const umMes = somarMes(dia);
+  const vencimento = umMes > hoje ? umMes : hoje;
   const cliente = await garantirCliente(d, asaas, e.id);
   const sub = await asaas.criarAssinatura({
     customer: cliente, billingType: "UNDEFINED", value: valor, nextDueDate: vencimento, cycle: ciclo,
@@ -572,7 +575,8 @@ export async function iniciarMensalidade(d: Deps, cfg: Record<string, string>, e
   });
   // a assinatura existe: daqui para frente a condição está cumprida (mesmo se o resto falhar)
   await d.banco.salvarCobranca(e.id, {
-    asaas_cliente_id: cliente, asaas_assinatura_id: sub.id, valor, ciclo, situacao: "aguardando",
+    // nada vencido ainda: em dia até o vencimento (a fatura fica no link; vencida, suspende como sempre)
+    asaas_cliente_id: cliente, asaas_assinatura_id: sub.id, valor, ciclo, situacao: vencimento > hoje ? "em_dia" : "aguardando",
     proximo_vencimento: vencimento, mensalidade_iniciada_em: agora,
   });
   const primeira = (await asaas.cobrancasDaAssinatura(sub.id).catch((): CobrancaAsaas[] => [])).filter((x) => !x.deleted).sort(porVencimento)[0];

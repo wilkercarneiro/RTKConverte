@@ -262,7 +262,7 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
                   {criada.primeiroCredito ? (
                     <div className="sa-aviso info">
                       Nada é cobrado agora. No dia em que a empresa gastar o 1º crédito, a mensalidade de {fmtPreco(criada.primeiroCredito)} começa:
-                      a assinatura nasce no Asaas vencendo nesse dia, o link vai no WhatsApp dela e os créditos passam a renovar no mesmo dia do mês.
+                      a 1ª vence um mês depois (o link vai no WhatsApp dela) e os créditos passam a renovar no mesmo dia do mês.
                     </div>
                   ) : null}
                   <div className="sa-credenciais">
@@ -367,7 +367,7 @@ function NovaEmpresa({ d, onFechar }: { d: DadosAdmin; onFechar: () => void }) {
                       <input type="radio" name="cobrar" checked={noPrimeiroCredito} disabled={!podeCobrar} onChange={() => setModo("primeiro_credito")} />
                       <span>
                         <b>Liberar agora; cobrar a partir do 1º crédito usado</b>
-                        <small>{podeCobrar ? `Entra na hora e não paga nada até gastar o primeiro crédito. Nesse dia a mensalidade (${fmtPreco(mensal!)}) começa a contar: o link vai no WhatsApp dela, vencendo no mesmo dia, e os créditos passam a renovar nessa data.` : "Precisa do Asaas e da mensalidade."}</small>
+                        <small>{podeCobrar ? `Entra na hora e não paga nada até gastar o primeiro crédito. Nesse dia a mensalidade (${fmtPreco(mensal!)}) começa a contar e a 1ª vence um mês depois (o link vai no WhatsApp dela); os créditos passam a renovar nessa data.` : "Precisa do Asaas e da mensalidade."}</small>
                       </span>
                     </label>
                     <label className="sa-opcao">

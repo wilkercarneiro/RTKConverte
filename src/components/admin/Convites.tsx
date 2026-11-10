@@ -67,7 +67,7 @@ export function Convites({ d }: { d: DadosAdmin | null }) {
       <header>
         <h3>Convites: cobrança a partir do 1º crédito<Dica>
           Para os clientes que vocês escolherem. O cliente abre o link, cria a conta e entra na hora, sem pagar nada (nem adesão).
-          No dia em que gastar o primeiro crédito, a mensalidade começa: a assinatura nasce no Asaas vencendo nesse dia, o link vai no WhatsApp dele
+          No dia em que gastar o primeiro crédito, a mensalidade começa a contar e a 1ª vence um mês depois (o link vai no WhatsApp dele)
           e os créditos passam a renovar no mesmo dia do mês. Cada link vale para uma conta só e vence. Para quem você cadastra à mão, use
           Empresas → Nova empresa → “Liberar agora; cobrar a partir do 1º crédito usado”.
         </Dica></h3>

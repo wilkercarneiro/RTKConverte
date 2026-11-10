@@ -155,7 +155,7 @@ crédito. Vale uma vez; depois é a cobrança de sempre.
   `primeiro_credito_em` e muda `escritorios.dia_renovacao` para o dia (créditos e
   mensalidade andam juntos).
 - A função `cobranca`, ação `iniciar_mensalidade`, cria a assinatura no Asaas
-  (Pix/boleto/cartão na fatura) **vencendo no dia do 1º crédito** (ou hoje, se
+  (Pix/boleto/cartão na fatura) **vencendo um mês depois do 1º crédito** (pedido de 10/11: o 1º mês é usado e pago no fim; ou hoje, se
   sair depois), grava `mensalidade_iniciada_em` e manda o link no WhatsApp da
   empresa (+ aviso ao superadmin). Quem chama: o app (quando `minha_cobranca()`
   diz `mensalidade_a_iniciar`), o cadastro do cartão e "Conferir" do superadmin
