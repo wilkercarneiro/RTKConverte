@@ -81,3 +81,36 @@ test("um dono só: nada muda (singular e um selo de proprietário)", async () =>
   assert.match(a4, /PROPRIETÁRIO:/);
   assert.doesNotMatch(a4, / E MARIA/);
 });
+
+// Posse de casal (pedido de 2026-11-10, "ajuste para posse também"): os dois
+// são posseiros e saem em todo lugar onde o primeiro sai, como na matrícula.
+const posse = (extra = {}) => servico({ tipo_imovel: "posse", matricula: "", cns: "", ...extra });
+for (const folha of [undefined, "A1", "A3"]) {
+  test(`posse ${folha ?? "(folha padrão)"}: o segundo posseiro sai e assina com selo próprio`, async () => {
+    const t = await textoDe(await gerarPlantaPdf(montarDadosPlanta(ctx(posse(), folha ? { folha } : {}))));
+    assert.match(t, /POSSEIROS/);
+    assert.ok(vezes(t, "MARIA ESPOSA DA SILVA") >= 2, "planimétrico e assinatura");
+    assert.equal(vezes(t, "MARIA ESPOSA DA SILVA"), vezes(t, "JOSE MARIDO DA SILVA"));
+    assert.ok(vezes(t, "222.222.222-22") >= 2);
+    assert.equal(vezes(t, "SELO DE RECONHECIMENTO"), 3, "RT + 2 posseiros");
+  });
+}
+
+test("posse A4: o selo lista os dois", async () => {
+  const t = await textoDe(await gerarPlantaPdf(montarDadosPlanta(ctx(posse(), { folha: "A4" }))));
+  assert.match(t, /POSSEIROS:/);
+  assert.match(t, /JOSE MARIDO DA SILVA E MARIA ESPOSA DA SILVA/);
+});
+
+test("posse em glebas: o bloco de cada gleba traz os dois", () => {
+  for (const gl of glebasParaPlanta(linhasGlebas, calc, posse())) {
+    assert.ok(gl.identificacao.includes("(POSSE)"));
+    assert.ok(gl.identificacao.includes("MARIA ESPOSA DA SILVA"), gl.identificacao.join(" | "));
+  }
+});
+
+test("posse de um posseiro só: singular", async () => {
+  const t = await textoDe(await gerarPlantaPdf(montarDadosPlanta(ctx(posse({ requerente2_nome: null, requerente2_cpf: null })))));
+  assert.doesNotMatch(t, /POSSEIROS/);
+  assert.equal(vezes(t, "SELO DE RECONHECIMENTO"), 2);
+});

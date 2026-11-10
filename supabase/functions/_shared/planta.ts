@@ -2282,7 +2282,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     // selo: dois campos por linha, três linhas
     const campos: [string, string][] = [
       // todos os donos (casal: o requerente e o segundo requerente), não só o primeiro
-      [d.proprietarios.length > 1 ? "PROPRIETÁRIOS" : "PROPRIETÁRIO",
+      [(posse ? "POSSEIRO" : "PROPRIETÁRIO") + (d.proprietarios.length > 1 ? "S" : ""),
         d.proprietarios.map((p) => p.nome.trim()).filter(Boolean).join(" E ") || "—"],
       ["RESPONSÁVEL TÉCNICO", d.rt.nome || "—"],
       ["MUNICÍPIO", d.municipioUf],

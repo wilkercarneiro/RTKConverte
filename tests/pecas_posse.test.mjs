@@ -144,3 +144,61 @@ test("empresa nova (posse, modelos neutros): nada do RT nem do código de creden
   const t3 = xmls["3"].replace(/<[^>]+>/g, "");
   assert.ok(t3.includes("XYZW"), "a carta cita o código do credenciado do serviço");
 });
+
+// Posse de casal (pedido de 2026-11-10): os dois são posseiros — o segundo sai
+// no cabeçalho, nas frases (carta e declaração no plural) e assina cada peça
+// logo abaixo do primeiro, nos modelos da D'Prol e nos neutros.
+const casal = {
+  ...dados,
+  requerentes: [
+    { nome: "ANTONIA DE TESTE COSTA", cpf: "111.222.333-44", genero: "F" },
+    { nome: "JOAO MARIDO COSTA", cpf: "555.666.777-88", genero: "M" },
+  ],
+};
+for (const [rotulo, pasta] of [["D'Prol", "../reference/pecas-posse"], ["neutros", "./fixtures/modelos-padrao/pecas-posse"]]) {
+  test(`posse com dois posseiros (${rotulo}): cabeçalho, frases e duas assinaturas`, async () => {
+    const tpl = {};
+    const zips = {};
+    for (const [k, nome] of Object.entries(NOMES)) {
+      zips[k] = await JSZip.loadAsync(readFileSync(new URL(`${pasta}/${nome}.docx`, import.meta.url)));
+      tpl[k] = await zips[k].file("word/document.xml").async("string");
+    }
+    const xmls = gerarPecasPosseXml(tpl, casal);
+    const t = {};
+    for (const [k, nome] of Object.entries(NOMES)) {
+      t[k] = dec(xmls[k].replace(/<[^>]+>/g, ""));
+      const semSelf = xmls[k].replace(/<[^<>]*\/>/g, "");
+      assert.equal((semSelf.match(/<w:p[ >]/g) ?? []).length, (semSelf.match(/<\/w:p>/g) ?? []).length, `peça ${k}: <w:p> desbalanceado`);
+      if (rotulo === "D'Prol") {
+        zips[k].file("word/document.xml", xmls[k]);
+        writeFileSync(new URL(`casal-${nome}.docx`, OUT), await zips[k].generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
+      }
+    }
+    const nCartas = (t[3].match(/CARTA DE ANUÊNCIA/g) ?? []).length;
+    const nDecl = (t[7].match(/vêm à presença de V\. Sa\./g) ?? []).length;
+    const esperadas = { 1: 1, 2: 1, 3: nCartas, 7: nDecl };
+    for (const k of ["1", "2", "3", "7"]) {
+      assert.ok(!t[k].includes("ANTONIO DA SILVA COSTA"), `peça ${k} ainda tem ANTONIO`);
+      assert.ok(!t[k].includes("005.097.695-86"), `peça ${k} ainda tem o CPF de exemplo`);
+      assert.equal((t[k].match(/Posseira: ANTONIA DE TESTE COSTA/g) ?? []).length, esperadas[k], `peça ${k}: assinatura da 1ª`);
+      assert.equal((t[k].match(/Posseiro: JOAO MARIDO COSTA/g) ?? []).length, esperadas[k], `peça ${k}: assinatura do 2º`);
+      assert.ok(t[k].includes("CPF nº:555.666.777-88"), `peça ${k}: CPF do 2º na assinatura`);
+    }
+    assert.ok(nCartas >= 1 && nDecl >= 1);
+    // cabeçalho dos memoriais: os dois nomes e CPFs
+    for (const k of ["1", "2"]) {
+      assert.ok(t[k].includes("ANTONIA DE TESTE COSTA/ JOAO MARIDO COSTA"), `peça ${k}: nomes no cabeçalho`);
+      assert.ok(t[k].includes("111.222.333-44/ 555.666.777-88"), `peça ${k}: CPFs no cabeçalho`);
+    }
+    assert.ok(t[3].includes("Eu, Posseira ANTONIA DE TESTE COSTA, CPF nº:111.222.333-44, Eu, Posseiro JOAO MARIDO COSTA, CPF nº:555.666.777-88, possuidores do imóvel"), "carta no plural");
+    assert.ok(t[7].includes("ANTONIA DE TESTE COSTA, brasileira, maior, capaz, inscrita no CPF nº: 111.222.333-44 e JOAO MARIDO COSTA, brasileiro, maior, capaz, inscrito no CPF nº: 555.666.777-88, residentes e domiciliados na"), "declaração com os dois");
+    assert.ok(t[7].includes("legítimos posseiros do imóvel"), "declaração no plural");
+  });
+}
+
+test("posse de um posseiro só: nada de segundo nem de plural", () => {
+  const um = (s) => (s.match(/Posseir[oa]:/g) ?? []).length;
+  assert.equal(um(textos[1]), 1);
+  assert.ok(textos[7].includes("inscrita no CPF nº: 111.222.333-44, residente e domiciliada na"), "singular, no feminino");
+  assert.ok(textos[7].includes("legítima posseira do imóvel"));
+});

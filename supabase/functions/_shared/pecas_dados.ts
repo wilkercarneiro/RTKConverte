@@ -28,7 +28,6 @@ export interface ContextoPecas {
 export function montarDadosPecasDoCalculo(ctx: ContextoPecas): DadosPecas {
   const { servico, rt, cred, calc } = ctx;
   const s = servico as Record<string, string | number | boolean | null | undefined>;
-  const posse = servico.tipo_imovel === "posse";
   // TRT preenchido no sistema manda: campo do serviço, depois o TRT padrão do RT.
   const trt = String(s.trt ?? "").trim() || String((rt as Record<string, unknown> | null)?.trt ?? "").trim();
 
@@ -62,8 +61,8 @@ export function montarDadosPecasDoCalculo(ctx: ContextoPecas): DadosPecas {
     inventarianteCpf: (s.inventariante_cpf as string | null) ?? null,
     inventarianteRg: (s.inventariante_rg as string | null) ?? null,
   }];
-  // segundo requerente não existe em posse: lá quem assina é o posseiro
-  if (s.requerente2_nome && !posse) {
+  // segundo requerente (casal): na posse também é posseiro e assina as peças
+  if (s.requerente2_nome) {
     requerentes.push({
       nome: String(s.requerente2_nome),
       cpf: String(s.requerente2_cpf ?? ""),

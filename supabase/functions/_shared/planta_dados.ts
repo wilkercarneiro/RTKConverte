@@ -158,8 +158,8 @@ function identificacaoDaGleba(s0: ServicoRow, nomeGleba: string, g?: GlebaRow | 
     if (s.inventariante_cpf) linhas.push(`CPF:${s.inventariante_cpf}`);
   }
   // co-dono (casal): a gleba é dos dois, como no planimétrico e nas assinaturas
-  // — mesma regra de montarDadosPlanta (na posse não há segundo requerente)
-  if ((s.requerente2_nome ?? "").trim() && s.tipo_imovel !== "posse") {
+  // — mesma regra de montarDadosPlanta (na posse também: os dois são posseiros)
+  if ((s.requerente2_nome ?? "").trim()) {
     linhas.push(s.requerente2_nome!.trim().toUpperCase());
     if (s.requerente2_cpf) linhas.push(`CPF:${s.requerente2_cpf}`);
   }
@@ -618,7 +618,8 @@ export function montarDadosPlanta(ctx: ContextoPlanta): DadosPlanta {
     inventarianteCpf: servico.inventariante_cpf ?? null,
     inventarianteRg: servico.inventariante_rg ?? null,
   }];
-  if (servico.requerente2_nome && !posse) {
+  // casal: o segundo assina também — na matrícula e na posse (pedido de 10/11/2026)
+  if (servico.requerente2_nome) {
     proprietarios.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "" });
   }
 
