@@ -135,6 +135,12 @@ export default function App() {
     });
     return () => { cancelado = true; };
   }, [logado, usuario]);
+  // 0050: criou, renomeou ou desativou um escritório: o seletor do topo relê a lista
+  useEffect(() => {
+    const f = () => { void carregarEscritorio().then((e) => { if (e.estado === "ok") setEscritorio(e); }); };
+    addEventListener("vertces:escritorios-mudaram", f);
+    return () => removeEventListener("vertces:escritorios-mudaram", f);
+  }, []);
 
   // Integração com o GPROL: sincroniza com o app aberto e ao trocar de tela
   const escritorioOk = logado === true && escritorio?.estado === "ok";
@@ -362,6 +368,8 @@ export default function App() {
   const casca = {
     rota, ir, usuario: nomeUsuario ? { nome: nomeUsuario, papel } : undefined, superadmin: conta.superadmin,
     escritorioId: escritorio.estado === "ok" ? escritorio.escritorio.id : undefined,
+    // 0050: escritório adicional (faixa no topo) e a lista do seletor (dono da matriz)
+    escritorio: escritorio.estado === "ok" ? escritorio.escritorio : undefined,
   };
 
   switch (rota.t) {

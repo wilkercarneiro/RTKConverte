@@ -1,0 +1,63 @@
+/* 0050 — escritórios adicionais na casca: o seletor no alto do trilho (dono da
+   matriz) e a faixa "Escritório X" no alto do conteúdo. Carregado pelo AppShell. */
+
+.tr-esc-bloco { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; }
+.tr-esc {
+  all: unset; box-sizing: border-box; cursor: pointer; position: relative;
+  display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 9px; margin-top: 14px; border-radius: 13px;
+  background: rgb(255 255 255 / 6%); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 9%);
+  color: #fff; transition: background 0.15s ease;
+}
+.tr-esc-bloco .tr-esc { margin-top: 0; }
+.tr-esc:hover { background: rgb(255 255 255 / 10%); }
+.tr-esc:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; }
+.tr-esc-fixo { cursor: default; }
+.tr-esc-fixo:hover { background: rgb(255 255 255 / 6%); }
+.tr-esc-ico { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: rgb(123 211 166 / 18%); color: var(--acento); }
+.tr-esc-ico svg { width: 18px; height: 18px; }
+.tr-esc-tx { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.2; }
+.tr-esc-tx small { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--floresta-texto-2); }
+.tr-esc-tx b { font-size: 13.5px; font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; }
+.tr-esc-seta { flex: none; display: grid; color: var(--floresta-texto-2); }
+.tr-esc-seta svg { width: 16px; height: 16px; }
+.tr:not([data-aberto="true"]) .tr-esc:hover::after {
+  content: attr(data-dica); position: fixed; left: calc(var(--largura-lateral) + 6px);
+  padding: 6px 10px; border-radius: 8px;
+  background: var(--texto); color: #fff; font-size: 12.5px; font-weight: 600; white-space: nowrap; pointer-events: none;
+}
+
+.tr-esc-lista { list-style: none; margin: 0; padding: 4px; display: flex; flex-direction: column; gap: 2px; border-radius: 12px; background: rgb(0 0 0 / 18%); }
+.tr-esc-lista button {
+  all: unset; box-sizing: border-box; cursor: pointer; width: 100%;
+  display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 8px; border-radius: 9px;
+  color: var(--floresta-texto); font-size: 13.5px;
+}
+.tr-esc-lista button:hover:not(:disabled) { background: rgb(255 255 255 / 8%); color: #fff; }
+.tr-esc-lista button:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; }
+.tr-esc-lista button.atual { color: #fff; font-weight: 600; }
+.tr-esc-lista button:disabled { cursor: progress; }
+.tr-esc-lista small { color: var(--floresta-texto-2); font-weight: 400; }
+.tr-esc-letra { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: rgb(255 255 255 / 9%); color: #fff; font-size: 12px; font-weight: 700; }
+.tr-esc-lista button.atual .tr-esc-letra { background: var(--acento); color: var(--floresta); }
+.tr-esc-lista .tr-rotulo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tr-esc-ok { flex: none !important; display: grid; color: var(--acento); }
+.tr-esc-ok svg { width: 15px; height: 15px; }
+.tr-esc-lista .spinner { width: 14px; height: 14px; }
+
+/* "Escritório X · Matriz" no alto do conteúdo */
+.esc-faixa {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 14px var(--pad-x) 0; padding: 9px 14px; border-radius: 12px;
+  background: var(--primaria-clara); color: var(--primaria-escura); font-size: 13.5px;
+  box-shadow: inset 0 0 0 1px rgb(23 133 82 / 18%);
+}
+.esc-faixa svg { width: 17px; height: 17px; flex: none; }
+.esc-faixa b { color: var(--floresta); }
+.esc-faixa .link { margin-left: auto; font-weight: 600; }
+
+@media (max-width: 900px) {
+  .esc-faixa { margin: 10px 14px 0; font-size: 13px; flex-wrap: nowrap; padding: 8px 12px; }
+  .esc-faixa > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .esc-faixa .link { flex: none; }
+  .tr.tr-gaveta .tr-esc-tx, .tr.tr-gaveta .tr-esc-seta { opacity: 1; transform: none; }
+}

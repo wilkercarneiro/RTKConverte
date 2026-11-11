@@ -22,7 +22,15 @@ export interface Escritorio {
   ativo?: boolean;
   permissoes?: string[];
   meu_nome?: string | null;
+  /** 0050: escritório adicional — a matriz (quem paga e de onde vêm plano e créditos) */
+  matriz_id?: string | null;
+  matriz_nome?: string | null;
+  /** 0050: só para o dono da matriz com escritórios ativos — a lista do seletor do topo */
+  escritorios?: EscritorioDoSeletor[] | null;
 }
+
+/** Um item do seletor de escritório (a matriz vem primeiro, com `matriz: true`). */
+export interface EscritorioDoSeletor { id: string; nome: string; matriz: boolean }
 
 export type EstadoEscritorio =
   | { estado: "legado" }

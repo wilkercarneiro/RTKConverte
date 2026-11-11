@@ -21,7 +21,6 @@ import {
 } from "../../supabase/functions/_shared/parcelas.ts";
 import type { Ciclo } from "../../supabase/functions/_shared/parcelas.ts";
 import { fmtReais } from "../../supabase/functions/_shared/precos.ts";
-import { textoCreditos } from "../../supabase/functions/_shared/mensagens_cobranca.ts";
 import { PagamentoCadastro, pagaPeloSite, ResumoAdesao } from "./PagamentoCadastro";
 import { Dica, Rotulo } from "./ui";
 import { Logo } from "./Logo";
@@ -45,17 +44,43 @@ function guardar(f: Campos): void {
   } catch { /* sem storage: só não lembra */ }
 }
 
-/** "crédito geral extra: R$ 70,00 · crédito de CAR extra: a partir de R$ 9,90" */
-function textoExtra(p: PlanoAVenda): string {
+/**
+ * "8 créditos para projetos e 16 para CAR por mês" · "Créditos ilimitados (projetos e CAR)".
+ * A carteira geral paga qualquer serviço: no cadastro ela é a dos projetos.
+ */
+function textoCreditosPlano(p: PlanoAVenda): string {
+  const c = p.creditos.filter((k) => k.por_mes === null || k.por_mes > 0);
+  if (!c.length) return "";
+  if (c.every((k) => k.por_mes === null)) return "Créditos ilimitados (projetos e CAR)";
+  const nome = (tipo: string, n: number | null) => tipo === "geral" ? (n === 1 ? "crédito para projetos" : "créditos para projetos")
+    : tipo === "car" ? "para CAR" : (p.creditos.find((k) => k.tipo === tipo)?.nome.toLowerCase() ?? tipo);
+  const partes = c.map((k) => k.por_mes === null ? `${nome(k.tipo, null)} sem limite` : `${k.por_mes} ${nome(k.tipo, k.por_mes)}`);
+  const lista = partes.length === 1 ? partes[0] : `${partes.slice(0, -1).join(", ")} e ${partes[partes.length - 1]}`;
+  return `${lista.charAt(0).toUpperCase()}${lista.slice(1)} por mês`;
+}
+
+/** "Crédito extra para projetos: R$ 50,00 (2 a 5) · R$ 40,00 (6 ou mais)" — uma linha por carteira à venda. */
+function textosExtra(p: PlanoAVenda): string[] {
   return p.creditos
     .filter((k) => (p.extra[k.tipo] ?? []).length)
     .map((k) => {
-      const precos = p.extra[k.tipo].map((f) => Number(f.preco));
-      const menor = Math.min(...precos);
-      const nome = k.nome.replace(/^Créditos\s+/i, "crédito ").replace(/gerais$/i, "geral");
-      return `${nome} extra: ${precos.length > 1 ? "a partir de " : ""}${fmtReais(menor)}`;
-    })
-    .join(" · ");
+      const faixas = [...p.extra[k.tipo]].sort((a, b) => a.a_partir_de - b.a_partir_de);
+      const nome = k.tipo === "geral" ? "Crédito extra para projetos" : k.tipo === "car" ? "Crédito extra de CAR"
+        : `${k.nome.replace(/^Créditos\s+/i, "Crédito ")} extra`;
+      if (faixas.length === 1) return `${nome}: ${fmtReais(Number(faixas[0].preco))} (mínimo ${faixas[0].a_partir_de})`;
+      return `${nome}: ${faixas.map((f, i) => {
+        const prox = faixas[i + 1];
+        return `${fmtReais(Number(f.preco))} (${prox ? `${f.a_partir_de} a ${prox.a_partir_de - 1}` : `${f.a_partir_de} ou mais`})`;
+      }).join(" · ")}`;
+    });
+}
+
+/** 0050: "Até 2 escritórios adicionais (R$ 99,90/mês cada)". */
+function textoEscritorios(p: PlanoAVenda): string | null {
+  const n = p.escritorios_adicionais ?? 0;
+  if (n <= 0) return null;
+  const preco = Number(p.preco_escritorio ?? 0);
+  return `Até ${n} escritório${n > 1 ? "s" : ""} adiciona${n > 1 ? "is" : "l"}${preco > 0 ? ` (${fmtReais(preco)}/mês cada)` : ""}`;
 }
 
 /** Por que o convite não abre (0049). */
@@ -299,8 +324,9 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
               {dados.planos.map((p) => {
                 const total = valorDoPeriodo(p.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto);
                 const eco = economia(p.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto);
-                const creditos = textoCreditos(p.creditos.map((k) => ({ nome: k.nome, por_mes: k.por_mes })));
-                const extra = textoExtra(p);
+                const creditos = textoCreditosPlano(p);
+                const extras = textosExtra(p);
+                const escritorios = textoEscritorios(p);
                 return (
                   <button key={p.id} type="button" role="radio" aria-checked={p.id === plano} className={`as-plano${p.id === plano ? " sel" : ""}`}
                     style={{ borderTopColor: p.cor }} onClick={() => { setPlano(p.id); setErro(null); }}>
@@ -313,8 +339,9 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
                       </small>
                     )}
                     <ul>
-                      {creditos && <li>{creditos.charAt(0).toUpperCase() + creditos.slice(1)}</li>}
-                      {extra && <li>{extra.charAt(0).toUpperCase() + extra.slice(1)}</li>}
+                      {creditos && <li>{creditos}</li>}
+                      {escritorios && <li>{escritorios}</li>}
+                      {extras.map((x) => <li key={x}>{x}</li>)}
                       {p.limite_usuarios && <li>Até {p.limite_usuarios} {p.limite_usuarios === 1 ? "usuário" : "usuários"}</li>}
                     </ul>
                   </button>

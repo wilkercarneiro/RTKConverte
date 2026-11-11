@@ -22,6 +22,14 @@ export interface Empresa {
   vencimento?: string | null;
   /** 0049: a mensalidade começa no 1º crédito — 'esperando' (ainda não gastou) ou 'a_iniciar' (gastou, falta a cobrança) */
   inicio_cobranca?: "esperando" | "a_iniciar" | null;
+  /** 0050: escritório adicional — a matriz (id e nome); null = empresa (matriz) */
+  matriz_id?: string | null;
+  matriz?: string | null;
+  /** 0050: escritórios adicionais ativos (na matriz) */
+  escritorios?: number;
+  /** 0050: ajuste por empresa (null = o do plano) */
+  limite_escritorios?: number | null;
+  preco_escritorio?: number | null;
 }
 
 export interface Plano {
@@ -33,6 +41,9 @@ export interface Plano {
   libera_recursos_novos?: boolean;
   /** aparece no autocadastro, o link de cadastro com pagamento (0040) */
   vende_no_site?: boolean;
+  /** 0050: escritórios adicionais que o plano permite (0 = nenhum) e o preço de cada um por mês */
+  escritorios_adicionais?: number;
+  preco_escritorio?: number | null;
 }
 export interface RecursoBanco {
   chave: string; nome: string; grupo: string; descricao: string | null;
@@ -101,7 +112,10 @@ export const usoModalidades = async (id: string | null, dias = 30): Promise<{ ch
 export const serieServicos = async (dias = 30): Promise<{ dia: string; total: number }[]> =>
   ok(await supabase.rpc("sa_serie_servicos", { p_dias: dias })) ?? [];
 
-export async function atualizarEmpresa(id: string, dados: Partial<Pick<Empresa, "nome" | "cnpj" | "responsavel" | "telefone" | "email" | "plano_id" | "status" | "observacoes" | "mensalidade">>): Promise<void> {
+export async function atualizarEmpresa(id: string, dados: Partial<Pick<Empresa, "nome" | "cnpj" | "responsavel" | "telefone" | "email" | "plano_id" | "status" | "observacoes" | "mensalidade">> & {
+  /** 0050: ajuste dos escritórios adicionais ("" = volta ao do plano) */
+  limite_escritorios?: number | ""; preco_escritorio?: number | "";
+}): Promise<void> {
   ok(await supabase.rpc("sa_atualizar_empresa", { p_escritorio: id, p_dados: dados }));
 }
 
@@ -116,6 +130,8 @@ export async function salvarPlano(p: Partial<Plano> & { nome: string }): Promise
     ...(p.preco_mensal !== undefined ? { preco_mensal: p.preco_mensal ?? null } : {}),
     ...(p.libera_recursos_novos !== undefined ? { libera_recursos_novos: p.libera_recursos_novos } : {}),
     ...(p.vende_no_site !== undefined ? { vende_no_site: p.vende_no_site } : {}),
+    ...(p.escritorios_adicionais !== undefined ? { escritorios_adicionais: p.escritorios_adicionais } : {}),
+    ...(p.preco_escritorio !== undefined ? { preco_escritorio: p.preco_escritorio } : {}),
   };
   const r = p.id
     ? await supabase.from("planos").update(linha).eq("id", p.id).select().single()

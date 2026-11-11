@@ -92,13 +92,19 @@ export function Empresas({ d }: { d: DadosAdmin }) {
             </thead>
             <tbody>
               {lista.map((e) => (
-                <tr key={e.id} className="clicavel" tabIndex={0}
+                <tr key={e.id} className={e.matriz_id ? "clicavel sa-linha-escritorio" : "clicavel"} tabIndex={0}
                   onClick={() => d.ir({ t: "admin", aba: "empresas", id: e.id })}
                   onKeyDown={(k) => { if (k.key === "Enter") d.ir({ t: "admin", aba: "empresas", id: e.id }); }}>
-                  <td className="empresa"><b>{e.nome}</b><span>{fmtCnpj(e.cnpj)}</span></td>
+                  <td className="empresa">
+                    {/* 0050: escritório adicional aparece logo abaixo da matriz */}
+                    {e.matriz_id
+                      ? <><b><span className="sa-ramo" aria-hidden="true">↳</span> {e.nome}</b><span>escritório de {e.matriz ?? "outra empresa"}</span></>
+                      : <><b>{e.nome}</b><span>{fmtCnpj(e.cnpj)}{(e.escritorios ?? 0) > 0 ? ` · ${e.escritorios} escritório${e.escritorios === 1 ? "" : "s"}` : ""}</span></>}
+                  </td>
                   <td>{e.responsavel ?? "—"}<div className="sub" style={{ fontSize: 12 }}>{e.email ?? ""}</div></td>
                   <td><PlanoTag planoId={e.plano_id} planos={d.planos} />
-                    {e.mensalidade != null && <div className="sub" style={{ fontSize: 12 }}>{fmtPreco(Number(e.mensalidade))}/mês</div>}
+                    {e.matriz_id ? <div className="sub" style={{ fontSize: 12 }}>paga na matriz</div>
+                      : e.mensalidade != null && <div className="sub" style={{ fontSize: 12 }}>{fmtPreco(Number(e.mensalidade))}/mês</div>}
                     {e.excecoes > 0 && <div className="sub" style={{ fontSize: 12 }}>+{e.excecoes} exceção(ões)</div>}</td>
                   <td><StatusPill status={e.status} />
                     {e.cobranca === "atrasada" && <div><span className="sa-pill cancelado" style={{ marginTop: 4 }}>Mensalidade atrasada</span></div>}

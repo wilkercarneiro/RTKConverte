@@ -1,6 +1,6 @@
 # Planos, créditos em carteiras e cobrança pelo Asaas (0034)
 
-Pedido do Wilker (2026-10-30): créditos gerais e créditos de CAR, quatro planos,
+Pedido do Wilker (2026-10-30): créditos gerais e créditos de CAR, quatro planos (em 11/11/2026 viraram dois: ver a seção 0050 no fim),
 preço do crédito extra por plano (com faixas no Só CAR), tudo ajustável por plano
 e por empresa; compra de crédito automática pelo Asaas; empresa nova recebe o link
 de pagamento no WhatsApp e só entra depois de pagar.
@@ -177,3 +177,64 @@ os cenários "1º crédito" e "convite" em `tests/cobranca.test.mjs`. Telas:
 `#/lab/admin/empresas/e6` e `/e7`, `#/lab/casca/inicio?primeirocredito`.
 Publicação: `bash scripts/publicar-primeiro-credito.sh [--executar]` e logo
 depois o push da main.
+
+## Dois planos + escritórios adicionais (0050, 11/11/2026)
+
+**Pedido do Wilker:** só dois planos e a modalidade escritório.
+
+| Plano | Mensalidade | Projetos/mês | CAR/mês | Crédito adicional | Escritórios adicionais |
+|---|---|---|---|---|---|
+| Profissional | R$ 299,90 | 8 | 16 | projetos: 2–5 = R$ 50,00 · 6+ = R$ 40,00 (cada); CAR: R$ 9,90 (mín. 2) | não tem |
+| Empresarial | R$ 1.000,00 | ilimitado | ilimitado | não vende (não precisa) | até 2, R$ 99,90/mês cada (ativo) |
+
+"Créditos para projetos" = a carteira `geral` (paga qualquer serviço). Autônomo e
+Só CAR saem do cadastro (`ativo = false`, `vende_no_site = false`); quem está
+neles continua igual. Convite antigo para esses planos deixa de abrir (`plano`).
+
+**Quem já era cliente não muda sozinho:** a migração grava na própria empresa a
+condição de antes para quem estava no Profissional ou no Empresarial
+(`escritorios.mensalidade`, `escritorio_creditos`, `precos_credito` da empresa).
+Para passar alguém para a regra nova: Painel → empresa → Plano e créditos →
+"Como no plano" em cada linha (e "Atualizar valor no Asaas" na Cobrança).
+
+**Escritório adicional** = empresa filha (`escritorios.matriz_id`), um nível só:
+- espaço próprio (serviços, clientes, cadastros, configurações, modelos, equipe);
+- plano, recursos e créditos são os da matriz — **um saldo só para o grupo**
+  (`franquia_credito`, `uso_credito`, `saldo_extra`, `tabela_precos`,
+  `recurso_liberado` e o período usam `empresa_pagante()`); compra de crédito,
+  cartão e recarga ficam sempre na matriz;
+- mensalidade: `mensalidade_de(matriz)` = plano (ou a combinada) + escritórios
+  **ativos** × preço; escritório = 0. Empresa sem cobrança (0) continua sem;
+- matriz suspensa/esperando pagamento = escritórios parados (`escritorio_atual`,
+  `tem_permissao`); `meu_escritorio` devolve o status da matriz;
+- o dono da matriz cria/renomeia/desativa/reativa em **Configurações →
+  Escritórios** (`meus_escritorios`, `criar_escritorio`, `definir_escritorio`) e
+  entra pelo **seletor no alto do menu** (`usar_escritorio` grava
+  `membros_escritorio.escritorio_em_uso`; o sistema recarrega no Início). Uma
+  faixa no alto mostra "Escritório X · matriz" com "Voltar à matriz";
+- o escritório nasce com as configurações da matriz (menos chaves de
+  integração/senhas: `gprol|token|segredo|secret|senha|chave|api`); logo e
+  modelos sobem de novo nas Configurações dele;
+- equipe própria: o dono adiciona pessoas estando no escritório (função `equipe`
+  usa o escritório em uso; `definir_membro`/`pode_adicionar_membro` tratam o dono
+  da matriz como dono); quem é da equipe de um escritório entra só nele;
+- desativar tira da mensalidade e guarda tudo; reativar respeita o limite;
+- plano da matriz muda → escritórios seguem o plano e o dia; limite menor →
+  os mais novos além dele são desativados (`ajustar_escritorios`);
+- depois de mudar a lista, a tela chama a função `cobranca`
+  (`escritorios_sincronizar`): o valor novo vai para a assinatura no Asaas (e as
+  faturas em aberto), com a descrição "plano X + N escritórios adicionais".
+
+**Painel:** Planos → "Escritórios adicionais" e "Preço por escritório"; lista de
+empresas mostra o escritório logo abaixo da matriz ("paga na matriz"); página da
+matriz → Plano e créditos → "Escritórios adicionais" (lista + ajuste só da
+empresa: limite e preço, vazio = do plano). A página do escritório aponta para a
+matriz (sem abas de plano, créditos e cobrança).
+
+**Testes:** `tests/rls/planos_escritorios.sql` (no `npm run test:rls`; inclui
+reaplicar a migração e o cliente antigo preservado) e os cenários
+"escritórios" em `tests/cobranca.test.mjs`. Telas: `#/lab/casca/escritorios`,
+`/escritorios-oferta`, `/filial?trilho`, `#/lab/assinar/plano`,
+`#/lab/admin/{planos,empresas,empresas/e4,empresas/e8}`.
+Publicação: `bash scripts/publicar-planos-escritorios.sh [--executar]` (0050 +
+funções cobranca e equipe) e logo depois o push da main.

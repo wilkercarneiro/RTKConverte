@@ -82,13 +82,16 @@ function banco(svc: Svc): Banco {
         id: string; nome: string; cnpj: string | null; email: string | null; telefone: string | null; responsavel: string | null;
         status: string; mensalidade: number | null; origem: string | null; plano: { nome: string; preco_mensal: number | null } | null;
       };
-      const [cob, dono, sit, renova] = await Promise.all([
+      const [cob, dono, sit, renova, mens] = await Promise.all([
         svc.from("cobranca_empresas").select("asaas_cliente_id, asaas_assinatura_id, situacao, link_pagamento, valor, proximo_vencimento, ciclo, inicio_no_primeiro_credito, primeiro_credito_em, mensalidade_iniciada_em")
           .eq("escritorio_id", id).maybeSingle(),
         svc.from("membros_escritorio").select("user_id").eq("escritorio_id", id).eq("papel", "dono").order("created_at").limit(1).maybeSingle(),
         svc.rpc("situacao_creditos", { p_escritorio: id }),
         svc.rpc("renovacao_periodo", { p_escritorio: id }),
+        // 0050: plano (ou o combinado) + escritórios adicionais ativos
+        svc.rpc("mensalidade_detalhe", { p_escritorio: id }),
       ]);
+      const det = mens.error ? null : mens.data as { total: number | null; escritorios: number } | null;
       let login: string | null = null;
       const donoId = (dono.data as { user_id: string } | null)?.user_id;
       if (donoId) login = (await svc.auth.admin.getUserById(donoId)).data.user?.email ?? null;
@@ -96,7 +99,8 @@ function banco(svc: Svc): Banco {
       return {
         id: e.id, nome: e.nome, cnpj: e.cnpj, email: e.email, telefone: e.telefone, responsavel: e.responsavel, status: e.status,
         plano: e.plano?.nome ?? null,
-        mensalidade: e.mensalidade ?? e.plano?.preco_mensal ?? null,
+        mensalidade: det ? (det.total === null ? null : Number(det.total)) : (e.mensalidade ?? e.plano?.preco_mensal ?? null),
+        escritorios: det ? Number(det.escritorios ?? 0) : 0,
         login, creditos, origem: e.origem,
         renovacao: typeof renova.data === "string" ? renova.data : null,
         cobranca: (cob.data as EmpresaCobranca["cobranca"]) ?? null,

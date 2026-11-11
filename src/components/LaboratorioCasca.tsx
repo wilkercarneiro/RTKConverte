@@ -6,6 +6,8 @@
 //   #/lab/casca/equipe · #/lab/casca/creditos (CAR sem crédito) · #/lab/casca/aceite (CAR com o geral)
 //   #/lab/casca/socar (plano Só CAR) · #/lab/casca/pagamento (empresa esperando a 1ª mensalidade)
 //   #/lab/casca/pedidos (todos os pedidos do GPROL) · #/lab/casca/escolher (serviço novo: é pedido do GPROL?)
+//   #/lab/casca/escritorios (Configurações → Escritórios, Empresarial com 2) · /escritorios-oferta (plano sem escritórios)
+//   #/lab/casca/filial (a dona dentro de um escritório adicional: seletor + faixa no topo)
 //   ?semasaas: compra de créditos sem o pagamento online
 //   ?operador na URL: entra como membro sem permissões de gestão
 import { useEffect, useState } from "react";
@@ -27,6 +29,49 @@ import { EscolherPedido } from "./gprol/EscolherPedido";
 import type { Creditos } from "../lib/creditos";
 import { definicaoDe, SERVICOS as SERVICOS_CATALOGO } from "../lib/modalidades";
 import { cobrancaDeExemplo, creditosDeExemplo, instalarCobrancaFalsa } from "./laboratorioCreditos";
+import { Escritorios } from "./config/Escritorios";
+import { definirEscritoriosFalsos } from "../lib/escritorios";
+import type { EscritorioAdicional, MeusEscritorios } from "../lib/escritorios";
+import type { Escritorio } from "../lib/escritorio";
+
+// 0050: os escritórios adicionais da D'Prol no plano Empresarial (em memória)
+const diaF = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+const FILIAIS: EscritorioAdicional[] = [
+  { id: "f1", nome: "Filial Feira de Santana", status: "ativo", criado_em: diaF(40), servicos: 14, servicos_30d: 6, ultimo_servico: diaF(1), usuarios: 2 },
+  { id: "f2", nome: "Filial Santo Amaro", status: "suspenso", criado_em: diaF(80), servicos: 3, servicos_30d: 0, ultimo_servico: diaF(50), usuarios: 1 },
+];
+function meusEscritoriosFalsos(oferta: boolean, emUso: string): MeusEscritorios {
+  const ativos = oferta ? 0 : FILIAIS.filter((f) => f.status === "ativo").length;
+  return {
+    disponivel: true, matriz: { id: "e1", nome: "D'Prol Georreferenciamento", status: "ativo", servicos: 214, servicos_30d: 38, usuarios: 6 }, plano: oferta ? "Profissional" : "Empresarial",
+    limite: oferta ? 0 : 2, preco: oferta ? 0 : 99.9, ativos, em_uso: emUso, escritorios: oferta ? [] : FILIAIS,
+    mensalidade: oferta ? { plano: 299.9, escritorios: 0, preco_escritorio: 0, limite_escritorios: 0, total: 299.9 }
+      : { plano: 1000, escritorios: ativos, preco_escritorio: 99.9, limite_escritorios: 2, total: Math.round((1000 + ativos * 99.9) * 100) / 100 },
+  };
+}
+function instalarEscritorios(oferta: boolean, emUso: string) {
+  definirEscritoriosFalsos(async (acao, args) => {
+    if (acao === "meus_escritorios") return meusEscritoriosFalsos(oferta, emUso);
+    if (acao === "criar_escritorio") {
+      const nome = String(args?.p_nome ?? "");
+      FILIAIS.push({ id: `f${FILIAIS.length + 1}`, nome, status: "ativo", criado_em: new Date().toISOString(), servicos: 0, servicos_30d: 0, ultimo_servico: null, usuarios: 0 });
+      return { id: `f${FILIAIS.length}`, nome, mensalidade: meusEscritoriosFalsos(oferta, emUso).mensalidade };
+    }
+    if (acao === "definir_escritorio") {
+      const f = FILIAIS.find((x) => x.id === args?.p_id);
+      if (f && args?.p_nome) f.nome = String(args.p_nome);
+      if (f && args?.p_ativo === true) {
+        if (FILIAIS.filter((x) => x.status === "ativo").length >= 2) throw new Error("O plano permite 2 escritório(s) adicional(is) ativo(s).");
+        f.status = "ativo";
+      }
+      if (f && args?.p_ativo === false) f.status = "suspenso";
+      return { id: f?.id, mensalidade: meusEscritoriosFalsos(oferta, emUso).mensalidade };
+    }
+    if (acao === "escritorios_sincronizar") return { sincronizado: true, valor: meusEscritoriosFalsos(oferta, emUso).mensalidade?.total ?? null };
+    if (acao === "usar_escritorio") { avisar("ok", `Entraria no escritório ${args?.p_id ?? "matriz"} (o sistema recarrega).`); return null; }
+    return null;
+  });
+}
 
 type Linha = Record<string, unknown>;
 const dia = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
@@ -270,6 +315,17 @@ export function LaboratorioCasca() {
     return () => removeEventListener("hashchange", f);
   }, []);
   const atualizar = () => setCred({ ...CREDITOS, carteiras: CREDITOS.carteiras.map((k) => ({ ...k })), compras: [...CREDITOS.compras] });
+  // ?trilho: o menu aberto com a lista de escritórios (para a foto; no uso, abre ao passar o mouse)
+  useEffect(() => {
+    if (!location.hash.includes("trilho")) return;
+    const t = window.setTimeout(() => {
+      const tr = document.querySelector<HTMLElement>("aside.tr");
+      if (tr) tr.dataset.aberto = "true";
+      document.querySelector<HTMLButtonElement>(".tr-esc")?.click();
+      if (tr) window.setTimeout(() => { tr.dataset.aberto = "true"; }, 50);
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, []);
   if (tela === "creditos" && !(window as { _avisou?: boolean })._avisou) {
     (window as { _avisou?: boolean })._avisou = true;
     setTimeout(() => void avisarConsumo("completo"), 300);
@@ -285,9 +341,18 @@ export function LaboratorioCasca() {
     location.hash = `#/lab/casca/${alvo}${operador ? "?operador" : ""}`;
   };
   const escritorio = { estado: "ok" as const, escritorio: { id: "e1", nome: "D'Prol", papel: operador ? "membro" as const : "dono" as const, modelos_compartilhados: true } };
+  // 0050: matriz com escritórios (seletor no topo do trilho); "filial" = a dona dentro da Filial Feira de Santana
+  const comEscritorios = tela === "escritorios" || tela === "filial";
+  if (tela.startsWith("escritorios") || tela === "filial") instalarEscritorios(tela === "escritorios-oferta", tela === "filial" ? "f1" : "e1");
+  const seletor = [{ id: "e1", nome: "D'Prol Georreferenciamento", matriz: true },
+    ...FILIAIS.filter((f) => f.status === "ativo").map((f) => ({ id: f.id, nome: f.nome, matriz: false }))];
+  const esc: Escritorio | undefined = !comEscritorios ? undefined : tela === "filial"
+    ? { id: "f1", nome: "Filial Feira de Santana", papel: "dono", modelos_compartilhados: false, matriz_id: "e1", matriz_nome: "D'Prol Georreferenciamento", escritorios: seletor }
+    : { id: "e1", nome: "D'Prol Georreferenciamento", papel: "dono", modelos_compartilhados: true, matriz_id: null, matriz_nome: null, escritorios: seletor };
   return (
-    <AppShell rota={rota} ir={ir} usuario={{ nome: operador ? "Paulo Sena" : "Daniel Nascimento", papel: operador ? "Equipe · D'Prol" : "Dono · D'Prol" }} superadmin={!operador} escritorioId="e1">
-      {tela === "equipe" ? <Equipe escritorio={escritorio} />
+    <AppShell rota={tela.startsWith("escritorios") ? { t: "config" } : rota} ir={ir} usuario={{ nome: operador ? "Paulo Sena" : "Daniel Nascimento", papel: operador ? "Equipe · D'Prol" : "Dono · D'Prol" }} superadmin={!operador} escritorioId="e1" escritorio={esc}>
+      {tela.startsWith("escritorios") ? <div className="pagina fade"><h1 className="titulo-pagina">Configurações · Escritórios</h1><Escritorios /></div>
+        : tela === "equipe" ? <Equipe escritorio={escritorio} />
         : tela === "creditos" ? <SemCreditos def={definicaoDe("car")} creditos={cred} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizar} />
         : tela === "aceite" ? <AceiteCreditoGeral def={definicaoDe("car")} creditos={cred} onAceitar={() => {}} onVoltar={() => ir({ t: "inicio" })} onAtualizar={atualizar} />
         : tela === "escolher" ? <EscolherPedido chave="completo" onEscolher={(p) => avisar("ok", `Ligaria ao pedido ${p.titulo}.`)}><div className="pagina"><h1>(tela do serviço novo, do zero)</h1></div></EscolherPedido>

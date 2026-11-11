@@ -526,6 +526,38 @@ test("atualizar a assinatura leva a mensalidade nova ao Asaas (e às cobranças 
   assert.equal(banco.cobrancas[EMPRESA.id].valor, 149.9);
 });
 
+// ------------------------------------------------------------------ escritórios adicionais (0050)
+
+test("escritório criado: a mensalidade nova (plano + escritórios) vai para a assinatura e a descrição diz quantos", async () => {
+  const { asaas, banco, deps, usuario } = cenario({ cfg: ASAAS_OK });
+  const sa = { id: "sa", email: "w@v.test", superadmin: true, escritorioId: null };
+  banco.empresas[EMPRESA.id] = { ...banco.empresas[EMPRESA.id], plano: "Empresarial", mensalidade: 1000 };
+  await tratarAcao(deps, sa, { acao: "cobrar_empresa", escritorio_id: EMPRESA.id });
+  // o banco já somou os dois escritórios ativos (mensalidade_detalhe)
+  Object.assign(banco.empresas[EMPRESA.id], { mensalidade: 1199.8, escritorios: 2 });
+  const r = await tratarAcao(deps, usuario, { acao: "escritorios_sincronizar" });
+  assert.equal(r.status, 200);
+  assert.deepEqual({ sincronizado: r.corpo.sincronizado, valor: r.corpo.valor }, { sincronizado: true, valor: 1199.8 });
+  const put = asaas.chamadas.find((c) => c.metodo === "PUT" && c.caminho.startsWith("/subscriptions/"));
+  assert.equal(put.corpo.value, 1199.8);
+  assert.equal(put.corpo.updatePendingPayments, true);
+  assert.match(put.corpo.description, /Empresarial \+ 2 escritórios adicionais/);
+  assert.equal(banco.cobrancas[EMPRESA.id].valor, 1199.8);
+  // de novo, sem mudança: não chama o Asaas outra vez
+  const antes = asaas.chamadas.length;
+  await tratarAcao(deps, usuario, { acao: "escritorios_sincronizar" });
+  assert.equal(asaas.chamadas.length, antes);
+});
+
+test("escritórios: sem assinatura no Asaas não há o que levar; só o dono sincroniza", async () => {
+  const { deps, usuario } = cenario({ cfg: ASAAS_OK });
+  const r = await tratarAcao(deps, usuario, { acao: "escritorios_sincronizar" });
+  assert.equal(r.corpo.sincronizado, false);
+  const membro = { ...usuario, souDono: false };
+  const negado = await tratarAcao(deps, membro, { acao: "escritorios_sincronizar" });
+  assert.equal(negado.status, 403);
+});
+
 // ------------------------------------------------------------------ peças puras
 
 test("preço por faixa: os mesmos casos do teste do banco", () => {

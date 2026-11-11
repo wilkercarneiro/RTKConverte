@@ -90,7 +90,11 @@ export function PlanoLimites({ e, d, cred, onSalvo }: {
   const acessoDoPlano = (k: string) => linhaPlano(k)?.liberado ?? (plano?.libera_recursos_novos === false ? false : porChave.get(k)?.padrao ?? true);
   const acessoVale = (k: string) => (r.acesso[k] === "plano" ? acessoDoPlano(k) : r.acesso[k] === "liberar");
   const mensalDoPlano = plano?.preco_mensal ?? null;
-  const mensalVale = r.mensal.modo === "empresa" ? (r.mensal.valor.trim() === "" ? 0 : reais(r.mensal.valor)) : mensalDoPlano;
+  const mensalBase = r.mensal.modo === "empresa" ? (r.mensal.valor.trim() === "" ? 0 : reais(r.mensal.valor)) : mensalDoPlano;
+  // 0050: escritórios adicionais ativos × preço (da empresa, senão do plano) entram na conta; sem mensalidade, não cobram
+  const nEscritorios = e.escritorios ?? 0;
+  const precoEscritorio = Number(e.preco_escritorio ?? plano?.preco_escritorio ?? 0);
+  const mensalVale = mensalBase === null ? null : mensalBase > 0 ? Math.round((mensalBase + nEscritorios * precoEscritorio) * 100) / 100 : 0;
   // sem plano = sem limite; plano sem a carteira = 0
   const porMesDoPlano = (t: string): number | null => (!plano ? null : t in (porMesPlanos[plano.id] ?? {}) ? porMesPlanos[plano.id][t] : 0);
   const porMesVale = (t: string) => (r.porMes[t]?.modo === "empresa" ? numero(r.porMes[t].valor) : porMesDoPlano(t));
@@ -177,6 +181,9 @@ export function PlanoLimites({ e, d, cred, onSalvo }: {
         </div>
         <p className="sa-vale">
           <b>Vale agora:</b> {mensalVale === null ? "mensalidade não definida" : mensalVale === 0 ? "sem mensalidade" : `${fmtPreco(mensalVale)} por mês`}
+          {mensalBase !== null && mensalBase > 0 && nEscritorios > 0 && (
+            <span className="sub"> ({fmtPreco(mensalBase)} + {nEscritorios} escritório{nEscritorios > 1 ? "s" : ""} × {fmtPreco(precoEscritorio)})</span>
+          )}
           {r.mensal.modo === "empresa" && <span className="sa-pill neutro">só desta empresa</span>}
         </p>
       </section>

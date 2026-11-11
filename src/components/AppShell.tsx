@@ -26,7 +26,11 @@ import { abrirSuporte, SuporteChat, useNaoLidasSuporte } from "./suporte/Suporte
 import { contagemSuporte } from "../lib/suporte";
 import { useEnvioMedicoes } from "./campo/useEnvioMedicoes";
 import { abrirInstalarApp, FaixaVersao, InstalarAppGlobal } from "./InstalarApp";
+import type { Escritorio } from "../lib/escritorio";
+import { entrarNoEscritorio } from "../lib/escritorios";
+import { avisar } from "./ui";
 import "./casca.css";
+import "./escritorios.css";
 
 const I = {
   inicio: "M3 11 12 3l9 8v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z",
@@ -47,7 +51,80 @@ const I = {
   voltar: "M15 18l-6-6 6-6",
   instalar: "M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM12 7v7M9.5 11.5 12 14l2.5-2.5M11 18h2",
   fechar: "M18 6 6 18M6 6l12 12",
+  predio: "M3 21h18M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M15 9h2a2 2 0 0 1 2 2v10M9 7h2M9 11h2M9 15h2",
+  setas: "M7 15l5 5 5-5M7 9l5-5 5 5",
+  ok: "M20 6 9 17l-5-5",
 };
+
+/**
+ * 0050: o seletor de escritório do dono da matriz (no alto do menu). A lista
+ * abre ali mesmo; escolher recarrega o sistema no escritório escolhido.
+ */
+function SeletorEscritorio({ escritorio }: { escritorio: Escritorio }) {
+  const [aberto, setAberto] = useState(false);
+  const [indo, setIndo] = useState<string | null>(null);
+  const lista = escritorio.escritorios ?? [];
+  if (lista.length < 2) {
+    // escritório adicional sem seletor (equipe do escritório): só o nome, para saber onde está
+    if (!escritorio.matriz_id) return null;
+    return (
+      <div className="tr-esc tr-esc-fixo" data-dica={`Escritório ${escritorio.nome}`}>
+        <span className="tr-esc-ico"><Ico d={I.predio} /></span>
+        <span className="tr-rotulo tr-esc-tx"><small>Escritório</small><b>{escritorio.nome}</b></span>
+      </div>
+    );
+  }
+  const trocar = async (id: string) => {
+    if (id === escritorio.id) { setAberto(false); return; }
+    setIndo(id);
+    try { await entrarNoEscritorio(lista.find((x) => x.id === id)?.matriz ? null : id); }
+    catch (e) { setIndo(null); avisar("erro", e instanceof Error ? e.message : String(e)); }
+  };
+  return (
+    <div className={aberto ? "tr-esc-bloco aberto" : "tr-esc-bloco"}>
+      <button type="button" className="tr-esc" aria-expanded={aberto} aria-haspopup="listbox"
+        data-dica={`Escritório: ${escritorio.nome} (trocar)`} onClick={() => setAberto((v) => !v)}>
+        <span className="tr-esc-ico"><Ico d={I.predio} /></span>
+        <span className="tr-rotulo tr-esc-tx"><small>{escritorio.matriz_id ? "Escritório" : "Matriz"}</small><b>{escritorio.nome}</b></span>
+        <span className="tr-rotulo tr-esc-seta"><Ico d={I.setas} /></span>
+      </button>
+      {aberto && (
+        <ul className="tr-esc-lista" role="listbox" aria-label="Trocar de escritório">
+          {lista.map((x) => (
+            <li key={x.id}>
+              <button type="button" role="option" aria-selected={x.id === escritorio.id} disabled={indo !== null}
+                className={x.id === escritorio.id ? "atual" : undefined} onClick={() => trocar(x.id)}>
+                <span className="tr-esc-letra" aria-hidden="true">{x.nome.trim().charAt(0).toUpperCase()}</span>
+                <span className="tr-rotulo">{x.nome}{x.matriz && <small> · matriz</small>}</span>
+                {x.id === escritorio.id && <span className="tr-rotulo tr-esc-ok"><Ico d={I.ok} /></span>}
+                {indo === x.id && <span className="spinner" aria-label="Entrando" />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** 0050: "Você está no escritório X" — no alto do conteúdo, em qualquer tela de um escritório adicional. */
+function FaixaEscritorio({ escritorio }: { escritorio: Escritorio }) {
+  const [indo, setIndo] = useState(false);
+  if (!escritorio.matriz_id) return null;
+  const podeVoltar = (escritorio.escritorios ?? []).length > 1;
+  return (
+    <div className="esc-faixa" role="status">
+      <Ico d={I.predio} />
+      <span>Escritório <b>{escritorio.nome}</b>{escritorio.matriz_nome && <> · {escritorio.matriz_nome}</>}</span>
+      {podeVoltar && (
+        <button type="button" className="link" disabled={indo}
+          onClick={() => { setIndo(true); entrarNoEscritorio(null).catch((e) => { setIndo(false); avisar("erro", e instanceof Error ? e.message : String(e)); }); }}>
+          {indo ? "Voltando…" : "Voltar à matriz"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 /** Abas da barra de baixo do celular (só no Início). */
 const ABAS: { t: Rota["t"] | "ferramentas"; rotulo: string; icone: string }[] = [
@@ -107,8 +184,10 @@ const Ico = ({ d }: { d: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
 );
 
-export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId }: {
+export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId, escritorio }: {
   rota: Rota; ir: (r: Rota) => void; children: ReactNode;
+  /** 0050: o escritório em que a pessoa está — faixa no topo (escritório adicional) e seletor (dono da matriz) */
+  escritorio?: Escritorio;
   /** nome exibido no rodapé da barra (ex.: e-mail ou nome do RT) */
   usuario?: { nome: string; papel?: string };
   /** mostra o atalho para o painel do SaaS */
@@ -194,6 +273,7 @@ export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId
         <Logo className="tr-logo" />
         <span className="tr-rotulo tr-nome">Vertces</span>
       </button>
+      {escritorio && <SeletorEscritorio escritorio={escritorio} />}
       <nav className="tr-nav" aria-label="Navegação principal">
         {grupos(!!superadmin, escritorioId ? naoLidas : null, esperando).map((g) => g.itens.length > 0 && (
           <div className="tr-grupo" key={g.titulo}>
@@ -302,6 +382,7 @@ export function AppShell({ rota, ir, children, usuario, superadmin, escritorioId
       {/* Um erro de desenho em qualquer tela fica NESTA área: o menu continua e o
           aviso oferece "tentar de novo" — nunca mais a página inteira em branco. */}
       <main className="app-conteudo" key={rota.t} ref={conteudo}>
+        {escritorio && <FaixaEscritorio escritorio={escritorio} />}
         <BarreiraErro onde="esta tela" chave={JSON.stringify(rota)}
           explicar={(e) => (/webgl/i.test(e.message) ? MOTIVO_SEM_WEBGL : null)}>
           {/* telas carregadas sob demanda (App.tsx): um aviso discreto enquanto o pedaço chega */}

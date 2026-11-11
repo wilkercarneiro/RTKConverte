@@ -16,6 +16,7 @@ import { RECURSOS, temRecurso } from "../../lib/recursos";
 import type { ChaveRecurso } from "../../lib/recursos";
 import { temPermissao } from "../../lib/permissoes";
 import { abrirSuporte } from "../suporte/SuporteChat";
+import { contaDaMensalidade } from "../../lib/escritorios";
 import { ComprarCreditos } from "../Creditos";
 import { PainelCartao } from "../Cartao";
 import { Dica, Esqueleto } from "../ui";
@@ -87,7 +88,13 @@ export function PlanoUso({ escritorio }: { escritorio: EstadoEscritorio }) {
         <section className="bloco">
           <header><h3>Mensalidade<Dica>{cobranca.cartao ? `cobrada no cartão final ${cobranca.cartao.final} no vencimento` : "cobrada pelo Asaas; dá para pagar por Pix, boleto ou cartão"}</Dica></h3></header>
           <div className="pu-mensalidade">
-            <div><span>Valor</span><b>{cobranca.valor !== null ? fmtPreco(Number(cobranca.valor)) : "—"}</b></div>
+            <div>
+              <span>Valor</span><b>{cobranca.valor !== null ? fmtPreco(Number(cobranca.valor)) : "—"}</b>
+              {/* 0050: plano + escritórios adicionais */}
+              {contaDaMensalidade(cobranca.mensalidade_detalhe, (v) => fmtPreco(v)) && (
+                <small className="pu-conta">{contaDaMensalidade(cobranca.mensalidade_detalhe, (v) => fmtPreco(v))}</small>
+              )}
+            </div>
             <div><span>Situação</span><b className={`pu-sit ${cobranca.situacao}`}>{ROTULO_SITUACAO[cobranca.situacao]}</b></div>
             {cobranca.vencimento && <div><span>{cobranca.situacao === "em_dia" ? "Próximo vencimento" : "Vencimento"}</span><b>{dataBr(cobranca.vencimento)}</b></div>}
             {cobranca.link && cobranca.situacao !== "em_dia" && cobranca.sou_dono && (

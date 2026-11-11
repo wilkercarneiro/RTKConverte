@@ -721,3 +721,13 @@ button.sa-nav:hover:not(:disabled) { color: #fff; }
 
 /* convite recém-gerado (0049): destaque até recarregar */
 .sa-fatura.sa-convite-novo { box-shadow: 0 0 0 2px var(--primaria-clara, #cfe8da); border-color: var(--primaria, #178552); }
+
+/* 0050: escritório adicional logo abaixo da matriz, recuado */
+.sa-linha-escritorio td { background: #FAFCFB; }
+.sa-linha-escritorio td.empresa { padding-left: 26px; }
+.sa-linha-escritorio .empresa span { font-family: var(--fonte); }
+.sa-ramo { color: var(--texto-3); font-weight: 400; margin-right: 2px; }
+.sa-lista-escritorios { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; }
+.sa-lista-escritorios li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; border-radius: 10px; background: #F7F9F8; }
+.sa-lista-escritorios .link { font-weight: 600; }
+.sa-lista-escritorios .sub { font-size: 12.5px; margin-left: auto; }

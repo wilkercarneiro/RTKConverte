@@ -13,6 +13,8 @@
 //               cancelar_compra { credito_id } · conferir
 //               pagar_cadastro { forma: pix|cartao, ciclo, parcelas?, cartao?, titular? }
 //                 (o dono da empresa do autocadastro paga o 1º período; 0040)
+//               escritorios_sincronizar (0050: o dono mexeu nos escritórios adicionais;
+//                 o valor novo da mensalidade vai para a assinatura no Asaas)
 //               iniciar_mensalidade { escritorio_id? (só superadmin) }
 //                 (0049: gastou o 1º crédito, a assinatura nasce no Asaas)
 //   superadmin: config_status · config_salvar · whatsapp_testar { telefone }
@@ -62,6 +64,8 @@ export interface EmpresaCobranca {
   status: string; plano: string | null;
   /** a que vale: a da empresa, senão a do plano */
   mensalidade: number | null;
+  /** 0050: escritórios adicionais ativos (já somados na mensalidade) */
+  escritorios?: number;
   /** e-mail do dono (o login) */
   login: string | null;
   creditos: CarteiraDoPlano[];
@@ -240,8 +244,10 @@ export function cobrancaDaEmpresa(cfg: Record<string, string>, e: EmpresaCobranc
 }
 
 /** "Vertces: plano X" (+ o período, se não for mensal): a descrição da assinatura no Asaas. */
-function descricaoAssinatura(e: EmpresaCobranca, ciclo: Ciclo): string {
-  const base = e.plano ? `Vertces: plano ${e.plano}` : "Vertces: mensalidade";
+export function descricaoAssinatura(e: EmpresaCobranca, ciclo: Ciclo): string {
+  const n = e.escritorios ?? 0;
+  const base = (e.plano ? `Vertces: plano ${e.plano}` : "Vertces: mensalidade")
+    + (n > 0 ? ` + ${n} escritório${n > 1 ? "s" : ""} ${n > 1 ? "adicionais" : "adicional"}` : "");
   return ciclo === "MONTHLY" ? base : `${base} (${NOME_CICLO[ciclo].toLowerCase()})`;
 }
 
@@ -391,6 +397,7 @@ export async function tratarAcao(d: Deps, u: Usuario, b: Record<string, unknown>
       case "cancelar_compra": return await cancelarCompra(d, cfg, u, b);
       case "conferir": return await conferir(d, cfg, u, b);
       case "pagar_cadastro": return await pagarCadastro(d, cfg, u, b);
+      case "escritorios_sincronizar": return await escritoriosSincronizar(d, cfg, u);
       case "iniciar_mensalidade": {
         // a tela da empresa chama quando minha_cobranca() diz mensalidade_a_iniciar; o superadmin, por empresa
         const alvo = u.superadmin && b.escritorio_id ? String(b.escritorio_id) : u.escritorioId;
@@ -829,6 +836,32 @@ async function atualizarAssinatura(d: Deps, cfg: Record<string, string>, b: Reco
   });
   await d.banco.salvarCobranca(e.id, { valor });
   return ok({ valor });
+}
+
+/**
+ * 0050: o dono criou, desativou ou reativou um escritório adicional — o banco
+ * já recalculou a mensalidade; aqui ela vai para a assinatura do Asaas (e para
+ * as faturas em aberto). Sem Asaas ou sem assinatura viva não há o que levar: a
+ * cobrança nasce com o valor certo quando for criada.
+ */
+async function escritoriosSincronizar(d: Deps, cfg: Record<string, string>, u: Usuario): Promise<Resposta> {
+  if (!u.escritorioId) throw new ErroUsuario("Sua conta não está ligada a uma empresa.", 403);
+  if (!u.souDono) throw new ErroUsuario("Só o dono da empresa cuida dos escritórios.", 403);
+  const e = await d.banco.empresa(u.escritorioId);
+  if (!e) throw new ErroUsuario("Empresa não encontrada.", 404);
+  const asaas = asaasDe(cfg, d.fetch);
+  const sub = e.cobranca?.asaas_assinatura_id;
+  if (!asaas || !sub || e.cobranca?.situacao === "cancelada") return ok({ sincronizado: false, valor: e.mensalidade });
+  const { ciclo, valor } = cobrancaDaEmpresa(cfg, e);
+  if (!(valor > 0)) return ok({ sincronizado: false, valor });
+  if (Number(e.cobranca?.valor ?? 0) === valor) return ok({ sincronizado: true, valor });
+  await asaas.atualizarAssinatura(sub, { value: valor, updatePendingPayments: true, description: descricaoAssinatura(e, ciclo) });
+  await d.banco.salvarCobranca(e.id, { valor });
+  await d.banco.atividade(e.id, "cobranca.valor", `mensalidade atualizada para ${fmtReais(valor)} (escritórios adicionais)`, u.id).catch(() => {});
+  const n = e.escritorios ?? 0;
+  await avisarSuperadmin(d, cfg, `Vertces: ${e.nome} agora paga ${fmtReais(valor)}`
+    + `${ciclo === "MONTHLY" ? "/mês" : ` (${NOME_CICLO[ciclo].toLowerCase()})`} — ${n} escritório(s) adicional(is).`);
+  return ok({ sincronizado: true, valor });
 }
 
 async function cancelarAssinatura(d: Deps, cfg: Record<string, string>, b: Record<string, unknown>): Promise<Resposta> {

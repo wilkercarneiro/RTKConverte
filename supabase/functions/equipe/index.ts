@@ -85,10 +85,15 @@ Deno.serve(async (req) => {
     const p = pode as { ok: boolean; motivo?: string; escritorio_id?: string; sou_dono?: boolean };
     const { data: gerencia } = await cli.rpc("tem_permissao", { p: "equipe.gerenciar" });
     if (gerencia !== true) return json({ erro: "Você não tem permissão para gerenciar a equipe." }, 403);
-    const { data: meu } = await svc.from("membros_escritorio").select("escritorio_id, papel").eq("user_id", eu).maybeSingle();
-    const escId = (meu as { escritorio_id: string } | null)?.escritorio_id;
+    // 0050: o dono da matriz que entrou num escritório adicional cuida da equipe
+    // DESSE escritório (meu_escritorio devolve o escritório em uso e o papel).
+    // Banco antes da 0050: meu_escritorio devolve a empresa da equipe, como antes.
+    const { data: meuRpc, error: eMeu } = await cli.rpc("meu_escritorio");
+    if (eMeu) return json({ erro: "Não foi possível conferir a sua empresa agora. Tente de novo em instantes." }, 503);
+    const meu = (Array.isArray(meuRpc) ? meuRpc[0] : meuRpc) as { id: string; papel: string } | null | undefined;
+    const escId = meu?.id;
     if (!escId) return json({ erro: "Sua conta não está ligada a uma empresa." }, 403);
-    const souDono = (meu as { papel: string }).papel === "dono";
+    const souDono = meu?.papel === "dono";
 
     const registrar = (acao: string, alvo: string) =>
       svc.from("atividades").insert({ escritorio_id: escId, user_id: eu, acao, alvo });

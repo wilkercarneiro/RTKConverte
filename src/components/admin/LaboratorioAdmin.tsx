@@ -14,24 +14,24 @@ import { qrDeExemplo } from "../laboratorioCreditos";
 import { mensagemCobranca } from "../../../supabase/functions/_shared/mensagens_cobranca.ts";
 
 const dia = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
-// os planos da 0034 (e o Completo de antes, fora do cadastro)
+// os dois planos da 0050 (Profissional e Empresarial) e os de antes, fora do cadastro
 const PLANOS = [
-  { id: "p1", nome: "Autônomo", descricao: "Todos os serviços. Por mês: 6 créditos gerais e 12 de CAR.", cor: "#5B6B63", ordem: 10, ativo: true, preco_mensal: 149.9, libera_recursos_novos: true, vende_no_site: true },
-  { id: "p2", nome: "Profissional", descricao: "Todos os serviços. Por mês: 12 créditos gerais e 25 de CAR.", cor: "#178552", ordem: 20, ativo: true, preco_mensal: 249.9, libera_recursos_novos: true, vende_no_site: true },
-  { id: "p3", nome: "Empresarial", descricao: "Todos os serviços. Por mês: 25 créditos gerais e 50 de CAR.", cor: "#0E3B2B", ordem: 30, ativo: true, preco_mensal: null, libera_recursos_novos: true },
-  { id: "p4", nome: "Só CAR", descricao: "Só o serviço de CAR. Por mês: 5 créditos de CAR.", cor: "#C99A12", ordem: 40, ativo: true, preco_mensal: 49.9, libera_recursos_novos: false },
-  { id: "p5", nome: "Completo", descricao: "", cor: "#2E4F43", ordem: 50, ativo: false, preco_mensal: null, libera_recursos_novos: true },
+  { id: "p2", nome: "Profissional", descricao: "Todos os serviços: 8 créditos para projetos e 16 para CAR por mês.", cor: "#178552", ordem: 10, ativo: true, preco_mensal: 299.9, libera_recursos_novos: true, vende_no_site: true, escritorios_adicionais: 0, preco_escritorio: null },
+  { id: "p3", nome: "Empresarial", descricao: "Créditos ilimitados e até 2 escritórios adicionais.", cor: "#0E3B2B", ordem: 20, ativo: true, preco_mensal: 1000, libera_recursos_novos: true, vende_no_site: true, escritorios_adicionais: 2, preco_escritorio: 99.9 },
+  { id: "p1", nome: "Autônomo", descricao: "Todos os serviços, para quem trabalha sozinho.", cor: "#5B6B63", ordem: 30, ativo: false, preco_mensal: 299.9, libera_recursos_novos: true, vende_no_site: false, escritorios_adicionais: 0, preco_escritorio: null },
+  { id: "p4", nome: "Só CAR", descricao: "Só o serviço de CAR. Por mês: 5 créditos de CAR.", cor: "#C99A12", ordem: 40, ativo: false, preco_mensal: 49.9, libera_recursos_novos: false, escritorios_adicionais: 0, preco_escritorio: null },
+  { id: "p5", nome: "Completo", descricao: "", cor: "#2E4F43", ordem: 50, ativo: false, preco_mensal: null, libera_recursos_novos: true, escritorios_adicionais: 0, preco_escritorio: null },
 ];
 const TIPOS = [
   { chave: "geral", nome: "Créditos gerais", descricao: "Valem para qualquer serviço. No CAR, só com o seu aceite.", servicos: null, ordem: 10, ativo: true },
   { chave: "car", nome: "Créditos de CAR", descricao: "Valem só para o CAR.", servicos: ["servico.car"], ordem: 20, ativo: true },
 ];
 const POR_MES: [string, string, number | null][] = [
-  ["p1", "geral", 6], ["p1", "car", 12], ["p2", "geral", 12], ["p2", "car", 25], ["p3", "geral", 25], ["p3", "car", 50],
+  ["p1", "geral", 6], ["p1", "car", 12], ["p2", "geral", 8], ["p2", "car", 16], ["p3", "geral", null], ["p3", "car", null],
   ["p4", "geral", 0], ["p4", "car", 5], ["p5", "geral", null], ["p5", "car", null],
 ];
 const PRECOS: [string, string, number, number][] = [
-  ["p1", "geral", 2, 70], ["p1", "car", 2, 9.9], ["p2", "geral", 2, 60], ["p2", "car", 2, 9.9], ["p3", "geral", 2, 50], ["p3", "car", 2, 9.9],
+  ["p1", "geral", 2, 70], ["p1", "car", 2, 9.9], ["p2", "geral", 2, 50], ["p2", "geral", 6, 40], ["p2", "car", 2, 9.9],
   ["p4", "car", 2, 19.9], ["p4", "car", 10, 15], ["p4", "car", 51, 10],
 ];
 const EMPRESAS = [
@@ -58,6 +58,18 @@ const EMPRESAS = [
   { ...EMPRESAS[1], id: "e7", nome: "TOPOGRAFIA CHAPADA", cnpj: "08332161000155", responsavel: "Carla Dias", status: "ativo", servicos: 1, servicos_30d: 1,
     ultimo_servico: dia(0.2), ultimo_acesso: dia(0.2), excecoes: 0, mensalidade: 249.9, cobranca: null, vencimento: null, created_at: dia(9), inicio_cobranca: "a_iniciar" },
 );
+// 0050: a MEDIÇÕES RECÔNCAVO (Empresarial) com dois escritórios adicionais, logo abaixo dela
+{
+  const m = (EMPRESAS as Record<string, unknown>[]).find((x) => x.id === "e4")!;
+  Object.assign(m, { escritorios: 2, mensalidade: 1199.8 });
+  const i = (EMPRESAS as Record<string, unknown>[]).indexOf(m);
+  (EMPRESAS as Record<string, unknown>[]).splice(i + 1, 0,
+    { ...m, id: "e8", nome: "Recôncavo — Filial Feira de Santana", cnpj: null, matriz_id: "e4", matriz: m.nome, escritorios: 0, mensalidade: 0,
+      usuarios: 2, servicos: 14, servicos_30d: 6, cobranca: null, vencimento: null, excecoes: 0, created_at: dia(40) },
+    { ...m, id: "e9", nome: "Recôncavo — Filial Santo Amaro", cnpj: null, matriz_id: "e4", matriz: m.nome, escritorios: 0, mensalidade: 0,
+      usuarios: 1, servicos: 3, servicos_30d: 3, cobranca: null, vencimento: null, excecoes: 0, created_at: dia(8) },
+  );
+}
 // convites (0049): em memória, como o resto do laboratório
 const CONVITES: Record<string, unknown>[] = [
   { id: "cv1", token: "3f9a".repeat(16), nome: "João — Geo Sertão (reunião 10/11)", plano_id: "p2", plano: "Profissional", criado_em: dia(1), expira_em: dia(-29), usado_em: null, cancelado_em: null, escritorio_id: null, empresa: null, situacao: "aberto" },

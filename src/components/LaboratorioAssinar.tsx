@@ -13,26 +13,26 @@ import { REGRAS_PADRAO } from "../../supabase/functions/_shared/parcelas.ts";
 import { Assinar } from "./Assinar";
 
 const REGRAS = { ...REGRAS_PADRAO, cadastro_aberto: true, ciclos: { ...REGRAS_PADRAO.ciclos, YEARLY: { ativo: true, desconto: 10 } } };
+// os dois planos da 0050 (11/11/2026)
 const PLANOS = [
-  { id: "a0000000-0000-4000-8000-000000000001", nome: "Autônomo", descricao: "Todos os serviços, para quem trabalha sozinho.", cor: "#5B6B63", mensalidade: 299.9, limite_usuarios: 1,
-    creditos: [{ tipo: "geral", nome: "Créditos gerais", por_mes: 6 }, { tipo: "car", nome: "Créditos de CAR", por_mes: 12 }],
-    extra: { geral: [{ a_partir_de: 1, preco: 70 }], car: [{ a_partir_de: 2, preco: 9.9 }] } },
-  { id: "a0000000-0000-4000-8000-000000000002", nome: "Profissional", descricao: "Todos os serviços, para o escritório que cresce.", cor: "#178552", mensalidade: 599.9, limite_usuarios: 5,
-    creditos: [{ tipo: "geral", nome: "Créditos gerais", por_mes: 12 }, { tipo: "car", nome: "Créditos de CAR", por_mes: 25 }],
-    extra: { geral: [{ a_partir_de: 1, preco: 60 }], car: [{ a_partir_de: 2, preco: 9.9 }] } },
-  { id: "a0000000-0000-4000-8000-000000000003", nome: "Empresarial", descricao: "Todos os serviços, para o escritório de volume alto.", cor: "#0E3B2B", mensalidade: 999.9, limite_usuarios: null,
-    creditos: [{ tipo: "geral", nome: "Créditos gerais", por_mes: 25 }, { tipo: "car", nome: "Créditos de CAR", por_mes: 50 }],
-    extra: { geral: [{ a_partir_de: 1, preco: 50 }], car: [{ a_partir_de: 2, preco: 9.9 }] } },
+  { id: "a0000000-0000-4000-8000-000000000002", nome: "Profissional", descricao: "Todos os serviços: 8 créditos para projetos e 16 para CAR por mês.", cor: "#178552", mensalidade: 299.9, limite_usuarios: null,
+    escritorios_adicionais: 0, preco_escritorio: null,
+    creditos: [{ tipo: "geral", nome: "Créditos gerais", por_mes: 8 }, { tipo: "car", nome: "Créditos de CAR", por_mes: 16 }],
+    extra: { geral: [{ a_partir_de: 2, preco: 50 }, { a_partir_de: 6, preco: 40 }], car: [{ a_partir_de: 2, preco: 9.9 }] } },
+  { id: "a0000000-0000-4000-8000-000000000003", nome: "Empresarial", descricao: "Créditos ilimitados e até 2 escritórios adicionais.", cor: "#0E3B2B", mensalidade: 1000, limite_usuarios: null,
+    escritorios_adicionais: 2, preco_escritorio: 99.9,
+    creditos: [{ tipo: "geral", nome: "Créditos gerais", por_mes: null }, { tipo: "car", nome: "Créditos de CAR", por_mes: null }],
+    extra: {} },
 ];
 // um QR qualquer (1 pixel): o laboratório não fala com o Asaas
 const QR = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 function cobranca(o: Partial<MinhaCobranca> = {}): MinhaCobranca {
   return {
-    status: "aguardando_pagamento", empresa: "Geo Lima Topografia", plano: "Profissional", valor: 6478.92, situacao: "sem_assinatura",
+    status: "aguardando_pagamento", empresa: "Geo Lima Topografia", plano: "Profissional", valor: 3238.92, situacao: "sem_assinatura",
     link: null, vencimento: null, sou_dono: true, pagamento_online: true, cartao: null, precisa_cartao: true,
     contato: { email: "ana@geolima.com.br", telefone: "71988887777", cnpj: "52998224725", responsavel: "Ana Lima" },
-    ciclo: "YEARLY", origem: "site", plano_id: PLANOS[1].id, mensalidade: 599.9, assinatura: false, regras: REGRAS, ultimo_pagamento: null, ...o,
+    ciclo: "YEARLY", origem: "site", plano_id: PLANOS[0].id, mensalidade: 299.9, assinatura: false, regras: REGRAS, ultimo_pagamento: null, ...o,
   };
 }
 
@@ -80,5 +80,5 @@ export function LaboratorioAssinar() {
   if (tela.startsWith("convite")) {
     return <Assinar convite={"3f9a".repeat(16)} passoInicial={tela === "convite-plano" ? 2 : undefined} />;
   }
-  return <Assinar plano={tela === "dados" ? undefined : PLANOS[1].id} ciclo={tela === "dados" ? undefined : "anual"} passoInicial={tela === "plano" ? 2 : undefined} />;
+  return <Assinar plano={tela === "dados" ? undefined : PLANOS[0].id} ciclo={tela === "dados" ? undefined : "anual"} passoInicial={tela === "plano" ? 2 : undefined} />;
 }

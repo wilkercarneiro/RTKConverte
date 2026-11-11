@@ -5,6 +5,10 @@
 //   Cobrança           — a assinatura no Asaas, a fatura em aberto e os pagamentos
 //   Cadastro           — dados da empresa
 //   Usuários, Uso, Histórico
+//
+// 0050: na matriz, "Plano e créditos" mostra os escritórios adicionais (e o
+// ajuste de quantos e por quanto); o escritório adicional não tem plano,
+// créditos nem cobrança próprios — a página dele aponta para a matriz.
 import { useCallback, useEffect, useState } from "react";
 import {
   acessosDaEmpresa, adicionarUsuario, atividadesDaEmpresa, atualizarEmpresa, contornosDaEmpresa, creditosDaEmpresa, lerSenhaPadrao, liberarContorno, mensagemDeAcesso,
@@ -31,7 +35,7 @@ type Aba = "plano" | "creditos" | "cobranca" | "cadastro" | "usuarios" | "uso" |
 
 export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
   const e = d.empresas.find((x) => x.id === id);
-  const [aba, setAba] = useState<Aba>("plano");
+  const [aba, setAba] = useState<Aba>(e?.matriz_id ? "usuarios" : "plano");
   const [aviso, setAviso] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
   // créditos do mês: o topo, "Plano e limites" e "Créditos extras" leem daqui (null = carregando ou banco sem a 0027)
   const [cred, setCred] = useState<DadosCreditos | null>(null);
@@ -81,6 +85,13 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
 
       {aviso && <div className={`sa-aviso ${aviso.tipo}`}>{aviso.texto}</div>}
 
+      {e.matriz_id && (
+        <div className="sa-aviso" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ flex: 1 }}>Escritório adicional da <b>{e.matriz ?? "matriz"}</b>: plano, créditos e mensalidade são os da matriz. Aqui ficam a equipe, o uso e o histórico dele.</span>
+          <button type="button" onClick={() => d.ir({ t: "admin", aba: "empresas", id: e.matriz_id! })}>Abrir a matriz</button>
+        </div>
+      )}
+
       <section className="sa-card">
         <div className="sa-cabeca-empresa">
           <span className="av">{iniciais(e.nome)}</span>
@@ -116,7 +127,8 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
       </div>
 
       <nav className="sa-abas" aria-label="Seções da empresa">
-        {([["plano", "Plano e créditos"], ["creditos", "Créditos extras"], ["cobranca", "Cobrança"], ["cadastro", "Cadastro"], ["usuarios", "Usuários"], ["uso", "Uso"], ["historico", "Histórico"]] as [Aba, string][]).map(([a, r]) => (
+        {([["plano", "Plano e créditos"], ["creditos", "Créditos extras"], ["cobranca", "Cobrança"], ["cadastro", "Cadastro"], ["usuarios", "Usuários"], ["uso", "Uso"], ["historico", "Histórico"]] as [Aba, string][])
+          .filter(([a]) => !e.matriz_id || (a !== "plano" && a !== "creditos" && a !== "cobranca")).map(([a, r]) => (
           <button key={a} type="button" className={aba === a ? "ativo" : ""} onClick={() => setAba(a)}>
             {r}{a === "creditos" && pendentes > 0 && <span className="sa-badge" style={{ marginLeft: 6 }}>{pendentes}</span>}
             {a === "cobranca" && (e.cobranca === "atrasada" || e.status === "aguardando_pagamento") && <span className="sa-badge" style={{ marginLeft: 6 }}>!</span>}
@@ -124,7 +136,10 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
         ))}
       </nav>
 
-      {aba === "plano" && <PlanoLimites e={e} d={d} cred={cred}
+      {aba === "plano" && !e.matriz_id && <EscritoriosDaEmpresa key={e.id} e={e} d={d}
+        onSalvo={async (t) => { await d.recarregar(); setAviso({ tipo: "ok", texto: t }); }}
+        onErro={(t) => setAviso({ tipo: "erro", texto: t })} />}
+      {aba === "plano" && !e.matriz_id && <PlanoLimites e={e} d={d} cred={cred}
         onSalvo={async (t) => { await Promise.all([d.recarregar(), recarregarCred()]); setAviso({ tipo: "ok", texto: t }); }} />}
       {aba === "creditos" && <CreditosEmpresa e={e} d={d} c={cred} onMudou={recarregarCred} />}
       {aba === "cobranca" && <CobrancaEmpresa e={e} d={d} onMudou={async (t) => { await recarregarCred(); setAviso({ tipo: "ok", texto: t }); }} />}
@@ -133,6 +148,59 @@ export function EmpresaDetalhe({ id, d }: { id: string; d: DadosAdmin }) {
       {aba === "uso" && <Uso e={e} />}
       {aba === "historico" && <Historico e={e} />}
     </>
+  );
+}
+
+/**
+ * 0050: os escritórios adicionais da matriz e o ajuste só desta empresa (quantos
+ * pode ter ativos e quanto cada um soma à mensalidade; vazio = o do plano).
+ */
+function EscritoriosDaEmpresa({ e, d, onSalvo, onErro }: {
+  e: Empresa; d: DadosAdmin; onSalvo: (t: string) => Promise<void>; onErro: (t: string) => void;
+}) {
+  const plano = d.planos.find((p) => p.id === e.plano_id);
+  const filhos = d.empresas.filter((x) => x.matriz_id === e.id);
+  const [limite, setLimite] = useState(e.limite_escritorios != null ? String(e.limite_escritorios) : "");
+  const [preco, setPreco] = useState(e.preco_escritorio != null ? Number(e.preco_escritorio).toFixed(2).replace(".", ",") : "");
+  const [salvando, setSalvando] = useState(false);
+  const doPlano = { limite: plano?.escritorios_adicionais ?? 0, preco: plano?.preco_escritorio ?? null };
+
+  async function salvar() {
+    const l = limite.trim() === "" ? "" : Math.max(0, Math.min(50, Math.floor(Number(limite))));
+    const pr = preco.trim() === "" ? "" : Number(preco.replace(/\./g, "").replace(",", "."));
+    if (pr !== "" && !(pr >= 0)) { onErro("Preço por escritório inválido."); return; }
+    setSalvando(true);
+    try {
+      await atualizarEmpresa(e.id, { limite_escritorios: l, preco_escritorio: pr });
+      await onSalvo("Escritórios adicionais salvos. Se a mensalidade mudou, atualize a assinatura na aba Cobrança.");
+    } catch (err) { onErro(String(err instanceof Error ? err.message : err)); }
+    finally { setSalvando(false); }
+  }
+
+  return (
+    <section className="sa-card" style={{ marginBottom: 18 }}>
+      <header><h3>Escritórios adicionais<Dica>espaços próprios da empresa (serviços, clientes, equipe) que usam o plano e os créditos dela; o dono cria em Configurações → Escritórios. Para liberar só nesta empresa, defina o limite.</Dica></h3></header>
+      {filhos.length > 0 ? (
+        <ul className="sa-lista-escritorios">
+          {filhos.map((f) => (
+            <li key={f.id}>
+              <button type="button" className="link" onClick={() => d.ir({ t: "admin", aba: "empresas", id: f.id })}>{f.nome}</button>
+              <StatusPill status={f.status} />
+              <span className="sub">{fmtNum(f.usuarios)} usuário(s) · {fmtNum(f.servicos_30d)} serviço(s) em 30 dias</span>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="sub" style={{ marginTop: 0 }}>{doPlano.limite > 0 || e.limite_escritorios ? "Nenhum escritório criado ainda." : "O plano desta empresa não inclui escritórios adicionais."}</p>}
+      <div className="sa-campos" style={{ alignItems: "end" }}>
+        <label><Rotulo dica="vazio = o do plano">Escritórios ativos permitidos</Rotulo>
+          <input type="number" min={0} max={50} placeholder={`${doPlano.limite} (do plano)`} value={limite} onChange={(x) => setLimite(x.target.value)} />
+        </label>
+        <label><Rotulo dica="vazio = o do plano; soma à mensalidade da empresa por escritório ativo">Preço por escritório (R$/mês)</Rotulo>
+          <input inputMode="decimal" placeholder={doPlano.preco != null ? `${fmtPreco(Number(doPlano.preco))} (do plano)` : "—"} value={preco} onChange={(x) => setPreco(x.target.value)} />
+        </label>
+        <div><button type="button" className="principal" disabled={salvando} onClick={salvar}>{salvando ? "Salvando…" : "Salvar escritórios"}</button></div>
+      </div>
+    </section>
   );
 }
 

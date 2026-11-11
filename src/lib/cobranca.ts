@@ -67,6 +67,13 @@ export interface MinhaCobranca {
   mensalidade_iniciada_em?: string | null;
   /** gastou o 1º crédito e a cobrança ainda não existe: a tela chama iniciarMensalidade */
   mensalidade_a_iniciar?: boolean;
+  /** 0050: a mensalidade aberta em partes (plano + escritórios adicionais) */
+  mensalidade_detalhe?: MensalidadeDetalhe | null;
+}
+
+/** 0050: plano (ou o combinado) + escritórios adicionais ativos × preço. */
+export interface MensalidadeDetalhe {
+  plano: number | null; escritorios: number; preco_escritorio: number; limite_escritorios: number; total: number | null;
 }
 
 /** 0049: a empresa ainda espera o 1º crédito para a mensalidade começar. */
@@ -81,6 +88,8 @@ export const iniciarMensalidade = () =>
 
 export interface PlanoAVenda {
   id: string; nome: string; descricao: string | null; cor: string; mensalidade: number; limite_usuarios: number | null;
+  /** 0050: escritórios adicionais que o plano permite e o preço de cada um por mês */
+  escritorios_adicionais?: number; preco_escritorio?: number | null;
   creditos: { tipo: string; nome: string; por_mes: number | null }[];
   extra: Record<string, Faixa[]>;
 }

@@ -20,6 +20,7 @@ import { IntegracaoGprol } from "./gprol/IntegracaoGprol";
 import { temRecurso } from "../lib/recursos";
 import { MinhaConta } from "./config/MinhaConta";
 import { PlanoUso } from "./config/PlanoUso";
+import { Escritorios } from "./config/Escritorios";
 
 /** Chaves gravadas em config_empresa (key/value). `desenhista` é lida pela planta;
  *  `rt_padrao` e `credenciado_padrao` pré-preenchem serviços novos; contato e
@@ -30,7 +31,7 @@ type Chave = typeof CHAVES[number];
 type Config = Record<Chave, string>;
 const VAZIA = Object.fromEntries(CHAVES.map((k) => [k, ""])) as Config;
 
-type Aba = "empresa" | "cadastros" | "modelos" | "integracoes" | "plano" | "conta";
+type Aba = "empresa" | "cadastros" | "modelos" | "integracoes" | "plano" | "escritorios" | "conta";
 const SEM_PERMISSAO = "Só quem tem a permissão \"Dados da empresa\" altera isto.";
 
 /** A aba vem do endereço (`/app/?aba=modelos#/configuracoes`) ou da última visita. */
@@ -50,6 +51,9 @@ export function Configuracoes({ escritorio = { estado: "legado" } }: { escritori
     ...(temModelos ? [{ chave: "modelos" as const, rotulo: "Modelos" }] : []),
     ...(temRecurso("integracao.gprol") ? [{ chave: "integracoes" as const, rotulo: "Integrações" }] : []),
     ...(escritorio.estado === "ok" ? [{ chave: "plano" as const, rotulo: "Plano e uso" }] : []),
+    // 0050: o dono da matriz cuida dos escritórios adicionais (no plano sem eles, a aba mostra o Empresarial)
+    ...(escritorio.estado === "ok" && escritorio.escritorio.papel === "dono" && "matriz_id" in escritorio.escritorio
+      ? [{ chave: "escritorios" as const, rotulo: "Escritórios" }] : []),
     { chave: "conta", rotulo: "Minha conta" },
   ];
   const [aba, setAba] = useState<Aba>(() => abaInicial(abas.map((a) => a.chave)));
@@ -71,6 +75,7 @@ export function Configuracoes({ escritorio = { estado: "legado" } }: { escritori
         {aba === "modelos" && temModelos && <Modelos pasta={pasta} />}
         {aba === "integracoes" && <IntegracaoGprol />}
         {aba === "plano" && <PlanoUso escritorio={escritorio} />}
+        {aba === "escritorios" && <Escritorios />}
         {aba === "conta" && <MinhaConta />}
       </div>
     </div>

@@ -1,7 +1,8 @@
 // Planos: o que cada um cobra, quantos créditos dá e o que libera.
 //
 //   - cartões dos planos: mensalidade, créditos por mês de cada carteira (geral,
-//     CAR…) e o preço do crédito extra por faixa — "Editar" abre o formulário
+//     CAR…), o preço do crédito extra por faixa e os escritórios adicionais
+//     (0050: quantos e quanto cada um soma à mensalidade) — "Editar" abre o formulário
 //   - matriz planos × recursos: o que cada plano libera. Célula listrada = o
 //     plano ainda não decidiu (recurso novo): vale o padrão do catálogo, ou
 //     bloqueado no plano que não libera recursos novos (o Só CAR).
@@ -31,6 +32,9 @@ interface Edicao {
   plano: Partial<Plano>;
   mensal: string;
   usuarios: string;
+  /** 0050: escritórios adicionais ("" = 0) e o preço de cada um */
+  escritorios: string;
+  precoEscritorio: string;
   /** carteira → créditos por mês ("" = sem limite) */
   porMes: Record<string, string>;
   precos: Record<string, FaixaTexto[]>;
@@ -89,6 +93,8 @@ export function Planos({ d }: { d: DadosAdmin }) {
       plano: p ?? { nome: "", descricao: "", cor: "#178552", ativo: true, libera_recursos_novos: true },
       mensal: p?.preco_mensal != null ? Number(p.preco_mensal).toFixed(2).replace(".", ",") : "",
       usuarios: p?.limite_usuarios ? String(p.limite_usuarios) : "",
+      escritorios: p?.escritorios_adicionais ? String(p.escritorios_adicionais) : "",
+      precoEscritorio: p?.preco_escritorio != null ? Number(p.preco_escritorio).toFixed(2).replace(".", ",") : "",
       // plano novo começa com 0 em cada carteira (não "sem limite")
       porMes: Object.fromEntries(d.tipos.map((t) => [t.chave, !p ? "0" : porMes[id]?.[t.chave] === null ? "" : String(porMes[id]?.[t.chave] ?? 0)])),
       precos: Object.fromEntries(d.tipos.map((t) => [t.chave, faixasParaTexto(precos[id]?.[t.chave] ?? [])])),
@@ -101,11 +107,17 @@ export function Planos({ d }: { d: DadosAdmin }) {
     if (erroPreco) { setMsg({ tipo: "erro", texto: erroPreco }); return; }
     const mensal = e.mensal.trim() === "" ? null : reais(e.mensal);
     if (mensal !== null && !(mensal >= 0)) { setMsg({ tipo: "erro", texto: "Mensalidade inválida." }); return; }
+    const escritorios = e.escritorios.trim() === "" ? 0 : Math.floor(Number(e.escritorios));
+    if (!(escritorios >= 0 && escritorios <= 50)) { setMsg({ tipo: "erro", texto: "Escritórios adicionais: de 0 a 50." }); return; }
+    const precoEscritorio = e.precoEscritorio.trim() === "" ? null : reais(e.precoEscritorio);
+    if (precoEscritorio !== null && !(precoEscritorio >= 0)) { setMsg({ tipo: "erro", texto: "Preço do escritório inválido." }); return; }
+    if (escritorios > 0 && precoEscritorio === null) { setMsg({ tipo: "erro", texto: "Defina quanto cada escritório adicional custa por mês (0 = sem custo)." }); return; }
     setMsg(null);
     try {
       const novo = await salvarPlano({
         ...e.plano, nome: e.plano.nome, ordem: e.plano.ordem ?? (d.planos.length + 1) * 10,
         preco_mensal: mensal, limite_usuarios: e.usuarios ? Math.max(1, Number(e.usuarios)) : null,
+        escritorios_adicionais: escritorios, preco_escritorio: precoEscritorio,
       });
       // plano novo nasce com a decisão explícita = padrão de cada recurso
       if (!e.plano.id) await salvarMatrizPlano(novo.id, Object.fromEntries(recursos.map((r) => [r.chave, padraoDe(novo, r.padrao)])));
@@ -123,7 +135,7 @@ export function Planos({ d }: { d: DadosAdmin }) {
   }
 
   async function apagar(p: Plano) {
-    const n = d.empresas.filter((e) => e.plano_id === p.id).length;
+    const n = d.empresas.filter((e) => e.plano_id === p.id && !e.matriz_id).length;
     if (n > 0) { setMsg({ tipo: "erro", texto: `${p.nome} tem ${n} empresa(s). Mude o plano delas antes, ou só tire o plano do cadastro.` }); return; }
     if (!(await confirmar({ titulo: `Excluir o plano ${p.nome}?`, texto: "O plano sai do catálogo. Nenhuma empresa está nele.", confirmar: "Excluir", perigo: true }))) return;
     try { await excluirPlano(p.id); setEditando(null); await Promise.all([d.recarregar(), carregar()]); }
@@ -174,7 +186,7 @@ export function Planos({ d }: { d: DadosAdmin }) {
                       <div className="sa-plano-cab">
                         <span className="cor" style={{ background: p.cor }} />
                         <b>{p.nome}</b>
-                        <small>{d.empresas.filter((e) => e.plano_id === p.id).length} empresa(s){p.ativo ? "" : " · fora do cadastro"}</small>
+                        <small>{d.empresas.filter((e) => e.plano_id === p.id && !e.matriz_id).length} empresa(s){p.ativo ? "" : " · fora do cadastro"}</small>
                       </div>
                     </th>
                   ))}
@@ -220,7 +232,7 @@ export function Planos({ d }: { d: DadosAdmin }) {
 function CartaoPlano({ p, d, porMes, precos, onEditar }: {
   p: Plano; d: DadosAdmin; porMes: Record<string, number | null>; precos: Record<string, Faixa[]>; onEditar: () => void;
 }) {
-  const empresas = d.empresas.filter((e) => e.plano_id === p.id).length;
+  const empresas = d.empresas.filter((e) => e.plano_id === p.id && !e.matriz_id).length;
   return (
     <section className="sa-card sa-plano-cartao" style={{ borderTopColor: p.cor }}>
       <header>
@@ -241,6 +253,12 @@ function CartaoPlano({ p, d, porMes, precos, onEditar }: {
             <small>{precos[t.chave]?.length ? `extra: ${faixasEmTexto(precos[t.chave]).join(" · ")}` : "sem venda de extra"}</small>
           </li>
         ))}
+        {(p.escritorios_adicionais ?? 0) > 0 && (
+          <li>
+            <b>{p.escritorios_adicionais}</b> escritório{p.escritorios_adicionais === 1 ? "" : "s"} {p.escritorios_adicionais === 1 ? "adicional" : "adicionais"}
+            <small>{Number(p.preco_escritorio ?? 0) > 0 ? `${fmtPreco(Number(p.preco_escritorio))}/mês cada, quando ativo` : "sem custo"}</small>
+          </li>
+        )}
       </ul>
       {p.descricao && <p className="sub" style={{ margin: 0, fontSize: 12.5 }}>{p.descricao}</p>}
     </section>
@@ -277,6 +295,13 @@ function FormPlano({ e, d, onChange, onCancelar, onSalvar, onExcluir }: {
           <select value={p.libera_recursos_novos === false ? "0" : "1"} onChange={(x) => set({ libera_recursos_novos: x.target.value === "1" })}>
             <option value="1">Liberados</option><option value="0">Bloqueados até decidir</option>
           </select>
+        </label>
+        <label><Rotulo dica="espaços próprios (serviços, clientes, equipe) que usam o plano e os créditos da matriz; o dono cria em Configurações → Escritórios. 0 = o plano não tem">Escritórios adicionais</Rotulo>
+          <input type="number" min={0} max={50} placeholder="0" value={e.escritorios} onChange={(x) => onChange({ ...e, escritorios: x.target.value })} />
+        </label>
+        <label><Rotulo dica="quanto cada escritório ativo soma à mensalidade da matriz">Preço por escritório (R$/mês)</Rotulo>
+          <input inputMode="decimal" placeholder={e.escritorios && e.escritorios !== "0" ? "obrigatório" : "—"} value={e.precoEscritorio}
+            disabled={!e.escritorios || e.escritorios === "0"} onChange={(x) => onChange({ ...e, precoEscritorio: x.target.value })} />
         </label>
         <label>Cor<input type="color" value={p.cor ?? "#178552"} onChange={(x) => set({ cor: x.target.value })} style={{ padding: 4 }} /></label>
         <label className="largo">Descrição<input value={p.descricao ?? ""} onChange={(x) => set({ descricao: x.target.value })} placeholder="Para quem é este plano" /></label>
