@@ -187,8 +187,8 @@ depois o push da main.
 | Profissional | R$ 299,90 | 8 | 16 | projetos: 2–5 = R$ 50,00 · 6+ = R$ 40,00 (cada); CAR: R$ 9,90 (mín. 2) | não tem |
 | Empresarial | R$ 1.000,00 | ilimitado | ilimitado | não vende (não precisa) | até 2, R$ 99,90/mês cada (ativo) |
 
-"Créditos para projetos" = a carteira `geral` (paga qualquer serviço). Autônomo e
-Só CAR saem do cadastro (`ativo = false`, `vende_no_site = false`); quem está
+"Créditos para projetos" = a carteira `geral` (paga qualquer serviço). **Só CAR e Loteamento continuam à venda** (0051 desfez o que a 0050 tirou deles); só o Autônomo
+sai do cadastro (`ativo = false`, `vende_no_site = false`); quem está
 neles continua igual. Convite antigo para esses planos deixa de abrir (`plano`).
 
 **Quem já era cliente não muda sozinho:** a migração grava na própria empresa a

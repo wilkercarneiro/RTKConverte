@@ -19,7 +19,7 @@ const PLANOS = [
   { id: "p2", nome: "Profissional", descricao: "Todos os serviços: 8 créditos para projetos e 16 para CAR por mês.", cor: "#178552", ordem: 10, ativo: true, preco_mensal: 299.9, libera_recursos_novos: true, vende_no_site: true, escritorios_adicionais: 0, preco_escritorio: null },
   { id: "p3", nome: "Empresarial", descricao: "Créditos ilimitados e até 2 escritórios adicionais.", cor: "#0E3B2B", ordem: 20, ativo: true, preco_mensal: 1000, libera_recursos_novos: true, vende_no_site: true, escritorios_adicionais: 2, preco_escritorio: 99.9 },
   { id: "p1", nome: "Autônomo", descricao: "Todos os serviços, para quem trabalha sozinho.", cor: "#5B6B63", ordem: 30, ativo: false, preco_mensal: 299.9, libera_recursos_novos: true, vende_no_site: false, escritorios_adicionais: 0, preco_escritorio: null },
-  { id: "p4", nome: "Só CAR", descricao: "Só o serviço de CAR. Por mês: 5 créditos de CAR.", cor: "#C99A12", ordem: 40, ativo: false, preco_mensal: 49.9, libera_recursos_novos: false, escritorios_adicionais: 0, preco_escritorio: null },
+  { id: "p4", nome: "Só CAR", descricao: "Só o serviço de CAR. Por mês: 5 créditos de CAR.", cor: "#C99A12", ordem: 40, ativo: true, preco_mensal: 49.9, libera_recursos_novos: false, vende_no_site: true, escritorios_adicionais: 0, preco_escritorio: null },
   { id: "p5", nome: "Completo", descricao: "", cor: "#2E4F43", ordem: 50, ativo: false, preco_mensal: null, libera_recursos_novos: true, escritorios_adicionais: 0, preco_escritorio: null },
 ];
 const TIPOS = [
