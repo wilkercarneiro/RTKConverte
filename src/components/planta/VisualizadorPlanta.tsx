@@ -14,6 +14,8 @@ import { avisarHistoricoAtualizado, tituloPlantaEditada } from "../../lib/histor
 import { EditorPlanta } from "./EditorPlanta";
 import { comFolhasSeguintes } from "../../lib/planta_folhas";
 import { temRecurso } from "../../lib/recursos";
+import { temPermissao } from "../../lib/permissoes";
+import { caminhoDaPlanta, comoRegerar, plantaDoHistorico, regerarPlanta, type PlantaDoHistorico } from "../../lib/regerar_planta";
 
 export interface PedidoPlanta {
   /** URL assinada do PDF, ou os bytes (planta feita no navegador) */
@@ -103,6 +105,42 @@ export function VisualizadorPlanta({ pedido, onFechar }: { pedido: PedidoPlanta;
     })();
     return () => { vivo = false; };
   }, [pedido]);
+
+  // Planta sem cena (gerada antes do editor): descobre no histórico que planta é
+  // esta, para oferecer "Gerar de novo" aqui mesmo.
+  const [doc, setDoc] = useState<PlantaDoHistorico | null>(null);
+  const [folhaNova, setFolhaNova] = useState<"A1" | "A3">("A1");
+  const [metragemNova, setMetragemNova] = useState(false);
+  const [regerando, setRegerando] = useState(false);
+  const como = doc ? comoRegerar(doc, doc.folhaDoImovel) : null;
+  useEffect(() => {
+    if (lendo || cena || !pedido.servicoId) return;
+    const path = caminhoDaPlanta(pedido);
+    if (!path) return;
+    let vivo = true;
+    plantaDoHistorico(pedido.servicoId, path).then((d) => {
+      if (!vivo || !d) return;
+      setDoc(d);
+      const c = comoRegerar(d, d.folhaDoImovel);
+      if (c?.folha) setFolhaNova(c.folha);
+    }).catch(() => {});
+    return () => { vivo = false; };
+  }, [lendo, cena, pedido]);
+
+  async function gerarDeNovo() {
+    if (!como || !pedido.servicoId) return;
+    setRegerando(true);
+    setErro(null);
+    try {
+      // na planta de gleba a folha escolhida é a da planta do imóvel (a da gleba é sempre A3)
+      const url = await regerarPlanta(pedido.servicoId, { ...como, folha: folhaNova } as typeof como, metragemNova);
+      const titulo = (pedido.titulo ?? "Planta").replace(/\s*·\s*v\d+\s*$/, "");
+      abrirPlanta({ url, servicoId: pedido.servicoId, nome: pedido.nome.replace(/\s*\(v\d+\)\s*$/, ""), titulo });
+    } catch (e) {
+      setErro(`Não foi possível gerar de novo: ${e instanceof Error ? e.message : String(e)}`);
+      setRegerando(false);
+    }
+  }
 
   useEffect(() => {
     if (!bytes) return;
@@ -204,7 +242,27 @@ export function VisualizadorPlanta({ pedido, onFechar }: { pedido: PedidoPlanta;
         <button type="button" className="fantasma vp-fechar" onClick={onFechar} title="Fechar (Esc)" aria-label="Fechar">✕</button>
       </div>
       {!lendo && !cena && !erro && (
-        <div className="vp-aviso">Esta planta foi gerada antes do editor existir. Gere a planta de novo para poder editá-la.</div>
+        <div className="vp-aviso vp-aviso-regerar">
+          <span>Esta planta foi gerada antes do editor existir. Gere a planta de novo para poder editá-la.</span>
+          {como && temPermissao("documentos.gerar") && (
+            <span className="vp-regerar">
+              <select value={folhaNova} disabled={regerando} onChange={(e) => setFolhaNova(e.target.value as "A1" | "A3")}
+                aria-label="Folha da planta" title={como.gleba ? "Folha da planta do imóvel (a da gleba sai em A3)" : "Folha da planta"}>
+                <option value="A1">A1</option>
+                <option value="A3">A3</option>
+              </select>
+              <label title="Escreve o comprimento de cada lado ao longo dele na planta">
+                <input type="checkbox" checked={metragemNova} disabled={regerando} onChange={(e) => setMetragemNova(e.target.checked)} /> com metragem
+              </label>
+              <button type="button" className="principal" disabled={regerando} onClick={gerarDeNovo}
+                title={como.funcao === "gerar-planta"
+                  ? "Refaz a planta do SIGEF com os dados de hoje — sem consumir crédito"
+                  : "Refaz o memorial, a planilha e a planta (nova versão no histórico) — sem consumir crédito"}>
+                {regerando ? "Gerando…" : "Gerar de novo"}
+              </button>
+            </span>
+          )}
+        </div>
       )}
       <div className="vp-corpo">
         {lendo && <div className="vp-carregando">Abrindo a planta…</div>}

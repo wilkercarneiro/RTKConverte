@@ -1786,3 +1786,12 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 /* Rodovias e recuo: 3 colunas que encolhem (1fr não deixava o campo da lei encolher e ele saía da caixa) */
 .grade-3.recuo-campos { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .recuo-campos input { min-width: 0; width: 100%; }
+
+/* visualizador: planta antiga (sem cena) → "Gerar de novo" na própria faixa do aviso */
+.vp-aviso-regerar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.vp-aviso-regerar > span:first-child { flex: 1 1 280px; }
+.vp-regerar { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.vp-regerar select { width: auto; padding: 4px 8px; font-size: 13px; }
+.vp-regerar label { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: inherit; margin: 0; }
+.vp-regerar label input { width: auto; margin: 0; }
+.vp-regerar button { padding: 5px 14px; font-size: 13px; }

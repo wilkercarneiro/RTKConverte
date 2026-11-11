@@ -154,3 +154,30 @@ export function ultimaGeracao(docs: readonly DocHistorico[]): UltimaGeracao {
 
   return { documentos, plantaSigef, pecas, tabular };
 }
+
+// Gerar de novo uma planta do histórico (visualizador, regerar_planta.ts):
+// qual função a refaz, pelo tipo da linha em documentos_gerados.
+export type ComoRegerar =
+  | { funcao: "gerar-planta"; folha: "A1" | "A3"; gleba: null }
+  | { funcao: "gerar-documentos"; folha: "A1" | "A3" | null; gleba: string | null };
+
+/** Qual função refaz esta planta, e com que folha. `null` = não é planta que se refaça. */
+export function comoRegerar(doc: Pick<DocHistorico, "tipo" | "titulo">, folhaDaPlantaDoImovel?: "A1" | "A3" | null): ComoRegerar | null {
+  const titulo = doc.titulo ?? "";
+  if (doc.tipo === "planta_pdf") return { funcao: "gerar-planta", folha: folhaDoTitulo(titulo) ?? "A1", gleba: null };
+  if (doc.tipo === "planta_pdf_sistema") return { funcao: "gerar-documentos", folha: folhaDoTitulo(titulo), gleba: null };
+  if (doc.tipo === "gleba_planta_pdf") {
+    // título "Planta A3 · GLEBA 1 · <selo>": a gleba é o que vem antes do selo
+    const nome = nomeDaGlebaNoTitulo(titulo).split(" · ")[0].trim();
+    return { funcao: "gerar-documentos", folha: folhaDaPlantaDoImovel ?? null, gleba: nome || null };
+  }
+  return null;
+}
+
+/** Caminho no bucket `gerados` a partir da URL assinada (ou do path já conhecido). */
+export function caminhoDaPlanta(p: { path?: string; url?: string }): string | null {
+  if (p.path) return p.path;
+  if (!p.url) return null;
+  const m = /\/object\/(?:sign|public)\/gerados\/([^?]+)/.exec(p.url);
+  return m ? decodeURIComponent(m[1]) : null;
+}
