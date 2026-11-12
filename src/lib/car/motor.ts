@@ -83,9 +83,42 @@ export interface ProjetoCar {
    * vegetação) passam pelo fator — as porcentagens não mudam.
    */
   baseArea?: BaseAreaCar;
+  /** o ajuste automático da sobreposição com os vizinhos (src/lib/car/sobreposicao.ts) */
+  sobreposicao?: RegistroSobreposicao;
 }
 
 export type BaseAreaCar = "utm" | "albers";
+
+/** O que o ajuste automático da sobreposição fez (e o que a pessoa mandou não fazer). */
+export interface RegistroSobreposicao {
+  /** o perímetro antes do PRIMEIRO ajuste (o "Desfazer" volta a ele) */
+  original: LonLat[] | null;
+  nomesOriginais?: (string | null)[];
+  /** os vizinhos cortados no último ajuste */
+  cortes: { fonte: "car" | "sigef"; codigo: string; rotulo: string; areaM2: number }[];
+  antesM2: number;
+  depoisM2: number;
+  em: string;
+  /** códigos que a pessoa mandou deixar como estão (desfez o ajuste) */
+  ignorar: string[];
+  /** códigos que a pessoa mandou cortar mesmo sendo grandes ou parecendo o próprio imóvel */
+  forcar: string[];
+}
+
+function normalizarRegistro(r: Partial<RegistroSobreposicao> | undefined): RegistroSobreposicao | undefined {
+  if (!r || typeof r !== "object") return undefined;
+  const lista = (x: unknown) => (Array.isArray(x) ? x.filter((c): c is string => typeof c === "string") : []);
+  return {
+    original: Array.isArray(r.original) && r.original.length >= 3 ? r.original : null,
+    ...(Array.isArray(r.nomesOriginais) ? { nomesOriginais: r.nomesOriginais } : {}),
+    cortes: Array.isArray(r.cortes) ? r.cortes.filter((c) => c && typeof c.codigo === "string") : [],
+    antesM2: Number(r.antesM2) || 0,
+    depoisM2: Number(r.depoisM2) || 0,
+    em: typeof r.em === "string" ? r.em : "",
+    ignorar: lista(r.ignorar),
+    forcar: lista(r.forcar),
+  };
+}
 
 /** Faixas de APP de curso d'água (Lei 12.651/2012, art. 4º, I), pela largura do leito. */
 export const FAIXAS_APP: { faixa: number; leito: string }[] = [
@@ -134,6 +167,7 @@ export function normalizarProjetoCar(p: Partial<ProjetoCar> | null, base: Projet
     rios: Array.isArray(p.rios) ? p.rios.filter((r) => r && Array.isArray(r.linha)) : [],
     produtivaSemApp: !!p.produtivaSemApp,
     ...(p.baseArea === "utm" || p.baseArea === "albers" ? { baseArea: p.baseArea } : {}),
+    ...(normalizarRegistro(p.sobreposicao) ? { sobreposicao: normalizarRegistro(p.sobreposicao) } : {}),
   };
 }
 

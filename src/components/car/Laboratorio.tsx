@@ -6,6 +6,15 @@ import { lerKml } from "../../lib/car/kml.ts";
 import { projetoNovo } from "../../lib/car/motor.ts";
 import type { ProjetoCar } from "../../lib/car/motor.ts";
 import kml from "../../../tests/fixtures/car/PLANTA.kml?raw";
+// a resposta do SICAR em volta do PLANTA.kml (12/11/2026): invade dois vizinhos
+import vizinhosPlanta from "../../../tests/fixtures/car/sicar_vizinhos_planta.json?raw";
+import type { FonteVizinhos } from "../../lib/car/vizinhos.ts";
+import { caixaComMargem } from "../../lib/consulta/geometria.ts";
+
+/** Os vizinhos gravados, sem rede (?ao-vivo no hash consulta o SICAR de verdade). */
+const vizinhosGravados: FonteVizinhos = async (perimetro) => ({
+  vizinhos: JSON.parse(vizinhosPlanta), caixa: caixaComMargem([perimetro], 300), falhas: [], cortada: false, quando: new Date().toISOString(),
+});
 import { definicaoDe } from "../../lib/modalidades";
 import { rotaParaHash, voltarDoNovo } from "../../lib/rota";
 import { Car } from "./Car";
@@ -31,6 +40,7 @@ export function LaboratorioCar() {
   }
   return (
     <CascaLab><Car servico={servico} onVoltar={() => { location.hash = "#/"; }}
+      fonteVizinhos={location.hash.includes("ao-vivo") ? undefined : vizinhosGravados}
       armazenamento={{
         carregar: async () => {
           try {

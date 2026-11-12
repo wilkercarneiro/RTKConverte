@@ -4,7 +4,7 @@
 //
 // O projeto é só intenção e mora em `car_projetos`; as camadas saem de
 // `calcularCar` a cada mudança. Tudo roda no navegador.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { rotuloCurto } from "../../lib/modalidades";
 import { useAutosave } from "../../lib/ux";
 import type { Servico } from "../../lib/types";
@@ -22,6 +22,12 @@ import { BotaoConcluir, useConclusao } from "../ConcluirServico";
 import { ExportarArea } from "../ExportarArea";
 import { RestricoesImovel } from "../RestricoesImovel";
 import { CarEditor, COR } from "./CarEditor";
+import { CartaoSobreposicao, useSobreposicaoCar } from "./SobreposicaoCar";
+import { fraseDoAjuste } from "../../lib/car/sobreposicao.ts";
+import type { AjusteSobreposicao } from "../../lib/car/sobreposicao.ts";
+import type { FonteVizinhos } from "../../lib/car/vizinhos.ts";
+import { antiHorario, caixa as caixaPts, diferenca } from "../../lib/loteamento/geom.ts";
+import type { Poligono, Pt } from "../../lib/loteamento/geom.ts";
 import { EscolhaBaseArea } from "./BaseArea";
 import type { FerramentaCar, SelecaoCar } from "./CarEditor";
 import "./car.css";
@@ -49,8 +55,35 @@ const ICO_CAR = {
   baixar: "M12 3v12M7 10l5 5 5-5M4 21h16",
 };
 
-export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }: {
+/**
+ * Depois que o perímetro muda (ajuste da sobreposição, desfazer), a reserva e a
+ * vegetação desenhadas voltam à porcentagem/área pedida sem sair do lugar. O
+ * "lado" encostado perde o índice (os lados do anel mudaram), então a faixa
+ * fica como polígono desenhado.
+ */
+function reacomodar(p: ProjetoCar): ProjetoCar {
+  let q: ProjetoCar = p;
+  if (q.reserva.poligonos.length) {
+    try { q = { ...q, reserva: { ...q.reserva, poligonos: ajustarReserva(q), lado: null } }; }
+    catch { q = { ...q, reserva: { ...q.reserva, lado: null } }; }
+  }
+  if (q.vegetacao.poligonos.length) {
+    try { q = { ...q, vegetacao: { ...q.vegetacao, poligonos: q.vegetacao.alvoHa ? ajustarVegetacao(q) : q.vegetacao.poligonos, lado: null } }; }
+    catch { q = { ...q, vegetacao: { ...q.vegetacao, lado: null } }; }
+  }
+  return q;
+}
+
+/** O projeto com o perímetro (e os nomes dos vértices) trocados. */
+function comPerimetro(p: ProjetoCar, perimetro: ProjetoCar["perimetro"], nomes: ProjetoCar["nomesVertices"] | undefined): ProjetoCar {
+  const { nomesVertices: _antigos, ...resto } = p;
+  return { ...resto, perimetro, ...(nomes && nomes.length === perimetro.length && nomes.some(Boolean) ? { nomesVertices: nomes } : {}) };
+}
+
+export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, fonteVizinhos }: {
   servico: Servico; onVoltar: () => void; armazenamento?: ArmazenamentoCar;
+  /** de onde vêm os vizinhos (CAR/SIGEF) da sobreposição; o laboratório passa respostas gravadas */
+  fonteVizinhos?: FonteVizinhos;
 }) {
   const [servico, setServico] = useState(servicoInicial);
   // pronto para concluir = os shapefiles já foram baixados (status "gerado")
@@ -96,6 +129,92 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
   const aneisRestricoes = useMemo(() => (perimetroCar && perimetroCar.length >= 3 ? [perimetroCar as [number, number][]] : []), [perimetroCar]);
 
   const mostrar = useCallback((t: string, erro = false) => setMsg({ t, erro }), []);
+
+  // ---------------- sobreposição com os vizinhos (CAR/SIGEF) ----------------
+  const sob = useSobreposicaoCar(projeto, servico.uf ?? null, fonteVizinhos);
+  // trava de segurança: o ajuste não pode ficar se repetindo (cada um muda o perímetro)
+  const ajustesSeguidos = useRef(0);
+  function aplicarAjuste(p: ProjetoCar, a: AjusteSobreposicao) {
+    if (!a.perimetro) return;
+    const reg = p.sobreposicao;
+    const cortados = a.itens.filter((i) => i.decisao === "cortado");
+    const cortes = new Map((reg?.original ? reg.cortes : []).map((c) => [`${c.fonte}:${c.codigo}`, c]));
+    for (const i of cortados) {
+      const k = `${i.fonte}:${i.codigo}`;
+      const ja = cortes.get(k);
+      cortes.set(k, { fonte: i.fonte, codigo: i.codigo, rotulo: i.rotulo, areaM2: (ja?.areaM2 ?? 0) + i.areaM2 });
+    }
+    const novo = reacomodar({
+      ...comPerimetro(p, a.perimetro, a.nomesVertices),
+      sobreposicao: {
+        original: reg?.original ?? p.perimetro,
+        ...(reg?.original ? (reg.nomesOriginais ? { nomesOriginais: reg.nomesOriginais } : {}) : (p.nomesVertices ? { nomesOriginais: p.nomesVertices } : {})),
+        cortes: [...cortes.values()],
+        antesM2: reg?.original ? reg.antesM2 : a.antesM2,
+        depoisM2: a.depoisM2,
+        em: new Date().toISOString(),
+        ignorar: reg?.ignorar ?? [],
+        forcar: reg?.forcar ?? [],
+      },
+    });
+    mudar(novo);
+    setSel(null);
+    const k = res?.fatorArea ?? 1;
+    mostrar(fraseDoAjuste(a, (m2) => fmtHa(m2 * k), (m2) => `${fmtNum(m2 * k, m2 * k < 10 ? 2 : 0)} m²`));
+  }
+  useEffect(() => {
+    const a = sob.ajuste;
+    if (!projeto || !a?.perimetro || h.base) return;
+    // o corte não resolveu (geometria estranha): não mexe no terreno; o cartão mostra
+    if (a.restanteM2 > 0.01 || ajustesSeguidos.current >= 3) return;
+    ajustesSeguidos.current++;
+    aplicarAjuste(projeto, a);
+  }, [sob.ajuste]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function desfazerAjuste() {
+    const reg = projeto?.sobreposicao;
+    if (!projeto || !reg?.original) return;
+    const ignorar = [...new Set([...reg.ignorar, ...reg.cortes.map((c) => c.codigo)])];
+    mudar(reacomodar({
+      ...comPerimetro(projeto, reg.original, reg.nomesOriginais),
+      sobreposicao: { ...reg, original: null, nomesOriginais: undefined, cortes: [], depoisM2: reg.antesM2, ignorar, forcar: reg.forcar.filter((c) => !ignorar.includes(c)) },
+    }));
+    ajustesSeguidos.current = 0;
+    mostrar("Ajuste desfeito: o terreno voltou ao perímetro do arquivo, com a sobreposição. O SEIA/SICAR vai acusar.");
+  }
+  function recortarTambem(codigo: string) {
+    if (!projeto) return;
+    const reg = projeto.sobreposicao;
+    ajustesSeguidos.current = 0;
+    mudar({
+      ...projeto,
+      sobreposicao: {
+        original: reg?.original ?? null, ...(reg?.nomesOriginais ? { nomesOriginais: reg.nomesOriginais } : {}),
+        cortes: reg?.cortes ?? [], antesM2: reg?.antesM2 ?? 0, depoisM2: reg?.depoisM2 ?? 0, em: reg?.em ?? "",
+        ignorar: (reg?.ignorar ?? []).filter((c) => c !== codigo), forcar: [...new Set([...(reg?.forcar ?? []), codigo])],
+      },
+    });
+  }
+  // no mapa: os vizinhos em volta (vermelho = ainda invade) e o pedaço tirado
+  const desenhoSob = useMemo(() => {
+    if (!res || !projeto) return { vizinhos: [], recorte: [] as Poligono[] };
+    const pl = res.plano;
+    const { min, max } = caixaPts(res.imovel.ext);
+    const m = 120;
+    const perto = (a: Pt[]) => a.some(([x, y]) => x > min[0] - m && x < max[0] + m && y > min[1] - m && y < max[1] + m);
+    const invadem = new Set((sob.ajuste?.itens ?? []).filter((i) => i.decisao !== "proprio").map((i) => `${i.fonte}:${i.codigo}`));
+    const proprios = new Set((sob.ajuste?.itens ?? []).filter((i) => i.decisao === "proprio").map((i) => `${i.fonte}:${i.codigo}`));
+    const vizinhos = (sob.dados?.vizinhos ?? [])
+      .filter((v) => !proprios.has(`${v.fonte}:${v.codigo}`))
+      .map((v) => ({ chave: `${v.fonte}:${v.codigo}`, aneis: v.poligonos.flatMap((pol) => pol.slice(0, 1)).map((a) => a.map(pl.para)), invade: invadem.has(`${v.fonte}:${v.codigo}`) }))
+      .filter((v) => v.aneis.some(perto));
+    const orig = projeto.sobreposicao?.original;
+    let recorte: Poligono[] = [];
+    if (orig && orig.length >= 3) {
+      try { recorte = diferenca([{ ext: antiHorario(orig.map(pl.para)), furos: [] }], [res.imovel]).filter((p) => Math.abs(p.ext.length) >= 3); } catch { /* sem desenho */ }
+    }
+    return { vizinhos, recorte };
+  }, [res, projeto, sob.dados, sob.ajuste]);
 
   /** transiente = arraste em andamento: só o estado antes dele vai para o desfazer */
   const mudar = useCallback((p: ProjetoCar, transiente = false) => {
@@ -250,6 +369,11 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
     : projeto.reserva.lado !== null && projeto.reserva.poligonos.length ? "reserva"
     : veg.lado !== null && veg.poligonos.length ? "vegetacao" : null;
   const rioSel = sel?.tipo === "rio" ? projeto.rios.find((r) => r.id === sel.id) : undefined;
+  const sobDestaque = !!(projeto.sobreposicao?.original && projeto.sobreposicao.cortes.length) || !!sob.ajuste?.itens.some((i) => i.decisao !== "cortado" && i.decisao !== "proprio");
+  const cartaoSob = (
+    <CartaoSobreposicao estado={sob} ajuste={sob.ajuste} projeto={projeto} fator={res.fatorArea}
+      onDesfazer={desfazerAjuste} onRecortar={recortarTambem} onDeNovo={sob.deNovo} />
+  );
 
   return (
     <div className="conferencia car-pagina tela-cheia">
@@ -284,6 +408,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
         <div className="car-centro">
           <CarEditor projeto={projeto} res={res} ferramenta={ferramenta} onFerramenta={setFerramenta} sel={sel} onSel={setSel}
             onMudar={mudar} onFimArraste={fimArraste} onLado={(l) => porLado(l)} alvoLado={alvoLado} satelite={satelite} onMsg={(t) => mostrar(t)}
+            vizinhos={desenhoSob.vizinhos} recorte={desenhoSob.recorte}
             sobreposto={giroDe === "reserva" ? (
               // o giro da divisa da reserva mexe no desenho: a régua fica nele
               <GiroMapa rotulo="Giro da reserva" valor={projeto.reserva.giro} min={-60} max={60} passo={1} onFim={fimArraste}
@@ -333,6 +458,8 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
             <span>Projeto do CAR</span>
             <button className="fantasma" onClick={() => recolher(true)} title="Recolher o painel: o mapa fica maior e as ações rápidas continuam à mão">Recolher <b aria-hidden="true">»</b></button>
           </div>
+          {/* teve ajuste ou há o que conferir: o cartão sobe para o topo */}
+          {sobDestaque && cartaoSob}
           <section className="car-cartao">
             <header><h3>Quadro de áreas</h3></header>
             <table className="car-quadro">
@@ -440,6 +567,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO }
             ))}
           </section>
 
+          {!sobDestaque && cartaoSob}
           {/* restrições do imóvel (TI, UC, assentamento, embargo…): o CAR já pagou, não cobra */}
           <RestricoesImovel aneisLonLat={aneisRestricoes} fuso={null} classe="car-cartao restricoes compacto" id="car-restricoes"
             dados={{ imovel: projeto.nome || servico.denominacao, municipio: servico.municipio, uf: servico.uf }} />

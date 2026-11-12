@@ -146,3 +146,25 @@ button.car-base-opcao b { font-size: 15px; color: var(--floresta); font-variant-
 button.car-base-opcao small { font-size: 11.5px; color: var(--texto-3); line-height: 1.3; }
 .car-base.compacta button.car-base-opcao { padding: 6px 8px; }
 .car-base.compacta button.car-base-opcao b { font-size: 13.5px; }
+
+/* ---- Sobreposição com vizinhos (CAR do SICAR + SIGEF) e o ajuste automático ---- */
+.car-sobreposicao header .spinner { margin-left: auto; }
+.car-sob-resumo { margin: 0; font-size: 13px; color: var(--texto-2); }
+.car-sobreposicao.livre .car-sob-resumo::before { content: "✓ "; color: var(--primaria); font-weight: 700; }
+.car-sobreposicao.ajustado { border-color: #E9B4B5; box-shadow: 0 0 0 3px rgb(229 72 77 / 8%); }
+.car-sobreposicao.alerta { background: #FFF8EC; border-color: #F1D9A8; }
+.car-sob-ajuste { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: #FDF0F0; border: 1px solid #F2CFD0; font-size: 13px; line-height: 1.45; }
+.car-sob-ajuste b:first-child { color: #A3272B; }
+.car-sob-ajuste ul { margin: 0; padding-left: 18px; }
+.car-sob-ajuste p { margin: 0; }
+.car-sob-ajuste .car-botoes button { flex: none; }
+.car-sob-cod { font: 600 11.5px var(--mono); word-break: break-all; }
+.car-sob-ajuste small, .car-sob-item small { color: var(--texto-3); }
+.car-sob-item { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid #F1D9A8; font-size: 12.5px; line-height: 1.45; color: var(--alerta-escuro); }
+.car-sob-item p { margin: 0; }
+.car-sob-item .car-botoes button { flex: none; height: 28px; }
+.car-sob-falha { margin: 0; font-size: 12px; color: var(--alerta-escuro); }
+.car-sob-rodape { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--texto-3); }
+.car-sob-rodape button { margin-left: auto; }
+.car-sob-proprio { margin: 0; font-size: 12px; line-height: 1.45; color: var(--texto-2); padding: 8px 10px; border-radius: 8px; background: #F4F6F5; }
+.car-sob-proprio small { color: var(--texto-3); }

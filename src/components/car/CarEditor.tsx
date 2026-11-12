@@ -40,6 +40,10 @@ interface Props {
   onMsg: (m: string) => void;
   /** controle que flutua sobre o desenho (ex.: o giro das divisas) */
   sobreposto?: ReactNode;
+  /** os imóveis vizinhos (CAR/SIGEF) em volta, no plano do desenho; `invade` = o imóvel ainda sobrepõe */
+  vizinhos?: { chave: string; aneis: Pt[][]; invade: boolean }[];
+  /** o que o ajuste automático tirou do imóvel (a sobreposição), no plano do desenho */
+  recorte?: Poligono[];
 }
 
 interface Vista { cx: number; cy: number; s: number }
@@ -52,6 +56,10 @@ type Arraste =
 type Alvo = { tipo: "reserva"; i: number } | { tipo: "vegetacao"; i: number } | { tipo: "rio"; id: string };
 
 export const COR = { imovel: "#F5C542", reserva: "#2E9E5B", vegetacao: "#6B8E23", produtiva: "#E8A33D", app: "#3B8BD9", rio: "#1565C0" };
+/** vizinho invadido e o pedaço tirado do imóvel */
+export const COR_RECORTE = "#E5484D";
+/** contorno dos vizinhos que só encostam */
+const COR_VIZINHO = "#B8BED0";
 
 /** Ferramentas que desenham polígono (clique no 1º ponto fecha). */
 const fechaPoligono = (f: FerramentaCar) => f === "reserva" || f === "vegetacao";
@@ -64,7 +72,7 @@ function pathPol(p: Poligono): string {
 }
 const pathLinha = (l: Pt[]) => "M" + l.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join("L");
 
-export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, onMudar, onFimArraste, onLado, alvoLado = "reserva", satelite, onMsg, sobreposto }: Props) {
+export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, onMudar, onFimArraste, onLado, alvoLado = "reserva", satelite, onMsg, sobreposto, vizinhos = [], recorte = [] }: Props) {
   const caixaRef = useRef<HTMLDivElement>(null);
   // começa em zero: o primeiro enquadramento espera a medida de verdade (com 900×600
   // de palpite, no celular o desenho abria 2–3× ampliado)
@@ -385,15 +393,30 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
           <pattern id="car-hachura-veg" width={9} height={9} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <line x1={0} y1={0} x2={0} y2={9} stroke="#2F4A0E" strokeWidth={2.2} strokeOpacity={0.55} />
           </pattern>
+          {/* o pedaço que saiu por sobreposição: hachura vermelha */}
+          <pattern id="car-hachura-recorte" width={7} height={7} patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+            <line x1={0} y1={0} x2={0} y2={7} stroke={COR_RECORTE} strokeWidth={2.4} strokeOpacity={0.9} />
+          </pattern>
         </defs>
         {tiles.map((t) => <image key={t.k} href={t.href} width={1} height={1} preserveAspectRatio="none" transform={t.m} />)}
         <g transform={matriz}>
+          {/* vizinhos (CAR do SICAR, parcelas do SIGEF): só o contorno, por baixo do imóvel */}
+          {vizinhos.map((z) => z.aneis.map((a, i) => a.length >= 3 && (
+            <path key={`${z.chave}-${i}`} d={pathLinha(a) + "Z"} fill={z.invade ? COR_RECORTE : "none"} fillOpacity={z.invade ? 0.18 : 0}
+              stroke={z.invade ? COR_RECORTE : COR_VIZINHO} strokeWidth={z.invade ? 2 : 1.4} strokeDasharray="7 5" vectorEffect="non-scaling-stroke" opacity={0.95} />
+          )))}
           <path d={pathPol(res.imovel)} fill={satelite ? "rgba(255,255,255,0.06)" : "#F3F1EA"} stroke="none" />
           {res.produtiva.map((p, i) => <path key={`p${i}`} d={pathPol(p)} fill={COR.produtiva} fillOpacity={0.28} stroke="none" />)}
           {res.reserva.map((p, i) => <path key={`r${i}`} d={pathPol(p)} fill={COR.reserva} fillOpacity={0.5} stroke={COR.reserva} strokeWidth={2} vectorEffect="non-scaling-stroke" />)}
           {res.vegetacao.map((p, i) => <path key={`v${i}`} d={pathPol(p)} fill={COR.vegetacao} fillOpacity={0.45} stroke={COR.vegetacao} strokeWidth={2} vectorEffect="non-scaling-stroke" />)}
           {res.vegetacao.map((p, i) => <path key={`vh${i}`} d={pathPol(p)} fill="url(#car-hachura-veg)" stroke="none" />)}
           {res.app.map((p, i) => <path key={`a${i}`} d={pathPol(p)} fill={COR.app} fillOpacity={0.45} stroke={COR.app} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />)}
+          {recorte.map((p, i) => (
+            <g key={`rc${i}`}>
+              <path d={pathPol(p)} fill={COR_RECORTE} fillOpacity={0.22} stroke="none" />
+              <path d={pathPol(p)} fill="url(#car-hachura-recorte)" stroke={COR_RECORTE} strokeWidth={1.5} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
+            </g>
+          ))}
           <path d={pathPol(res.imovel)} fill="none" stroke={COR.imovel} strokeWidth={2.5} vectorEffect="non-scaling-stroke" />
           {/* contorno dos polígonos de reserva como foram desenhados (podem passar do imóvel) */}
           {reservasPlano.map((r, i) => r.length >= 3 && (
