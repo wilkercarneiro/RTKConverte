@@ -169,3 +169,14 @@ button.car-base-opcao small { font-size: 11.5px; color: var(--texto-3); line-hei
 .car-sob-rodape button { margin-left: auto; }
 .car-sob-proprio { margin: 0; font-size: 12px; line-height: 1.45; color: var(--texto-2); padding: 8px 10px; border-radius: 8px; background: #F4F6F5; }
 .car-sob-proprio small { color: var(--texto-3); }
+
+/* vizinhos no mapa (13/11/2026): nome + legenda — vermelho ainda sobrepõe, laranja ajustado, branco conferido */
+.car-viz-rotulo { font: 600 11px var(--fonte); fill: #fff; text-anchor: middle; dominant-baseline: middle; pointer-events: none; paint-order: stroke; stroke: rgb(15 23 42 / 80%); stroke-width: 3px; stroke-linejoin: round; }
+.car-viz-rotulo.ajustado { fill: #FCD34D; }
+.car-viz-rotulo.invade { fill: #FCA5A5; }
+.car-viz-legenda { position: absolute; left: 12px; top: 12px; display: flex; flex-direction: column; gap: 3px; padding: 7px 10px; border-radius: 10px; background: rgb(255 255 255 / 92%); box-shadow: 0 1px 4px rgb(0 0 0 / 18%); font-size: 11px; color: var(--texto-2); pointer-events: auto; }
+.car-viz-legenda b { font-size: 11px; color: var(--texto-1, #1f2937); }
+.car-viz-legenda span { display: flex; align-items: center; gap: 6px; }
+.car-viz-legenda i { width: 18px; height: 0; border-top: 2.5px dashed #94A3B8; }
+.car-viz-legenda i.ajustado { border-top-color: #F59E0B; }
+.car-viz-legenda i.invade { border-top-color: #E5484D; }

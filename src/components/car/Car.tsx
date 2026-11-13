@@ -27,7 +27,9 @@ import { fraseDoAjuste } from "../../lib/car/sobreposicao.ts";
 import type { AjusteSobreposicao } from "../../lib/car/sobreposicao.ts";
 import { motivosIncompleta } from "../../lib/car/vizinhos.ts";
 import type { FonteVizinhos } from "../../lib/car/vizinhos.ts";
-import { antiHorario, caixa as caixaPts, diferenca } from "../../lib/loteamento/geom.ts";
+import { antiHorario, diferenca } from "../../lib/loteamento/geom.ts";
+import { vizinhosNoMapa } from "../../lib/car/mapaVizinhos.ts";
+import type { VizinhoNoMapa } from "../../lib/car/mapaVizinhos.ts";
 import type { Poligono, Pt } from "../../lib/loteamento/geom.ts";
 import { EscolhaBaseArea } from "./BaseArea";
 import type { FerramentaCar, SelecaoCar } from "./CarEditor";
@@ -198,19 +200,12 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, 
       },
     });
   }
-  // no mapa: os vizinhos em volta (vermelho = ainda invade) e o pedaço tirado
+  // no mapa: os vizinhos em volta (vermelho = ainda invade, laranja = ajustado, branco = conferido) e o pedaço tirado
   const desenhoSob = useMemo(() => {
-    if (!res || !projeto) return { vizinhos: [], recorte: [] as Poligono[] };
+    if (!res || !projeto) return { vizinhos: [] as VizinhoNoMapa[], recorte: [] as Poligono[] };
     const pl = res.plano;
-    const { min, max } = caixaPts(res.imovel.ext);
-    const m = 120;
-    const perto = (a: Pt[]) => a.some(([x, y]) => x > min[0] - m && x < max[0] + m && y > min[1] - m && y < max[1] + m);
-    const invadem = new Set((sob.ajuste?.itens ?? []).filter((i) => i.decisao !== "proprio").map((i) => `${i.fonte}:${i.codigo}`));
-    const proprios = new Set((sob.ajuste?.itens ?? []).filter((i) => i.decisao === "proprio").map((i) => `${i.fonte}:${i.codigo}`));
-    const vizinhos = (sob.dados?.vizinhos ?? [])
-      .filter((v) => !proprios.has(`${v.fonte}:${v.codigo}`))
-      .map((v) => ({ chave: `${v.fonte}:${v.codigo}`, aneis: v.poligonos.flatMap((pol) => pol.slice(0, 1)).map((a) => a.map(pl.para)), invade: invadem.has(`${v.fonte}:${v.codigo}`) }))
-      .filter((v) => v.aneis.some(perto));
+    const vizinhos = vizinhosNoMapa(res.imovel.ext, sob.dados?.vizinhos ?? [], pl.para, sob.ajuste?.itens ?? [],
+      projeto.sobreposicao?.original ? projeto.sobreposicao.cortes : []);
     const orig = projeto.sobreposicao?.original;
     let recorte: Poligono[] = [];
     if (orig && orig.length >= 3) {

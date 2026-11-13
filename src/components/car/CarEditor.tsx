@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { PointerEvent as RPointerEvent, WheelEvent as RWheelEvent } from "react";
 import { caixa, dentroPol, dist, distPolilinha, distSegmento } from "../../lib/loteamento/geom.ts";
 import type { Anel, Poligono, Pt } from "../../lib/loteamento/geom.ts";
+import type { VizinhoNoMapa } from "../../lib/car/mapaVizinhos.ts";
 import type { ProjetoCar, ResultadoCar } from "../../lib/car/motor.ts";
 import { fmtNum } from "../../lib/car/motor.ts";
 import type { LonLat } from "../../lib/car/kml.ts";
@@ -40,8 +41,8 @@ interface Props {
   onMsg: (m: string) => void;
   /** controle que flutua sobre o desenho (ex.: o giro das divisas) */
   sobreposto?: ReactNode;
-  /** os imóveis vizinhos (CAR/SIGEF) em volta, no plano do desenho; `invade` = o imóvel ainda sobrepõe */
-  vizinhos?: { chave: string; aneis: Pt[][]; invade: boolean }[];
+  /** os imóveis vizinhos (CAR/SIGEF) em volta, no plano do desenho (src/lib/car/mapaVizinhos.ts) */
+  vizinhos?: VizinhoNoMapa[];
   /** o que o ajuste automático tirou do imóvel (a sobreposição), no plano do desenho */
   recorte?: Poligono[];
 }
@@ -58,8 +59,11 @@ type Alvo = { tipo: "reserva"; i: number } | { tipo: "vegetacao"; i: number } | 
 export const COR = { imovel: "#F5C542", reserva: "#2E9E5B", vegetacao: "#6B8E23", produtiva: "#E8A33D", app: "#3B8BD9", rio: "#1565C0" };
 /** vizinho invadido e o pedaço tirado do imóvel */
 export const COR_RECORTE = "#E5484D";
-/** contorno dos vizinhos que só encostam */
-const COR_VIZINHO = "#B8BED0";
+/** vizinho conferido, sem sobreposição (branco sobre halo escuro: aparece no satélite e no papel) */
+const COR_VIZINHO = "#FFFFFF";
+/** vizinho que deu sobreposição e foi tirado do imóvel pelo ajuste */
+export const COR_AJUSTADO = "#F59E0B";
+const corVizinho = (e: VizinhoNoMapa["estado"]) => (e === "invade" ? COR_RECORTE : e === "ajustado" ? COR_AJUSTADO : COR_VIZINHO);
 
 /** Ferramentas que desenham polígono (clique no 1º ponto fecha). */
 const fechaPoligono = (f: FerramentaCar) => f === "reserva" || f === "vegetacao";
@@ -400,10 +404,14 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
         </defs>
         {tiles.map((t) => <image key={t.k} href={t.href} width={1} height={1} preserveAspectRatio="none" transform={t.m} />)}
         <g transform={matriz}>
-          {/* vizinhos (CAR do SICAR, parcelas do SIGEF): só o contorno, por baixo do imóvel */}
+          {/* vizinhos (CAR do SICAR, parcelas do SIGEF), por baixo do imóvel: halo escuro + contorno na cor do estado */}
           {vizinhos.map((z) => z.aneis.map((a, i) => a.length >= 3 && (
-            <path key={`${z.chave}-${i}`} d={pathLinha(a) + "Z"} fill={z.invade ? COR_RECORTE : "none"} fillOpacity={z.invade ? 0.18 : 0}
-              stroke={z.invade ? COR_RECORTE : COR_VIZINHO} strokeWidth={z.invade ? 2 : 1.4} strokeDasharray="7 5" vectorEffect="non-scaling-stroke" opacity={0.95} />
+            <g key={`${z.chave}-${i}`} className={`car-vizinho ${z.estado}`}>
+              <path d={pathLinha(a) + "Z"} fill={corVizinho(z.estado)} fillOpacity={z.estado === "encosta" ? (satelite ? 0.1 : 0.04) : 0.2}
+                stroke="rgb(15 23 42 / 50%)" strokeWidth={z.estado === "encosta" ? 3.4 : 4.5} vectorEffect="non-scaling-stroke" />
+              <path d={pathLinha(a) + "Z"} fill="none" stroke={satelite || z.estado !== "encosta" ? corVizinho(z.estado) : "#64748B"}
+                strokeWidth={z.estado === "encosta" ? 1.8 : 2.4} strokeDasharray="8 5" vectorEffect="non-scaling-stroke" />
+            </g>
           )))}
           <path d={pathPol(res.imovel)} fill={satelite ? "rgba(255,255,255,0.06)" : "#F3F1EA"} stroke="none" />
           {res.produtiva.map((p, i) => <path key={`p${i}`} d={pathPol(p)} fill={COR.produtiva} fillOpacity={0.28} stroke="none" />)}
@@ -442,6 +450,19 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
           )}
         </g>
         {/* nomes e alças em coordenadas de tela (tamanho fixo) */}
+        {vizinhos.map((z) => {
+          if (!z.rotulo) return null;
+          const t = tela(z.rotulo);
+          if (t[0] < 0 || t[1] < 0 || t[0] > W || t[1] > H) return null;
+          // o nome não sai pela borda do mapa (meia largura aproximada do texto)
+          const meia = (z.nome.length + (z.estado === "encosta" ? 0 : 11)) * 3.2;
+          const x = Math.min(W - meia - 6, Math.max(meia + 6, t[0]));
+          return (
+            <text key={`vz-${z.chave}`} x={x} y={Math.min(H - 14, Math.max(14, t[1]))} className={`car-viz-rotulo ${z.estado}`}>
+              {z.nome}{z.estado === "ajustado" ? " · ajustado" : z.estado === "invade" ? " · sobrepõe" : ""}
+            </text>
+          );
+        })}
         {riosPlano.map((r) => {
           if (r.l.length < 2) return null;
           const m = tela(r.l[Math.floor((r.l.length - 1) / 2)]);
@@ -463,6 +484,14 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
         {desenho.map((q, k) => { const t = tela(q); return <circle key={`d${k}`} cx={t[0]} cy={t[1]} r={k === 0 ? 6 : 4} className="car-alca desenho" />; })}
       </svg>
       {sobreposto}
+      {vizinhos.length > 0 && (
+        <div className="car-viz-legenda" onPointerDown={(e) => e.stopPropagation()}>
+          <b>Vizinhos ({vizinhos.length})</b>
+          <span><i className="encosta" />CAR/SIGEF conferido</span>
+          {vizinhos.some((z) => z.estado === "ajustado") && <span><i className="ajustado" />sobreposição ajustada</span>}
+          {vizinhos.some((z) => z.estado === "invade") && <span><i className="invade" />ainda sobrepõe</span>}
+        </div>
+      )}
       <div className="car-escala">
         {/* no celular as dicas falam de toque e pinça (não de clique e roda do mouse) */}
         {ferramenta === "reserva" && (toque ? "Toque para marcar os pontos da reserva · toque no 1º ponto para fechar · dois dedos aproximam" : "Clique para marcar os pontos da reserva · clique no 1º ponto, Enter ou duplo clique fecha · Backspace volta · Shift solta o encaixe")}
