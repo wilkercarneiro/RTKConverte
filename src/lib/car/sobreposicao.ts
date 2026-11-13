@@ -24,7 +24,9 @@
 //   - "grande": cortar levaria mais da metade do imóvel (provável matrícula-mãe
 //     ou desenho errado: decisão de gente);
 //   - "dentro": o vizinho está inteiro dentro do imóvel (o corte faria um furo,
-//     e o imóvel do CAR é um anel só).
+//     e o imóvel do CAR é um anel só);
+//   - "inativo": CAR Cancelado ou Suspenso (ou parcela cancelada) — não tira
+//     terreno do cliente sozinho; fica para a pessoa conferir (13/11/2026).
 import { antiHorario, areaPol, areaPols, centroide, dentroAnel, diferenca, dist, intersecao, offsetPols, tirarBicos, uniao } from "../loteamento/geom.ts";
 import type { Anel, Poligono } from "../loteamento/geom.ts";
 import { paraGeo, planoDe } from "./motor.ts";
@@ -43,7 +45,13 @@ export interface VizinhoCar {
   poligonos: LonLat[][][];
 }
 
-export type DecisaoSobreposicao = "cortado" | "proprio" | "grande" | "dentro" | "ignorado";
+export type DecisaoSobreposicao = "cortado" | "proprio" | "grande" | "dentro" | "ignorado" | "inativo";
+
+/** Situação que não vale como vizinho para o corte automático (CAR Cancelado/Suspenso, parcela cancelada). */
+export function situacaoInativa(situacao: string | null | undefined): boolean {
+  const s = (situacao ?? "").normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
+  return /^(cancelad|suspens|inativ)/.test(s);
+}
 
 export interface ItemSobreposicao {
   fonte: VizinhoCar["fonte"];
@@ -154,7 +162,8 @@ export function ajustarSobreposicao(
     let decisao: DecisaoSobreposicao = "cortado";
     if (ignorar.has(v.codigo)) decisao = "ignorado";
     else if (!forcar.has(v.codigo)) {
-      if (pctImovel >= 80 && pctVizinho >= 80) decisao = "proprio";
+      if (situacaoInativa(v.situacao)) decisao = "inativo";
+      else if (pctImovel >= 80 && pctVizinho >= 80) decisao = "proprio";
       else if (pctImovel > 50) decisao = "grande";
     }
     comCorte.push({ item: { fonte: v.fonte, codigo: v.codigo, rotulo: v.rotulo, situacao: v.situacao ?? null, areaM2: area, pctImovel, pctVizinho, decisao }, pol });

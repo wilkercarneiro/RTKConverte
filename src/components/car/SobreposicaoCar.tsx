@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ajustarSobreposicao } from "../../lib/car/sobreposicao.ts";
 import type { AjusteSobreposicao, ItemSobreposicao } from "../../lib/car/sobreposicao.ts";
-import { dentroDaCaixa, vizinhosReais } from "../../lib/car/vizinhos.ts";
+import { dentroDaCaixa, motivosIncompleta, vizinhosReais } from "../../lib/car/vizinhos.ts";
 import type { FonteVizinhos, VizinhosDoCar } from "../../lib/car/vizinhos.ts";
 import { fmtHa, fmtNum } from "../../lib/car/motor.ts";
 import type { ProjetoCar } from "../../lib/car/motor.ts";
@@ -55,7 +55,7 @@ export function useSobreposicaoCar(projeto: ProjetoCar | null, uf: string | null
 const fmtArea = (m2: number) => (m2 >= 10_000 ? fmtHa(m2) : `${fmtNum(m2, m2 < 10 ? 2 : 0)} m²`);
 const rotuloFonte = (f: ItemSobreposicao["fonte"]) => (f === "car" ? "CAR declarado (SICAR)" : "parcela certificada (SIGEF)");
 
-export function CartaoSobreposicao({ estado, ajuste, projeto, fator, onDesfazer, onRecortar, onDeNovo }: {
+export function CartaoSobreposicao({ estado, ajuste, projeto, fator, onDesfazer, onRecortar, onDeNovo, travado = false, onAplicar }: {
   estado: EstadoVizinhos;
   ajuste: AjusteSobreposicao | null;
   projeto: ProjetoCar;
@@ -64,21 +64,27 @@ export function CartaoSobreposicao({ estado, ajuste, projeto, fator, onDesfazer,
   onDesfazer: () => void;
   onRecortar: (codigo: string) => void;
   onDeNovo: () => void;
+  /** CAR já exportado: o ajuste NÃO é aplicado sozinho, só pelo botão */
+  travado?: boolean;
+  onAplicar?: () => void;
 }) {
   const reg = projeto.sobreposicao;
   const ajustado = !!reg?.original && reg.cortes.length > 0;
   const pendentes = (ajuste?.itens ?? []).filter((i) => i.decisao !== "cortado" && i.decisao !== "proprio");
   const proprios = (ajuste?.itens ?? []).filter((i) => i.decisao === "proprio");
   const n = estado.dados?.vizinhos.length ?? 0;
-  const falhas = estado.dados?.falhas ?? [];
-  const tom = pendentes.length ? "alerta" : ajustado ? "ajustado" : estado.dados && !falhas.length ? "livre" : "";
+  // sem todas as bases (ou com resposta parcial) não dá para dizer "livre"
+  const motivos = motivosIncompleta(estado.dados);
+  const incompleta = motivos.length > 0;
+  const aCortar = travado ? (ajuste?.perimetro ? ajuste.itens.filter((i) => i.decisao === "cortado") : []) : [];
+  const tom = pendentes.length || aCortar.length ? "alerta" : incompleta ? "alerta" : ajustado ? "ajustado" : estado.dados ? "livre" : "";
 
   let resumo: string;
   if (estado.carregando && !estado.dados) resumo = "consultando os CAR do SICAR e o SIGEF…";
   else if (estado.erro && !estado.dados) resumo = `não deu para consultar: ${estado.erro}`;
-  else if (pendentes.length) resumo = `${pendentes.length} sobreposição(ões) para conferir`;
-  else if (ajustado) resumo = "ajustado: o terreno não sobrepõe mais ninguém";
-  else if (estado.dados) resumo = falhas.length ? "consulta incompleta" : `sem sobreposição (${n} vizinho${n === 1 ? "" : "s"} conferido${n === 1 ? "" : "s"})`;
+  else if (pendentes.length || aCortar.length) resumo = `${pendentes.length + aCortar.length} sobreposição(ões) para conferir`;
+  else if (ajustado) resumo = incompleta ? "ajustado nos vizinhos encontrados — mas a consulta veio incompleta" : "ajustado: o terreno não sobrepõe mais ninguém";
+  else if (estado.dados) resumo = incompleta ? "consulta incompleta: não dá para dizer que está livre" : `sem sobreposição (${n} vizinho${n === 1 ? "" : "s"} conferido${n === 1 ? "" : "s"})`;
   else resumo = "";
 
   return (
@@ -110,6 +116,17 @@ export function CartaoSobreposicao({ estado, ajuste, projeto, fator, onDesfazer,
         </div>
       )}
 
+      {aCortar.length > 0 && (
+        <div className="car-sob-item" role="status">
+          <p>
+            <b>Este CAR já foi exportado</b>, então o terreno não é mexido sozinho. A consulta achou sobreposição com{" "}
+            {aCortar.map((i, k) => <span key={`${i.fonte}:${i.codigo}`}>{k ? ", " : ""}<span className="car-sob-cod">{i.rotulo}</span> ({fmtArea(i.areaM2 * fator)})</span>)}.
+            Se recortar, baixe os shapefiles de novo.
+          </p>
+          <div className="car-botoes"><button onClick={onAplicar}>Recortar o terreno agora</button></div>
+        </div>
+      )}
+
       {proprios.map((i) => (
         <p key={`${i.fonte}:${i.codigo}`} className="car-sob-proprio">
           Este imóvel já {i.fonte === "car" ? "tem CAR no SICAR" : "está certificado no SIGEF"}: <span className="car-sob-cod">{i.rotulo}</span>{" "}
@@ -123,6 +140,7 @@ export function CartaoSobreposicao({ estado, ajuste, projeto, fator, onDesfazer,
             <span className="car-sob-cod">{i.rotulo}</span> <small>{rotuloFonte(i.fonte)}{i.situacao ? ` · ${i.situacao}` : ""}</small><br />
             {i.decisao === "grande" && <>Sobrepõe {fmtArea(i.areaM2 * fator)} ({fmtNum(i.pctImovel, 1)}% do imóvel). Recortar levaria mais da metade do terreno — confira antes.</>}
             {i.decisao === "dentro" && <>Está inteiro dentro do imóvel ({fmtArea(i.areaM2 * fator)}). O recorte faria um buraco no meio, e o imóvel do CAR é um contorno só — confira o desenho.</>}
+            {i.decisao === "inativo" && <>Sobrepõe {fmtArea(i.areaM2 * fator)} ({fmtNum(i.pctImovel, 2)}% do imóvel), mas o {i.fonte === "car" ? "CAR" : "registro"} está {i.situacao ?? "inativo"}. Não foi recortado sozinho — confira a situação antes de tirar terreno do cliente.</>}
             {i.decisao === "ignorado" && <>Sobrepõe {fmtArea(i.areaM2 * fator)} ({fmtNum(i.pctImovel, 2)}% do imóvel). Você desfez o ajuste: o SEIA/SICAR vai acusar.</>}
           </p>
           {i.decisao !== "dentro" && (
@@ -131,8 +149,11 @@ export function CartaoSobreposicao({ estado, ajuste, projeto, fator, onDesfazer,
         </div>
       ))}
 
-      {falhas.length > 0 && (
-        <p className="car-sob-falha">Sem resposta de: {falhas.join(" · ")}. Nessas bases não dá para dizer que está livre.</p>
+      {incompleta && (
+        <div className="car-sob-falha" role="alert">
+          <ul>{motivos.map((m) => <li key={m}>{m}.</li>)}</ul>
+          Pode haver sobreposição com algum imóvel que não veio — confira no SEIA/SICAR antes de enviar, ou consulte de novo.
+        </div>
       )}
       {(estado.dados || estado.erro) && (
         <div className="car-sob-rodape">

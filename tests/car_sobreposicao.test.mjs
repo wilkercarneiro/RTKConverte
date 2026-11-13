@@ -147,3 +147,82 @@ test("o registro do ajuste sobrevive à gravação (normalizarProjetoCar)", () =
   assert.deepEqual(p.sobreposicao.ignorar, ["B"]);
   assert.deepEqual(normalizarProjetoCar(JSON.parse(JSON.stringify(base)), base).sobreposicao, undefined);
 });
+
+// ---------------- correções da auditoria de 13/11/2026 ----------------
+// 1) CAR Cancelado/Suspenso não tira terreno do cliente sozinho;
+// 2) resposta parcial do SICAR e falha/atraso do SIGEF aparecem (não vira "sem sobreposição");
+// 3) CAR já exportado não é recortado sozinho ao abrir.
+import { situacaoInativa } from "../src/lib/car/sobreposicao.ts";
+import { consultarVizinhos, motivosIncompleta } from "../src/lib/car/vizinhos.ts";
+
+const CANTO = q(-39.9992, -10.0002, -39.9988, -9.9998); // pega uma quina do IMOVEL
+const vizS = (codigo, situacao) => ({ ...viz(codigo, CANTO), situacao });
+
+test("situacaoInativa: Cancelado/Suspenso (com ou sem condição) sim; Ativo/Pendente não", () => {
+  for (const s of ["Cancelado", "Suspenso · Aguardando análise", "cancelada", "SUSPENSO", "Inativo"]) assert.ok(situacaoInativa(s), s);
+  for (const s of ["Ativo · Aguardando análise", "Pendente", "Certificada", "", null, undefined]) assert.ok(!situacaoInativa(s), String(s));
+});
+
+test("CAR Cancelado ou Suspenso: não corta sozinho, fica para conferir; Ativo corta", () => {
+  for (const sit of ["Cancelado", "Suspenso · Aguardando análise"]) {
+    const a = ajustarSobreposicao(IMOVEL, [vizS("X", sit)]);
+    assert.equal(a.itens[0].decisao, "inativo", sit);
+    assert.equal(a.perimetro, null, `${sit}: o terreno não muda`);
+  }
+  assert.equal(ajustarSobreposicao(IMOVEL, [vizS("X", "Ativo · Aguardando análise")]).itens[0].decisao, "cortado");
+  // "Recortar este também" continua valendo
+  const f = ajustarSobreposicao(IMOVEL, [vizS("X", "Cancelado")], { forcar: ["X"] });
+  assert.equal(f.itens[0].decisao, "cortado");
+  assert.ok(f.perimetro);
+});
+
+test("caso real com os dois invadidos Cancelados: nenhum corte", () => {
+  const cancelados = vizinhos.map((v) => (INVADIDOS.includes(v.codigo) ? { ...v, situacao: "Cancelado" } : v));
+  const a = ajustarSobreposicao(kml.perimetro, cancelados);
+  assert.equal(a.perimetro, null);
+  for (const c of INVADIDOS) assert.equal(a.itens.find((i) => i.codigo === c).decisao, "inativo");
+});
+
+const bases = (o = {}) => ({
+  carNaCaixa: async () => ({ imoveis: [], cortada: false }),
+  consultarSigef: async () => ({ parcelas: { type: "FeatureCollection", features: [] }, sobreposicoes: [] }),
+  sincronizarSigef: async (_a, uf) => ({ ok: true, uf, camadas: [], guardadas: 0, removidas: 0, avisos: [] }),
+  ...o,
+});
+
+test("consulta completa: nenhum motivo (pode dizer 'sem sobreposição')", async () => {
+  const d = await consultarVizinhos(IMOVEL, "BA", bases());
+  assert.deepEqual(motivosIncompleta(d), []);
+});
+
+test("SICAR devolveu só parte dos imóveis: a consulta é incompleta", async () => {
+  const d = await consultarVizinhos(IMOVEL, "BA", bases({ carNaCaixa: async () => ({ imoveis: [], cortada: true }) }));
+  assert.ok(d.cortada);
+  assert.ok(motivosIncompleta(d).some((m) => /SICAR devolveu só parte/.test(m)));
+});
+
+test("INCRA fora do ar (sincronizar falha ou responde ok:false): aparece, não é engolido", async () => {
+  const caiu = await consultarVizinhos(IMOVEL, "BA", bases({ sincronizarSigef: async () => { throw new Error("timeout"); } }));
+  assert.ok(motivosIncompleta(caiu).some((m) => /SIGEF: o INCRA não respondeu \(timeout\)/.test(m)));
+  const naoOk = await consultarVizinhos(IMOVEL, "BA", bases({ sincronizarSigef: async (_a, uf) => ({ ok: false, uf, camadas: [], guardadas: 0, removidas: 0, avisos: ["503"] }) }));
+  assert.ok(motivosIncompleta(naoOk).some((m) => /INCRA não respondeu \(503\)/.test(m)));
+  const semUf = await consultarVizinhos(IMOVEL, null, bases());
+  assert.ok(motivosIncompleta(semUf).some((m) => /UF do imóvel desconhecida/.test(m)));
+});
+
+test("base do SIGEF ou SICAR sem resposta: falha listada", async () => {
+  const d = await consultarVizinhos(IMOVEL, "BA", bases({
+    consultarSigef: async () => { throw new Error("rpc caiu"); },
+    carNaCaixa: async () => { throw new Error("GeoServer 502"); },
+  }));
+  const m = motivosIncompleta(d).join(" | ");
+  assert.match(m, /SIGEF: rpc caiu/);
+  assert.match(m, /SICAR\): GeoServer 502/);
+});
+
+test("CAR já exportado (status gerado) não é recortado sozinho ao abrir", () => {
+  const src = fs.readFileSync(new URL("../src/components/car/Car.tsx", import.meta.url), "utf8");
+  const efeito = src.slice(src.indexOf("const a = sob.ajuste;"), src.indexOf("aplicarAjuste(projeto, a);"));
+  assert.match(efeito, /servico\.status === "gerado"\) return/);
+  assert.match(src, /travado=\{travadoSob\}/);
+});

@@ -25,6 +25,7 @@ import { CarEditor, COR } from "./CarEditor";
 import { CartaoSobreposicao, useSobreposicaoCar } from "./SobreposicaoCar";
 import { fraseDoAjuste } from "../../lib/car/sobreposicao.ts";
 import type { AjusteSobreposicao } from "../../lib/car/sobreposicao.ts";
+import { motivosIncompleta } from "../../lib/car/vizinhos.ts";
 import type { FonteVizinhos } from "../../lib/car/vizinhos.ts";
 import { antiHorario, caixa as caixaPts, diferenca } from "../../lib/loteamento/geom.ts";
 import type { Poligono, Pt } from "../../lib/loteamento/geom.ts";
@@ -165,6 +166,8 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, 
   useEffect(() => {
     const a = sob.ajuste;
     if (!projeto || !a?.perimetro || h.base) return;
+    // CAR já exportado: não mexe no terreno sozinho (o shapefile entregue ficaria diferente); o cartão oferece o botão
+    if (servico.status === "gerado") return;
     // o corte não resolveu (geometria estranha): não mexe no terreno; o cartão mostra
     if (a.restanteM2 > 0.01 || ajustesSeguidos.current >= 3) return;
     ajustesSeguidos.current++;
@@ -369,10 +372,14 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, 
     : projeto.reserva.lado !== null && projeto.reserva.poligonos.length ? "reserva"
     : veg.lado !== null && veg.poligonos.length ? "vegetacao" : null;
   const rioSel = sel?.tipo === "rio" ? projeto.rios.find((r) => r.id === sel.id) : undefined;
-  const sobDestaque = !!(projeto.sobreposicao?.original && projeto.sobreposicao.cortes.length) || !!sob.ajuste?.itens.some((i) => i.decisao !== "cortado" && i.decisao !== "proprio");
+  const travadoSob = servico.status === "gerado";
+  const sobDestaque = !!(projeto.sobreposicao?.original && projeto.sobreposicao.cortes.length)
+    || !!sob.ajuste?.itens.some((i) => i.decisao !== "proprio" && (i.decisao !== "cortado" || (travadoSob && !!sob.ajuste?.perimetro)))
+    || motivosIncompleta(sob.dados).length > 0;
   const cartaoSob = (
     <CartaoSobreposicao estado={sob} ajuste={sob.ajuste} projeto={projeto} fator={res.fatorArea}
-      onDesfazer={desfazerAjuste} onRecortar={recortarTambem} onDeNovo={sob.deNovo} />
+      onDesfazer={desfazerAjuste} onRecortar={recortarTambem} onDeNovo={sob.deNovo}
+      travado={travadoSob} onAplicar={() => { if (sob.ajuste?.perimetro && sob.ajuste.restanteM2 <= 0.01) aplicarAjuste(projeto, sob.ajuste); }} />
   );
 
   return (

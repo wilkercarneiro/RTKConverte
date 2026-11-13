@@ -7,8 +7,7 @@
 import { carNaCaixa, ufsCandidatas } from "../consulta/car.ts";
 import { caixaComMargem } from "../consulta/geometria.ts";
 import type { Caixa } from "../consulta/geometria.ts";
-import { consultarSigef, sincronizarSigef } from "../sigef";
-import type { FeatureParcela } from "../sigef";
+import type { FeatureParcela, ResultadoSigef, SincroniaSigef } from "../sigef";
 import type { LonLat } from "./kml.ts";
 import type { VizinhoCar } from "./sobreposicao.ts";
 
@@ -20,6 +19,8 @@ export interface VizinhosDoCar {
   falhas: string[];
   /** alguma base devolveu só parte dos imóveis da caixa */
   cortada: boolean;
+  /** respondeu, mas com ressalva (ex.: SIGEF sem atualizar do INCRA, só a base do sistema) */
+  avisos?: string[];
   quando: string;
 }
 
@@ -37,13 +38,30 @@ function poligonosDoGeo(g: FeatureParcela["geometry"] | null | undefined): LonLa
   return [];
 }
 
-export const vizinhosReais: FonteVizinhos = async (perimetro, uf) => {
+/** As bases consultadas (os testes trocam por respostas falsas). */
+export interface BasesVizinhos {
+  carNaCaixa: typeof carNaCaixa;
+  consultarSigef: (aneis: LonLat[][], op: { raioM: number }) => Promise<ResultadoSigef>;
+  sincronizarSigef: (aneis: LonLat[][], uf: string) => Promise<SincroniaSigef>;
+}
+
+// o módulo do SIGEF puxa o cliente do Supabase: só carrega quando consulta de verdade
+const basesReais = async (): Promise<BasesVizinhos> => {
+  const sigef = await import("../sigef");
+  return { carNaCaixa, consultarSigef: sigef.consultarSigef, sincronizarSigef: (a, uf) => sigef.sincronizarSigef(a, uf) };
+};
+
+export const vizinhosReais: FonteVizinhos = async (perimetro, uf) => consultarVizinhos(perimetro, uf, await basesReais());
+
+export async function consultarVizinhos(perimetro: LonLat[], uf: string | null, bases: BasesVizinhos): Promise<VizinhosDoCar> {
+  const { carNaCaixa, consultarSigef, sincronizarSigef } = bases;
   const aneis = [perimetro];
   const caixa = caixaComMargem(aneis, MARGEM_CAIXA_M);
   const [o, s, l, n] = caixa;
   const ufs = [...new Set([uf, ...[[o, s], [l, s], [l, n], [o, n], [(o + l) / 2, (s + n) / 2]].flatMap(([x, y]) => ufsCandidatas(x, y))]
     .filter((u): u is string => !!u && /^[A-Z]{2}$/.test(u)))];
   const falhas: string[] = [];
+  const avisos: string[] = [];
   let cortada = false;
   const vizinhos: VizinhoCar[] = [];
 
@@ -61,7 +79,16 @@ export const vizinhosReais: FonteVizinhos = async (perimetro, uf) => {
   const sigef = (async () => {
     try {
       // traz do INCRA o que houver em volta (sem a UF, fica a base do sistema)
-      if (uf) await sincronizarSigef(aneis, uf).catch(() => null);
+      // a falha aqui não para a consulta (a base do sistema responde), mas tem de aparecer
+      if (!uf) avisos.push("SIGEF: UF do imóvel desconhecida — conferido só na base do sistema, sem atualizar do INCRA");
+      else {
+        try {
+          const r = await sincronizarSigef(aneis, uf);
+          if (!r.ok) avisos.push(`SIGEF: o INCRA não respondeu${r.avisos?.length ? ` (${r.avisos.join("; ")})` : ""} — conferido só na base do sistema, que pode estar desatualizada`);
+        } catch (e) {
+          avisos.push(`SIGEF: o INCRA não respondeu (${e instanceof Error ? e.message : String(e)}) — conferido só na base do sistema, que pode estar desatualizada`);
+        }
+      }
       const r = await consultarSigef(aneis, { raioM: MARGEM_CAIXA_M });
       for (const f of r.parcelas.features) {
         const p = f.properties;
@@ -78,8 +105,18 @@ export const vizinhosReais: FonteVizinhos = async (perimetro, uf) => {
   })();
 
   await Promise.all([car, sigef]);
-  return { vizinhos, caixa, falhas, cortada, quando: new Date().toISOString() };
-};
+  return { vizinhos, caixa, falhas, cortada, avisos, quando: new Date().toISOString() };
+}
+
+/** Por que a consulta não permite dizer "sem sobreposição" (vazio = completa). */
+export function motivosIncompleta(d: VizinhosDoCar | null | undefined): string[] {
+  if (!d) return [];
+  return [
+    ...d.falhas.map((f) => `Sem resposta de ${f}`),
+    ...(d.cortada ? ["O SICAR devolveu só parte dos CAR em volta do imóvel (limite da consulta)"] : []),
+    ...(d.avisos ?? []),
+  ];
+}
 
 /** O perímetro ainda está dentro da caixa já consultada? */
 export function dentroDaCaixa(perimetro: LonLat[], caixa: Caixa): boolean {
