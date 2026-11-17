@@ -19,23 +19,41 @@
 // aceites_termos, como no cadastro antigo. Se um passo falha, desfaz o que foi
 // criado. Depois a tela entra com o e-mail e a senha e paga (pagar_cadastro).
 //
+// Cupom (0052): `cupom` no cadastro_criar é conferido antes de criar a conta e
+// reservado (sob trava, contando o limite de usos) logo depois de criar a
+// empresa; a foto dele fica na cobrança e o pagamento (pagar_cadastro) faz a
+// conta. Cupom que zera o 1º pagamento (meses grátis sem adesão) libera a conta
+// na hora. A ação pública cupom_conferir { codigo, plano_id } mostra o desconto
+// antes de criar a conta (limitada por IP: ninguém testa códigos no atacado).
+//
 // Contra abuso (o signup do Auth segue DESLIGADO, auditoria de 04/11/2026):
 // campo escondido `site` (robô preenche), limite por IP (5 por hora, 15 por
 // dia) e no total (200 por dia), tudo conferido aqui — a tela não decide nada.
 // Sem Deno nem supabase-js, como fluxos.ts (tests/cobranca.test.mjs).
 
-import { asaasDe, ErroUsuario, urlApp, zapDe } from "./fluxos.ts";
+import { asaasDe, ErroUsuario, liberarComCupom, urlApp, zapDe } from "./fluxos.ts";
 import type { Deps, Resposta } from "./fluxos.ts";
+import { codigoValido, cupomDe, MOTIVO_CUPOM, normalizarCodigo, primeiroPagamento, resumoDoCupom } from "../_shared/cupons.ts";
+import type { Cupom } from "../_shared/cupons.ts";
 import { ErroAsaas } from "../_shared/asaas.ts";
 import { formatarDocumento, formatarTelefone, problemasDoCadastro, soDigitos } from "../_shared/cnpj.ts";
 import { enviarWhatsApp } from "../_shared/whatsapp.ts";
 import {
-  mensagemCadastroConvite, mensagemCadastroCriado, mensagemNovoCadastro, mensagemNovoConvite, textoCreditos,
+  mensagemCadastroComCupom, mensagemCadastroConvite, mensagemCadastroCriado, mensagemNovoCadastro, mensagemNovoConvite, textoCreditos,
 } from "../_shared/mensagens_cobranca.ts";
 import { cicloDe, maxParcelas, NOME_CICLO, regrasDe, valorDoPeriodo } from "../_shared/parcelas.ts";
+import { fmtReais } from "../_shared/precos.ts";
 import type { Ciclo } from "../_shared/parcelas.ts";
 
 /** Limites do cadastro: [chave, máximo, janela em segundos]. */
+/** Tentativas de cupom por IP (conferir + cadastrar): [chave, máximo, janela em segundos]. */
+export const LIMITES_CUPOM = (ip: string): [string, number, number][] => [
+  [`cupom:ip-hora:${ip}`, 20, 3600],
+  [`cupom:ip-dia:${ip}`, 60, 86400],
+  // todas as conexões juntas (se o IP vier trocado a cada pedido, ainda há um teto)
+  ["cupom:total-dia", 2000, 86400],
+];
+
 export const LIMITES_CADASTRO = (ip: string): [string, number, number][] => [
   [`cadastro:ip-hora:${ip}`, 5, 3600],
   [`cadastro:ip-dia:${ip}`, 15, 86400],
@@ -49,6 +67,7 @@ const falha = (status: number, erro: string): Resposta => ({ status, corpo: { er
 export async function tratarPublico(d: Deps, ip: string | null, b: Record<string, unknown>): Promise<Resposta> {
   try {
     if (b.acao === "cadastro_criar") return await cadastroCriar(d, ip, b);
+    if (b.acao === "cupom_conferir") return await cupomConferir(d, ip, b);
     return falha(400, "Ação desconhecida.");
   } catch (e) {
     if (e instanceof ErroUsuario) return falha(e.status, e.message);
@@ -99,6 +118,30 @@ async function avisarTetoDoDia(d: Deps, cfg: Record<string, string>): Promise<vo
 
 const texto = (v: unknown, max: number) => String(v ?? "").trim().replace(/\s+/g, " ").slice(0, max);
 
+/** Gasta uma tentativa de cupom deste IP; false = passou do limite. */
+async function tentativaDeCupom(d: Deps, ip: string | null): Promise<boolean> {
+  if (!d.limite) return true;
+  for (const [chave, max, janela] of LIMITES_CUPOM(ip ?? "desconhecido")) {
+    if (!(await d.limite(chave, max, janela))) return false;
+  }
+  return true;
+}
+
+/**
+ * 0052: a página de cadastro confere o cupom antes de criar a conta e mostra o
+ * desconto. Só diz se vale e o que dá; o que conta é o cadastro_criar.
+ */
+async function cupomConferir(d: Deps, ip: string | null, b: Record<string, unknown>): Promise<Resposta> {
+  const codigo = normalizarCodigo(b.codigo);
+  if (!codigoValido(codigo)) return ok({ valido: false, motivo: "inexistente", mensagem: MOTIVO_CUPOM.inexistente });
+  if (!d.banco.conferirCupom) return ok({ valido: false, motivo: "inexistente", mensagem: MOTIVO_CUPOM.inexistente });
+  if (!(await tentativaDeCupom(d, ip))) return falha(429, MOTIVO_CUPOM.muitas);
+  const plano = String(b.plano_id ?? "");
+  const r = await d.banco.conferirCupom(codigo, /^[0-9a-f-]{36}$/i.test(plano) ? plano : null);
+  if (!r.valido) return ok({ valido: false, motivo: r.motivo, mensagem: MOTIVO_CUPOM[r.motivo] ?? MOTIVO_CUPOM.inexistente });
+  return ok({ valido: true, cupom: cupomDe(r.cupom) });
+}
+
 /** O convite (0049) não vale: usado, cancelado, vencido ou desconhecido. */
 export const CONVITE_INVALIDO = "Este convite não vale mais: já foi usado, foi cancelado ou venceu. Peça um novo à equipe do Vertces.";
 
@@ -139,11 +182,23 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
     }
   }
   if (!regras.ciclos[ciclo].ativo) throw new ErroUsuario(`O período ${NOME_CICLO[ciclo].toLowerCase()} não está disponível. Escolha outro.`);
+  // 0052: o cupom digitado (vazio = sem cupom); a conferência de verdade é na reserva, depois da empresa
+  const codigoCupom = normalizarCodigo(b.cupom);
+  if (String(b.cupom ?? "").trim() && !codigoValido(codigoCupom)) throw new ErroUsuario(MOTIVO_CUPOM.inexistente, 422);
+  if (codigoCupom) {
+    if (!d.banco.conferirCupom || !d.banco.reservarCupom) throw new ErroUsuario(MOTIVO_CUPOM.inexistente, 422);
+    if (!(await tentativaDeCupom(d, ip))) throw new ErroUsuario(MOTIVO_CUPOM.muitas, 429);
+    // sem o plano do convite ainda: confere sem plano só se não for convite (o do convite é conferido na reserva)
+    if (!porConvite) {
+      const r = await d.banco.conferirCupom(codigoCupom, planoId);
+      if (!r.valido) throw new ErroUsuario(MOTIVO_CUPOM[r.motivo] ?? MOTIVO_CUPOM.inexistente, 422);
+    }
+  }
   // o convite é de uso único: reservado aqui (sob trava no banco) e devolvido se a conta não sair
   const convite = porConvite ? await d.banco.reservarConvite!(token) : null;
   if (porConvite && !convite) throw new ErroUsuario(CONVITE_INVALIDO, 410);
   try {
-    return await criarContaEEmpresa(d, cfg, regras, f, versao, ciclo, convite ? convite.plano_id : planoId, convite);
+    return await criarContaEEmpresa(d, cfg, regras, f, versao, ciclo, convite ? convite.plano_id : planoId, convite, codigoCupom || null);
   } catch (e) {
     if (convite) await d.banco.devolverConvite?.(convite.id).catch(() => {});
     throw e;
@@ -152,7 +207,7 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
 
 async function criarContaEEmpresa(d: Deps, cfg: Record<string, string>, regras: ReturnType<typeof regrasDe>,
   f: { empresa: string; documento: string; responsavel: string; email: string; telefone: string; senha: string },
-  versao: string, ciclo: Ciclo, planoId: string, convite: { id: string; nome: string | null } | null): Promise<Resposta> {
+  versao: string, ciclo: Ciclo, planoId: string, convite: { id: string; nome: string | null } | null, codigoCupom: string | null = null): Promise<Resposta> {
   const plano = await d.banco.planoParaVenda(planoId);
   const mensalidade = Number(plano?.preco_mensal ?? 0);
   // pelo convite vale qualquer plano ativo com mensalidade (a equipe escolheu); pelo site, só os à venda
@@ -170,6 +225,7 @@ async function criarContaEEmpresa(d: Deps, cfg: Record<string, string>, regras: 
   }
   const valor = valorDoPeriodo(mensalidade, ciclo, regras.ciclos[ciclo].desconto);
   let escId: string | null = null;
+  let cupom: Cupom | null = null;
   try {
     escId = await d.banco.inserirEmpresa({
       nome: f.empresa, cnpj: f.documento, responsavel: f.responsavel, telefone: f.telefone, email: f.email,
@@ -181,6 +237,12 @@ async function criarContaEEmpresa(d: Deps, cfg: Record<string, string>, regras: 
     // a razão social e o documento também vão para Configurações (memorial e planta leem de lá)
     await d.banco.inserirConfigEmpresa(escId, { razao_social: f.empresa, cnpj: f.documento });
     await d.banco.salvarCobranca(escId, { ciclo, valor, situacao: "sem_assinatura", ...(convite ? { inicio_no_primeiro_credito: true } : {}) });
+    // 0052: o uso do cupom (sob trava: o limite não estoura) e a foto dele na cobrança
+    if (codigoCupom) {
+      const r = await d.banco.reservarCupom!(codigoCupom, plano.id, escId);
+      if (!r.valido) throw new ErroUsuario(MOTIVO_CUPOM[r.motivo] ?? MOTIVO_CUPOM.inexistente, 422);
+      cupom = cupomDe(r.cupom);
+    }
     if (convite) await d.banco.concluirConvite?.(convite.id, escId);
   } catch (e) {
     if (escId) await d.banco.removerEmpresa(escId).catch(() => {});
@@ -189,20 +251,57 @@ async function criarContaEEmpresa(d: Deps, cfg: Record<string, string>, regras: 
     if ((e as { codigo?: string }).codigo === "23505") throw new ErroUsuario(JA_EXISTE, 409);
     throw e;
   }
+  const comCupom = cupom ? ` · cupom ${cupom.codigo}` : "";
   if (convite) {
-    await d.banco.atividade(escId, "empresa.cadastro_convite", `${plano.nome} · ${NOME_CICLO[ciclo].toLowerCase()} · cobra a partir do 1º crédito`, conta.id).catch(() => {});
-    const whatsapp = await avisarConvite(d, cfg, { ...f, plano: plano.nome, ciclo, valor, convite: convite.nome, escritorioId: escId });
-    return ok({ escritorio_id: escId, login: f.email, ciclo, valor, adesao: 0, liberada: true, inicio_no_primeiro_credito: true, whatsapp });
+    await d.banco.atividade(escId, "empresa.cadastro_convite", `${plano.nome} · ${NOME_CICLO[ciclo].toLowerCase()} · cobra a partir do 1º crédito${comCupom}`, conta.id).catch(() => {});
+    const whatsapp = await avisarConvite(d, cfg, { ...f, plano: plano.nome, ciclo, valor, convite: convite.nome, escritorioId: escId, cupom });
+    return ok({ escritorio_id: escId, login: f.email, ciclo, valor, adesao: 0, liberada: true, inicio_no_primeiro_credito: true, whatsapp, ...(cupom ? { cupom } : {}) });
   }
-  await d.banco.atividade(escId, "empresa.cadastro_site", `${plano.nome} · ${NOME_CICLO[ciclo].toLowerCase()}`, conta.id).catch(() => {});
-  const whatsapp = await avisarCadastro(d, cfg, { ...f, plano: plano.nome, ciclo, valor, adesao: regras.adesao, parcelas: maxParcelas(regras, ciclo) });
-  return ok({ escritorio_id: escId, login: f.email, ciclo, valor, adesao: regras.adesao, whatsapp });
+  await d.banco.atividade(escId, "empresa.cadastro_site", `${plano.nome} · ${NOME_CICLO[ciclo].toLowerCase()}${comCupom}`, conta.id).catch(() => {});
+  const pp = primeiroPagamento(valor, regras.adesao, cupom);
+  // 0052: o cupom zerou o 1º pagamento (meses grátis, sem adesão a pagar): a conta entra já
+  // (se o banco falhar aqui, a conta fica esperando e a tela de pagamento libera: pagar_cadastro faz o mesmo)
+  const lib = cupom && !(pp.total > 0) ? await liberarComCupom(d, cfg, escId, ciclo).catch(() => null) : null;
+  if (cupom && lib) {
+    const whatsapp = await avisarLiberadaPorCupom(d, cfg, { ...f, plano: plano.nome, ciclo, valor, escritorioId: escId, cupom, vencimento: lib.vencimento });
+    return ok({ escritorio_id: escId, login: f.email, ciclo, valor, adesao: 0, liberada: true, cupom, primeira_mensalidade: lib.vencimento, whatsapp });
+  }
+  const whatsapp = await avisarCadastro(d, cfg, {
+    ...f, plano: plano.nome, ciclo, valor, adesao: regras.adesao, parcelas: maxParcelas(regras, ciclo),
+    cupom: cupom ? { codigo: cupom.codigo, resumo: resumoDoCupom(cupom), total: pp.total } : null,
+  });
+  return ok({ escritorio_id: escId, login: f.email, ciclo, valor, adesao: pp.adesao, total: pp.total, whatsapp, ...(cupom ? { cupom } : {}) });
+}
+
+/** 0052: a conta entrou pelo cupom sem pagar nada agora. Nunca derruba o cadastro. */
+async function avisarLiberadaPorCupom(d: Deps, cfg: Record<string, string>, c: {
+  empresa: string; documento: string; responsavel: string; email: string; telefone: string; plano: string; ciclo: Ciclo; valor: number;
+  escritorioId: string; cupom: Cupom; vencimento: string;
+}): Promise<boolean> {
+  const zap = zapDe(cfg);
+  if (!zap) return false;
+  const periodo = NOME_CICLO[c.ciclo].toLowerCase();
+  const emp = await d.banco.empresa(c.escritorioId).catch(() => null);
+  const resumo = resumoDoCupom(c.cupom);
+  const [pessoa] = await Promise.all([
+    enviarWhatsApp(zap, c.telefone, mensagemCadastroComCupom({
+      responsavel: c.responsavel, empresa: c.empresa, plano: c.plano, periodo, valor: c.valor, url: urlApp(cfg), login: c.email,
+      codigo: c.cupom.codigo, resumo, vencimento: c.vencimento, creditos: emp ? textoCreditos(emp.creditos) : undefined,
+    }), d.fetch).catch(() => ({ ok: false as const })),
+    cfg.whatsapp_avisos
+      ? enviarWhatsApp(zap, cfg.whatsapp_avisos, mensagemNovoCadastro({
+        empresa: c.empresa, documento: formatarDocumento(c.documento), responsavel: c.responsavel, email: c.email,
+        telefone: formatarTelefone(c.telefone), plano: c.plano, periodo, valor: c.valor, cupom: `${c.cupom.codigo} (${resumo})`, liberada: true,
+      }), d.fetch).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+  return pessoa.ok;
 }
 
 /** Convite (0049): "conta criada, nada a pagar agora" para a pessoa e o aviso para o superadmin. Nunca derruba o cadastro. */
 async function avisarConvite(d: Deps, cfg: Record<string, string>, c: {
   empresa: string; documento: string; responsavel: string; email: string; telefone: string; plano: string; ciclo: Ciclo; valor: number;
-  convite: string | null; escritorioId: string;
+  convite: string | null; escritorioId: string; cupom?: Cupom | null;
 }): Promise<boolean> {
   const zap = zapDe(cfg);
   if (!zap) return false;
@@ -217,6 +316,7 @@ async function avisarConvite(d: Deps, cfg: Record<string, string>, c: {
       ? enviarWhatsApp(zap, cfg.whatsapp_avisos, mensagemNovoConvite({
         empresa: c.empresa, documento: formatarDocumento(c.documento), responsavel: c.responsavel, email: c.email,
         telefone: formatarTelefone(c.telefone), plano: c.plano, periodo, valor: c.valor, convite: c.convite,
+        cupom: c.cupom ? `${c.cupom.codigo} (${resumoDoCupom(c.cupom)})` : null,
       }), d.fetch).catch(() => null)
       : Promise.resolve(null),
   ]);
@@ -226,6 +326,7 @@ async function avisarConvite(d: Deps, cfg: Record<string, string>, c: {
 /** "Cadastro criado, falta o pagamento" para a pessoa e, se houver, o aviso para o superadmin. Nunca derruba o cadastro. */
 async function avisarCadastro(d: Deps, cfg: Record<string, string>, c: {
   empresa: string; documento: string; responsavel: string; email: string; telefone: string; plano: string; ciclo: Ciclo; valor: number; adesao: number; parcelas: number;
+  cupom?: { codigo: string; resumo: string; total: number } | null;
 }): Promise<boolean> {
   const zap = zapDe(cfg);
   if (!zap) return false;
@@ -233,11 +334,13 @@ async function avisarCadastro(d: Deps, cfg: Record<string, string>, c: {
   const [pessoa] = await Promise.all([
     enviarWhatsApp(zap, c.telefone, mensagemCadastroCriado({
       responsavel: c.responsavel, empresa: c.empresa, plano: c.plano, periodo, valor: c.valor, adesao: c.adesao, url: urlApp(cfg), login: c.email, parcelas: c.parcelas,
+      cupom: c.cupom ?? null,
     }), d.fetch).catch(() => ({ ok: false as const })),
     cfg.whatsapp_avisos
       ? enviarWhatsApp(zap, cfg.whatsapp_avisos, mensagemNovoCadastro({
         empresa: c.empresa, documento: formatarDocumento(c.documento), responsavel: c.responsavel, email: c.email,
         telefone: formatarTelefone(c.telefone), plano: c.plano, periodo, valor: c.valor, adesao: c.adesao,
+        cupom: c.cupom ? `${c.cupom.codigo} (${c.cupom.resumo}) · 1º pagamento ${fmtReais(c.cupom.total)}` : null,
       }), d.fetch).catch(() => null)
       : Promise.resolve(null),
   ]);

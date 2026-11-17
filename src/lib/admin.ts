@@ -239,6 +239,9 @@ export interface CobrancaEmpresa {
     inicio_no_primeiro_credito?: boolean;
     primeiro_credito_em?: string | null;
     mensalidade_iniciada_em?: string | null;
+    /** 0052: a foto do cupom do cadastro e o fim do desconto da mensalidade */
+    cupom?: unknown;
+    cupom_desconto_ate?: string | null;
   } | null;
   /** 0037: o cartão (sem o token) e a compra automática */
   cartao?: CartaoPublico | null;
@@ -293,6 +296,30 @@ export const criarConvite = async (plano: string, nome: string, dias: number): P
 export const cancelarConvite = async (id: string): Promise<void> => { ok(await supabase.rpc("sa_cancelar_convite", { p_id: id })); };
 /** O endereço que vai para o cliente (a página /cadastro/ leva ao #/assinar com o token). */
 export const linkDoConvite = (token: string, origem = location.origin) => `${origem}/cadastro/?convite=${token}`;
+
+// ---------------------------------------------------------------- cupons de desconto (0052)
+
+export type TipoCupom = "percentual" | "valor" | "isencao";
+export interface CupomAdmin {
+  id: string; codigo: string; descricao: string | null;
+  adesao_tipo: TipoCupom | null; adesao_valor: number | null;
+  mensalidade_tipo: TipoCupom | null; mensalidade_valor: number | null; mensalidade_vezes: number | null; isencao_meses: number | null;
+  /** null = todos os planos */
+  planos: string[] | null; nomes_planos: string[];
+  max_usos: number | null; valido_ate: string | null; ativo: boolean; criado_em: string;
+  usos: number;
+  situacao: "ativo" | "inativo" | "expirado" | "esgotado";
+  empresas: { id: string; nome: string; status: string; usado_em: string }[];
+}
+export const listarCupons = async (): Promise<CupomAdmin[]> => ok(await supabase.rpc("sa_cupons")) ?? [];
+/** Cria (id null) ou altera; o banco confere tudo de novo. */
+export const salvarCupom = async (id: string | null, dados: Record<string, unknown>): Promise<CupomAdmin> =>
+  ok(await supabase.rpc("sa_salvar_cupom", { p_id: id, p_dados: dados }));
+export const ativarCupom = async (id: string, ativo: boolean): Promise<void> => { ok(await supabase.rpc("sa_ativar_cupom", { p_id: id, p_ativo: ativo })); };
+export const excluirCupom = async (id: string): Promise<void> => { ok(await supabase.rpc("sa_excluir_cupom", { p_id: id })); };
+/** O link de cadastro com o cupom já preenchido (a pessoa ainda escolhe o plano, se não vier). */
+export const linkDoCupom = (codigo: string, planoId?: string | null, origem = location.origin) =>
+  `${origem}/cadastro/?${planoId ? `plano=${planoId}&` : ""}cupom=${encodeURIComponent(codigo)}`;
 export const adicionarUsuario = (escritorio_id: string, email: string, senha: string, papel: "dono" | "membro") =>
   chamarFuncao<{ ok: true; login: string }>("superadmin", { acao: "adicionar_usuario", escritorio_id, email, senha, papel });
 export const redefinirSenha = (user_id: string, senha: string) =>

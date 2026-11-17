@@ -6,14 +6,14 @@
 // FUNCTIONS_VERIFY_JWT_MAP com false, como a `gprol`. Quem chama:
 //   - o Asaas, em POST …/functions/v1/cobranca?origem=asaas, com o token no
 //     header asaas-access-token (configurado pelo próprio painel);
-//   - a página de cadastro, SEM login (só a chave pública): cadastro_criar, em
-//     cadastro.ts (0040);
+//   - a página de cadastro, SEM login (só a chave pública): cadastro_criar e
+//     cupom_conferir (0052), em cadastro.ts (0040);
 //   - o site, com o JWT da pessoa: as ações em fluxos.ts.
 import { createClient } from "@supabase/supabase-js";
 import { tratarAcao, tratarWebhook, ErroUsuario } from "./fluxos.ts";
 import { tratarPublico } from "./cadastro.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, lerTexto, LIMITE_MB } from "../_shared/limite.ts";
-import type { Banco, CartaoSalvo, Deps, EmpresaCobranca, PedidoCredito, PlanoAVenda, ReservaRecarga, Usuario } from "./fluxos.ts";
+import type { Banco, CartaoSalvo, Deps, EmpresaCobranca, PedidoCredito, PlanoAVenda, ReservaRecarga, RespostaCupom, Usuario } from "./fluxos.ts";
 import type { CarteiraDoPlano } from "../_shared/mensagens_cobranca.ts";
 
 const CORS = {
@@ -83,7 +83,7 @@ function banco(svc: Svc): Banco {
         status: string; mensalidade: number | null; origem: string | null; plano: { nome: string; preco_mensal: number | null } | null;
       };
       const [cob, dono, sit, renova, mens] = await Promise.all([
-        svc.from("cobranca_empresas").select("asaas_cliente_id, asaas_assinatura_id, situacao, link_pagamento, valor, proximo_vencimento, ciclo, inicio_no_primeiro_credito, primeiro_credito_em, mensalidade_iniciada_em")
+        svc.from("cobranca_empresas").select("asaas_cliente_id, asaas_assinatura_id, situacao, link_pagamento, valor, proximo_vencimento, ciclo, inicio_no_primeiro_credito, primeiro_credito_em, mensalidade_iniciada_em, cupom, cupom_desconto_ate")
           .eq("escritorio_id", id).maybeSingle(),
         svc.from("membros_escritorio").select("user_id").eq("escritorio_id", id).eq("papel", "dono").order("created_at").limit(1).maybeSingle(),
         svc.rpc("situacao_creditos", { p_escritorio: id }),
@@ -259,6 +259,17 @@ function banco(svc: Svc): Banco {
     async concluirConvite(id, escritorioId) {
       falhou(await svc.from("convites_cadastro").update({ escritorio_id: escritorioId }).eq("id", id), "convite");
     },
+    // ---- cupons (0052)
+    async conferirCupom(codigo, planoId) {
+      const r = await svc.rpc("conferir_cupom", { p_codigo: codigo, p_plano: planoId });
+      falhou(r, "cupom");
+      return r.data as RespostaCupom;
+    },
+    async reservarCupom(codigo, planoId, escritorioId) {
+      const r = await svc.rpc("reservar_cupom", { p_codigo: codigo, p_plano: planoId, p_escritorio: escritorioId });
+      falhou(r, "cupom");
+      return r.data as RespostaCupom;
+    },
   };
 }
 
@@ -321,7 +332,7 @@ Deno.serve(async (req) => {
     }
     const b = await lerJson(req, LIMITE_MB(1)).catch((e) => { if (e instanceof CorpoInvalido && e.status === 413) throw e; return {}; }) as Record<string, unknown>;
     // a página de cadastro (sem login): a função confere e limita tudo sozinha
-    if (b.acao === "cadastro_criar") {
+    if (b.acao === "cadastro_criar" || b.acao === "cupom_conferir") {
       const r = await tratarPublico(deps, ipDoPedido(req), b);
       return json(r.corpo, r.status);
     }

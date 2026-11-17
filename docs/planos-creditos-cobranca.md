@@ -238,3 +238,64 @@ reaplicar a migração e o cliente antigo preservado) e os cenários
 `#/lab/admin/{planos,empresas,empresas/e4,empresas/e8}`.
 Publicação: `bash scripts/publicar-planos-escritorios.sh [--executar]` (0050 +
 funções cobranca e equipe) e logo depois o push da main.
+
+## Cupons de desconto no cadastro (0052, 17/11/2026)
+
+Pedido do Wilker: cupom para a adesão ou para a mensalidade, por valor ou %, ou
+de isenção. A equipe cria em **Configurações → Cupons**; a pessoa digita no
+passo 2 do cadastro ("Tem um cupom de desconto?") ou já recebe no link
+`/cadastro/?plano=…&cupom=CODIGO` (botões "Copiar link" e "WhatsApp" do painel).
+
+**O que um cupom pode dar** (adesão e mensalidade são independentes; dá para combinar):
+
+| Onde        | Tipo        | Efeito |
+|-------------|-------------|--------|
+| Adesão      | percentual  | 1–100% a menos na taxa de adesão |
+| Adesão      | valor       | R$ a menos (nunca negativo) |
+| Adesão      | isenção     | adesão zerada |
+| Mensalidade | percentual  | 1–99% a menos nas N primeiras cobranças (vazio = em todas) |
+| Mensalidade | valor       | R$ a menos em cada uma das N primeiras cobranças (ou em todas) |
+| Mensalidade | isenção     | N meses (1–24) sem mensalidade: a 1ª cobrança só vence depois |
+
+Mais: validade (até o fim do dia, Brasília), limite de usos (cadastro do site que fica 24 h sem pagar
+deixa de contar) e planos em que vale (nenhum = todos). Quem usou guarda a **foto**
+do cupom do dia (`cobranca_empresas.cupom`): editar ou desativar depois não muda o
+combinado. Cupom usado não se exclui (desativa); nunca usado, sim.
+
+**Como chega ao Asaas** (a conta é `_shared/cupons.ts`, a mesma na tela):
+- 1º pagamento = período com o desconto + adesão com o desconto (`primeiroPagamento`).
+  Sem adesão a pagar, segue a assinatura de sempre já com o valor com desconto;
+  com adesão, a compra avulsa de sempre (0044) com o total já descontado.
+- **Meses grátis com adesão:** cobra só a adesão (`pagamentos.sem_periodo = true`);
+  paga, a empresa ativa e a assinatura nasce vencendo no fim da isenção, com o valor cheio
+  (`aplicar_pagamento_asaas` não empurra o vencimento um período nesse caso).
+- **Meses grátis sem adesão (ou com a adesão isenta):** nada a pagar — a conta entra
+  na hora (`liberarComCupom`, a tela vai direto para o sistema) e a assinatura nasce
+  vencendo no fim da isenção. Se o Asaas falhar, a empresa fica liberada e em dia até
+  lá e o superadmin recebe o aviso para gerar a cobrança no painel.
+- **Desconto nas N primeiras:** a assinatura nasce com o valor com desconto e
+  `cupom_desconto_ate` = 1ª cobrança + N períodos. Quando o Asaas gera a cobrança
+  que vence nesse dia ou depois (aviso `PAYMENT_CREATED`), a função troca o valor dela
+  e o da assinatura para o cheio (`ajustarCupom`; repetir não muda nada; a cobrança
+  anterior, ainda com desconto, não é tocada). Falhou: aviso no WhatsApp do superadmin
+  e o botão "Atualizar valor no Asaas" na aba Cobrança da empresa.
+- O Asaas não emite cobrança abaixo de R$ 5,00: o desconto da mensalidade para em
+  R$ 5,00; adesão que, sozinha, ficaria abaixo disso vira isenta.
+- **Convite (0049) + cupom:** só a parte da mensalidade conta (o convite já não tem
+  adesão): a isenção empurra a 1ª mensalidade (um mês depois do 1º crédito + N meses)
+  e o desconto conta a partir dela.
+- `atualizar_assinatura`, `escritorios_sincronizar`, cartão e cobrança manual usam o
+  valor da próxima cobrança com o cupom (com desconto até o fim dele, cheio depois).
+
+**Segurança:** tabelas só para service_role; `conferir_cupom`/`reservar_cupom` só a
+função; a página pública confere pela ação `cupom_conferir` da função, com limite de
+20 tentativas por hora e 60 por dia por IP, e 2.000 por dia no total (o código não é adivinhável no atacado).
+O uso é reservado sob trava (`select … for update`) depois de criar a empresa; se o
+limite estourou nesse meio-tempo, o cadastro é desfeito (conta e empresa saem).
+
+**Testes:** `tests/cupons.test.mjs` (a conta), os cenários "cupom" no fim de
+`tests/cobranca.test.mjs` (cadastro, Pix, isenção, fim do desconto no Asaas,
+convite, painel) e `tests/rls/cupons.sql` (no `npm run test:rls`). Telas:
+`#/lab/assinar/{cupom,gratis,pagamento-cupom}` e `#/lab/admin/config`.
+Publicação: `bash scripts/publicar-cupons.sh [--executar]` (0052 + função cobranca e
+as que dividem `asaas.ts`/`mensagens_cobranca.ts`) e logo depois o push da main.

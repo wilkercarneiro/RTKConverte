@@ -47,6 +47,10 @@ import {
 } from "../_shared/parcelas.ts";
 import type { Ciclo, Parcelamento, RegrasPagamento } from "../_shared/parcelas.ts";
 import { MUITAS_CHAMADAS } from "../_shared/limite.ts";
+import {
+  cupomDe, descontaMensalidade, fimDoDesconto, mensalidadeComCupom, mesesGratis, primeiroPagamento, resumoDoCupom, vencimentoComIsencao,
+} from "../_shared/cupons.ts";
+import type { Cupom } from "../_shared/cupons.ts";
 
 export const URL_APP_PADRAO = "https://vertces.com.br/app/";
 
@@ -84,6 +88,9 @@ export interface EmpresaCobranca {
     primeiro_credito_em?: string | null;
     /** quando a cobrança foi criada no Asaas (null = ainda não) */
     mensalidade_iniciada_em?: string | null;
+    /** 0052: a foto do cupom do cadastro (jsonb) e o fim do desconto da mensalidade */
+    cupom?: unknown;
+    cupom_desconto_ate?: string | null;
   } | null;
 }
 
@@ -93,6 +100,8 @@ export const esperaPrimeiroCredito = (e: EmpresaCobranca | null | undefined): bo
 
 export interface ResultadoPagamento {
   acao: string; escritorio_id?: string; credito_id?: string | null;
+  /** a linha de pagamentos e para que era (mensalidade, creditos, parcela) */
+  pagamento_id?: string | null; finalidade?: string | null;
   /** 0040: compra parcelada paga sem assinatura — criar a dos períodos seguintes */
   criar_assinatura?: boolean; ciclo?: string | null; proximo_vencimento?: string | null;
 }
@@ -112,7 +121,7 @@ export interface Banco {
   ultimoEvento(): Promise<{ evento: string; resultado: string | null; recebido_em: string } | null>;
   aplicarPagamento(evento: string, pagamento: unknown): Promise<ResultadoPagamento>;
   empresa(id: string): Promise<EmpresaCobranca | null>;
-  atualizarEmpresa(id: string, campos: { dia_renovacao?: number }): Promise<void>;
+  atualizarEmpresa(id: string, campos: { dia_renovacao?: number; status?: string }): Promise<void>;
   salvarCobranca(id: string, campos: Record<string, unknown>): Promise<void>;
   inserirPagamento(p: Record<string, unknown>): Promise<void>;
   atualizarPagamento(id: string, campos: Record<string, unknown>): Promise<void>;
@@ -162,7 +171,15 @@ export interface Banco {
   devolverConvite?(id: string): Promise<void>;
   /** o convite virou esta empresa */
   concluirConvite?(id: string, escritorioId: string): Promise<void>;
+  // ---- cupons (0052)
+  /** o cupom vale para este plano agora? (só lê) */
+  conferirCupom?(codigo: string, planoId: string | null): Promise<RespostaCupom>;
+  /** grava o uso (sob trava: o limite de usos não estoura) e a foto na cobrança da empresa */
+  reservarCupom?(codigo: string, planoId: string, escritorioId: string): Promise<RespostaCupom>;
 }
+
+/** conferir_cupom / reservar_cupom (0052). */
+export type RespostaCupom = { valido: true; cupom: unknown } | { valido: false; motivo: string };
 
 export interface CartaoSalvo {
   asaas_token: string | null; bandeira: string | null; final: string | null; validade: string | null; titular: string | null;
@@ -235,12 +252,20 @@ export const urlApp = (cfg: Record<string, string>) => cfg.url_app || URL_APP_PA
  * O período e o valor da assinatura da empresa (0040). Mensal = a mensalidade
  * (como sempre foi); semestral e anual = mensalidade × meses com o desconto que
  * vale hoje em Configurações → Autocadastro.
+ *
+ * 0052: com o cupom do cadastro, `valor` é o da cobrança que vence em
+ * `vencimento` (padrão: o próximo vencimento da empresa) — com desconto até o
+ * fim dele, cheio depois; `cheio` é sempre sem o cupom.
  */
-export function cobrancaDaEmpresa(cfg: Record<string, string>, e: EmpresaCobranca): { ciclo: Ciclo; valor: number; mensalidade: number } {
+export function cobrancaDaEmpresa(cfg: Record<string, string>, e: EmpresaCobranca, vencimento?: string | null):
+  { ciclo: Ciclo; valor: number; cheio: number; mensalidade: number; cupom: Cupom | null } {
   const ciclo = cicloDe(e.cobranca?.ciclo) ?? "MONTHLY";
   const mensalidade = Number(e.mensalidade ?? 0);
-  const valor = ciclo === "MONTHLY" ? mensalidade : valorDoPeriodo(mensalidade, ciclo, regrasDe(cfg).ciclos[ciclo].desconto);
-  return { ciclo, valor, mensalidade };
+  const cheio = ciclo === "MONTHLY" ? mensalidade : valorDoPeriodo(mensalidade, ciclo, regrasDe(cfg).ciclos[ciclo].desconto);
+  const cupom = cupomDe(e.cobranca?.cupom);
+  const ref = vencimento !== undefined ? vencimento : (e.cobranca?.proximo_vencimento ?? null);
+  const valor = mensalidadeComCupom(cheio, cupom, ref, e.cobranca?.cupom_desconto_ate ?? null);
+  return { ciclo, valor, cheio, mensalidade, cupom };
 }
 
 /** "Vertces: plano X" (+ o período, se não for mensal): a descrição da assinatura no Asaas. */
@@ -314,6 +339,17 @@ async function aplicarEAvisar(d: Deps, cfg: Record<string, string>, evento: stri
       await avisarSuperadmin(d, cfg, `Vertces: a ${emp?.nome ?? "empresa"} pagou o período parcelado, mas a assinatura dos períodos seguintes não foi criada no Asaas (${msg(e)}). Gere a cobrança em Painel → Empresas → Cobrança.`);
     }
   }
+  // 0052: a cobrança da assinatura que vence depois do fim do desconto do cupom vai com o valor cheio
+  if (pagamento.subscription && r.escritorio_id && (r.finalidade ?? "mensalidade") === "mensalidade") {
+    try {
+      const fim = await ajustarCupom(d, cfg, r.escritorio_id, pagamento, r.pagamento_id ?? null);
+      if (fim) avisos.push(fim);
+    } catch (e) {
+      avisos.push(`cupom: valor cheio NÃO aplicado (${msg(e)})`);
+      const emp = await d.banco.empresa(r.escritorio_id).catch(() => null);
+      await avisarSuperadmin(d, cfg, `Vertces: o desconto do cupom da ${emp?.nome ?? "empresa"} acabou, mas a cobrança ${pagamento.id} não passou para o valor cheio no Asaas (${msg(e)}). Use “Atualizar valor no Asaas” em Painel → Empresas → Cobrança.`);
+    }
+  }
   const comAvisos = (extra?: string) => {
     const tudo = [...avisos, ...(extra ? [extra] : [])];
     return tudo.length ? { ...r, aviso: tudo.join(" · ") } : r;
@@ -361,9 +397,11 @@ async function criarAssinaturaDoPeriodo(d: Deps, cfg: Record<string, string>, es
   if (!e) throw new Error("empresa não encontrada");
   // já tem (outra chamada criou): não cria outra
   if (e.cobranca?.asaas_assinatura_id && e.cobranca.situacao !== "cancelada") return null;
-  const { ciclo, valor } = cobrancaDaEmpresa(cfg, e);
-  if (!(valor > 0)) throw new Error("a empresa está sem mensalidade");
+  const ciclo = cicloDe(e.cobranca?.ciclo) ?? "MONTHLY";
   const proximo = vencimento ?? e.cobranca?.proximo_vencimento ?? somarMeses(d.hoje(), MESES[ciclo]);
+  // 0052: o valor da cobrança que vence em `proximo` (com o desconto do cupom, se ainda vale)
+  const { valor } = cobrancaDaEmpresa(cfg, e, proximo);
+  if (!(valor > 0)) throw new Error("a empresa está sem mensalidade");
   const cliente = await garantirCliente(d, asaas, e.id);
   const sub = await asaas.criarAssinatura({
     customer: cliente, billingType: "UNDEFINED", value: valor, nextDueDate: proximo, cycle: ciclo,
@@ -371,6 +409,78 @@ async function criarAssinaturaDoPeriodo(d: Deps, cfg: Record<string, string>, es
   });
   await d.banco.salvarCobranca(e.id, { asaas_assinatura_id: sub.id, valor, ciclo, proximo_vencimento: proximo });
   return sub.id;
+}
+
+/**
+ * 0052: o desconto do cupom acabou. A cobrança da assinatura que vence no fim
+ * do desconto ou depois (cupom_desconto_ate) passa para o valor cheio, e a
+ * assinatura também (as próximas já nascem cheias). Chamado a cada aviso do
+ * Asaas sobre uma cobrança da assinatura (PAYMENT_CREATED chega quando ele gera
+ * a do período seguinte); repetir não muda nada. Devolve o que foi feito (ou null).
+ */
+async function ajustarCupom(d: Deps, cfg: Record<string, string>, escritorioId: string, pag: CobrancaAsaas, pagamentoId: string | null): Promise<string | null> {
+  const e = await d.banco.empresa(escritorioId);
+  const c = e?.cobranca;
+  const cupom = cupomDe(c?.cupom);
+  if (!e || !c || !descontaMensalidade(cupom) || cupom!.mensalidade_vezes === null || !c.cupom_desconto_ate) return null;
+  if (!c.asaas_assinatura_id || c.situacao === "cancelada" || pag.subscription !== c.asaas_assinatura_id) return null;
+  if (!pag.dueDate || pag.dueDate < c.cupom_desconto_ate) return null;
+  const asaas = asaasDe(cfg, d.fetch);
+  if (!asaas) return null;
+  const { ciclo, cheio } = cobrancaDaEmpresa(cfg, e, pag.dueDate);
+  if (!(cheio > 0)) return null;
+  const feito: string[] = [];
+  if (!pag.deleted && (pag.status === "PENDING" || pag.status === "OVERDUE") && Math.abs(Number(pag.value ?? 0) - cheio) >= 0.005) {
+    await asaas.atualizarCobranca(pag.id, { value: cheio });
+    if (pagamentoId) await d.banco.atualizarPagamento(pagamentoId, { valor: cheio });
+    feito.push(`cobrança ${pag.id}`);
+  }
+  if (Math.abs(Number(c.valor ?? 0) - cheio) >= 0.005) {
+    await asaas.atualizarAssinatura(c.asaas_assinatura_id, { value: cheio, updatePendingPayments: false, description: descricaoAssinatura(e, ciclo) });
+    await d.banco.salvarCobranca(e.id, { valor: cheio });
+    await d.banco.atividade(e.id, "cobranca.cupom_fim", `cupom ${cupom!.codigo}: desconto encerrado, ${nomeDaCobranca(ciclo)} volta a ${fmtReais(cheio)}`, null).catch(() => {});
+    feito.push("assinatura");
+  }
+  return feito.length ? `cupom ${cupom!.codigo} encerrado: ${feito.join(" e ")} no valor cheio (${fmtReais(cheio)})` : null;
+}
+
+/**
+ * 0052: o cupom zerou o 1º pagamento do cadastro pelo site (isenção da
+ * mensalidade, e a adesão isenta ou sem adesão). A empresa entra já e a
+ * assinatura nasce vencendo no fim da isenção, com o valor cheio. Se o Asaas
+ * falhar, a empresa fica liberada e em dia até lá e o superadmin gera a cobrança
+ * no painel (cobrar_empresa começa no vencimento gravado, sem cobrar antes).
+ */
+export async function liberarComCupom(d: Deps, cfg: Record<string, string>, escritorioId: string, ciclo: Ciclo):
+  Promise<{ vencimento: string; valor: number; assinatura: string | null; erro?: string }> {
+  const e = await d.banco.empresa(escritorioId);
+  if (!e) throw new ErroUsuario("Empresa não encontrada.", 404);
+  const hoje = d.hoje();
+  // o período escolhido agora (a empresa pode ter outro gravado de uma tentativa anterior)
+  const base = cobrancaDaEmpresa(cfg, e.cobranca ? { ...e, cobranca: { ...e.cobranca, ciclo } } : e);
+  const vencimento = vencimentoComIsencao(hoje, base.cupom);
+  const valor = base.cheio;
+  await d.banco.salvarCobranca(e.id, { ciclo, valor, situacao: "em_dia", proximo_vencimento: vencimento, link_pagamento: null });
+  await d.banco.atualizarEmpresa(e.id, { status: "ativo", dia_renovacao: Number(hoje.slice(8, 10)) });
+  await d.banco.atividade(e.id, "empresa.ativada", `cupom ${base.cupom?.codigo ?? ""}: ${resumoDoCupom(base.cupom)}; 1ª cobrança em ${dataBr(vencimento)}`, null).catch(() => {});
+  let assinatura: string | null = null;
+  let erro: string | undefined;
+  const asaas = asaasDe(cfg, d.fetch);
+  try {
+    if (!asaas) throw new Error("o Asaas não está configurado");
+    if (!(valor > 0)) throw new Error("a empresa está sem mensalidade");
+    const cliente = await garantirCliente(d, asaas, e.id);
+    const sub = await asaas.criarAssinatura({
+      customer: cliente, billingType: "UNDEFINED", value: valor, nextDueDate: vencimento, cycle: ciclo,
+      description: descricaoAssinatura(e, ciclo), externalReference: e.id,
+    });
+    assinatura = sub.id;
+    await d.banco.salvarCobranca(e.id, { asaas_cliente_id: cliente, asaas_assinatura_id: sub.id });
+  } catch (x) {
+    erro = msg(x);
+    await avisarSuperadmin(d, cfg, `Vertces: a ${e.nome} entrou com o cupom ${base.cupom?.codigo ?? ""} (sem pagamento agora), mas a assinatura não foi criada no Asaas (${erro}). Gere a cobrança em Painel → Empresas → Cobrança: ela começa em ${dataBr(vencimento)}.`);
+  }
+  return { vencimento, valor, assinatura, ...(erro ? { erro } : {}) };
 }
 
 async function textoCreditosPagos(d: Deps, e: EmpresaCobranca, creditoId: string | null | undefined): Promise<string> {
@@ -558,8 +668,8 @@ export async function iniciarMensalidade(d: Deps, cfg: Record<string, string>, e
   if (!c.primeiro_credito_em) return { acao: "esperando" };
   const asaas = asaasDe(cfg, d.fetch);
   if (!asaas) return { acao: "sem_asaas" };
-  const { ciclo, valor } = cobrancaDaEmpresa(cfg, e);
-  if (!(valor > 0)) return { acao: "sem_mensalidade" };
+  const { ciclo, cheio, cupom } = cobrancaDaEmpresa(cfg, e);
+  if (!(cheio > 0)) return { acao: "sem_mensalidade" };
   // duas abas (ou a tela e o painel) ao mesmo tempo criariam duas assinaturas
   if (d.limite && !(await d.limite(`iniciar-mensalidade:${e.id}`, 1, 30))) return { acao: "em_andamento" };
   const agora = new Date().toISOString();
@@ -574,7 +684,10 @@ export async function iniciarMensalidade(d: Deps, cfg: Record<string, string>, e
   // vence um mês depois do 1º crédito, no mesmo dia (31 → último dia do mês); o
   // Asaas não aceita vencimento no passado, então cobrança que sai muito depois vence hoje
   const umMes = somarMes(dia);
-  const vencimento = umMes > hoje ? umMes : hoje;
+  // 0052: a isenção do cupom empurra a 1ª cobrança N meses; o desconto conta a partir dela
+  const vencimento = vencimentoComIsencao(umMes > hoje ? umMes : hoje, cupom);
+  const descontoAte = fimDoDesconto(vencimento, cupom, ciclo);
+  const valor = mensalidadeComCupom(cheio, cupom, vencimento, descontoAte);
   const cliente = await garantirCliente(d, asaas, e.id);
   const sub = await asaas.criarAssinatura({
     customer: cliente, billingType: "UNDEFINED", value: valor, nextDueDate: vencimento, cycle: ciclo,
@@ -585,6 +698,7 @@ export async function iniciarMensalidade(d: Deps, cfg: Record<string, string>, e
     // nada vencido ainda: em dia até o vencimento (a fatura fica no link; vencida, suspende como sempre)
     asaas_cliente_id: cliente, asaas_assinatura_id: sub.id, valor, ciclo, situacao: vencimento > hoje ? "em_dia" : "aguardando",
     proximo_vencimento: vencimento, mensalidade_iniciada_em: agora,
+    ...(cupom ? { cupom_desconto_ate: descontoAte } : {}),
   });
   const primeira = (await asaas.cobrancasDaAssinatura(sub.id).catch((): CobrancaAsaas[] => [])).filter((x) => !x.deleted).sort(porVencimento)[0];
   let link: string | null = null;
@@ -756,8 +870,9 @@ async function cobrarEmpresa(d: Deps, cfg: Record<string, string>, b: Record<str
   let e = await d.banco.empresa(id);
   if (!e) throw new ErroUsuario("Empresa não encontrada.", 404);
   // o valor do período da empresa (mensal = a mensalidade; autocadastro semestral/anual = o do período)
-  const { ciclo, valor } = cobrancaDaEmpresa(cfg, e);
-  if (!(valor > 0)) {
+  const { ciclo, cheio } = cobrancaDaEmpresa(cfg, e);
+  let { valor } = cobrancaDaEmpresa(cfg, e);
+  if (!(cheio > 0)) {
     throw new ErroUsuario("Esta empresa não tem mensalidade. Defina o preço do plano em Planos (ou só para ela, na aba Plano e créditos).");
   }
   let link: string | null;
@@ -772,7 +887,19 @@ async function cobrarEmpresa(d: Deps, cfg: Record<string, string>, b: Record<str
     // quando o período pago acaba, sem cobrar de novo agora
     const pagoAte = e.cobranca?.situacao === "em_dia" && e.cobranca.proximo_vencimento && e.cobranca.proximo_vencimento > hoje
       ? e.cobranca.proximo_vencimento : null;
-    const primeiroVencimento = pagoAte ?? (b.liberada ? somarDias(hoje, 3) : hoje);
+    // 0052: a isenção do cupom que ainda não começou (nunca houve cobrança) empurra a 1ª
+    const cupom = cupomDe(e.cobranca?.cupom);
+    const isencaoPendente = mesesGratis(cupom) > 0 && !pagoAte && !e.cobranca?.asaas_assinatura_id
+      && (e.cobranca?.situacao ?? "sem_assinatura") === "sem_assinatura";
+    const base1 = pagoAte ?? (b.liberada ? somarDias(hoje, 3) : hoje);
+    const primeiroVencimento = isencaoPendente ? vencimentoComIsencao(base1, cupom) : base1;
+    // e o desconto que ainda não começou começa nesta 1ª cobrança
+    if (cupom && !e.cobranca?.cupom_desconto_ate && fimDoDesconto(primeiroVencimento, cupom, ciclo)) {
+      await d.banco.salvarCobranca(e.id, { cupom_desconto_ate: fimDoDesconto(primeiroVencimento, cupom, ciclo) });
+      e = (await d.banco.empresa(id)) ?? e;
+    }
+    // o valor da cobrança que vence nesse dia (com o desconto, se ainda vale)
+    valor = cobrancaDaEmpresa(cfg, e, primeiroVencimento).valor;
     const sub = await asaas.criarAssinatura({
       customer: cliente, billingType: "UNDEFINED", value: valor, nextDueDate: primeiroVencimento, cycle: ciclo,
       description: descricaoAssinatura(e, ciclo), externalReference: e.id,
@@ -787,7 +914,7 @@ async function cobrarEmpresa(d: Deps, cfg: Record<string, string>, b: Record<str
       status: primeira.status || "PENDING", link: primeira.invoiceUrl ?? null, vencimento: primeira.dueDate, ciclo,
     });
     await d.banco.salvarCobranca(e.id, {
-      asaas_cliente_id: cliente, asaas_assinatura_id: sub.id, valor, ciclo, situacao: pagoAte ? "em_dia" : "aguardando",
+      asaas_cliente_id: cliente, asaas_assinatura_id: sub.id, valor, ciclo, situacao: pagoAte || isencaoPendente ? "em_dia" : "aguardando",
       link_pagamento: primeira.invoiceUrl ?? null, proximo_vencimento: primeira.dueDate,
     });
     // empresa nova: o mês do crédito começa no dia do vencimento da mensalidade
@@ -985,9 +1112,14 @@ async function mensalidadeNoCartao(d: Deps, cfg: Record<string, string>, asaas: 
     // cruzariam e uma "recusa" desfaria uma assinatura paga.
     proximo = somarDias(hoje, 1);
     cobrarJa = true;
+    // 0052: o desconto do cupom conta a partir desta 1ª cobrança
+    await marcarFimDoDesconto(d, e, proximo, ciclo);
   } else {
     // já usa e não tem assinatura (cortesia que passou a pagar): começa na renovação dos créditos
     proximo = e.renovacao && e.renovacao > hoje ? e.renovacao : somarMes(hoje);
+    // 0052: liberada pelo cupom (meses grátis) e a assinatura não saiu: não cobra antes do fim da isenção
+    const gravado = e.cobranca?.proximo_vencimento;
+    if (gravado && gravado > proximo && mesesGratis(cupomDe(e.cobranca?.cupom)) > 0) proximo = gravado;
   }
 
   let nova: AssinaturaAsaas;
@@ -1244,11 +1376,14 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
   if (!regras.ciclos[ciclo].ativo) throw new ErroUsuario(`O período ${NOME_CICLO[ciclo].toLowerCase()} não está disponível. Escolha outro.`);
   const mensalidade = Number(e.mensalidade ?? 0);
   if (!(mensalidade > 0)) throw new ErroUsuario("O plano desta conta está sem mensalidade. Fale com o suporte.", 409);
-  const valor = valorDoPeriodo(mensalidade, ciclo, regras.ciclos[ciclo].desconto);
+  // 0052: o cupom do cadastro mexe no período (desconto ou meses grátis) e na adesão
+  const cupom = cupomDe(e.cobranca?.cupom);
+  const pp = primeiroPagamento(valorDoPeriodo(mensalidade, ciclo, regras.ciclos[ciclo].desconto), regras.adesao, cupom);
+  const valor = pp.periodo;
   // a adesão (0044) vem junto do 1º pagamento: uma compra avulsa (período + adesão)
   // e a assinatura das renovações nasce depois de pago, só com o plano
-  const adesao = regras.adesao;
-  const total = totalComAdesao(valor, adesao);
+  const adesao = pp.adesao;
+  const total = pp.total;
   // dois cartões aprovados cobrariam duas vezes: o que está em análise decide primeiro
   const pendentesAntes = await d.banco.pagamentosPendentes(e.id);
   if (pendentesAntes.some((p) => p.status === "AWAITING_RISK_ANALYSIS")) {
@@ -1259,9 +1394,23 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
     throw new ErroUsuario("Há uma compra no cartão desta conta esperando a resposta do Asaas. Aguarde alguns minutos ou fale com o suporte antes de pagar de novo.", 409);
   }
 
+  const hoje = d.hoje();
+  if (cupom) {
+    // o cupom zerou o 1º pagamento: entra já, e a 1ª mensalidade vence no fim da isenção
+    if (!(total > 0)) {
+      const jaPaga = await limparTentativa(d, cfg, asaas, e);
+      if (jaPaga) return ok({ forma: b.forma === "cartao" ? "cartao" : "pix", ciclo: cicloDe(e.cobranca?.ciclo) ?? ciclo, ...jaPaga });
+      const r = await liberarComCupom(d, cfg, e.id, ciclo);
+      return ok({ forma: b.forma === "cartao" ? "cartao" : "pix", ciclo, valor: 0, pago: true, ativou: true, primeira_mensalidade: r.vencimento });
+    }
+    // (o fim do desconto é marcado onde a 1ª cobrança nasce, pelo vencimento dela: a cobrança
+    // reaproveitada de uma tentativa anterior fica com o fim que já tinha)
+  }
+  // só a adesão (meses grátis): o pagamento não cobre período; a 1ª mensalidade vence no fim da isenção
+  const soAdesao = pp.meses_gratis > 0 ? { primeira: vencimentoComIsencao(hoje, cupom), descricao: descricaoSoAdesao(e.plano, ciclo, cupom, adesao) } : null;
   if (b.forma === "pix") {
     return adesao > 0
-      ? await pagarCadastroPixComAdesao(d, cfg, asaas, e, ciclo, valor, adesao)
+      ? await pagarCadastroPixComAdesao(d, cfg, asaas, e, ciclo, valor, adesao, soAdesao)
       : await pagarCadastroPix(d, cfg, asaas, e, ciclo, valor);
   }
   if (b.forma !== "cartao") throw new ErroUsuario("Escolha Pix ou cartão.");
@@ -1280,7 +1429,26 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
     const r = await cadastrarCartao(d, cfg, asaas, u, e.id, cartao, titular);
     return ok({ forma: "cartao", ciclo, valor, parcelas: 1, parcela: valor, final: r.final, pago: r.pagas > 0, ativou: r.ativou, em_analise: r.emAnalise });
   }
-  return await pagarCadastroParcelado(d, cfg, asaas, u, e, ciclo, p, regras, cartao, titular, adesao);
+  return await pagarCadastroParcelado(d, cfg, asaas, u, e, ciclo, p, regras, cartao, titular, adesao, soAdesao);
+}
+
+/** 0052: o fim do desconto do cupom, contado da 1ª cobrança que acabou de nascer (sem cupom ou sem fim: nada). */
+async function marcarFimDoDesconto(d: Deps, e: EmpresaCobranca, primeira: string, ciclo: Ciclo): Promise<void> {
+  const cupom = cupomDe(e.cobranca?.cupom);
+  if (!cupom) return;
+  await d.banco.salvarCobranca(e.id, { cupom_desconto_ate: fimDoDesconto(primeira, cupom, ciclo) });
+}
+
+/** 0052: a descrição no Asaas do pagamento só da adesão (o cupom isentou os primeiros meses). */
+function descricaoSoAdesao(plano: string | null, ciclo: Ciclo, cupom: Cupom | null, adesao: number): string {
+  const n = mesesGratis(cupom);
+  return `Vertces: taxa de adesão de ${fmtReais(adesao)} (uma vez só) · plano ${plano ?? "contratado"} (${NOME_CICLO[ciclo].toLowerCase()}), `
+    + `${n === 1 ? "1º mês" : `${n} primeiros meses`} sem mensalidade pelo cupom ${cupom?.codigo ?? ""}`;
+}
+
+/** Período + adesão (0044), com o cupom anotado na fatura (0052). */
+function descricaoComCupom(base: string, cupom: Cupom | null): string {
+  return cupom ? `${base} · cupom ${cupom.codigo}` : base;
 }
 
 /**
@@ -1290,7 +1458,7 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
  * quando o período pago acaba, só com o valor do plano.
  */
 async function pagarCadastroPixComAdesao(d: Deps, cfg: Record<string, string>, asaas: ClienteAsaas, e: EmpresaCobranca,
-  ciclo: Ciclo, valor: number, adesao: number): Promise<Resposta> {
+  ciclo: Ciclo, valor: number, adesao: number, soAdesao: { primeira: string; descricao: string } | null = null): Promise<Resposta> {
   const total = totalComAdesao(valor, adesao);
   const base = { forma: "pix", ciclo, valor: total, periodo: valor, adesao };
   // o mesmo Pix já gerado (mesmo período e mesmo total): devolve ele, sem criar outro
@@ -1310,18 +1478,26 @@ async function pagarCadastroPixComAdesao(d: Deps, cfg: Record<string, string>, a
   if (jaPaga) return ok({ forma: "pix", ciclo: cicloDe(e.cobranca?.ciclo) ?? ciclo, ...jaPaga });
   const cliente = await garantirCliente(d, asaas, e.id);
   const hoje = d.hoje();
+  const cupom = cupomDe(e.cobranca?.cupom);
+  // só a adesão: o fim da isenção fica gravado ANTES da cobrança existir (o webhook o mantém)
+  if (soAdesao) await d.banco.salvarCobranca(e.id, { asaas_cliente_id: cliente, proximo_vencimento: soAdesao.primeira });
   const cob = await asaas.criarCobranca({
     customer: cliente, billingType: "PIX", value: total, dueDate: hoje,
-    description: descricaoDaCompra(e.plano, ciclo, parcelamento(total, 1, regrasDe(cfg)), regrasDe(cfg), adesao),
+    description: soAdesao?.descricao ?? descricaoComCupom(descricaoDaCompra(e.plano, ciclo, parcelamento(total, 1, regrasDe(cfg)), regrasDe(cfg), adesao), cupom),
     externalReference: e.id,
   });
   await d.banco.inserirPagamento({
     escritorio_id: e.id, finalidade: "mensalidade", asaas_id: cob.id, valor: total, status: cob.status || "PENDING", forma: "PIX",
     link: cob.invoiceUrl ?? null, vencimento: cob.dueDate || hoje, parcelas: 1, ciclo, adesao,
+    // 0052: só a adesão (meses grátis): pago, não empurra o vencimento um período
+    ...(soAdesao ? { sem_periodo: true } : {}),
   });
   await d.banco.salvarCobranca(e.id, {
-    asaas_cliente_id: cliente, valor, ciclo, situacao: "aguardando", link_pagamento: cob.invoiceUrl ?? null, proximo_vencimento: cob.dueDate || hoje,
+    asaas_cliente_id: cliente, valor, ciclo, situacao: "aguardando", link_pagamento: cob.invoiceUrl ?? null,
+    // com os meses grátis, o "próximo vencimento" já é o da 1ª mensalidade (o banco mantém ao pagar)
+    proximo_vencimento: soAdesao?.primeira ?? (cob.dueDate || hoje),
   });
+  await marcarFimDoDesconto(d, e, cob.dueDate || hoje, ciclo);
   // o mês do crédito começa no dia do pagamento
   await d.banco.atualizarEmpresa(e.id, { dia_renovacao: Number(hoje.slice(8, 10)) });
   const pix = await asaas.pix(cob.id).catch(() => null);
@@ -1401,6 +1577,7 @@ async function pagarCadastroPix(d: Deps, cfg: Record<string, string>, asaas: Cli
     asaas_cliente_id: cliente, asaas_assinatura_id: sub.id, valor, ciclo, situacao: "aguardando",
     link_pagamento: primeira.invoiceUrl ?? null, proximo_vencimento: primeira.dueDate,
   });
+  await marcarFimDoDesconto(d, e, primeira.dueDate || hoje, ciclo);
   // o mês do crédito começa no dia do pagamento
   await d.banco.atualizarEmpresa(e.id, { dia_renovacao: Number(hoje.slice(8, 10)) });
   const pix = await asaas.pix(primeira.id).catch(() => null);
@@ -1408,12 +1585,18 @@ async function pagarCadastroPix(d: Deps, cfg: Record<string, string>, asaas: Cli
 }
 
 async function pagarCadastroParcelado(d: Deps, cfg: Record<string, string>, asaas: ClienteAsaas, u: Usuario, e: EmpresaCobranca,
-  ciclo: Ciclo, p: Parcelamento, regras: RegrasPagamento, cartao: CartaoDigitado, titular: TitularDigitado, adesao = 0): Promise<Resposta> {
+  ciclo: Ciclo, p: Parcelamento, regras: RegrasPagamento, cartao: CartaoDigitado, titular: TitularDigitado, adesao = 0,
+  soAdesao: { primeira: string; descricao: string } | null = null): Promise<Resposta> {
   const hoje = d.hoje();
   const ip = ipDe(u);
   const dados = paraAsaas(cartao, titular, hoje);
   const cliente = await garantirCliente(d, asaas, e.id);
-  const descricao = descricaoDaCompra(e.plano, ciclo, p, regras, adesao);
+  const cupom = cupomDe(e.cobranca?.cupom);
+  // só a adesão: o fim da isenção fica gravado ANTES de cobrar o cartão (o webhook pode chegar já)
+  if (soAdesao) await d.banco.salvarCobranca(e.id, { asaas_cliente_id: cliente, proximo_vencimento: soAdesao.primeira });
+  const descricao = soAdesao
+    ? (p.n === 1 ? soAdesao.descricao : `${soAdesao.descricao}, ${p.n}x de ${fmtReais(p.parcela)}${p.juros ? ` (total ${fmtReais(p.total)})` : " sem juros"}`)
+    : descricaoComCupom(descricaoDaCompra(e.plano, ciclo, p, regras, adesao), cupom);
   let cob: CobrancaAsaas;
   try {
     // 1x só acontece aqui com adesão (0044): uma cobrança avulsa no cartão, à vista
@@ -1440,8 +1623,13 @@ async function pagarCadastroParcelado(d: Deps, cfg: Record<string, string>, asaa
     escritorio_id: e.id, finalidade: "mensalidade", asaas_id: cob.id, valor: p.total, status: cob.status || "PENDING", forma: "CREDIT_CARD",
     link: cob.invoiceUrl ?? null, vencimento: cob.dueDate || hoje, parcelas: p.n, asaas_parcelamento: cob.installment ?? null, ciclo,
     ...(adesao > 0 ? { adesao } : {}),
+    ...(soAdesao ? { sem_periodo: true } : {}),
   });
-  await d.banco.salvarCobranca(e.id, { asaas_cliente_id: cliente, valor: valorDoPeriodo(Number(e.mensalidade ?? 0), ciclo, regras.ciclos[ciclo].desconto), ciclo, situacao: "aguardando", link_pagamento: null });
+  await d.banco.salvarCobranca(e.id, {
+    asaas_cliente_id: cliente, valor: valorDoPeriodo(Number(e.mensalidade ?? 0), ciclo, regras.ciclos[ciclo].desconto), ciclo, situacao: "aguardando", link_pagamento: null,
+    ...(soAdesao ? { proximo_vencimento: soAdesao.primeira } : {}),
+  });
+  await marcarFimDoDesconto(d, e, cob.dueDate || hoje, ciclo);
   await d.banco.atualizarEmpresa(e.id, { dia_renovacao: Number(hoje.slice(8, 10)) });
   const final = dados.creditCard.number.slice(-4);
   await d.banco.atividade(e.id, "pagamento.parcelado", `${p.n}x (${NOME_CICLO[ciclo].toLowerCase()}) no cartão final ${final}`, u.id).catch(() => {});

@@ -7,11 +7,13 @@
 //                    "Criar conta e ir para o pagamento" cria a conta (função
 //                    `cobranca`, ação pública cadastro_criar) e já entra com ela;
 //   3. Pagamento   — Pix ou cartão em até N vezes (PagamentoCadastro).
+// No passo 2, o cupom de desconto (0052): digitado ou já no link (?cupom=…),
+// conferido pela função antes de criar a conta; o total já mostra o desconto.
 // Quem confere tudo é o servidor; aqui a validação é só para avisar cedo.
 import { useEffect, useMemo, useState } from "react";
 import { supabase, ErroFuncao } from "../lib/supabase";
-import { conviteDoCadastro, criarCadastro, minhaCobranca, planosDoCadastro } from "../lib/cobranca";
-import type { CadastroPlanos, MinhaCobranca, PlanoAVenda } from "../lib/cobranca";
+import { conferirCupom, conviteDoCadastro, criarCadastro, minhaCobranca, planosDoCadastro } from "../lib/cobranca";
+import type { CadastroPlanos, Cupom, MinhaCobranca, PlanoAVenda } from "../lib/cobranca";
 import { SUPORTE_WHATSAPP, VERSAO_TERMOS } from "../lib/config";
 import {
   formatarDocumento, formatarTelefone, problemasDoCadastro, soDigitos,
@@ -21,6 +23,7 @@ import {
 } from "../../supabase/functions/_shared/parcelas.ts";
 import type { Ciclo } from "../../supabase/functions/_shared/parcelas.ts";
 import { fmtReais } from "../../supabase/functions/_shared/precos.ts";
+import { mesesGratis, mensalidadeComCupom, MOTIVO_CUPOM, normalizarCodigo, primeiroPagamento, textosDoCupom } from "../../supabase/functions/_shared/cupons.ts";
 import { PagamentoCadastro, pagaPeloSite, ResumoAdesao } from "./PagamentoCadastro";
 import { Dica, Rotulo } from "./ui";
 import { Logo } from "./Logo";
@@ -92,8 +95,10 @@ const MOTIVO_CONVITE: Record<string, string> = {
   inexistente: "Não encontramos este convite. Confira se o link chegou inteiro.",
 };
 
-export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicial }: {
+export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, cupom: cupomUrl, passoInicial }: {
   plano?: string; ciclo?: string;
+  /** 0052: o cupom que veio no link (a página confere antes de usar) */
+  cupom?: string;
   /** 0049: o token do convite — o plano é o dele, a conta entra já e a mensalidade começa no 1º crédito */
   convite?: string;
   /** só o laboratório (#/lab/assinar/plano) abre direto no passo 2 */
@@ -114,6 +119,11 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
   const [erro, setErro] = useState<{ texto: string; entrar?: boolean } | null>(null);
   // pagou no passo 3: os três passos ficam feitos
   const [pago, setPago] = useState(false);
+  // 0052: o cupom digitado, o aplicado (conferido pela função) e por que não vale
+  const [cupomTexto, setCupomTexto] = useState(() => normalizarCodigo(cupomUrl ?? ""));
+  const [cupom, setCupom] = useState<Cupom | null>(null);
+  const [cupomErro, setCupomErro] = useState<string | null>(null);
+  const [conferindoCupom, setConferindoCupom] = useState(false);
   const etapa = pago ? 4 : passo;
 
   useEffect(() => {
@@ -152,6 +162,28 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
   const escolhido = dados?.planos.find((p) => p.id === plano) ?? null;
   const ativos = dados ? ciclosAtivos(dados.regras) : [];
 
+  async function aplicarCupom(codigo = cupomTexto, silencioso = false) {
+    const c = normalizarCodigo(codigo);
+    if (!c) { setCupom(null); setCupomErro(null); return; }
+    setConferindoCupom(true); setCupomErro(null);
+    try {
+      const r = await conferirCupom(c, escolhido?.id ?? plano ?? null);
+      if (r.valido && r.cupom) { setCupom(r.cupom); setCupomTexto(r.cupom.codigo); return; }
+      setCupom(null);
+      setCupomErro(r.mensagem ?? MOTIVO_CUPOM[r.motivo ?? ""] ?? MOTIVO_CUPOM.inexistente);
+    } catch (x) {
+      setCupom(null);
+      if (!silencioso) setCupomErro(x instanceof Error ? x.message : String(x));
+    } finally {
+      setConferindoCupom(false);
+    }
+  }
+  // o cupom do link é conferido quando o plano aparece; trocar de plano confere de novo (pode valer só para alguns)
+  useEffect(() => {
+    if (!dados || !(cupom?.codigo || (cupomUrl && !cupomErro))) return;
+    void aplicarCupom(cupom?.codigo ?? cupomTexto, true);
+  }, [dados, plano]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function continuar(e: React.FormEvent) {
     e.preventDefault();
     setTocado(Object.fromEntries(["empresa", "documento", "responsavel", "telefone", "email", "senha", "senha2", "aceite_termos"].map((k) => [k, true])));
@@ -167,7 +199,7 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
       const r = await criarCadastro({
         empresa: f.empresa.trim(), documento: soDigitos(f.documento), responsavel: f.responsavel.trim(), email: f.email.trim(),
         telefone: soDigitos(f.telefone), senha: f.senha, plano_id: escolhido.id, ciclo, aceite_termos: f.aceite,
-        versao_termos: VERSAO_TERMOS, site: f.site, ...(convite ? { convite } : {}),
+        versao_termos: VERSAO_TERMOS, site: f.site, ...(convite ? { convite } : {}), ...(cupom ? { cupom: cupom.codigo } : {}),
       });
       const { error } = await supabase.auth.signInWithPassword({ email: f.email.trim(), password: f.senha });
       if (error) {
@@ -181,6 +213,8 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
       setPasso(3);
     } catch (x) {
       const status = x instanceof ErroFuncao ? x.status : 0;
+      // 0052: o cupom deixou de valer entre conferir e criar (esgotou, venceu): sai e a pessoa decide
+      if (status === 422 && cupom) { setCupom(null); setCupomErro(x instanceof Error ? x.message : String(x)); }
       setErro({ texto: x instanceof Error ? x.message : String(x), entrar: status === 409 });
     } finally {
       setEnviando(false);
@@ -354,21 +388,35 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
                   <Dica>a primeira cobrança vence um mês depois do primeiro crédito usado e chega no WhatsApp; paga por Pix, boleto ou cartão. Dá para cadastrar o cartão no sistema e ele paga sozinho.</Dica>
                 </span>
                 <b>R$ 0,00 agora</b>
-                <small>depois, {fmtReais(valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto))} por {ciclo === "YEARLY" ? "ano" : ciclo === "SEMIANNUALLY" ? "semestre" : "mês"}; a 1ª vence um mês depois do 1º crédito usado</small>
+                <small>depois, {fmtReais(mensalidadeComCupom(valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto), cupom))} por {ciclo === "YEARLY" ? "ano" : ciclo === "SEMIANNUALLY" ? "semestre" : "mês"}{cupom && cupom.mensalidade_vezes !== null && mensalidadeComCupom(1000, cupom) !== 1000 ? ` nas ${cupom.mensalidade_vezes === 1 ? "primeira" : `${cupom.mensalidade_vezes} primeiras`} cobrança${cupom.mensalidade_vezes === 1 ? "" : "s"}` : ""}; a 1ª vence {mesesGratis(cupom) > 0 ? `${mesesGratis(cupom) + 1} meses` : "um mês"} depois do 1º crédito usado</small>
               </div>
             )}
-            {escolhido && !convite && (
-              <div className="as-total">
-                <span>Plano <b>{escolhido.nome}</b> · {NOME_CICLO[ciclo].toLowerCase()}
-                  <Dica>o acesso é liberado quando o pagamento confirmar; no cartão, acima de {dados.regras.parcelas_sem_juros}x há juros de {String(dados.regras.juros_mes).replace(".", ",")}% ao mês, mostrados antes de pagar</Dica>
-                </span>
-                <b>{fmtReais(totalComAdesao(valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto), dados.regras.adesao))}</b>
-                <small>{dados.regras.adesao > 0 ? "primeiro pagamento, com a adesão · " : ""}Pix ou cartão{maxParcelas(dados.regras, ciclo) > 1 ? ` em até ${maxParcelas(dados.regras, ciclo)}x` : ""}</small>
-              </div>
+            {escolhido && (
+              <CampoCupom texto={cupomTexto} cupom={cupom} erro={cupomErro} conferindo={conferindoCupom} convite={!!convite}
+                onTexto={(v) => { setCupomTexto(normalizarCodigo(v)); setCupomErro(null); }}
+                onAplicar={() => aplicarCupom()} onRemover={() => { setCupom(null); setCupomTexto(""); setCupomErro(null); }} />
             )}
+            {escolhido && !convite && (() => {
+              const cheio = valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto);
+              const semCupom = totalComAdesao(cheio, dados.regras.adesao);
+              const pp = primeiroPagamento(cheio, dados.regras.adesao, cupom);
+              return (
+                <div className="as-total">
+                  <span>Plano <b>{escolhido.nome}</b> · {NOME_CICLO[ciclo].toLowerCase()}
+                    <Dica>{pp.total > 0
+                      ? <>o acesso é liberado quando o pagamento confirmar; no cartão, acima de {dados.regras.parcelas_sem_juros}x há juros de {String(dados.regras.juros_mes).replace(".", ",")}% ao mês, mostrados antes de pagar</>
+                      : <>com o cupom, a conta entra assim que for criada; a 1ª mensalidade chega no WhatsApp quando vencer</>}</Dica>
+                  </span>
+                  <b>{pp.total !== semCupom && <s className="as-riscado">{fmtReais(semCupom)}</s>}{fmtReais(pp.total)}{pp.total > 0 ? "" : " agora"}</b>
+                  <small>{pp.total > 0
+                    ? <>{pp.adesao > 0 ? (pp.periodo > 0 ? "primeiro pagamento, com a adesão · " : "só a adesão agora · ") : "primeiro pagamento · "}Pix ou cartão{maxParcelas(dados.regras, ciclo) > 1 ? ` em até ${maxParcelas(dados.regras, ciclo)}x` : ""}</>
+                    : <>a 1ª mensalidade ({fmtReais(cheio)}) vence daqui a {pp.meses_gratis === 1 ? "1 mês" : `${pp.meses_gratis} meses`}</>}</small>
+                </div>
+              );
+            })()}
             {escolhido && !convite && (
               <ResumoAdesao plano={escolhido.nome} periodo={NOME_CICLO[ciclo].toLowerCase()} adesao={dados.regras.adesao} texto={dados.regras.adesao_texto}
-                valorPeriodo={valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto)} />
+                valorPeriodo={valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto)} cupom={cupom} />
             )}
             {erro && (
               <div className="aviso-erro-pagina" role="alert">
@@ -378,7 +426,8 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
             <div className="as-botoes">
               <button type="button" className="fantasma" onClick={() => { setPasso(1); setErro(null); }} disabled={enviando}>Voltar</button>
               <button type="button" className="principal" onClick={criar} disabled={enviando || !escolhido}>
-                {enviando ? "Criando a conta…" : convite ? "Criar conta e entrar" : "Criar conta e ir para o pagamento"}
+                {enviando ? "Criando a conta…" : convite || (cupom && escolhido && !(primeiroPagamento(valorDoPeriodo(escolhido.mensalidade, ciclo, dados.regras.ciclos[ciclo].desconto), dados.regras.adesao, cupom).total > 0))
+                  ? "Criar conta e entrar" : "Criar conta e ir para o pagamento"}
               </button>
             </div>
           </section>
@@ -386,5 +435,47 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, passoInicia
       </main>
       <footer className="as-rodape">Pagamento processado pelo Asaas. O Vertces não guarda o número do cartão.</footer>
     </div>
+  );
+}
+
+/**
+ * 0052: o cupom de desconto no passo 2. Fechado vira um link ("Tem um cupom?")
+ * para não chamar atenção de quem não tem; aberto, o campo e "Aplicar";
+ * aplicado, o selo com o que ele dá e "remover".
+ */
+function CampoCupom({ texto, cupom, erro, conferindo, convite, onTexto, onAplicar, onRemover }: {
+  texto: string; cupom: Cupom | null; erro: string | null; conferindo: boolean; convite: boolean;
+  onTexto: (v: string) => void; onAplicar: () => void; onRemover: () => void;
+}) {
+  const [aberto, setAberto] = useState(!!texto);
+  if (cupom) {
+    // no convite não há adesão: só a parte da mensalidade conta
+    const frases = textosDoCupom(convite ? { ...cupom, adesao_tipo: null } : cupom);
+    return (
+      <div className="as-cupom-ok" role="status">
+        <span className="as-cupom-selo" aria-hidden="true">%</span>
+        <span className="as-cupom-txt">
+          <b>Cupom {cupom.codigo} aplicado</b>
+          <small>{frases.length ? frases.join(" · ") : "este cupom só vale para a taxa de adesão, que o convite já isenta"}</small>
+        </span>
+        <button type="button" className="link" onClick={onRemover}>remover</button>
+      </div>
+    );
+  }
+  if (!aberto) {
+    return <button type="button" className="link as-cupom-abrir" onClick={() => setAberto(true)}>Tem um cupom de desconto?</button>;
+  }
+  return (
+    <form className="as-cupom" onSubmit={(e) => { e.preventDefault(); onAplicar(); }} noValidate>
+      <label>
+        <span>Cupom de desconto</span>
+        <span className="as-cupom-linha">
+          <input className="mono" value={texto} maxLength={30} autoCapitalize="characters" autoComplete="off" spellCheck={false}
+            placeholder="EX.: BEMVINDO" onChange={(e) => onTexto(e.target.value)} aria-invalid={!!erro} />
+          <button type="submit" disabled={conferindo || texto.length < 3}>{conferindo ? "Conferindo…" : "Aplicar"}</button>
+        </span>
+      </label>
+      {erro && <span className="erro-campo">{erro}</span>}
+    </form>
   );
 }

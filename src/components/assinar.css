@@ -118,3 +118,23 @@
 .as-adesao-linha.total { padding-top: 6px; border-top: 1px solid var(--borda); }
 .as-adesao-linha.total b { color: var(--floresta); font-size: 16px; }
 .as-adesao p { margin: 2px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--texto-3); }
+
+/* cupom de desconto (0052): o campo no passo 2, o selo do cupom aplicado e as linhas de desconto */
+.as-cupom-abrir { justify-self: start; margin: 12px 0 0; padding: 0; font-size: 13.5px; }
+.as-cupom { display: grid; gap: 6px; margin: 14px 0 0; max-width: 420px; text-align: left; }
+.as-cupom label { display: grid; gap: 6px; font-weight: 600; font-size: 13px; color: var(--texto-2); }
+.as-cupom-linha { display: flex; gap: 8px; }
+.as-cupom-linha input { flex: 1; min-width: 0; height: 42px; border-radius: 10px; font-size: 15px; letter-spacing: .04em; text-transform: uppercase; }
+.as-cupom-linha button { height: 42px; padding: 0 18px; border-radius: 10px; }
+.as-cupom-ok { display: flex; align-items: center; gap: 12px; margin: 14px 0 0; padding: 10px 14px; border-radius: 12px;
+  border: 1px solid #bfe0cd; background: #f3faf6; text-align: left; }
+.as-cupom-selo { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--primaria); color: #fff; font-weight: 700; font-size: 16px; }
+.as-cupom-txt { flex: 1; display: grid; gap: 2px; min-width: 0; }
+.as-cupom-txt b { font-size: 14.5px; color: var(--floresta); }
+.as-cupom-txt small { font-size: 13px; color: var(--texto-2); line-height: 1.4; }
+.as-cupom-ok .link { padding: 0; font-size: 13px; }
+.as-riscado { margin-right: 8px; font-family: var(--fonte); font-size: 15px; font-weight: 400; color: var(--texto-3); text-decoration: line-through; }
+.as-adesao-linha.desconto, .as-adesao-linha.desconto b { color: var(--primaria-escura, #178552); }
+.as-total > small.as-cupom-nota { color: var(--primaria-escura, #178552); }
+.as-adesao-linha > b { margin-left: auto; white-space: nowrap; }

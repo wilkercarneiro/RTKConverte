@@ -117,6 +117,8 @@ export function mensagemCadastroConvite(o: {
 /** 0049: aviso para o número do superadmin quando o convite vira conta. */
 export function mensagemNovoConvite(o: {
   empresa: string; documento: string; responsavel: string; email: string; telefone: string; plano: string; periodo: string; valor: number; convite: string | null;
+  /** 0052: "BEMVINDO (1º mês sem mensalidade)" */
+  cupom?: string | null;
 }): string {
   return [
     "Novo cadastro pelo convite do Vertces 🆕",
@@ -124,6 +126,7 @@ export function mensagemNovoConvite(o: {
     `${o.empresa} (${o.documento})${o.convite ? ` · convite: ${o.convite}` : ""}`,
     `Responsável: ${o.responsavel} · ${o.telefone} · ${o.email}`,
     `Plano ${o.plano}, ${o.periodo}: ${fmtReais(o.valor)}`,
+    ...(o.cupom ? [`Cupom: ${o.cupom}`] : []),
     "",
     "O acesso já está liberado; a cobrança começa no 1º crédito gasto.",
   ].join("\n");
@@ -159,10 +162,14 @@ export function mensagemCadastroCriado(o: {
   responsavel: string | null; empresa: string; plano: string; periodo: string; valor: number; url: string; login: string; parcelas: number;
   /** taxa de adesão (0044), somada só ao 1º pagamento */
   adesao?: number;
+  /** 0052: o cupom do cadastro e o 1º pagamento já com ele */
+  cupom?: { codigo: string; resumo: string; total: number } | null;
 }): string {
-  const adesao = o.adesao && o.adesao > 0
-    ? ` O primeiro pagamento leva também a adesão de ${fmtReais(o.adesao)}, cobrada uma vez só: total de ${fmtReais(o.valor + o.adesao)}.`
-    : "";
+  const adesao = o.cupom
+    ? ` Cupom ${o.cupom.codigo} aplicado: ${o.cupom.resumo}. O primeiro pagamento fica em ${fmtReais(o.cupom.total)}.`
+    : o.adesao && o.adesao > 0
+      ? ` O primeiro pagamento leva também a adesão de ${fmtReais(o.adesao)}, cobrada uma vez só: total de ${fmtReais(o.valor + o.adesao)}.`
+      : "";
   return [
     ola(o.responsavel),
     "",
@@ -173,10 +180,32 @@ export function mensagemCadastroCriado(o: {
   ].join("\n");
 }
 
+/** 0052: o cupom zerou o 1º pagamento — a conta entrou já e a 1ª mensalidade vence no fim da isenção. */
+export function mensagemCadastroComCupom(o: {
+  responsavel: string | null; empresa: string; plano: string; periodo: string; valor: number; url: string; login: string;
+  codigo: string; resumo: string; vencimento: string; creditos?: string;
+}): string {
+  return [
+    ola(o.responsavel),
+    "",
+    `A conta da ${o.empresa} no Vertces está criada e liberada ✅ (plano ${o.plano}, ${o.periodo}).`,
+    `Cupom ${o.codigo}: ${o.resumo}. Nada a pagar agora.`,
+    "",
+    `Entre em ${o.url} com o login ${o.login}.`,
+    ...(o.creditos ? [`Seu plano inclui ${o.creditos}.`] : []),
+    "",
+    `A primeira cobrança (${fmtReais(o.valor)}) vence em ${dataBr(o.vencimento)} e chega por aqui, com Pix, boleto ou cartão.`,
+  ].join("\n");
+}
+
 /** Autocadastro (0040): aviso para o número do superadmin (chave whatsapp_avisos). */
 export function mensagemNovoCadastro(o: {
   empresa: string; documento: string; responsavel: string; email: string; telefone: string; plano: string; periodo: string; valor: number;
   adesao?: number;
+  /** 0052: "BEMVINDO (isenção da taxa de adesão) · 1º pagamento R$ 299,90" */
+  cupom?: string | null;
+  /** 0052: o cupom zerou o 1º pagamento e o acesso já foi liberado */
+  liberada?: boolean;
 }): string {
   return [
     "Novo cadastro pelo site do Vertces 🆕",
@@ -184,8 +213,10 @@ export function mensagemNovoCadastro(o: {
     `${o.empresa} (${o.documento})`,
     `Responsável: ${o.responsavel} · ${o.telefone} · ${o.email}`,
     `Plano ${o.plano}, ${o.periodo}: ${fmtReais(o.valor)}${o.adesao && o.adesao > 0 ? ` + adesão ${fmtReais(o.adesao)}` : ""}`,
+    ...(o.cupom ? [`Cupom: ${o.cupom}`] : []),
     "",
-    "A conta espera o pagamento (Pix ou cartão) para liberar o acesso.",
+    o.liberada ? "Com o cupom não há nada a pagar agora: o acesso já está liberado e a 1ª mensalidade vence no fim da isenção."
+      : "A conta espera o pagamento (Pix ou cartão) para liberar o acesso.",
   ].join("\n");
 }
 

@@ -75,6 +75,18 @@ const CONVITES: Record<string, unknown>[] = [
   { id: "cv1", token: "3f9a".repeat(16), nome: "João — Geo Sertão (reunião 10/11)", plano_id: "p2", plano: "Profissional", criado_em: dia(1), expira_em: dia(-29), usado_em: null, cancelado_em: null, escritorio_id: null, empresa: null, situacao: "aberto" },
   { id: "cv2", token: "7c1e".repeat(16), nome: "Lucas Moreira", plano_id: "p2", plano: "Profissional", criado_em: dia(4), expira_em: dia(-26), usado_em: dia(2), cancelado_em: null, escritorio_id: "e6", empresa: "GEO VALE DO SÃO FRANCISCO", situacao: "usado" },
 ];
+// cupons (0052): em memória
+const CUPOM_VAZIO = { descricao: null, adesao_tipo: null, adesao_valor: null, mensalidade_tipo: null, mensalidade_valor: null, mensalidade_vezes: null,
+  isencao_meses: null, planos: null, nomes_planos: [], max_usos: null, valido_ate: null, ativo: true, usos: 0, situacao: "ativo", empresas: [] };
+const CUPONS: Record<string, unknown>[] = [
+  { ...CUPOM_VAZIO, id: "cp1", codigo: "BEMVINDO", descricao: "Quem vem da demonstração", adesao_tipo: "isencao", criado_em: dia(6), usos: 3, max_usos: 50,
+    empresas: [{ id: "e6", nome: "GEO VALE DO SÃO FRANCISCO", status: "ativo", usado_em: dia(2) }, { id: "e2", nome: "TOPOGRAFIA ALTO SERTÃO", status: "ativo", usado_em: dia(4) }, { id: "e3", nome: "AGRIMENSURA BOA VISTA", status: "aguardando_pagamento", usado_em: dia(5) }] },
+  { ...CUPOM_VAZIO, id: "cp2", codigo: "FEIRA2026", descricao: "Feira de agrimensura", adesao_tipo: "percentual", adesao_valor: 50, mensalidade_tipo: "percentual", mensalidade_valor: 20,
+    mensalidade_vezes: 3, criado_em: dia(3), valido_ate: dia(-20).slice(0, 10) },
+  { ...CUPOM_VAZIO, id: "cp3", codigo: "1MESGRATIS", mensalidade_tipo: "isencao", isencao_meses: 1, planos: ["p2"], nomes_planos: ["Profissional"], criado_em: dia(2), max_usos: 10 },
+  { ...CUPOM_VAZIO, id: "cp4", codigo: "OUTUBRO", adesao_tipo: "valor", adesao_valor: 200, criado_em: dia(40), valido_ate: dia(10).slice(0, 10), situacao: "expirado", usos: 1,
+    empresas: [{ id: "e1", nome: "Empresa 1", status: "ativo", usado_em: dia(25) }] },
+];
 const MATRIZ = PLANOS.flatMap((p) => RECURSOS.filter((r) => r.chave !== "sigef.mapa").map((r) => ({
   plano_id: p.id, recurso_chave: r.chave,
   liberado: p.id !== "p4" || ["servico.car", "empresa.equipe", "integracao.gprol"].includes(r.chave),
@@ -158,6 +170,26 @@ const RPC: Record<string, (a: Record<string, unknown>) => unknown> = {
     CONVITES.unshift(c);
     return { id: c.id, token, expira_em: c.expira_em };
   },
+  sa_cupons: () => CUPONS,
+  sa_salvar_cupom: (a) => {
+    const d = a.p_dados as Record<string, unknown>;
+    const n = (x: unknown) => (x === null || x === undefined || x === "" ? null : Number(x));
+    const planos = Array.isArray(d.planos) && d.planos.length ? d.planos as string[] : null;
+    const campos = {
+      codigo: String(d.codigo), descricao: d.descricao || null, adesao_tipo: d.adesao_tipo ?? null, adesao_valor: n(d.adesao_valor),
+      mensalidade_tipo: d.mensalidade_tipo ?? null, mensalidade_valor: n(d.mensalidade_valor), mensalidade_vezes: n(d.mensalidade_vezes),
+      isencao_meses: n(d.isencao_meses), planos, nomes_planos: planos ? PLANOS.filter((p) => planos.includes(p.id)).map((p) => p.nome) : [],
+      max_usos: n(d.max_usos), valido_ate: d.valido_ate || null,
+    };
+    if (CUPONS.some((c) => c.codigo === campos.codigo && c.id !== a.p_id)) throw new Error(`Já existe um cupom com o código ${campos.codigo}.`);
+    const atual = CUPONS.find((c) => c.id === a.p_id);
+    if (atual) { Object.assign(atual, campos); return atual; }
+    const c = { ...CUPOM_VAZIO, ...campos, id: crypto.randomUUID(), criado_em: dia(0) };
+    CUPONS.unshift(c);
+    return c;
+  },
+  sa_ativar_cupom: (a) => { const c = CUPONS.find((x) => x.id === a.p_id); if (c) Object.assign(c, { ativo: !!a.p_ativo, situacao: a.p_ativo ? "ativo" : "inativo" }); return null; },
+  sa_excluir_cupom: (a) => { const i = CUPONS.findIndex((x) => x.id === a.p_id); if (i >= 0) CUPONS.splice(i, 1); return null; },
   sa_cancelar_convite: (a) => { const c = CONVITES.find((x) => x.id === a.p_id); if (c) Object.assign(c, { cancelado_em: dia(0), situacao: "cancelado" }); return null; },
   sa_cobranca_empresa: (a) => {
     if (a.p_escritorio === "e6" || a.p_escritorio === "e7") {
@@ -273,7 +305,7 @@ function instalar() {
       url_app: "https://vertces.com.br/app/",
       ultimo_evento: { evento: "PAYMENT_RECEIVED", resultado: "creditos · WhatsApp enviado", recebido_em: dia(0.05) },
       autocadastro: {
-        cadastro_aberto: true, parcelas_sem_juros: 6, parcelas_max: 12, juros_mes: 2.99, whatsapp_avisos: "71988887777", parcelado_value: false,
+        cadastro_aberto: true, parcelas_sem_juros: 6, parcelas_max: 12, juros_mes: 2.99, whatsapp_avisos: "71988887777", parcelado_value: false, adesao: 500,
         ciclos: { MONTHLY: { ativo: true, desconto: 0 }, SEMIANNUALLY: { ativo: true, desconto: 5 }, YEARLY: { ativo: true, desconto: 10 } },
       },
     };

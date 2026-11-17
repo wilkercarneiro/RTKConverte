@@ -10,9 +10,13 @@ import { useEffect, useRef, useState } from "react";
 import { conferirPagamentos, minhaCobranca, pagarCadastro } from "../lib/cobranca";
 import type { Ciclo, MinhaCobranca, ResultadoPagarCadastro } from "../lib/cobranca";
 import {
-  ciclosAtivos, economia, MESES, NOME_CICLO, normalizarRegras, opcoesDeParcelas, totalComAdesao, valorDoPeriodo,
+  ciclosAtivos, economia, MESES, NOME_CICLO, normalizarRegras, opcoesDeParcelas, valorDoPeriodo,
 } from "../../supabase/functions/_shared/parcelas.ts";
 import type { Parcelamento } from "../../supabase/functions/_shared/parcelas.ts";
+import {
+  cupomDe, descontaMensalidade, mensalidadeComCupom, mesesGratis, primeiroPagamento, textosDoCupom,
+} from "../../supabase/functions/_shared/cupons.ts";
+import type { Cupom } from "../../supabase/functions/_shared/cupons.ts";
 import { fmtReais } from "../../supabase/functions/_shared/precos.ts";
 import { FormCartao } from "./Cartao";
 import { Dica } from "./ui";
@@ -30,20 +34,63 @@ export function rotuloParcela(p: Parcelamento): string {
   return p.juros ? `${p.n}x de ${fmtReais(p.parcela)} (total ${fmtReais(p.total)})` : `${p.n}x de ${fmtReais(p.parcela)} sem juros`;
 }
 
+const mesesTxt = (n: number) => (n === 1 ? "1 mês" : `${n} meses`);
+
+/** 0052: como fica a renovação com o cupom ("R$ 239,92 nas próximas 2 cobranças e depois R$ 299,90"). */
+export function textoRenovacao(periodo: string, valorPeriodo: number, cupom: Cupom | null): string {
+  const n = mesesGratis(cupom);
+  if (n > 0) return `A 1ª mensalidade (${fmtReais(valorPeriodo)}) vence daqui a ${mesesTxt(n)}; depois, renovação ${periodo}.`;
+  if (!descontaMensalidade(cupom)) return `Renovação ${periodo}: ${fmtReais(valorPeriodo)}.`;
+  const com = mensalidadeComCupom(valorPeriodo, cupom);
+  if (cupom!.mensalidade_vezes === null) return `Renovação ${periodo}: ${fmtReais(com)} (o desconto do cupom vale em todas).`;
+  const resto = cupom!.mensalidade_vezes - 1;
+  return resto > 0
+    ? `Renovação ${periodo}: ${fmtReais(com)} na${resto > 1 ? `s próximas ${resto} cobranças` : " próxima cobrança"} e depois ${fmtReais(valorPeriodo)}.`
+    : `Renovação ${periodo}: ${fmtReais(valorPeriodo)}.`;
+}
+
 /**
- * A taxa de adesão (0044) explicada: o plano do período, a adesão (uma vez só)
- * e o total do 1º pagamento, com o texto que o superadmin escreveu no painel.
+ * O 1º pagamento explicado: o plano do período, a adesão (0044, uma vez só), o
+ * que o cupom tira de cada um (0052) e o total, com o texto da adesão que o
+ * superadmin escreveu no painel. Sem adesão e sem cupom, não aparece.
  */
-export function ResumoAdesao({ plano, periodo, valorPeriodo, adesao, texto }: {
+export function ResumoAdesao({ plano, periodo, valorPeriodo, adesao, texto, cupom = null }: {
   plano: string | null; periodo: string; valorPeriodo: number; adesao: number; texto: string;
+  /** 0052: o cupom aplicado (valorPeriodo e adesao são os cheios) */
+  cupom?: Cupom | null;
 }) {
-  if (!(adesao > 0)) return null;
+  if (!(adesao > 0) && !cupom) return null;
+  const pp = primeiroPagamento(valorPeriodo, adesao, cupom);
+  const menosPeriodo = valorPeriodo - pp.periodo;
+  // (inclui a adesão que, sozinha abaixo do mínimo do Asaas, ficou isenta)
+  const menosAdesao = adesao - pp.adesao;
+  const [txtAdesao, txtMensal] = cupom
+    ? [textosDoCupom({ ...cupom, mensalidade_tipo: null })[0], textosDoCupom({ ...cupom, adesao_tipo: null })[0]]
+    : [undefined, undefined];
   return (
-    <div className="as-adesao" aria-label="Taxa de adesão">
-      <span className="as-adesao-linha"><span>Plano{plano ? ` ${plano}` : ""} ({periodo})</span><b>{fmtReais(valorPeriodo)}</b></span>
-      <span className="as-adesao-linha"><span>Taxa de adesão (pagamento único)</span><b>{fmtReais(adesao)}</b></span>
-      <span className="as-adesao-linha total"><span>Primeiro pagamento</span><b>{fmtReais(totalComAdesao(valorPeriodo, adesao))}</b></span>
-      <p><b>O que é a adesão?</b> {texto} Renovação {periodo}: {fmtReais(valorPeriodo)}.</p>
+    <div className={`as-adesao${cupom ? " com-cupom" : ""}`} aria-label={cupom ? "Primeiro pagamento com o cupom" : "Taxa de adesão"}>
+      {pp.meses_gratis > 0 ? (
+        // isenção: o período não é descontado, a 1ª cobrança é que vem depois (no anual, 3 meses grátis ≠ um ano de desconto)
+        <>
+          <span className="as-adesao-linha"><span>Plano{plano ? ` ${plano}` : ""} ({periodo}): {fmtReais(valorPeriodo)}</span><b>{fmtReais(0)} agora</b></span>
+          <span className="as-adesao-linha desconto"><span>Cupom {cupom!.codigo}: {(txtMensal ?? "").toLowerCase()}</span>
+            <b>1ª cobrança em {pp.meses_gratis === 1 ? "1 mês" : `${pp.meses_gratis} meses`}</b></span>
+        </>
+      ) : (
+        <span className="as-adesao-linha"><span>Plano{plano ? ` ${plano}` : ""} ({periodo})</span><b>{fmtReais(valorPeriodo)}</b></span>
+      )}
+      {pp.meses_gratis === 0 && menosPeriodo > 0.004 && (
+        <span className="as-adesao-linha desconto"><span>Cupom {cupom!.codigo}: {txtMensal?.toLowerCase() ?? "desconto"}</span><b>− {fmtReais(menosPeriodo)}</b></span>
+      )}
+      {adesao > 0 && <span className="as-adesao-linha"><span>Taxa de adesão (pagamento único)</span><b>{fmtReais(adesao)}</b></span>}
+      {adesao > 0 && menosAdesao > 0.004 && (
+        <span className="as-adesao-linha desconto"><span>Cupom {cupom!.codigo}: {(txtAdesao ?? "desconto na adesão").toLowerCase()}</span><b>− {fmtReais(menosAdesao)}</b></span>
+      )}
+      <span className="as-adesao-linha total"><span>{pp.total > 0 ? "Primeiro pagamento" : "A pagar agora"}</span><b>{fmtReais(pp.total)}</b></span>
+      <p>
+        {adesao > 0 && <><b>O que é a adesão?</b> {texto} </>}
+        {textoRenovacao(periodo, valorPeriodo, cupom)}
+      </p>
     </div>
   );
 }
@@ -72,10 +119,12 @@ export function PagamentoCadastro({ cobranca, vigiar = true, onConfirmado }: {
   const [copiado, setCopiado] = useState(false);
   const [conferindo, setConferindo] = useState(false);
 
-  // o período e, só no 1º pagamento, a adesão (0044): o servidor faz a mesma conta
-  const periodo = valorDoPeriodo(mensalidade, ciclo, regras.ciclos[ciclo].desconto);
-  const adesao = regras.adesao;
-  const total = totalComAdesao(periodo, adesao);
+  // o período e, só no 1º pagamento, a adesão (0044), com o cupom do cadastro (0052): o servidor faz a mesma conta
+  const cupom = cupomDe(cobranca.cupom);
+  const periodoCheio = valorDoPeriodo(mensalidade, ciclo, regras.ciclos[ciclo].desconto);
+  const pp = primeiroPagamento(periodoCheio, regras.adesao, cupom);
+  const periodo = pp.periodo;
+  const total = pp.total;
   const opcoes = opcoesDeParcelas(total, ciclo, regras);
   const escolhida = opcoes[Math.min(n, opcoes.length) - 1];
   const temJuros = opcoes.some((p) => p.juros);
@@ -119,7 +168,7 @@ export function PagamentoCadastro({ cobranca, vigiar = true, onConfirmado }: {
   function trocarCiclo(c: Ciclo) {
     if (c === ciclo || gerando) return;
     setCiclo(c);
-    setN((atual) => Math.min(atual, opcoesDeParcelas(totalComAdesao(valorDoPeriodo(mensalidade, c, regras.ciclos[c].desconto), adesao), c, regras).length));
+    setN((atual) => Math.min(atual, opcoesDeParcelas(primeiroPagamento(valorDoPeriodo(mensalidade, c, regras.ciclos[c].desconto), regras.adesao, cupom).total, c, regras).length));
     // o Pix gerado era de outro valor
     if (estado === "pix") { setPix(null); setEstado("escolher"); }
     setErro(null);
@@ -192,18 +241,26 @@ export function PagamentoCadastro({ cobranca, vigiar = true, onConfirmado }: {
       )}
       <div className="as-total">
         <span>{cobranca.plano ? <>Plano <b>{cobranca.plano}</b> · </> : null}{NOME_CICLO[ciclo].toLowerCase()}</span>
-        <b>{fmtReais(periodo)}</b>
-        {MESES[ciclo] > 1 && (
+        <b>{periodo !== periodoCheio && <s className="as-riscado">{fmtReais(periodoCheio)}</s>}{fmtReais(periodo)}</b>
+        {MESES[ciclo] > 1 && periodo > 0 && (
           <small>
             equivale a {fmtReais(periodo / MESES[ciclo])}/mês
             {economia(mensalidade, ciclo, regras.ciclos[ciclo].desconto) > 0 && <> · economia de {fmtReais(economia(mensalidade, ciclo, regras.ciclos[ciclo].desconto))}</>}
           </small>
         )}
+        {cupom && <small className="as-cupom-nota">Cupom <b>{cupom.codigo}</b> aplicado no cadastro.</small>}
       </div>
 
-      <ResumoAdesao plano={cobranca.plano ?? null} periodo={NOME_CICLO[ciclo].toLowerCase()} valorPeriodo={periodo} adesao={adesao} texto={regras.adesao_texto} />
+      <ResumoAdesao plano={cobranca.plano ?? null} periodo={NOME_CICLO[ciclo].toLowerCase()} valorPeriodo={periodoCheio} adesao={regras.adesao} texto={regras.adesao_texto} cupom={cupom} />
 
-      <div className="as-formas" role="radiogroup" aria-label="Forma de pagamento">
+      {!(total > 0) && (
+        // 0052: o cupom zerou o 1º pagamento (a conta normalmente já entra no cadastro; isto é a volta de segurança)
+        <div className="as-acao">
+          <button type="button" className="principal" disabled={gerando} onClick={() => gerarPix()}>{gerando ? "Liberando…" : "Liberar a conta (nada a pagar agora)"}</button>
+        </div>
+      )}
+
+      {total > 0 && <div className="as-formas" role="radiogroup" aria-label="Forma de pagamento">
         <button type="button" role="radio" aria-checked={forma === "pix"} className={`as-forma${forma === "pix" ? " sel" : ""}`} onClick={() => setForma("pix")}>
           <b>Pix</b><small>libera em segundos</small>
         </button>
@@ -211,11 +268,11 @@ export function PagamentoCadastro({ cobranca, vigiar = true, onConfirmado }: {
           <b>Cartão de crédito</b>
           <small>{opcoes.length > 1 ? `em até ${opcoes.length}x${regras.parcelas_sem_juros > 1 ? ` · até ${Math.min(regras.parcelas_sem_juros, opcoes.length)}x sem juros` : ""}` : "à vista"}</small>
         </button>
-      </div>
+      </div>}
 
       {erro && <div className="aviso-erro-pagina" role="alert">{erro}</div>}
 
-      {forma === "pix" && (estado === "pix" && pix ? (
+      {total > 0 && forma === "pix" && (estado === "pix" && pix ? (
         <div className="as-pix">
           {pix.pix?.encodedImage
             ? <img src={`data:image/png;base64,${pix.pix.encodedImage}`} alt="QR Code do Pix" width={220} height={220} />
@@ -246,7 +303,7 @@ export function PagamentoCadastro({ cobranca, vigiar = true, onConfirmado }: {
         </div>
       ))}
 
-      {forma === "cartao" && (
+      {total > 0 && forma === "cartao" && (
         <div className="as-cartao">
           {opcoes.length > 1 && (
             <label className="as-parcelas">

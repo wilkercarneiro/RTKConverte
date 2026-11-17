@@ -140,6 +140,8 @@ export function clienteAsaas(chave: string, ambiente: Ambiente, f: typeof fetch 
       chamar<{ creditCardToken: string; creditCardNumber?: string; creditCardBrand?: string }>("POST", "/creditCard/tokenizeCreditCard", d, 60_000),
     cobranca: (pagamento: string) => chamar<CobrancaAsaas>("GET", `/payments/${id(pagamento)}`),
     removerCobranca: (pagamento: string) => chamar<{ deleted: boolean }>("DELETE", `/payments/${id(pagamento)}`),
+    /** Muda o valor de uma cobrança em aberto (0052: o fim do desconto do cupom). */
+    atualizarCobranca: (pagamento: string, d: { value: number }) => chamar<CobrancaAsaas>("PUT", `/payments/${id(pagamento)}`, d),
     /** Cancela um parcelamento inteiro (todas as parcelas). */
     removerParcelamento: (parcelamento: string) => chamar<{ deleted: boolean }>("DELETE", `/installments/${id(parcelamento)}`),
     pix: (pagamento: string) => chamar<PixAsaas>("GET", `/payments/${id(pagamento)}/pixQrCode`),

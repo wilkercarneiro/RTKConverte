@@ -9,9 +9,11 @@ import type { CartaoPublico, RecargaCarteira } from "./creditos_regras";
 import type { Faixa } from "./creditos";
 import type { CartaoDigitado, TitularDigitado } from "../../supabase/functions/_shared/cartao.ts";
 import { normalizarRegras } from "../../supabase/functions/_shared/parcelas.ts";
+import { cupomDe } from "../../supabase/functions/_shared/cupons.ts";
+import type { Cupom } from "../../supabase/functions/_shared/cupons.ts";
 import type { Ciclo, RegrasPagamento } from "../../supabase/functions/_shared/parcelas.ts";
 
-export type { CartaoPublico, RecargaCarteira, Ciclo, RegrasPagamento };
+export type { CartaoPublico, RecargaCarteira, Ciclo, RegrasPagamento, Cupom };
 
 export interface Pix { encodedImage: string; payload: string; expirationDate?: string }
 
@@ -69,6 +71,9 @@ export interface MinhaCobranca {
   mensalidade_a_iniciar?: boolean;
   /** 0050: a mensalidade aberta em partes (plano + escritórios adicionais) */
   mensalidade_detalhe?: MensalidadeDetalhe | null;
+  /** 0052: o cupom do cadastro (a foto do dia) e o fim do desconto da mensalidade */
+  cupom?: Cupom | null;
+  cupom_desconto_ate?: string | null;
 }
 
 /** 0050: plano (ou o combinado) + escritórios adicionais ativos × preço. */
@@ -141,8 +146,23 @@ export interface DadosCadastro {
   site: string;
   /** 0049: o token do convite (o servidor usa o plano dele e libera já) */
   convite?: string;
+  /** 0052: o código do cupom (o servidor confere e reserva o uso) */
+  cupom?: string;
 }
-type CadastroCriado = { escritorio_id: string; login: string; liberada?: boolean };
+type CadastroCriado = {
+  escritorio_id: string; login: string; liberada?: boolean;
+  /** 0052: o cupom aplicado; o 1º pagamento com ele; o vencimento da 1ª mensalidade (quando o cupom liberou já) */
+  cupom?: Cupom; total?: number; primeira_mensalidade?: string;
+};
+
+/** 0052: o cupom digitado vale? (ação pública da função, com limite de tentativas por IP) */
+export interface CupomConferido { valido: boolean; cupom?: Cupom | null; motivo?: string; mensagem?: string }
+export async function conferirCupom(codigo: string, planoId: string | null): Promise<CupomConferido> {
+  const r = falsa
+    ? (await falsa({ acao: "cupom_conferir", codigo, plano_id: planoId })) as CupomConferido
+    : await chamarFuncaoPublica<CupomConferido>("cobranca", { acao: "cupom_conferir", codigo, plano_id: planoId });
+  return r.valido ? { valido: true, cupom: cupomDe(r.cupom) } : r;
+}
 /** Cria a conta e a empresa (sem login). Erro com `status` (409 = já existe; 410 = convite que não vale; 429 = muitas tentativas). */
 export const criarCadastro = (d: DadosCadastro) =>
   falsa

@@ -270,7 +270,7 @@ export default function App() {
   }
   // Autocadastro (0040): público, com ou sem login. A própria página entra com a
   // conta que cria e leva ao pagamento; quem já está conectado vê o aviso de lá.
-  if (rota.t === "assinar") return <Suspense fallback={null}><Assinar plano={rota.plano} ciclo={rota.ciclo} convite={rota.convite} /></Suspense>;
+  if (rota.t === "assinar") return <Suspense fallback={null}><Assinar plano={rota.plano} ciclo={rota.ciclo} convite={rota.convite} cupom={rota.cupom} /></Suspense>;
   // verificação pública do QR da planta: abre com ou sem login
   if (rota.t === "verificar") return <Suspense fallback={null}><VerificarDocumento codigo={rota.codigo} /></Suspense>;
   if (logado === null) return <div className="centro">Carregando...</div>;

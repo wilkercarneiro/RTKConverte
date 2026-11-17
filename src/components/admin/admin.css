@@ -731,3 +731,25 @@ button.sa-nav:hover:not(:disabled) { color: #fff; }
 .sa-lista-escritorios li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; border-radius: 10px; background: #F7F9F8; }
 .sa-lista-escritorios .link { font-weight: 600; }
 .sa-lista-escritorios .sub { font-size: 12.5px; margin-left: auto; }
+
+/* Configurações → Cupons (0052) */
+.sa-cupom-form { margin-top: 14px; padding: 16px; border: 1px solid var(--borda); border-radius: 14px; background: #fbfdfc; }
+.sa-cupom-codigo { display: flex; gap: 8px; }
+.sa-cupom-codigo input { flex: 1; min-width: 0; letter-spacing: .04em; }
+.sa-cupom-codigo button { height: 40px; padding: 0 14px; border-radius: 10px; }
+.sa-cupom-parte { margin: 14px 0 0; padding: 12px 14px 14px; border: 1px dashed #cfe3d7; border-radius: 12px; }
+.sa-cupom-parte legend { padding: 0 6px; font-weight: 700; font-size: 13.5px; color: var(--floresta); }
+.sa-cupom-parte legend small { font-weight: 400; color: var(--texto-3); }
+.sa-cupom-vazio { display: block; }
+.sa-cupom-planos { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 14px; font-size: 13.5px; color: var(--texto-2); }
+.sa-cupom-planos > span { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; font-size: 13px; }
+.sa-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.sa-check input { width: 16px; height: 16px; margin: 0; }
+.sa-cupom-previa { display: grid; gap: 4px; margin-top: 14px; padding: 10px 14px; border-radius: 12px; background: var(--primaria-clara); color: var(--texto); font-size: 13.5px; }
+.sa-cupom-previa small { color: var(--texto-2); font-size: 12.5px; }
+.sa-cupons-tabela td { vertical-align: top; }
+.sa-cupom-acoes { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.sa-cupom-acoes button { height: 32px; padding: 0 10px; font-size: 12.5px; border-radius: 8px; }
+.sa-cupom-quem { margin-top: 4px; }
+.sa-cupom-quem summary { cursor: pointer; font-size: 12px; }
+.sa-cupom-quem ul { margin: 4px 0 0; padding-left: 16px; font-size: 12.5px; }

@@ -15,6 +15,7 @@ import { fmtPreco } from "../../lib/creditos";
 import { dataBr, nomeDaCobranca } from "../../../supabase/functions/_shared/mensagens_cobranca.ts";
 import { soDigitos } from "../../../supabase/functions/_shared/cnpj.ts";
 import { cicloDe, NOME_CICLO } from "../../../supabase/functions/_shared/parcelas.ts";
+import { cupomDe, mensalidadeComCupom, resumoDoCupom } from "../../../supabase/functions/_shared/cupons.ts";
 import type { PagamentoEmpresa } from "../../lib/admin";
 import type { DadosAdmin } from "./PainelAdmin";
 import { confirmar, Dica } from "../ui";
@@ -58,7 +59,10 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
   const viva = !!a?.asaas_assinatura_id && a.situacao !== "cancelada";
   // semestral/anual (autocadastro): o Asaas cobra o período, não a mensalidade
   const ciclo = cicloDe(a?.ciclo) ?? "MONTHLY";
-  const valorDiferente = ciclo === "MONTHLY" && viva && a!.valor !== null && c.mensalidade !== null && Number(a!.valor) !== Number(c.mensalidade);
+  // 0052: o cupom do cadastro (a foto do dia); com desconto valendo, o Asaas cobra menos de propósito
+  const cupom = cupomDe(a?.cupom);
+  const esperado = c.mensalidade === null ? null : mensalidadeComCupom(Number(c.mensalidade), cupom, a?.proximo_vencimento ?? null, a?.cupom_desconto_ate ?? null);
+  const valorDiferente = ciclo === "MONTHLY" && viva && a!.valor !== null && esperado !== null && Number(a!.valor) !== esperado;
   const semMensalidade = !(Number(c.mensalidade ?? 0) > 0);
   // 0049: a mensalidade que começa no 1º crédito gasto
   const esperando = !!a?.inicio_no_primeiro_credito && !a.mensalidade_iniciada_em;
@@ -90,6 +94,8 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
           {a?.proximo_vencimento && <div><span>{a.situacao === "em_dia" ? "Próximo vencimento" : "Vencimento"}</span><b>{dataBr(a.proximo_vencimento)}</b></div>}
           {a?.ultimo_pagamento_em && <div><span>Último pagamento</span><b>{fmtData(a.ultimo_pagamento_em)}</b></div>}
           {a?.whatsapp_em && <div><span>WhatsApp</span><b>enviado {fmtData(a.whatsapp_em)}</b></div>}
+          {cupom && <div><span>Cupom do cadastro</span><b className="mono">{cupom.codigo}</b>
+            <small className="sub">{resumoDoCupom(cupom)}{a?.cupom_desconto_ate ? ` · desconto até ${dataBr(a.cupom_desconto_ate)}` : ""}</small></div>}
           <div><span>Cartão</span><b>{c.cartao ? `${c.cartao.bandeira ?? "Cartão"} •••• ${c.cartao.final}` : "não cadastrado"}</b>
             {c.cartao && <small className="sub">{c.cartao.reutilizavel ? "mensalidade e créditos" : "só mensalidade (sem token)"} · validade {c.cartao.validade}</small>}</div>
           {c.recarga && Object.entries(c.recarga).filter(([, r]) => r.ativo).map(([tipo, r]) => (
@@ -110,7 +116,7 @@ export function CobrancaEmpresa({ e, d, onMudou }: { e: Empresa; d: DadosAdmin; 
         {a?.whatsapp_erro && <div className="sa-aviso erro" style={{ marginTop: 12 }}>Último envio no WhatsApp falhou: {a.whatsapp_erro}</div>}
         {valorDiferente && (
           <div className="sa-aviso info" style={{ marginTop: 12 }}>
-            A mensalidade mudou para {fmtPreco(Number(c.mensalidade))}, mas o Asaas ainda cobra {fmtPreco(Number(a!.valor))}.
+            A mensalidade mudou para {fmtPreco(esperado ?? Number(c.mensalidade))}{esperado !== Number(c.mensalidade) ? " (com o cupom)" : ""}, mas o Asaas ainda cobra {fmtPreco(Number(a!.valor))}.
           </div>
         )}
         {a?.link_pagamento && (

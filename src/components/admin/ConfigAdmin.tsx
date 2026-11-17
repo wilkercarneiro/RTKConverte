@@ -14,6 +14,7 @@ import { Carregando, quando, Topo } from "./comum";
 import { confirmar, Dica, Rotulo } from "../ui";
 import { Autocadastro } from "./Autocadastro";
 import { Convites } from "./Convites";
+import { Cupons } from "./Cupons";
 import type { DadosAdmin } from "./PainelAdmin";
 
 type Msg = { tipo: "ok" | "erro"; texto: string } | null;
@@ -74,6 +75,7 @@ function Pagamentos({ d }: { d: DadosAdmin | null }) {
       <Asaas st={st} onSalvo={setSt} />
       <Autocadastro st={st} d={d} onSalvo={(a) => setSt({ ...st, autocadastro: a })} />
       <Convites d={d} />
+      <Cupons d={d} adesao={st.autocadastro?.adesao ?? 0} />
       <WhatsApp st={st} />
     </>
   );

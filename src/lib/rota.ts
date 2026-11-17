@@ -25,7 +25,8 @@ export type Rota =
   // públicas (abrem sem login). #/assinar?plano=<id>&ciclo=anual: o autocadastro
   // (0040) com o plano e o período já escolhidos; #/cadastro (o link antigo) cai nela
   // #/assinar?convite=<token> (0049): o convite da equipe, que libera já e cobra no 1º crédito
-  | { t: "assinar"; plano?: string; ciclo?: string; convite?: string }
+  // #/assinar?cupom=CODIGO (0052): o cupom de desconto já preenchido (a pessoa ainda confere)
+  | { t: "assinar"; plano?: string; ciclo?: string; convite?: string; cupom?: string }
   | { t: "termos" }
   | { t: "privacidade" }
   // conferência pública de documento (QR da planta): #/verificar/<código>
@@ -45,7 +46,7 @@ export function rotaParaHash(r: Rota): string {
     case "admin": return `#/admin/${r.aba}${r.id ? `/${r.id}` : ""}`;
     case "verificar": return `#/verificar${r.codigo ? `/${r.codigo}` : ""}`;
     case "assinar": {
-      const q = new URLSearchParams({ ...(r.plano ? { plano: r.plano } : {}), ...(r.ciclo ? { ciclo: r.ciclo } : {}), ...(r.convite ? { convite: r.convite } : {}) }).toString();
+      const q = new URLSearchParams({ ...(r.plano ? { plano: r.plano } : {}), ...(r.ciclo ? { ciclo: r.ciclo } : {}), ...(r.convite ? { convite: r.convite } : {}), ...(r.cupom ? { cupom: r.cupom } : {}) }).toString();
       return `#/assinar${q ? `?${q}` : ""}`;
     }
     default: return `#/${r.t}`;
@@ -74,7 +75,8 @@ export function hashParaRota(hash: string): Rota {
       const plano = q.get("plano")?.trim();
       const ciclo = q.get("ciclo")?.trim();
       const convite = q.get("convite")?.trim();
-      return { t: "assinar", ...(plano ? { plano } : {}), ...(ciclo ? { ciclo } : {}), ...(convite ? { convite } : {}) };
+      const cupom = q.get("cupom")?.trim();
+      return { t: "assinar", ...(plano ? { plano } : {}), ...(ciclo ? { ciclo } : {}), ...(convite ? { convite } : {}), ...(cupom ? { cupom } : {}) };
     }
     case "termos": return { t: "termos" };
     case "privacidade": return { t: "privacidade" };

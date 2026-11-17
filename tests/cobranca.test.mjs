@@ -90,6 +90,7 @@ function asaasFalso() {
       const c = s.cobrancas.get(m[1]);
       if (!c) return resp(404, { errors: [{ description: "não encontrada" }] });
       if (metodo === "DELETE") { c.deleted = true; return resp(200, { deleted: true }); }
+      if (metodo === "PUT") Object.assign(c, corpo); // 0052: o valor cheio no fim do desconto do cupom
       return resp(200, c);
     }
     if ((m = /^\/installments\/([^/?]+)$/.exec(caminho)) && metodo === "DELETE") {
@@ -1517,4 +1518,291 @@ test("link público sem convite continua cobrando no cadastro (a condição não
   assert.equal(e.status, "aguardando_pagamento");
   assert.equal(e.origem, "site");
   assert.equal(banco.cobrancas[e.id].inicio_no_primeiro_credito, undefined);
+});
+
+// ------------------------------------------------------------------ cupons de desconto (0052)
+// Os cupons ficam num "banco" em memória com a mesma regra de conferir_cupom /
+// reservar_cupom (tests/rls/cupons.sql testa a do Postgres).
+const CUPONS = {
+  ADESAOZERO: { codigo: "ADESAOZERO", adesao_tipo: "isencao", adesao_valor: null, mensalidade_tipo: null, mensalidade_valor: null, mensalidade_vezes: null, isencao_meses: null },
+  UMMES: { codigo: "UMMES", adesao_tipo: null, adesao_valor: null, mensalidade_tipo: "isencao", mensalidade_valor: null, mensalidade_vezes: null, isencao_meses: 1 },
+  TRESMESES: { codigo: "TRESMESES", adesao_tipo: null, adesao_valor: null, mensalidade_tipo: "isencao", mensalidade_valor: null, mensalidade_vezes: null, isencao_meses: 3 },
+  VINTE2: { codigo: "VINTE2", adesao_tipo: null, adesao_valor: null, mensalidade_tipo: "percentual", mensalidade_valor: 20, mensalidade_vezes: 2, isencao_meses: null },
+  COMBO: { codigo: "COMBO", adesao_tipo: "percentual", adesao_valor: 50, mensalidade_tipo: "valor", mensalidade_valor: 50, mensalidade_vezes: null, isencao_meses: null },
+};
+function comCupons(banco, { maximo = {}, planos = {} } = {}) {
+  banco.usosCupom = [];
+  const problema = (codigo, plano) => {
+    if (!CUPONS[codigo]) return "inexistente";
+    if (maximo[codigo] !== undefined && banco.usosCupom.filter((u) => u.codigo === codigo).length >= maximo[codigo]) return "esgotado";
+    if (planos[codigo] && !planos[codigo].includes(plano)) return "plano";
+    return null;
+  };
+  banco.conferirCupom = async (codigo, plano) => {
+    const m = problema(codigo, plano);
+    return m ? { valido: false, motivo: m } : { valido: true, cupom: { ...CUPONS[codigo] } };
+  };
+  banco.reservarCupom = async (codigo, plano, esc) => {
+    const m = banco.forcarEsgotado ? "esgotado" : problema(codigo, plano);
+    if (m) return { valido: false, motivo: m };
+    banco.usosCupom.push({ codigo, esc });
+    banco.cobrancas[esc] = { ...(banco.cobrancas[esc] ?? {}), cupom: { ...CUPONS[codigo] } };
+    return { valido: true, cupom: { ...CUPONS[codigo] } };
+  };
+  // a mensalidade da empresa vem do plano (index.ts lê mensalidade_detalhe)
+  const inserir = banco.inserirEmpresa;
+  banco.inserirEmpresa = async (campos) => {
+    const id = await inserir(campos);
+    banco.empresas[id].mensalidade = banco.planos[campos.plano_id]?.preco_mensal ?? null;
+    return id;
+  };
+  const remover = banco.removerEmpresa;
+  banco.removerEmpresa = async (esc) => { banco.usosCupom = banco.usosCupom.filter((u) => u.esc !== esc); await remover(esc); };
+  return banco;
+}
+/** como aplicar_pagamento_asaas (0052): o pagamento só da adesão não empurra o vencimento */
+function bancoQueAtivaComCupom(banco) {
+  return (evento, p) => {
+    const cob = banco.cobrancas[SITE.id];
+    const pag = banco.pagamentos.find((x) => x.asaas_id === p.id);
+    const primeira = banco.empresas[SITE.id].status === "aguardando_pagamento";
+    banco.empresas[SITE.id].status = "ativo";
+    cob.situacao = "em_dia";
+    const meses = pag?.sem_periodo ? 0 : ({ MONTHLY: 1, SEMIANNUALLY: 6, YEARLY: 12 }[pag?.ciclo ?? cob.ciclo] ?? 1);
+    const novo = somarMeses(p.dueDate, meses);
+    cob.proximo_vencimento = cob.proximo_vencimento && cob.proximo_vencimento > novo ? cob.proximo_vencimento : novo;
+    const criar = primeira && !p.subscription && Number(pag?.adesao) > 0 && !cob.asaas_assinatura_id;
+    return { acao: primeira ? "ativou" : "renovou", escritorio_id: SITE.id, finalidade: "mensalidade", pagamento_id: pag?.id ?? null,
+      ...(criar ? { criar_assinatura: true, ciclo: cob.ciclo, proximo_vencimento: cob.proximo_vencimento } : {}) };
+  };
+}
+
+test("cupom: a página confere antes de criar a conta (o que dá, por que não vale) e o IP tem limite de tentativas", async () => {
+  const { banco, deps } = cenarioCadastro(COM_ADESAO);
+  comCupons(banco, { planos: { VINTE2: ["outro-plano"] } });
+  let r = await tratarPublico(deps, "200.1.2.3", { acao: "cupom_conferir", codigo: " adesao zero ", plano_id: PLANO.id });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.valido, true);
+  assert.equal(r.corpo.cupom.codigo, "ADESAOZERO", "espaços e minúsculas viram o código");
+  r = await tratarPublico(deps, "200.1.2.3", { acao: "cupom_conferir", codigo: "NAOEXISTE", plano_id: PLANO.id });
+  assert.deepEqual({ v: r.corpo.valido, m: r.corpo.motivo }, { v: false, m: "inexistente" });
+  r = await tratarPublico(deps, "200.1.2.3", { acao: "cupom_conferir", codigo: "VINTE2", plano_id: PLANO.id });
+  assert.equal(r.corpo.motivo, "plano");
+  assert.match(r.corpo.mensagem, /não vale para o plano/);
+  for (let i = 0; i < 17; i++) await tratarPublico(deps, "200.1.2.3", { acao: "cupom_conferir", codigo: "X1X", plano_id: PLANO.id });
+  r = await tratarPublico(deps, "200.1.2.3", { acao: "cupom_conferir", codigo: "ADESAOZERO", plano_id: PLANO.id });
+  assert.equal(r.status, 429, "20 tentativas por hora por IP: ninguém testa códigos no atacado");
+  assert.equal((await tratarPublico(deps, "200.9.9.9", { acao: "cupom_conferir", codigo: "ADESAOZERO", plano_id: PLANO.id })).corpo.valido, true);
+  assert.equal(banco.contas.length, 0, "conferir não cria nada");
+});
+
+test("cupom no cadastro: inválido não cria a conta; esgotado na reserva (corrida) desfaz conta e empresa", async () => {
+  let c = cenarioCadastro(COM_ADESAO);
+  comCupons(c.banco);
+  let r = await tratarPublico(c.deps, "200.1.2.3", { ...DADOS, cupom: "NAOEXISTE" });
+  assert.equal(r.status, 422);
+  assert.match(r.corpo.erro, /Cupom não encontrado/);
+  assert.equal(c.banco.contas.length, 0);
+
+  c = cenarioCadastro(COM_ADESAO);
+  comCupons(c.banco);
+  c.banco.forcarEsgotado = true; // conferiu, mas outro cadastro levou o último uso antes da reserva
+  r = await tratarPublico(c.deps, "200.1.2.3", { ...DADOS, cupom: "ADESAOZERO" });
+  assert.equal(r.status, 422);
+  assert.match(r.corpo.erro, /número máximo de vezes/);
+  assert.equal(c.banco.contas.length, 0, "a conta sai");
+  assert.equal(c.banco.removidas.length, 1, "a empresa sai (e o uso volta)");
+});
+
+test("cupom de isenção da adesão: o 1º pagamento é só o período, na assinatura de sempre (sem cobrança avulsa)", async () => {
+  const c = cenarioCadastro({ ...COM_ADESAO, ...ZAP, whatsapp_avisos: "71977776666" });
+  comCupons(c.banco);
+  const r = await tratarPublico(c.deps, "200.1.2.3", { ...DADOS, ciclo: "mensal", cupom: "adesaozero" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.deepEqual({ a: r.corpo.adesao, t: r.corpo.total, c: r.corpo.cupom.codigo }, { a: 0, t: 299.9, c: "ADESAOZERO" });
+  const esc = r.corpo.escritorio_id;
+  assert.equal(c.banco.cobrancas[esc].cupom.codigo, "ADESAOZERO", "a foto do cupom fica na cobrança");
+  assert.equal(c.banco.atividades.find((a) => a.acao === "empresa.cadastro_site").alvo, "Autônomo · mensal · cupom ADESAOZERO");
+  const zaps = c.asaas.chamadas.filter((x) => x.whatsapp);
+  assert.match(zaps.find((z) => z.corpo.number === "5571988887777").corpo.text, /Cupom ADESAOZERO aplicado: Isenção da taxa de adesão\. O primeiro pagamento fica em R\$\s299,90/);
+  assert.match(zaps.find((z) => z.corpo.number === "5571977776666").corpo.text, /Cupom: ADESAOZERO \(Isenção da taxa de adesão\) · 1º pagamento R\$\s299,90/);
+
+  // pagou pelo site: como sem adesão — a assinatura mensal vencendo hoje
+  const p = cenarioPagamento(COM_ADESAO, "MONTHLY", 299.9);
+  p.banco.cobrancas[SITE.id].cupom = { ...CUPONS.ADESAOZERO };
+  const pr = await tratarAcao(p.deps, p.usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "MONTHLY" });
+  assert.equal(pr.status, 200, JSON.stringify(pr.corpo));
+  assert.equal(posts(p.asaas, "/payments").length, 0, "nada de Pix avulso: não há adesão a cobrar");
+  assert.deepEqual({ v: posts(p.asaas, "/subscriptions")[0].corpo.value, d: posts(p.asaas, "/subscriptions")[0].corpo.nextDueDate }, { v: 299.9, d: "2026-10-30" });
+});
+
+test("cupom de 1 mês grátis sem adesão: a conta entra já, sem pagar; a assinatura nasce vencendo daqui a um mês", async () => {
+  const c = cenarioCadastro({ ...ABERTO, ...ZAP, whatsapp_avisos: "71977776666" });
+  comCupons(c.banco);
+  const r = await tratarPublico(c.deps, "200.1.2.3", { ...DADOS, ciclo: "mensal", cupom: "UMMES" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.liberada, true, "a tela vai direto para o sistema");
+  assert.equal(r.corpo.primeira_mensalidade, "2026-11-30");
+  const esc = r.corpo.escritorio_id;
+  assert.equal(c.banco.empresas[esc].status, "ativo");
+  const cob = c.banco.cobrancas[esc];
+  assert.deepEqual({ s: cob.situacao, p: cob.proximo_vencimento, v: cob.valor }, { s: "em_dia", p: "2026-11-30", v: 299.9 });
+  const sub = posts(c.asaas, "/subscriptions");
+  assert.equal(sub.length, 1);
+  assert.deepEqual({ v: sub[0].corpo.value, d: sub[0].corpo.nextDueDate, c: sub[0].corpo.cycle }, { v: 299.9, d: "2026-11-30", c: "MONTHLY" });
+  assert.equal(cob.asaas_assinatura_id, sub[0].corpo.id ?? cob.asaas_assinatura_id);
+  assert.match(cob.asaas_assinatura_id, /^sub_/);
+  assert.equal(posts(c.asaas, "/payments").length, 0, "nenhuma cobrança agora");
+  const zaps = c.asaas.chamadas.filter((x) => x.whatsapp);
+  assert.match(zaps.find((z) => z.corpo.number === "5571988887777").corpo.text, /criada e liberada.*Cupom UMMES: 1º mês sem mensalidade\. Nada a pagar agora.*vence em 30\/11\/2026/s);
+  assert.match(zaps.find((z) => z.corpo.number === "5571977776666").corpo.text, /Cupom: UMMES.*o acesso já está liberado/s);
+});
+
+test("cupom de 3 meses grátis com adesão: paga só a adesão; a 1ª mensalidade vence no fim da isenção", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento(COM_ADESAO, "MONTHLY", 299.9);
+  banco.cobrancas[SITE.id].cupom = { ...CUPONS.TRESMESES };
+  banco.respostaAplicar = bancoQueAtivaComCupom(banco);
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "MONTHLY" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const pix = posts(asaas, "/payments");
+  assert.equal(pix.length, 1);
+  assert.deepEqual({ v: pix[0].corpo.value, b: pix[0].corpo.billingType }, { v: 500, b: "PIX" }, "só a adesão");
+  assert.match(pix[0].corpo.description, /taxa de adesão de R\$\s500,00.*3 primeiros meses sem mensalidade pelo cupom TRESMESES/);
+  assert.deepEqual({ s: banco.pagamentos[0].sem_periodo, a: banco.pagamentos[0].adesao }, { s: true, a: 500 });
+  assert.equal(banco.cobrancas[SITE.id].proximo_vencimento, "2027-01-30");
+  // pagou: ativa e a assinatura nasce vencendo em 30/01/2027, com o valor cheio
+  asaas.cobrancas.get(banco.pagamentos[0].asaas_id).status = "RECEIVED";
+  const r2 = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "MONTHLY" });
+  assert.equal(r2.corpo.ativou, true, JSON.stringify(r2.corpo));
+  const sub = posts(asaas, "/subscriptions");
+  assert.equal(sub.length, 1);
+  assert.deepEqual({ v: sub[0].corpo.value, d: sub[0].corpo.nextDueDate }, { v: 299.9, d: "2027-01-30" });
+});
+
+test("cupom de 20% nas 2 primeiras cobranças: assinatura com desconto; na 3ª cobrança o Asaas passa para o valor cheio (uma vez)", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento({ ...ABERTO, asaas_webhook_token: "tok" }, "MONTHLY", 299.9);
+  banco.cobrancas[SITE.id].cupom = { ...CUPONS.VINTE2 };
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "MONTHLY" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const sub = posts(asaas, "/subscriptions")[0];
+  assert.equal(sub.corpo.value, 239.92, "R$ 299,90 − 20%");
+  assert.equal(banco.cobrancas[SITE.id].cupom_desconto_ate, "2026-12-30", "o 1º pagamento (hoje) + 2 meses");
+  const subId = banco.cobrancas[SITE.id].asaas_assinatura_id;
+  // o Asaas gera as próximas cobranças da assinatura e avisa (PAYMENT_CREATED)
+  banco.respostaAplicar = (ev, p) => {
+    const pg = { id: `pg_${p.id}`, asaas_id: p.id, escritorio_id: SITE.id, finalidade: "mensalidade", valor: p.value, status: p.status };
+    if (!banco.pagamentos.some((x) => x.asaas_id === p.id)) banco.pagamentos.push(pg);
+    return { acao: "atualizado", escritorio_id: SITE.id, finalidade: "mensalidade", pagamento_id: banco.pagamentos.find((x) => x.asaas_id === p.id).id };
+  };
+  const aviso = async (id, dueDate, value) => {
+    asaas.cobrancas.set(id, { id, status: "PENDING", subscription: subId, value, dueDate });
+    return tratarWebhook(deps, "tok", JSON.stringify({ id: `evt_${id}_${Math.random()}`, event: "PAYMENT_CREATED", payment: { id, status: "PENDING", subscription: subId, value, dueDate } }));
+  };
+  await aviso("pay_nov", "2026-11-30", 239.92);
+  assert.equal(asaas.chamadas.filter((x) => x.metodo === "PUT").length, 0, "a 2ª cobrança ainda tem desconto");
+  await aviso("pay_dez", "2026-12-30", 239.92);
+  const puts = asaas.chamadas.filter((x) => x.metodo === "PUT");
+  assert.deepEqual(puts.map((x) => [x.caminho, x.corpo.value]), [["/payments/pay_dez", 299.9], [`/subscriptions/${subId}`, 299.9]],
+    "a 3ª cobrança e a assinatura vão para o valor cheio");
+  assert.equal(puts[1].corpo.updatePendingPayments, false, "a cobrança anterior (ainda com desconto) fica como está");
+  assert.equal(banco.cobrancas[SITE.id].valor, 299.9);
+  assert.equal(banco.pagamentos.find((x) => x.asaas_id === "pay_dez").valor, 299.9);
+  assert.ok(banco.atividades.some((a) => a.acao === "cobranca.cupom_fim"));
+  assert.match(banco.eventos.at(-1).resultado, /cupom VINTE2 encerrado/);
+  // o mesmo aviso de novo (ou o PAYMENT_UPDATED da troca): nada muda
+  await tratarWebhook(deps, "tok", JSON.stringify({ id: "evt_upd", event: "PAYMENT_UPDATED", payment: { id: "pay_dez", status: "PENDING", subscription: subId, value: 299.9, dueDate: "2026-12-30" } }));
+  assert.equal(asaas.chamadas.filter((x) => x.metodo === "PUT").length, 2);
+});
+
+test("cupom combinado (50% na adesão + R$ 50 em todas as mensalidades), anual: 1º pagamento avulso e a assinatura com o desconto para sempre", async () => {
+  const { asaas, banco, deps, usuario } = cenarioPagamento(COM_ADESAO, "YEARLY", 3598.8);
+  banco.cobrancas[SITE.id].cupom = { ...CUPONS.COMBO };
+  banco.respostaAplicar = bancoQueAtivaComCupom(banco);
+  const r = await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "YEARLY" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const pix = posts(asaas, "/payments")[0].corpo;
+  assert.equal(pix.value, 3798.8, "(R$ 3.598,80 − R$ 50) + (R$ 500 − 50%)");
+  assert.match(pix.description, /cupom COMBO/);
+  assert.equal(banco.cobrancas[SITE.id].cupom_desconto_ate ?? null, null, "desconto em todas: sem fim");
+  asaas.cobrancas.get(banco.pagamentos[0].asaas_id).status = "RECEIVED";
+  await tratarAcao(deps, usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "YEARLY" });
+  const sub = posts(asaas, "/subscriptions")[0].corpo;
+  assert.deepEqual({ v: sub.value, d: sub.nextDueDate }, { v: 3548.8, d: "2027-10-30" }, "as renovações continuam com os R$ 50 a menos");
+});
+
+test("cupom no convite: 2 meses grátis empurram a 1ª mensalidade depois do 1º crédito; 20% vale a partir dela", async () => {
+  const s = cenarioPrimeiroCredito({ gastou: "2026-10-31T02:30:00Z" });
+  s.banco.cobrancas[EMPRESA.id].cupom = { ...CUPONS.TRESMESES, codigo: "DOISMESES", isencao_meses: 2 };
+  let r = await tratarAcao(s.deps, s.usuario, { acao: "iniciar_mensalidade" });
+  assert.equal(r.corpo.acao, "iniciada", JSON.stringify(r.corpo));
+  let sub = s.asaas.chamadas.find((c) => c.caminho === "/subscriptions" && c.metodo === "POST").corpo;
+  assert.deepEqual({ v: sub.value, d: sub.nextDueDate }, { v: 199.9, d: "2027-01-30" }, "um mês depois do 1º crédito + 2 meses grátis");
+
+  const t = cenarioPrimeiroCredito({ gastou: "2026-10-31T02:30:00Z" });
+  t.banco.cobrancas[EMPRESA.id].cupom = { ...CUPONS.VINTE2 };
+  r = await tratarAcao(t.deps, t.usuario, { acao: "iniciar_mensalidade" });
+  sub = t.asaas.chamadas.find((c) => c.caminho === "/subscriptions" && c.metodo === "POST").corpo;
+  assert.deepEqual({ v: sub.value, d: sub.nextDueDate }, { v: 159.92, d: "2026-11-30" });
+  assert.equal(t.banco.cobrancas[EMPRESA.id].cupom_desconto_ate, "2027-01-30", "a 1ª cobrança + 2 meses");
+});
+
+test("cupom: atualizar a assinatura no painel respeita o desconto que ainda vale e o que já acabou", async () => {
+  const { asaas, banco, deps } = cenario({ cfg: ASAAS_OK, superadmin: true });
+  banco.cobrancas[EMPRESA.id] = { situacao: "em_dia", ciclo: "MONTHLY", valor: 159.92, asaas_assinatura_id: "sub_x", proximo_vencimento: "2026-11-30",
+    cupom: { ...CUPONS.VINTE2 }, cupom_desconto_ate: "2026-12-30" };
+  asaas.assinaturas.set("sub_x", { id: "sub_x", value: 159.92 });
+  const usuario = { ...SA };
+  let r = await tratarAcao(deps, usuario, { acao: "atualizar_assinatura", escritorio_id: EMPRESA.id });
+  assert.equal(r.corpo.valor, 159.92, "a próxima (30/11) ainda é antes do fim do desconto");
+  banco.cobrancas[EMPRESA.id].proximo_vencimento = "2026-12-30";
+  r = await tratarAcao(deps, usuario, { acao: "atualizar_assinatura", escritorio_id: EMPRESA.id });
+  assert.equal(r.corpo.valor, 199.9, "a próxima já é depois: valor cheio");
+});
+
+// ---- achados da revisão (17/11/2026)
+test("cupom: o Pix reaproveitado dias depois não empurra o fim do desconto (conta do vencimento da cobrança que nasceu)", async () => {
+  const c = cenarioPagamento(ABERTO, "MONTHLY", 299.9);
+  c.banco.cobrancas[SITE.id].cupom = { ...CUPONS.VINTE2 };
+  await tratarAcao(c.deps, c.usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "MONTHLY" });
+  assert.equal(c.banco.cobrancas[SITE.id].cupom_desconto_ate, "2026-12-30");
+  c.deps.hoje = () => "2026-11-04"; // voltou 5 dias depois: o mesmo Pix
+  const r = await tratarAcao(c.deps, c.usuario, { acao: "pagar_cadastro", forma: "pix", ciclo: "MONTHLY" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(posts(c.asaas, "/subscriptions").length, 1, "o mesmo Pix");
+  assert.equal(c.banco.cobrancas[SITE.id].cupom_desconto_ate, "2026-12-30", "o fim do desconto não andou");
+});
+
+test("cupom: a cobrança manual do painel respeita os meses grátis que ainda não começaram", async () => {
+  const s = cenarioPrimeiroCredito({ superadmin: true });
+  s.banco.cobrancas[EMPRESA.id].cupom = { ...CUPONS.TRESMESES };
+  const r = await tratarAcao(s.deps, { ...SA }, { acao: "cobrar_empresa", escritorio_id: EMPRESA.id, liberada: true, enviar_whatsapp: false });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const sub = posts(s.asaas, "/subscriptions")[0].corpo;
+  assert.equal(sub.nextDueDate, "2027-02-02", "liberada (hoje + 3 dias) + 3 meses grátis");
+  assert.equal(s.banco.cobrancas[EMPRESA.id].situacao, "em_dia", "nada vencendo antes do fim da isenção");
+});
+
+test("cupom: o cartão da empresa liberada pelo cupom (assinatura falhou) não cobra antes do fim da isenção", async () => {
+  const c = cenario({ cfg: ASAAS_OK });
+  Object.assign(c.banco.empresas[EMPRESA.id], { status: "ativo", renovacao: "2026-11-30" });
+  c.banco.cobrancas[EMPRESA.id] = { situacao: "em_dia", ciclo: "MONTHLY", proximo_vencimento: "2027-01-30", cupom: { ...CUPONS.TRESMESES } };
+  const r = await tratarAcao(c.deps, c.usuario, { acao: "cartao_salvar", cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const sub = posts(c.asaas, "/subscriptions")[0].corpo;
+  assert.deepEqual({ d: sub.nextDueDate, b: sub.billingType }, { d: "2027-01-30", b: "CREDIT_CARD" });
+});
+
+test("cupom: no cartão só da adesão, o fim da isenção já está gravado quando o Asaas cobra (o webhook pode chegar antes da resposta)", async () => {
+  const c = cenarioPagamento(COM_ADESAO, "MONTHLY", 299.9);
+  c.banco.cobrancas[SITE.id].cupom = { ...CUPONS.TRESMESES };
+  let gravadoNaHora = null;
+  const f = c.asaas.fetch;
+  c.deps.fetch = async (url, init = {}) => {
+    if (String(url).endsWith("/payments") && init.method === "POST") gravadoNaHora = c.banco.cobrancas[SITE.id].proximo_vencimento ?? null;
+    return f(url, init);
+  };
+  const r = await tratarAcao(c.deps, c.usuario, { acao: "pagar_cadastro", forma: "cartao", ciclo: "MONTHLY", parcelas: 1, cartao: CARTAO, titular: TITULAR });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(gravadoNaHora, "2027-01-30");
+  assert.equal(posts(c.asaas, "/payments")[0].corpo.value, 500);
 });
