@@ -2,7 +2,7 @@
 // a tela (o menu do botão) e o servidor (função `entregar`, que valida o pedido)
 // leem a mesma lista — e a tela não precisa carregar proj4 nem JSZip para isso.
 
-export type FormatoArea = "kml" | "kmz" | "dxf" | "cad" | "gpx" | "shp" | "geojson" | "csv" | "txt";
+export type FormatoArea = "kml" | "levantamento" | "kmz" | "dxf" | "cad" | "gpx" | "shp" | "geojson" | "csv" | "txt";
 
 export interface DefFormatoArea {
   id: FormatoArea;
@@ -21,6 +21,8 @@ export interface DefFormatoArea {
 /** Na ordem do menu: os mais pedidos primeiro. */
 export const FORMATOS_AREA: DefFormatoArea[] = [
   { id: "kml", rotulo: "KML", serve: "Google Earth", ext: "kml", tipo: "application/vnd.google-earth.kml+xml", utm: false },
+  // o formato das coletoras da equipe, com altitude, σ e confrontantes: reabre em outro serviço sem pedir nada
+  { id: "levantamento", rotulo: "TXT do levantamento", serve: "com altitude e σ: reabre em outro serviço", ext: "txt", tipo: "text/plain;charset=utf-8", utm: true },
   { id: "dxf", rotulo: "DXF", serve: "AutoCAD / topografia", ext: "dxf", tipo: "application/dxf", utm: true },
   // o DXF não diz o fuso: o pacote leva o .prj do UTM e um LEIAME junto
   { id: "cad", rotulo: "Pacote CAD (.zip)", serve: "DXF + PRJ do fuso + LEIAME", ext: "zip", tipo: "application/zip", utm: true },

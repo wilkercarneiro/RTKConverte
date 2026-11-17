@@ -16,6 +16,7 @@ import { gerarGeoJsonArea } from "./geojson.ts";
 import { gerarShpArea } from "./shp.ts";
 import { gerarCsvPontos, gerarTxtColetora } from "./pontos.ts";
 import { gerarPacoteCad } from "./cad.ts";
+import { gerarTxtLevantamento } from "./levantamento.ts";
 import type { Camada } from "./tipos.ts";
 
 export type { Camada, Feicao, XY } from "./tipos.ts";
@@ -44,6 +45,8 @@ export function nomeDoArquivo(nome: string, formato: FormatoArea, fuso: number):
   const def = FORMATOS_AREA.find((f) => f.id === formato)!;
   if (formato === "shp") return `${base}_SHP_SIRGAS2000.zip`;
   if (formato === "cad") return `${base}_CAD_SIRGAS2000_UTM${fuso}S.zip`;
+  // os dois TXT não podem ter o mesmo nome: o do levantamento diz o que é
+  if (formato === "levantamento") return `${base}_LEVANTAMENTO_SIRGAS2000_UTM${fuso}S.txt`;
   return def.utm ? `${base}_SIRGAS2000_UTM${fuso}S.${def.ext}` : `${base}.${def.ext}`;
 }
 
@@ -67,6 +70,7 @@ export async function exportarArea(camadas: Camada[], formato: FormatoArea, op: 
     case "cad": return com(await gerarPacoteCad(prontas, { base: nomeLimpo(titulo), titulo, fuso, hoje: op.hoje }));
     case "geojson": return com(texto(gerarGeoJsonArea(prontas, titulo)));
     case "shp": return com(await gerarShpArea(prontas, nomeLimpo(titulo), fuso, op.hoje));
+    case "levantamento": return com(texto(gerarTxtLevantamento(prontas).texto));
     case "csv":
     case "txt": {
       const pontos = pontosDasCamadas(prontas);

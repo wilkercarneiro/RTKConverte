@@ -151,7 +151,10 @@ const TRECHOS_PECAS = [
   { id: "t2", servico_id: SID, vertice_inicio_ordem: 1, codigo_inicio: "XXXX-M-0002", descritivo: "ESTRADA VICINAL", tipo_limite: "LA3", eh_via: true, numerado: false, exibir_planta: true },
 ];
 const TABELAS: Record<string, unknown[]> = {
-  servicos: [{ ...SERVICO, tipo: "pecas", modalidade: "completo" }],
+  // ?pecas: a tela de peças lê o serviço como "pecas"; nas outras, o serviço é o da tela
+  // (o "Usar a área em outro serviço" do Exportar ▾ lê o serviço e os vértices daqui)
+  servicos: [q.has("pecas") ? { ...SERVICO, tipo: "pecas", modalidade: "completo" } : SERVICO],
+  vertices: VERTICES_LAB,
   // os confrontantes demoram mais que o serviço: era a janela em que o
   // autossalvamento apagava todos (delete + insert de uma lista vazia)
   trechos_confrontantes: TRECHOS_PECAS,
@@ -171,6 +174,8 @@ function consulta(t: string) {
   const c: Record<string, unknown> = {};
   for (const m of ["select", "order", "in", "limit", "neq", "gte", "eq", "not", "or", "is", "lt", "lte", "ilike"]) c[m] = () => c;
   // documentos_gerados por serviço: a tela do imóvel e a lista das áreas leem a mesma tabela
+  // vértices: só os do serviço da tela (as áreas criadas no laboratório seguem sem vértices, como antes)
+  if (t === "vertices") c.eq = (col: string, v: unknown) => { if (col === "servico_id" && v !== SID) linhas = []; return c; };
   if (t === "documentos_gerados") {
     const doServico = (l: unknown) => (l as { servico_id: string }).servico_id;
     c.eq = (col: string, v: unknown) => { if (col === "servico_id") linhas = linhas.filter((l) => doServico(l) === v); return c; };

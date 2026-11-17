@@ -21,12 +21,15 @@ import { temRecurso } from "../lib/recursos";
 import { MinhaConta } from "./config/MinhaConta";
 import { PlanoUso } from "./config/PlanoUso";
 import { Escritorios } from "./config/Escritorios";
+import { CHAVES_GPS, lerSigma } from "../lib/configGps";
 
 /** Chaves gravadas em config_empresa (key/value). `desenhista` é lida pela planta;
  *  `rt_padrao` e `credenciado_padrao` pré-preenchem serviços novos; contato e
  *  endereço identificam a empresa (suporte, documentos, integração). */
 const CHAVES = ["razao_social", "cnpj", "desenhista", "rt_padrao", "credenciado_padrao",
-  "telefone_empresa", "email_empresa", "site", "cep_empresa", "endereco_empresa", "cidade_empresa", "uf_empresa"] as const;
+  "telefone_empresa", "email_empresa", "site", "cep_empresa", "endereco_empresa", "cidade_empresa", "uf_empresa",
+  // configuração do GPS (lib/configGps.ts): a precisão que completa arquivo sem σ na conferência do TXT
+  ...CHAVES_GPS] as const;
 type Chave = typeof CHAVES[number];
 type Config = Record<Chave, string>;
 const VAZIA = Object.fromEntries(CHAVES.map((k) => [k, ""])) as Config;
@@ -149,6 +152,12 @@ function Empresa({ pasta }: { pasta: string }) {
     e.preventDefault();
     if (!pode) return;
     setErro(null);
+    // a precisão do GPS: as duas ou nenhuma, e um número de verdade (até 10 m)
+    const sp = config.gps_sigma_pos.trim(), sh = config.gps_sigma_h.trim();
+    if ((sp || sh) && (lerSigma(sp) === null || lerSigma(sh) === null)) {
+      setErro("Configuração do GPS: informe as duas precisões (σ) em metros, maiores que zero e até 10 — ex.: 0,05 e 0,08.");
+      return;
+    }
     setSalvando(true);
     const linhas = CHAVES.map((key) => ({ key, value: config[key] ?? "" }));
     const falhou = await salvarConfigEmpresa(linhas);
@@ -235,6 +244,18 @@ function Empresa({ pasta }: { pasta: string }) {
                 <option value="">—</option>
                 {credenciados.map((c) => <option key={c.id} value={c.id}>{c.nome} ({c.prefixo_vertice})</option>)}
               </select>
+            </label>
+          </div>
+          <h4 className="config-sub">Configuração do GPS<Dica>Quando um arquivo chega sem a precisão dos pontos (KML, GPX, planilha só com coordenadas), a conferência do TXT oferece usar esta precisão com um clique — e a altitude de cada ponto sai do relevo, pela coordenada. Use a precisão que o seu receptor entrega no método de sempre.</Dica></h4>
+          <div className="grade config-grade">
+            <label>Equipamento GNSS
+              <input value={config.gps_equipamento} onChange={(e) => campo("gps_equipamento", e.target.value)} placeholder="ex.: receptor RTK CHC i73" />
+            </label>
+            <label><Rotulo dica="desvio-padrão horizontal de cada ponto, em metros">σ horizontal (m)</Rotulo>
+              <input className="mono" inputMode="decimal" value={config.gps_sigma_pos} onChange={(e) => campo("gps_sigma_pos", e.target.value)} placeholder="0,05" />
+            </label>
+            <label><Rotulo dica="desvio-padrão vertical de cada ponto, em metros">σ vertical (m)</Rotulo>
+              <input className="mono" inputMode="decimal" value={config.gps_sigma_h} onChange={(e) => campo("gps_sigma_h", e.target.value)} placeholder="0,08" />
             </label>
           </div>
         </fieldset>

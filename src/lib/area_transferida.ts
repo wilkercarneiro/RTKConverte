@@ -1,12 +1,18 @@
-// Área levada de uma ferramenta (Consultar imóvel, Medir no campo) para um
-// serviço novo, sem baixar e reenviar arquivo.
+// Área levada de uma ferramenta (Consultar imóvel, Medir no campo) ou de outro
+// serviço (Exportar ▾ → "Usar a área em outro serviço") para um serviço novo,
+// sem baixar e reenviar arquivo.
 //
-// A ferramenta grava a área aqui e navega para #/novo/car (ou outra
-// modalidade que aceite área pronta). A tela de entrada do serviço lê com
-// `pegarAreaTransferida()` — que também apaga — e já começa com o perímetro
-// carregado, como se o operador tivesse enviado o KML.
+// Quem leva grava a área aqui e navega para #/novo/<modalidade>. A tela de
+// entrada do serviço lê com `pegarAreaTransferida()` — que também apaga — e já
+// começa com a área carregada, como se o operador tivesse enviado o arquivo:
+//   • o CAR (CarNovo) usa o `perimetro` em lon/lat, como o de um KML;
+//   • os serviços GEO (Upload) abrem o `arquivo` (o TXT do levantamento, com
+//     altitude, σ e confrontantes) na conferência do TXT; sem `arquivo`, montam
+//     um KML do `perimetro`.
 //
 // sessionStorage: some ao fechar a aba e não vaza para outra conta.
+
+import type { VerticeLevado } from "./area_vertices";
 
 export type LonLat = [number, number];
 
@@ -30,6 +36,12 @@ export interface AreaTransferida {
   frase?: string;
   /** o "← Voltar" da tela de entrada leva de volta à ferramenta de origem, não ao Início */
   volta?: VoltaDaArea;
+  /** o arquivo de pontos da área (TXT do levantamento): o Upload o abre como se tivesse sido enviado */
+  arquivo?: { nome: string; conteudo: string };
+  /** fuso UTM das coordenadas do `arquivo` (o serviço novo nasce nele, sem perguntar) */
+  fuso?: number | null;
+  /** o que o TXT não carrega (confrontação completa dos M, método de cada vértice): reaplicado por coordenada depois de criar */
+  vertices?: VerticeLevado[];
 }
 
 export interface VoltaDaArea {

@@ -157,8 +157,8 @@ const chave9 = (p) => `${p[0].toFixed(9)},${p[1].toFixed(9)}`;
 // Formatos
 // ======================================================================
 
-test("formatos: os nove do menu, e o nome do arquivo diz o sistema de coordenadas", () => {
-  assert.deepEqual(new Set(FORMATOS_AREA.map((f) => f.id)), new Set(["kml", "kmz", "dxf", "cad", "gpx", "shp", "geojson", "csv", "txt"]));
+test("formatos: os dez do menu, e o nome do arquivo diz o sistema de coordenadas", () => {
+  assert.deepEqual(new Set(FORMATOS_AREA.map((f) => f.id)), new Set(["kml", "levantamento", "kmz", "dxf", "cad", "gpx", "shp", "geojson", "csv", "txt"]));
   assert.equal(FORMATOS_AREA.find((f) => f.id === "cad").rotulo, "Pacote CAD (.zip)");
   assert.ok(!FORMATOS_AREA.some((f) => /dwg/i.test(`${f.rotulo} ${f.serve}`)), "DXF não é DWG");
   assert.equal(nomeDoArquivo("Fazenda São José", "dxf", 24), "FAZENDA_SAO_JOSE_SIRGAS2000_UTM24S.dxf");
@@ -687,7 +687,7 @@ test("entregar · formato inválido é 400 com a lista, antes de qualquer consul
   for (const formato of [undefined, "pdf", "dwg", 7]) {
     const r = await chamar({ servico_id: "s1", saida: "area", formato });
     assert.equal(r.status, 400);
-    assert.match(r.corpo.erro, /Formato de exportação inválido.*kml, dxf, cad, gpx, shp, kmz, geojson, csv, txt/);
+    assert.match(r.corpo.erro, /Formato de exportação inválido.*kml, levantamento, dxf, cad, gpx, shp, kmz, geojson, csv, txt/);
   }
   assert.deepEqual(b.chamadasRpc ?? [], [], "nem permissão nem contorno foram consultados");
 });

@@ -23,6 +23,12 @@ export interface Feicao {
   furosGeo?: XY[][];
   /** altitude de cada ponto (null = sem altitude) */
   alt?: (number | null)[];
+  /**
+   * Ponto: a precisão do vértice (σ horizontal e vertical, em m), quando o
+   * serviço tem. Só o TXT do levantamento escreve (é o que o leitor relê sem
+   * pedir σ de novo); os outros formatos não mudam.
+   */
+  sigma?: { pos: number; h: number } | null;
   props?: Record<string, Valor>;
   /**
    * Confrontante de cada lado do polígono (lado i: ponto i → i+1), quando o

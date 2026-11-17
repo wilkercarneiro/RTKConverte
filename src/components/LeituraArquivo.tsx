@@ -30,6 +30,9 @@ import { Dica } from "./ui";
 import { lonLatDeUtm, PreviaRestricoes } from "./RestricoesImovel";
 import { estimarAltitudes } from "../lib/altitude_terreno";
 import type { AltitudesEstimadas } from "../lib/altitude_terreno";
+import { carregarConfigGps, fmtSigma, lerSigma, salvarConfigGps } from "../lib/configGps";
+import type { ConfigGps } from "../lib/configGps";
+import { temPermissao } from "../lib/permissoes";
 import "./leitura.css";
 
 const proj4: Proj4 = (de, para, c) => (proj4lib as unknown as Proj4)(de, para, c);
@@ -158,7 +161,7 @@ const fmtCoord = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigit
 
 type Modo = { t: "ver" } | { t: "ligar"; partes: number[][]; aberta: boolean } | { t: "encaixar"; idx: number };
 
-export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirmar, onTrocarArquivo, uf = "", fuso = null, onEscolherFuso }: {
+export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirmar, onTrocarArquivo, uf = "", fuso = null, onEscolherFuso, configGps }: {
   nomeArquivo: string;
   resposta: RespostaLeitura;
   criando: boolean;
@@ -171,6 +174,8 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
   fuso?: number | null;
   /** o operador escolheu o fuso aqui (vale também para criar o serviço) */
   onEscolherFuso?: (z: number) => void;
+  /** configuração do GPS já conhecida (laboratório); ausente = lê de config_empresa */
+  configGps?: ConfigGps | null;
 }) {
   const linhas = resposta.linhas;
   const podeAjustar = !!resposta.ajustes;
@@ -194,6 +199,25 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
     const pos = Number(sigmaTexto.pos.replace(",", ".")), h = Number(sigmaTexto.h.replace(",", "."));
     return pos > 0 && h > 0 && pos <= 10 && h <= 10 ? { pos, h } : null;
   }, [sigmaTexto]);
+
+  // Configuração do GPS da empresa (Configurações → Empresa): o arquivo que chega
+  // sem σ e/ou sem altitude (KML, GPX, planilha 2D) se completa com UM clique —
+  // σ da configuração + altitude pelo relevo. undefined = carregando; null = não há.
+  const [gps, setGps] = useState<ConfigGps | null | undefined>(configGps);
+  useEffect(() => {
+    if (configGps !== undefined) return; // veio pronta (laboratório)
+    let vivo = true;
+    void carregarConfigGps().then((c) => { if (vivo) setGps(c); });
+    return () => { vivo = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // o "sim" da pergunta: vale como o "conferi" da altitude estimada
+  const [aceitouGps, setAceitouGps] = useState(false);
+  // valores do cartão quando a empresa não tem configuração (ou a pessoa quer outros)
+  const [gpsTexto, setGpsTexto] = useState({ pos: "", h: "" });
+  const [gpsManual, setGpsManual] = useState(false);
+  const [guardarGps, setGuardarGps] = useState(true);
+  const sigmaAntes = useRef({ pos: "", h: "" });
+  useEffect(() => { if (gps) setGpsTexto((t) => (t.pos || t.h ? t : { pos: fmtSigma(gps.sigmaPos), h: fmtSigma(gps.sigmaH) })); }, [gps]);
 
   // altitude pela coordenada para os pontos sem altitude no arquivo (modelo de terreno)
   // (os valores são por índice do ponto: só valem para a mesma receita)
@@ -440,12 +464,51 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
     try { return lonLatDeUtm(partesEsboco, fusoPrevia); } catch { return []; }
   }, [partesEsboco, fusoPrevia]);
 
+  // ---- "Seu arquivo veio sem σ e altitude. Usar a configuração do GPS?" ----
+  // (a falta é a do ARQUIVO: depois do "sim" o σ declarado continua contando)
+  const faltaSigma = !!leitura && (leitura.avisos.some((a) => a.codigo === "sem_precisao") || leitura.anel.some((p) => p.sigmaDeclarado));
+  const faltaAltura = pedemAltura.length > 0;
+  const sigmaCartao = { pos: lerSigma(gpsTexto.pos), h: lerSigma(gpsTexto.h) };
+  const usaValoresDaConfig = !!gps && !gpsManual;
+  const cartaoValido = !faltaSigma || (sigmaCartao.pos !== null && sigmaCartao.h !== null);
+  const podeGuardarGps = temPermissao("empresa.configurar");
+  async function usarGps() {
+    if (!cartaoValido) return;
+    sigmaAntes.current = sigmaTexto;
+    if (faltaSigma) {
+      const pos = usaValoresDaConfig ? gps!.sigmaPos : sigmaCartao.pos!, h = usaValoresDaConfig ? gps!.sigmaH : sigmaCartao.h!;
+      setSigmaTexto({ pos: fmtSigma(pos), h: fmtSigma(h) });
+      // valores novos viram a configuração da empresa (quem pode configurar e deixou marcado)
+      if (!usaValoresDaConfig && guardarGps && podeGuardarGps && (!gps || gps.sigmaPos !== pos || gps.sigmaH !== h)) {
+        const nova: ConfigGps = { equipamento: gps?.equipamento ?? "", sigmaPos: pos, sigmaH: h };
+        if (!(await salvarConfigGps(nova))) setGps(nova);
+      }
+    }
+    setAceitouGps(true);
+    setGpsManual(false);
+  }
+  function desfazerGps() {
+    setAceitouGps(false);
+    // volta o σ que estava antes do "sim" (digitado à mão na caixa, ou vazio)
+    setSigmaTexto(sigmaAntes.current);
+  }
+  const textoAltitude = buscandoAlt ? `buscando a altitude de ${pedemAltura.length} ponto(s) pelo relevo…`
+    : alturaPadrao ? `altitude de ${Object.keys(alturaPadrao).length} ponto(s) pelo relevo${alturas?.est.calibracao !== null && alturas?.est.calibracao !== undefined ? ", calibrada pelos pontos medidos" : ""}`
+    : erroAlt ? "não foi possível buscar a altitude pelo relevo"
+    : "altitude de cada ponto pelo relevo, pela coordenada";
+
   const bloqueios = leitura ? leitura.avisos.filter((a) => a.nivel === "bloqueio") : [];
-  const faltaConfirmar = leitura ? leitura.aConfirmar.filter((c) => !confirmados.has(c)) : [];
+  // o "sim" da configuração do GPS conta como o "conferi" da altitude estimada
+  const confirmadosEf = useMemo(
+    () => (aceitouGps && leitura?.aConfirmar.includes("altura_estimada") ? new Set([...confirmados, "altura_estimada"]) : confirmados),
+    [aceitouGps, leitura, confirmados],
+  );
+  const faltaConfirmar = leitura ? leitura.aConfirmar.filter((c) => !confirmadosEf.has(c)) : [];
   const pode = !!leitura && leitura.ok && faltaConfirmar.length === 0 && !criando && modo.t === "ver";
   const semSigma = leitura?.avisos.some((a) => a.codigo === "sem_precisao") || sigmaPadrao !== null || !!leitura?.anel.some((p) => p.sigmaDeclarado);
   const origem = ORIGEM(receita, resposta.perfil);
-  const estado = !leitura || bloqueios.length ? "ruim" : leitura.aConfirmar.length ? "atencao" : "bom";
+  // tudo conferido (à mão ou pelo "sim" do GPS) também é "bom": nada mais a fazer antes do Prosseguir
+  const estado = !leitura || bloqueios.length ? "ruim" : faltaConfirmar.length ? "atencao" : "bom";
   const tabular = receita.registro === "linha" || receita.registro === "planilha";
   const ajustesFeitos = excluir.size + incluir.size + (ligacao ? 1 : 0);
   const inativos = leitura ? leitura.pontos.filter((p) => inativo(situacao(p))).length : 0;
@@ -454,7 +517,7 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
   function prosseguir() {
     if (!leitura) return;
     onConfirmar({
-      receita, ordem, excluir: [...excluir], sigma_padrao: sigmaPadrao, altura_padrao: alturaPadrao, confirmados: [...confirmados], versao: leitura.versoes.escolhida,
+      receita, ordem, excluir: [...excluir], sigma_padrao: sigmaPadrao, altura_padrao: alturaPadrao, confirmados: [...confirmadosEf], versao: leitura.versoes.escolhida,
       incluir: [...incluir], ligacao,
       resumo: { pontos: leitura.anel.length, partes: leitura.blocos.length, areaHa: medidas?.areaHa ?? null, perimetroM: medidas?.perimetroM ?? null },
     });
@@ -470,6 +533,7 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
             {!leitura ? "Não foi possível ler com estas opções"
               : estado === "ruim" ? "Falta resolver antes de prosseguir"
               : estado === "atencao" ? "Lido — confira os pontos marcados abaixo"
+              : leitura.aConfirmar.length ? "Conferido — pronto para prosseguir"
               : "Arquivo lido sem pendências"}
           </b>
           <span className="lt-chips">
@@ -485,6 +549,65 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
         </div>
         <button type="button" className="fantasma" onClick={() => setAjustar((v) => !v)}>{ajustar ? "ocultar colunas" : "ajustar colunas"}</button>
       </div>
+
+      {/* ---- arquivo sem σ e/ou sem altitude: completa com a configuração do GPS + relevo, num clique ---- */}
+      {leitura && leitura.anel.length >= 3 && (faltaSigma || faltaAltura) && (aceitouGps ? (
+        <div className="lt-gps lt-gps-ok" role="status" data-testid="gps-aplicado">
+          <span className="lt-gps-sinal" aria-hidden>✓</span>
+          <span className="lt-gps-texto">
+            <b>{faltaSigma ? "Configuração do GPS aplicada" : "Altitude pelo relevo aplicada"}</b>
+            <span>
+              {faltaSigma && sigmaPadrao ? `σ ${fmtSigma(sigmaPadrao.pos)} m horizontal e ${fmtSigma(sigmaPadrao.h)} m vertical` : ""}
+              {faltaSigma && faltaAltura ? " · " : ""}
+              {faltaAltura ? textoAltitude : ""}
+            </span>
+          </span>
+          {faltaAltura && erroAlt && !buscandoAlt && <button type="button" onClick={() => void buscarAltitudes()}>Tentar de novo</button>}
+          <button type="button" className="fantasma" onClick={desfazerGps}>desfazer</button>
+        </div>
+      ) : (
+        <section className="lt-gps" aria-label="Completar o arquivo" data-testid="gps-pergunta">
+          <span className="lt-gps-sinal" aria-hidden>?</span>
+          <div className="lt-gps-texto">
+            <b>Seu arquivo veio sem {[faltaSigma && "a precisão (σ)", faltaAltura && "a altitude"].filter(Boolean).join(" e ")} dos pontos.</b>
+            <span>{faltaSigma ? "Usar a configuração do GPS?" : "Usar a altitude do relevo?"}<Dica lado="baixo">
+              {faltaSigma && "A precisão (σ) é a do seu receptor no método usado, como está em Configurações → Empresa → Configuração do GPS. "}
+              {faltaAltura && "A altitude sai do modelo digital de terreno pela latitude/longitude de cada ponto (o mesmo do relevo); com pontos de altitude medida no arquivo, o modelo é calibrado por eles. Sem nenhum ponto medido é a cota do terreno, que pode diferir 10–20 m da altitude elipsoidal: serve para planta, memorial e relevo; para protocolar no SIGEF, prefira a altitude do receptor."}
+            </Dica></span>
+            <ul className="lt-gps-itens">
+              {faltaSigma && (usaValoresDaConfig ? (
+                <li>σ <b className="mono">{fmtSigma(gps!.sigmaPos)} m</b> horizontal e <b className="mono">{fmtSigma(gps!.sigmaH)} m</b> vertical{gps!.equipamento ? ` — ${gps!.equipamento}` : ""}</li>
+              ) : (
+                <li className="lt-gps-campos">
+                  {gps === null && <p className="lt-gps-nota">A empresa ainda não tem a configuração do GPS: informe a precisão do seu receptor.</p>}
+                  <label>σ horizontal (m)<input className="mono" inputMode="decimal" value={gpsTexto.pos} placeholder="0,05" onChange={(e) => setGpsTexto((t) => ({ ...t, pos: e.target.value }))} /></label>
+                  <label>σ vertical (m)<input className="mono" inputMode="decimal" value={gpsTexto.h} placeholder="0,08" onChange={(e) => setGpsTexto((t) => ({ ...t, h: e.target.value }))} /></label>
+                  {podeGuardarGps && (
+                    <label className="lt-gps-guardar"><input type="checkbox" checked={guardarGps} onChange={(e) => setGuardarGps(e.target.checked)} /> guardar como a configuração do GPS da empresa</label>
+                  )}
+                </li>
+              ))}
+              {faltaAltura && (
+                <li>
+                  {buscandoAlt && <span className="spinner" />} {textoAltitude[0].toUpperCase() + textoAltitude.slice(1)}
+                  {!buscandoAlt && erroAlt && <> <button type="button" className="fantasma" onClick={() => void buscarAltitudes()}>tentar de novo</button></>}
+                  {!buscandoAlt && precisaGeo && fusoEsboco === null && (
+                    <span className="lt-fuso-opcoes">
+                      {fusos.map((f) => <button key={f.zone} type="button" onClick={() => onEscolherFuso?.(f.zone)}>fuso {f.zone}S — {fmtLon(f.lon)}</button>)}
+                    </span>
+                  )}
+                </li>
+              )}
+            </ul>
+          </div>
+          <div className="lt-gps-acoes">
+            <button type="button" className="principal" disabled={!cartaoValido || (faltaSigma && gps === undefined)} onClick={() => void usarGps()}>
+              {faltaSigma ? "Usar a configuração do GPS" : "Usar a altitude do relevo"}
+            </button>
+            {faltaSigma && usaValoresDaConfig && <button type="button" className="fantasma" onClick={() => { setGpsManual(true); setGuardarGps(false); }}>outros valores</button>}
+          </div>
+        </section>
+      ))}
 
       <div className="lt-grade">
         <div className="lt-esquerda">
@@ -697,7 +820,7 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
               )}
               {!buscandoAlt && !erroAlt && alturaPadrao && (
                 <p className="sub pequeno">
-                  Altitude preenchida em {Object.keys(alturaPadrao).length} ponto(s){alturas?.est.calibracao !== null && alturas?.est.calibracao !== undefined ? `, calibrada pelos pontos medidos (${alturas.est.calibracao >= 0 ? "+" : ""}${alturas.est.calibracao.toLocaleString("pt-BR")} m)` : " pelo modelo de terreno"}. Confira e marque “conferi” no aviso.
+                  Altitude preenchida em {Object.keys(alturaPadrao).length} ponto(s){alturas?.est.calibracao !== null && alturas?.est.calibracao !== undefined ? `, calibrada pelos pontos medidos (${alturas.est.calibracao >= 0 ? "+" : ""}${alturas.est.calibracao.toLocaleString("pt-BR")} m)` : " pelo modelo de terreno"}.{aceitouGps ? " Aceita no cartão do alto." : " Confira e marque “conferi” no aviso."}
                 </p>
               )}
             </div>
@@ -724,8 +847,12 @@ export function LeituraArquivo({ nomeArquivo, resposta, criando, erro, onConfirm
                       <span>{a.mensagem}{a.linhas?.length ? <small className="sub"> · linha{a.linhas.length > 1 ? "s" : ""} {a.linhas.slice(0, 12).join(", ")}{a.linhas.length > 12 ? "…" : ""}</small> : null}</span>
                       {confirmar && (
                         <label className="lt-conferi">
-                          <input type="checkbox" checked={confirmados.has(a.codigo)}
-                            onChange={(e) => setConfirmados((s) => { const n = new Set(s); if (e.target.checked) n.add(a.codigo); else n.delete(a.codigo); return n; })} />
+                          <input type="checkbox" checked={confirmadosEf.has(a.codigo)}
+                            onChange={(e) => {
+                              // desmarcar a altitude depois do "sim" do GPS desfaz o "sim" (a altitude volta a pedir conferência)
+                              if (!e.target.checked && a.codigo === "altura_estimada") setAceitouGps(false);
+                              setConfirmados((s) => { const n = new Set(s); if (e.target.checked) n.add(a.codigo); else n.delete(a.codigo); return n; });
+                            }} />
                           conferi
                         </label>
                       )}

@@ -4,6 +4,10 @@
 //   #/lab/leitura/ia       formato novo interpretado pela IA (receita simulada)
 //   #/lab/leitura/cruza    numeração que cruza o desenho (ordem do arquivo)
 //   #/lab/leitura/semsigma PNEZD sem precisões (σ declarado na prévia)
+//   #/lab/leitura/upload/<modalidade>  a tela de início do serviço (Upload), com a ler-arquivo
+//                          simulada aqui: abre a área levada pelo Exportar ▾ do lab da conferência
+//   #/lab/leitura/kml      KML do Google Earth (sem σ, altitude 0): "Usar a configuração do GPS?"
+//                          (?gps = a empresa já tem a configuração; sem = o cartão pede os valores)
 //   #/lab/leitura/versoes  levantamento + os mesmos pontos "postp_" (só uma versão entra)
 //   #/lab/leitura/manual   formato não reconhecido: o operador mapeia as colunas
 //   #/lab/leitura/pascoal  o desenho no Monte Pascoal (TI + Parque Nacional): prévia grátis das restrições
@@ -21,6 +25,10 @@ import type { Receita } from "../../supabase/functions/_shared/leitor/receita.ts
 import { LeituraArquivo } from "./LeituraArquivo";
 import type { LeituraConfirmada, RespostaLeitura } from "./LeituraArquivo";
 import { confirmar, DialogosGlobais, Passos } from "./ui";
+import { Upload } from "./Upload";
+import { supabase } from "../lib/supabase";
+import { definicaoDe } from "../lib/modalidades";
+import type { ChaveServico } from "../lib/modalidades";
 import THEREZA from "../../reference/THEREZA.txt?raw";
 import LARISSA from "../../reference/LARISSA.txt?raw";
 
@@ -68,6 +76,16 @@ function caso(nome: string): { arquivo: string; linhas: string[]; receita?: Rece
     case "semaltura":
       // planilha só com E/N (KML do Google Earth, DXF 2D…): a altitude vem da coordenada
       return { arquivo: "pontos_sem_altitude.csv", linhas: base.map((p) => `${p.num};${p.e.toFixed(3).replace(".", ",")};${p.n.toFixed(3).replace(".", ",")}`) };
+    case "kml": {
+      // KML do Google Earth: pontos em lat/lon com altitude 0 (colado ao chão) e sem σ —
+      // a pergunta "Usar a configuração do GPS?" completa os dois de uma vez
+      const pm = base.map((p) => {
+        const [lon, lat] = proj4(utmDef(24), GEO_DEF, [p.e, p.n]);
+        return `<Placemark><name>${p.num}${p.rotulo ? ` ${p.rotulo.replace(/[<&>]/g, "")}` : ""}</name><Point><coordinates>${lon.toFixed(8)},${lat.toFixed(8)},0</coordinates></Point></Placemark>`;
+      });
+      const kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>FAZENDA LARISSA</name>\n${pm.join("\n")}\n</Document></kml>`;
+      return { arquivo: "FAZENDA_LARISSA.kml", linhas: separarLinhas(kml) };
+    }
     case "semsigma":
       return { arquivo: "pontos_pnezd.csv", linhas: base.map((p) => `${p.num},${p.n.toFixed(3)},${p.e.toFixed(3)},${p.h.toFixed(3)},${p.rotulo ?? ""}`) };
     case "manual":
@@ -77,7 +95,57 @@ function caso(nome: string): { arquivo: string; linhas: string[]; receita?: Rece
   }
 }
 
+/**
+ * #/lab/leitura/upload/<modalidade>: a tela de início do serviço (Upload) com a
+ * função `ler-arquivo` simulada pelo leitor de verdade, aqui no navegador. Serve
+ * para a área levada de outro serviço (Exportar ▾ → "Usar a área em outro
+ * serviço"): o lab da conferência grava a área e esta tela a abre.
+ */
+let uploadInstalado = false;
+function LaboratorioUpload({ chave }: { chave: string }) {
+  if (!uploadInstalado) {
+    uploadInstalado = true;
+    const auth = supabase.auth as unknown as Record<string, unknown>;
+    auth.getSession = () => Promise.resolve({ data: { session: { access_token: "lab" } }, error: null });
+    (supabase as unknown as Record<string, unknown>).from = () => {
+      const c: Record<string, unknown> = {};
+      for (const m of ["select", "order", "in", "limit", "eq"]) c[m] = () => c;
+      c.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(ok);
+      return c;
+    };
+    const fetchReal = window.fetch.bind(window);
+    window.fetch = async (entrada: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(entrada instanceof Request ? entrada.url : entrada);
+      if (u.includes("/functions/v1/ler-arquivo")) {
+        const corpo = JSON.parse(String(init?.body ?? "{}")) as { arquivo_base64: string };
+        const bin = atob(corpo.arquivo_base64);
+        const texto = new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0)));
+        const linhas = separarLinhas(texto);
+        const l = lerLinhas(linhas, { proj4 });
+        const r: RespostaLeitura = {
+          ok: true, formato: "texto (utf-8)", codificacao: "utf-8", linhas, receita: l?.receita ?? null, confianca: l?.confianca ?? "baixa",
+          duvidas: l?.duvidas ?? [], perfil: null, ajustes: 1, ia: { usada: false, tentativas: [], custoUsd: 0, erro: null, motivo: null },
+        };
+        return new Response(JSON.stringify(r), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return fetchReal(entrada, init);
+    };
+  }
+  return (
+    <div style={{ padding: 24 }}>
+      <DialogosGlobais />
+      <Upload definicao={definicaoDe(chave as ChaveServico)} onParsed={() => undefined} onVoltar={() => undefined} />
+    </div>
+  );
+}
+
 export function LaboratorioLeitura() {
+  return location.hash.startsWith("#/lab/leitura/upload")
+    ? <LaboratorioUpload chave={location.hash.split("/")[4]?.split("?")[0] || "completo"} />
+    : <LaboratorioPrevia />;
+}
+
+function LaboratorioPrevia() {
   const nome = (location.hash.split("/")[3] ?? "equipe").split("?")[0];
   const c = useMemo(() => caso(nome), [nome]);
   const [confirmada, setConfirmada] = useState<LeituraConfirmada | null>(null);
@@ -109,6 +177,8 @@ export function LaboratorioLeitura() {
         </div>
         <LeituraArquivo key={nome} nomeArquivo={c.arquivo} resposta={resposta} criando={false} erro={null}
           uf={uf} fuso={fuso} onEscolherFuso={setFuso}
+          // ?gps: a empresa já tem a configuração do GPS; sem: ainda não tem (o cartão pede os valores)
+          configGps={location.hash.includes("gps") ? { equipamento: "Receptor RTK CHC i73", sigmaPos: 0.05, sigmaH: 0.08 } : null}
           onConfirmar={async (l) => {
             // a mesma pergunta do Upload (aqui sem banco: o texto genérico)
             const ok = await confirmar({ titulo: "Prosseguir vai consumir 1 crédito geral", texto: <><p>Sai dos créditos do mês: depois dele, sobram 37 de 50 (renova em 10/11).</p><p className="sub">{`O serviço será criado com ${l.resumo.pontos} pontos. (laboratório: nada é criado)`}</p></>, confirmar: "Prosseguir e usar 1 crédito geral", cancelar: "Voltar à conferência" });

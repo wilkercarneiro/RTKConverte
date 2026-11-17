@@ -206,3 +206,37 @@ button.lt-esboco-convite:hover:not(:disabled) { border-color: var(--primaria); c
   .lt-pontos-tabela th:nth-child(4), .lt-pontos-tabela td:nth-child(4) { display: none; }
   .lt-esboco-kpis b { font-size: 12.5px; }
 }
+
+/* "Seu arquivo veio sem σ e altitude. Usar a configuração do GPS?" — a pergunta
+   única logo abaixo da faixa; depois do "sim", vira uma linha verde com "desfazer". */
+.lt-gps {
+  display: flex; align-items: flex-start; gap: 14px; margin-top: 10px; padding: 14px 16px;
+  border-radius: var(--raio); border: 1px solid color-mix(in srgb, var(--primaria) 35%, transparent);
+  background: linear-gradient(180deg, #fff, var(--primaria-clara));
+}
+.lt-gps-sinal {
+  width: 34px; height: 34px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 800; color: #fff; background: var(--primaria);
+}
+.lt-gps-texto { display: grid; gap: 4px; flex: 1; min-width: 0; font-size: 14px; }
+.lt-gps-texto > b { font-size: 15px; }
+.lt-gps-itens { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 4px; color: var(--texto-2); font-size: 13.5px; }
+.lt-gps-itens b { color: var(--texto); }
+.lt-gps-itens .spinner { width: 12px; height: 12px; vertical-align: -1px; }
+.lt-gps-campos { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; }
+.lt-gps-campos > .lt-gps-nota { flex-basis: 100%; margin: 0; font-size: 12.5px; color: var(--texto-2); }
+.lt-gps-campos label.lt-gps-guardar { flex-basis: 100%; }
+.lt-gps-campos label { display: grid; gap: 3px; font-size: 12.5px; }
+.lt-gps-campos input.mono { width: 92px; padding: 5px 8px; }
+.lt-gps-campos label.lt-gps-guardar { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.lt-gps-campos label.lt-gps-guardar input { width: auto; margin: 0; }
+.lt-gps-itens .lt-fuso-opcoes { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
+.lt-gps-acoes { display: flex; flex-direction: column; align-items: stretch; gap: 6px; flex: none; }
+.lt-gps-ok { align-items: center; padding: 10px 14px; background: var(--primaria-clara); }
+.lt-gps-ok .lt-gps-sinal { width: 26px; height: 26px; font-size: 13px; }
+.lt-gps-ok .lt-gps-texto { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.lt-gps-ok .lt-gps-texto span { color: var(--texto-2); font-size: 13.5px; }
+@media (max-width: 720px) {
+  .lt-gps { flex-wrap: wrap; }
+  .lt-gps-acoes { flex-basis: 100%; }
+}

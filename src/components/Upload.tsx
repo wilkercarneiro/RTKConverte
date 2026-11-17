@@ -4,7 +4,11 @@
 // regras, IA) → etapa "Leitura do arquivo" (prévia conferida pelo operador) →
 // parse-txt, que reexecuta a leitura confirmada, une os certificados e cria o
 // serviço.
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { pegarAreaTransferida } from "../lib/area_transferida";
+import type { AreaTransferida } from "../lib/area_transferida";
+import { remendosDosVertices } from "../lib/area_vertices";
+import type { VerticeLevado } from "../lib/area_vertices";
 import { LeituraArquivo } from "./LeituraArquivo";
 import type { LeituraConfirmada, RespostaLeitura } from "./LeituraArquivo";
 import { chamarFuncao, supabase } from "../lib/supabase";
@@ -19,7 +23,7 @@ import type { PreviewParse, Servico, Trecho, Vertice } from "../lib/types";
 import { parseCsvSigef } from "../../supabase/functions/_shared/certificados.ts";
 import type { VerticeSigef } from "../../supabase/functions/_shared/certificados.ts";
 import { Icone, ICONE } from "./Icone";
-import { confirmar, Dica, Passos, Rotulo, type Passo } from "./ui";
+import { avisar, confirmar, Dica, Passos, Rotulo, type Passo } from "./ui";
 import { PlantaCertificada } from "./PlantaCertificada";
 import { PainelSigef } from "./PainelSigef";
 import { BarreiraErro } from "./BarreiraErro";
@@ -91,6 +95,41 @@ async function fusoMaisUsado(uf: string, opcoes: number[]): Promise<number | nul
   } catch { return null; }
 }
 
+/**
+ * O arquivo de uma área transferida: o TXT do levantamento que veio com ela;
+ * sem ele (área de uma ferramenta, só o contorno), um KML do perímetro com os
+ * vértices nomeados — o leitor lê os dois sozinho.
+ */
+async function arquivoDaArea(a: AreaTransferida): Promise<File> {
+  if (a.arquivo?.conteudo) return new File([a.arquivo.conteudo], a.arquivo.nome || "area.txt", { type: "text/plain" });
+  const { exportarArea } = await import("../lib/exportar/index.ts");
+  const { fusoDoMeio } = await import("../lib/exportar/coordenadas.ts");
+  const nomes = a.nomes ?? [];
+  const arq = await exportarArea([
+    { nome: "PERIMETRO", feicoes: [{ nome: a.nome || "Área", tipo: "poligono", geo: a.perimetro }] },
+    ...(nomes.some(Boolean) ? [{ nome: "VERTICES", feicoes: a.perimetro.map((g, i) => ({ nome: nomes[i] || `P${i + 1}`, tipo: "ponto" as const, geo: [g] })) }] : []),
+  ], "kml", { fuso: fusoDoMeio(a.perimetro), nome: a.nome || "Área" });
+  return new File([arq.dados as Uint8Array<ArrayBuffer>], arq.nome, { type: arq.tipo });
+}
+
+/**
+ * Serviço recém-criado com a área de outro serviço: grava nos vértices o que o
+ * TXT não carrega (lib/area_vertices.ts). Falhar aqui não desfaz o serviço — ele
+ * já existe e está pago: avisa e segue com o que gravou.
+ */
+async function completarVertices(r: ResultadoParse, levados: VerticeLevado[]): Promise<ResultadoParse> {
+  const remendos = remendosDosVertices(r.vertices, levados);
+  if (!remendos.length) return r;
+  const gravou = await Promise.all(remendos.map(async (m) => {
+    const { error } = await supabase.from("vertices").update(m.campos).in("id", m.ids);
+    return error ? error.message : null;
+  }));
+  const falha = gravou.find((x) => x !== null);
+  if (falha) avisar("erro", `O serviço foi criado, mas parte dos confrontantes não foi copiada (${falha}). Confira na conferência.`);
+  const porId = new Map(remendos.filter((_, i) => gravou[i] === null).flatMap((m) => m.ids.map((id) => [id, m.campos] as const)));
+  return { ...r, vertices: r.vertices.map((v) => (v.id && porId.has(v.id) ? { ...v, ...porId.get(v.id) } : v)) };
+}
+
 const fmtLon = (lon: number) => { const a = Math.abs(lon); const g = Math.floor(a); return `${g}°${String(Math.round((a - g) * 60)).padStart(2, "0")}′ ${lon < 0 ? "O" : "L"}`; };
 
 /** A função ler-arquivo ainda não publicada (ou fora do ar): cai no caminho antigo. */
@@ -131,6 +170,34 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
   const [erroCriacao, setErroCriacao] = useState<string | null>(null);
   // o arquivo cabe em mais de um fuso dentro da UF: o operador escolhe antes de criar
   const [perguntaFuso, setPerguntaFuso] = useState<{ l: LeituraConfirmada; opcoes: { zone: number; lon: number }[]; sugerido: number | null } | null>(null);
+
+  // Área trazida de outro serviço (Exportar ▾ → "Usar a área em outro serviço")
+  // ou de uma ferramenta: abre direto na conferência do TXT, como se o arquivo
+  // tivesse sido enviado. pegarAreaTransferida() lê e apaga: no StrictMode a 2ª
+  // passada do efeito não acha nada e não mexe.
+  const [veio, setVeio] = useState<AreaTransferida | null>(null);
+  // a faixa "Área trazida" vale enquanto o arquivo em uso é o que veio (trocar o arquivo a apaga)
+  const [veioNoArquivo, setVeioNoArquivo] = useState(true);
+  useEffect(() => {
+    const a = pegarAreaTransferida();
+    if (!a) return;
+    setVeio(a);
+    if (a.uf) setUf(a.uf);
+    // o TXT do levantamento é em UTM no fuso do serviço de origem: o novo nasce nele, sem perguntar
+    if (a.fuso) setFuso(String(a.fuso));
+    // a área já vem pronta: os certificados do vizinho, se havia, vêm como vértices
+    // dela e voltam com o código do SIGEF depois de criar (completarVertices)
+    setConfronta(false);
+    setFase("txt");
+    void arquivoDaArea(a).then(setArquivoVeio, (e: unknown) => setErro(e instanceof Error ? e.message : String(e)));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // processa no render seguinte: UF e fuso da área já aplicados (o caminho antigo do servidor os lê)
+  const [arquivoVeio, setArquivoVeio] = useState<File | null>(null);
+  useEffect(() => {
+    if (!arquivoVeio) return;
+    setArquivoVeio(null);
+    void processar(arquivoVeio);
+  }, [arquivoVeio]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const gruposValidos = grupos.filter((g) => g.selecionados.size > 0);
   const totalSelecionados = gruposValidos.reduce((s, g) => s + g.selecionados.size, 0);
@@ -288,9 +355,11 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
     if (!(await confirmarCredito(l))) return;
     setCriando(true);
     try {
-      onParsed(await chamarFuncao<ResultadoParse>("parse-txt", {
+      const r = await chamarFuncao<ResultadoParse>("parse-txt", {
         ...corpoServico(), ...(fusoEscolhido !== undefined ? { fuso: fusoEscolhido } : {}), nome_arquivo: previa.arquivo.name, arquivo_base64: previa.b64, leitura: l,
-      }));
+      });
+      // área trazida de outro serviço: a confrontação completa e o método voltam aos vértices
+      onParsed(veio?.vertices?.length && veioNoArquivo ? await completarVertices(r, veio.vertices) : r);
     } catch (e) {
       setErroCriacao(textoSemCredito(e instanceof Error ? e.message : String(e)));
     } finally {
@@ -309,13 +378,23 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
   ];
   const stepper = <Passos passos={passos} rotulo="Etapas do novo serviço" />;
   // `dica`: explicação de uso da fase, no "?" ao lado do título
+  // a área veio de outro serviço: o "← Voltar" volta para ele, e a faixa diz de onde veio
+  const volta = veio?.volta;
   const cabecalhoCom = (dica?: ReactNode) => (
     <>
-      {onVoltar && <button className="fantasma voltar-para voltar-pagina" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
+      {volta
+        ? <button className="fantasma voltar-para voltar-pagina" onClick={() => { location.hash = volta.hash; }}>← Voltar para {volta.rotulo}</button>
+        : onVoltar && <button className="fantasma voltar-para voltar-pagina" onClick={onVoltar}>← Voltar para {voltarPara}</button>}
       <div>
         <h2>{definicao.titulo}{dica && <Dica>{dica}</Dica>}</h2>
         <p className="sub">{definicao.resumo}</p>
       </div>
+      {veio && veioNoArquivo && (
+        <div className="area-veio" role="status">
+          <span className="area-veio-sinal" aria-hidden="true">⇢</span>
+          <span><b>Área trazida de outro serviço.</b> {veio.frase ?? veio.origem}. Confira abaixo e prossiga: nada foi cobrado até aqui.</span>
+        </div>
+      )}
     </>
   );
   const cabecalho = cabecalhoCom();
@@ -464,7 +543,7 @@ export function Upload({ definicao, onParsed, onVoltar, voltarPara = "o Início"
             criando={criando}
             erro={erroCriacao}
             onConfirmar={criar}
-            onTrocarArquivo={() => { setPrevia(null); setErroCriacao(null); setFase("txt"); }}
+            onTrocarArquivo={() => { setPrevia(null); setErroCriacao(null); setFase("txt"); setVeioNoArquivo(false); }}
             uf={uf}
             fuso={fuso ? Number(fuso) : null}
             onEscolherFuso={(z) => { setFuso(String(z)); guardar("fuso", String(z)); }}

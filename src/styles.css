@@ -1795,3 +1795,10 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
 .vp-regerar label { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: inherit; margin: 0; }
 .vp-regerar label input { width: auto; margin: 0; }
 .vp-regerar button { padding: 5px 14px; font-size: 13px; }
+
+/* Upload: a área veio de outro serviço (Exportar ▾ → "Usar a área em outro serviço") */
+.area-veio {
+  display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; padding: 10px 14px;
+  border-radius: var(--raio); background: var(--primaria-clara); color: var(--floresta); font-size: 13.5px; line-height: 1.45;
+}
+.area-veio-sinal { flex: none; font-size: 16px; line-height: 1.2; color: var(--primaria-escura); }

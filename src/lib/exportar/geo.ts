@@ -38,7 +38,7 @@ const proj4: Proj4 = (de, para, c) => (proj4mod as unknown as Proj4)(de, para, c
 
 /** O que a montagem lê de cada linha de `vertices` (o resto da linha é ignorado). */
 export type VerticeArea = Pick<Vertice, "ordem" | "num_txt" | "e" | "n" | "tipo" | "codigo">
-  & Partial<Pick<Vertice, "h" | "codigo_provisorio" | "inserido_manual" | "lat_gms" | "lon_gms" | "descritivo" | "apelido_txt">>;
+  & Partial<Pick<Vertice, "h" | "codigo_provisorio" | "inserido_manual" | "lat_gms" | "lon_gms" | "descritivo" | "apelido_txt" | "sigma_pos" | "sigma_h">>;
 
 /** O que a montagem lê de cada linha de `glebas`. */
 export interface GlebaArea { nome?: string | null; anel: PontoAnel[] }
@@ -229,9 +229,11 @@ export function camadasDoGeo(vertices: VerticeArea[], glebas: GlebaArea[], fuso:
     .filter((v) => coords.has(v.ordem) && (cobre || noDesenho.has(v.ordem)))
     .map((v) => {
       const c = coords.get(v.ordem)!;
+      const sp = numero(v.sigma_pos), sh = numero(v.sigma_h);
       return {
         nome: nomeDoVertice(v), tipo: "ponto", utm: [c.utm], geo: [c.geo], alt: [numero(v.h)],
         props: { tipo: v.tipo, codigo: v.codigo ?? null, num_txt: v.num_txt ?? null },
+        sigma: sp !== null && sh !== null && sp > 0 && sh > 0 ? { pos: sp, h: sh } : null,
       };
     });
 

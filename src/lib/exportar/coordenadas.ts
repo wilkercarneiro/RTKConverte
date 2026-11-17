@@ -64,6 +64,8 @@ export interface FeicaoPronta {
   props: Record<string, Valor>;
   /** um por lado do polígono (lado i: ponto i → i+1); vazio fora do polígono */
   confrontantes: (string | null)[];
+  /** ponto: σ horizontal e vertical (m); null quando a feição não traz */
+  sigma: { pos: number; h: number } | null;
 }
 
 export interface CamadaPronta {
@@ -145,6 +147,7 @@ function prepararFeicao(f: Feicao, fuso: number): FeicaoPronta | null {
     alt: um ? s.alt.slice(0, 1) : s.alt,
     props: { ...(f.props ?? {}) },
     confrontantes: anel ? ladosQueSobraram(f.confrontantes, s.idx, s.tamanho) : [],
+    sigma: um && f.sigma && f.sigma.pos > 0 && f.sigma.h > 0 ? { pos: f.sigma.pos, h: f.sigma.h } : null,
   };
 }
 

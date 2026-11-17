@@ -21,3 +21,20 @@
 .exportar-menu button:focus-visible { background: #F2F6F4; color: var(--texto); border: 0; }
 .exportar-menu b { font-weight: 600; white-space: nowrap; }
 .exportar-menu small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--texto-3); }
+
+/* lista longa (10 formatos + "outro serviço") em tela baixa: rola dentro do menu */
+.exportar-menu { max-height: calc(var(--vh) - 96px); overflow-y: auto; overscroll-behavior: contain; }
+.exportar-titulo {
+  padding: 6px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--texto-3);
+}
+.exportar-sep { height: 1px; margin: 6px 4px; background: var(--borda); }
+
+/* "Usar a área em outro serviço": destaque leve, abre a lista dos serviços ali mesmo */
+.exportar-menu button.exportar-outro { color: var(--primaria-escura); }
+.exportar-menu button.exportar-outro b { font-weight: 650; }
+.exportar-menu button.exportar-outro.aberto { background: var(--primaria-clara); }
+.exportar-seta { margin-left: auto; font-size: 11px; color: var(--texto-3); }
+.exportar-destinos { display: flex; flex-direction: column; gap: 1px; margin: 4px 0 2px; padding-left: 6px; border-left: 2px solid #D5E8DD; }
+.exportar-menu .exportar-destinos button { align-items: center; padding: 7px 10px; }
+.exportar-icone { display: inline-flex; flex: none; width: 26px; height: 26px; align-items: center; justify-content: center; border-radius: 8px; background: var(--primaria-clara); color: var(--primaria-escura); }
+.exportar-nota { margin: 6px 10px 4px; font-size: 11.5px; line-height: 1.35; color: var(--texto-3); }
