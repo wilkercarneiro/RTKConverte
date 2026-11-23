@@ -419,7 +419,7 @@ export function servicoDaParte(servico: Servico, g: Gleba): Partial<Servico> {
     // o resto da pessoa é do herdeiro, não do espólio: fica para preencher
     ...((g.detentor_nome ?? "").trim() ? {
       detentor_rg: null, detentor_genero: null, endereco_detentor: null,
-      requerente2_nome: null, requerente2_cpf: null, requerente2_genero: null,
+      requerente2_nome: null, requerente2_cpf: null, requerente2_genero: null, requerentes_extras: [],
       is_espolio: false, inventariante_nome: null, inventariante_cpf: null, inventariante_rg: null,
     } : {}),
     area_matricula_ha: null,

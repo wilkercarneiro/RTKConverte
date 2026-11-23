@@ -14,6 +14,7 @@ import type { Cliente, Credenciado, RT, Servico } from "../lib/types";
 import { HistoricoDocs } from "./HistoricoDocs";
 import { avisarHistoricoAtualizado } from "../lib/historico";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
+import { RequerentesQueAssinam } from "./Requerentes";
 import { Avisos, BarraEtapas, Dica, Passos, Rotulo, ProximaAcao, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 import { BotaoConcluir, useConclusao } from "./ConcluirServico";
 import { AutoriaServico } from "./Auditoria";
@@ -544,9 +545,8 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
                   </div>
                 </Secao>
 
-                <Secao titulo="Gênero e segundo requerente"
-                  selo={<span className={`secao-selo ${servico.requerente2_nome ? "completa" : ""}`}>{servico.requerente2_nome || "só o detentor"}</span>}
-                  abrirEm={!!servico.requerente2_nome}
+                <Secao titulo="Gênero do detentor"
+                  selo={<span className="secao-selo completa">{servico.detentor_genero === "F" ? "feminino" : "masculino"}</span>}
                   dica="usado na flexão dos textos e nas assinaturas">
                   <div className="grade">
                     <label>Gênero do detentor
@@ -554,16 +554,11 @@ export function PecasServico({ servicoId, clienteId, pedidoId, onVoltar, onCriad
                         <option value="M">Masculino</option><option value="F">Feminino</option>
                       </select>
                     </label>
-                    <label>Requerente 2 (opcional{servico.tipo_imovel === "posse" ? " — ignorado na posse" : ""})
-                      <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} /></label>
-                    <label>CPF do requerente 2 <input className="mono" value={servico.requerente2_cpf ?? ""} onChange={(e) => campo("requerente2_cpf", e.target.value || null)} /></label>
-                    <label>Gênero do requerente 2
-                      <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
-                        <option value="M">Masculino</option><option value="F">Feminino</option>
-                      </select>
-                    </label>
                   </div>
                 </Secao>
+
+                <RequerentesQueAssinam servico={servico} posse={servico.tipo_imovel === "posse"}
+                  onMudar={(c) => setServico((s) => (s ? { ...s, ...c } : s))} />
 
                 <Secao titulo="Espólio e inventariante"
                   selo={<span className={`secao-selo ${servico.is_espolio ? "completa" : ""}`}>{servico.is_espolio ? "é espólio" : "não"}</span>}

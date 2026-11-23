@@ -16,6 +16,7 @@ import type { DadosPecas, Requerente } from "./pecas.ts";
 import { geometriaDoCalculo, sigefDoCalculo } from "./planta_dados.ts";
 import type { CredRow, RtRow, ServicoRow } from "./planta_dados.ts";
 import type { ServicoCalculado } from "./servico.ts";
+import { outrosRequerentes } from "./requerentes.ts";
 
 export interface ContextoPecas {
   servico: ServicoRow & Record<string, unknown>;
@@ -61,14 +62,8 @@ export function montarDadosPecasDoCalculo(ctx: ContextoPecas): DadosPecas {
     inventarianteCpf: (s.inventariante_cpf as string | null) ?? null,
     inventarianteRg: (s.inventariante_rg as string | null) ?? null,
   }];
-  // segundo requerente (casal): na posse também é posseiro e assina as peças
-  if (s.requerente2_nome) {
-    requerentes.push({
-      nome: String(s.requerente2_nome),
-      cpf: String(s.requerente2_cpf ?? ""),
-      genero: s.requerente2_genero === "F" ? "F" : "M",
-    });
-  }
+  // os outros requerentes (2º, 3º…): na posse também são posseiros e assinam
+  requerentes.push(...outrosRequerentes(servico));
 
   const r = rt as Record<string, string | null> | null;
   return {

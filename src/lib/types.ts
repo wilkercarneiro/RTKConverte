@@ -179,6 +179,8 @@ export interface Servico {
   requerente2_nome: string | null;
   requerente2_cpf: string | null;
   requerente2_genero: "M" | "F" | null;
+  /** 3º requerente em diante (0053); a tela trata tudo em lib/requerentes.ts */
+  requerentes_extras?: { nome: string; cpf: string; genero: "M" | "F" }[] | null;
   endereco_detentor: string | null;
   area_matricula_ha: string | null;
   // obsoleto: as faixas de domínio saem dos trechos da planta (uma declaração

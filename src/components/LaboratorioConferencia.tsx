@@ -165,7 +165,7 @@ const TABELAS: Record<string, unknown[]> = {
 };
 
 /** O que a tela mandou gravar (insert/update/upsert/delete). */
-const ESCRITAS: { tabela: string; op: string }[] = [];
+const ESCRITAS: { tabela: string; op: string; dados?: unknown }[] = [];
 (window as unknown as { __labEscritas: typeof ESCRITAS }).__labEscritas = ESCRITAS;
 
 let servicosCriados = 0;
@@ -182,7 +182,7 @@ function consulta(t: string) {
     c.in = (col: string, vs: unknown[]) => { if (col === "servico_id") linhas = linhas.filter((l) => vs.includes(doServico(l))); return c; };
   }
   let inseriu = false;
-  for (const m of ["insert", "update", "upsert", "delete"]) c[m] = () => { ESCRITAS.push({ tabela: t, op: m }); if (m === "insert") inseriu = true; return c; };
+  for (const m of ["insert", "update", "upsert", "delete"]) c[m] = (dados?: unknown) => { ESCRITAS.push({ tabela: t, op: m, dados }); if (m === "insert") inseriu = true; return c; };
   // o serviço de uma área nasce com id próprio (lab-area-2, -3…)
   c.single = c.maybeSingle = () => Promise.resolve({ data: t === "servicos" && inseriu ? { ...(linhas[0] as object), id: `lab-area-${++servicosCriados + 1}` } : linhas[0] ?? null, error: null });
   // as glebas chegam "do banco" um pouco depois do primeiro desenho, como na produção

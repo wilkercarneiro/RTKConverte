@@ -16,6 +16,7 @@ import type { DadosSigef } from "./sigef_pdf.ts";
 import type { LinhaVertice } from "./ods.ts";
 import { SEM_ESCRITORIO, caminhosDaLogo } from "./modelos.ts";
 import type { EscritorioModelos } from "./modelos.ts";
+import { outrosRequerentes, SEM_OUTROS_REQUERENTES } from "./requerentes.ts";
 
 /** Linha da tabela `glebas` como vem do banco. */
 export interface GlebaRow {
@@ -45,8 +46,8 @@ export function servicoDaGleba<S extends ServicoRow>(s: S, g: GlebaRow | null | 
     detentor_cpf: (g!.detentor_cpf ?? "").trim() || null,
     detentor_rg: null,
     is_espolio: false, inventariante_nome: null, inventariante_cpf: null, inventariante_rg: null,
-    // o segundo requerente é co-dono do imóvel de origem, não da parte do herdeiro
-    requerente2_nome: null, requerente2_cpf: null,
+    // os co-requerentes são donos do imóvel de origem, não da parte do herdeiro
+    ...SEM_OUTROS_REQUERENTES,
   };
 }
 
@@ -159,9 +160,9 @@ function identificacaoDaGleba(s0: ServicoRow, nomeGleba: string, g?: GlebaRow | 
   }
   // co-dono (casal): a gleba é dos dois, como no planimétrico e nas assinaturas
   // — mesma regra de montarDadosPlanta (na posse também: os dois são posseiros)
-  if ((s.requerente2_nome ?? "").trim()) {
-    linhas.push(s.requerente2_nome!.trim().toUpperCase());
-    if (s.requerente2_cpf) linhas.push(`CPF:${s.requerente2_cpf}`);
+  for (const r of outrosRequerentes(s)) {
+    linhas.push(r.nome.toUpperCase());
+    if (r.cpf) linhas.push(`CPF:${r.cpf}`);
   }
   return linhas;
 }
@@ -555,6 +556,9 @@ export interface ServicoRow {
   inventariante_rg?: string | null;
   requerente2_nome?: string | null;
   requerente2_cpf?: string | null;
+  requerente2_genero?: string | null;
+  /** 3º requerente em diante (0053): [{ nome, cpf, genero }] */
+  requerentes_extras?: unknown;
   tipo_imovel?: string | null;
   matricula?: string | null;
   cns?: string | null;
@@ -618,10 +622,8 @@ export function montarDadosPlanta(ctx: ContextoPlanta): DadosPlanta {
     inventarianteCpf: servico.inventariante_cpf ?? null,
     inventarianteRg: servico.inventariante_rg ?? null,
   }];
-  // casal: o segundo assina também — na matrícula e na posse (pedido de 10/11/2026)
-  if (servico.requerente2_nome) {
-    proprietarios.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "" });
-  }
+  // os outros requerentes (2º, 3º…) assinam também — na matrícula e na posse
+  for (const r of outrosRequerentes(servico)) proprietarios.push({ nome: r.nome, cpf: r.cpf });
 
   return {
     vertices: g.vertices,

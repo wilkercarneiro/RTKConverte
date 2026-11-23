@@ -24,6 +24,7 @@ import { mensagemDeErro } from "../_shared/vertices_db.ts";
 import { aplicarAssinaturaRt, carregarAssinaturaRt } from "../_shared/assinatura_rt.ts";
 import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } from "../_shared/limite.ts";
 import { anelDoSigef, conferirContorno } from "../_shared/contorno.ts";
+import { outrosRequerentes } from "../_shared/requerentes.ts";
 import { escreverMonografia, marcoDoCredenciado, marcosDosAneis, montarMonografia, normalizarCamposMonografia } from "../_shared/monografia.ts";
 
 const proj4: Proj4 = (from, to, coords) => (proj4mod as unknown as Proj4)(from, to, coords);
@@ -416,10 +417,8 @@ Deno.serve(async (req) => {
       inventarianteCpf: servico.inventariante_cpf ?? null,
       inventarianteRg: servico.inventariante_rg ?? null,
     }];
-    // casal: o segundo assina também — na matrícula e na posse
-    if (servico.requerente2_nome) {
-      requerentes.push({ nome: servico.requerente2_nome, cpf: servico.requerente2_cpf ?? "", genero: servico.requerente2_genero === "F" ? "F" : "M" });
-    }
+    // os outros requerentes (2º, 3º…) assinam também — na matrícula e na posse
+    requerentes.push(...outrosRequerentes(servico));
     const dados: DadosPecas = {
       requerentes,
       rg: servico.detentor_rg ?? null,

@@ -226,6 +226,27 @@ function desenharQr(c: Ctx, url: string, x: number, y: number, lado: number) {
   }
 }
 
+/**
+ * Nome em uma ou duas linhas para caber em `maxW` sem encolher abaixo de
+ * `minimo` pt: se em uma linha ele cairia abaixo disso, quebra no espaço mais
+ * perto do meio. Medir e desenhar usam a mesma função (a altura da faixa conta
+ * a 2ª linha).
+ */
+function linhasDoNome(c: Ctx, nome: string, tam: number, maxW: number, minimo: number, bold = true): string[] {
+  const font = bold ? c.fb : c.f;
+  const t = textoWinAnsi(nome);
+  if (font.widthOfTextAtSize(t, tam) <= maxW || maxW / font.widthOfTextAtSize(t, 1) >= minimo) return [nome];
+  const espacos = [...nome.matchAll(/ /g)].map((m) => m.index!);
+  if (!espacos.length) return [nome];
+  const corte = espacos.reduce((a, b) => (Math.abs(b - nome.length / 2) < Math.abs(a - nome.length / 2) ? b : a));
+  return [nome.slice(0, corte), nome.slice(corte + 1)];
+}
+
+/** "A", "A E B", "A, B E C" — os donos no selo da A4. */
+function juntarNomes(nomes: string[]): string {
+  return nomes.length <= 1 ? (nomes[0] ?? "") : `${nomes.slice(0, -1).join(", ")} E ${nomes[nomes.length - 1]}`;
+}
+
 /** "7K3M9QXW…" → "7K3M-9QXW-…" (para ler e digitar). */
 function codigoEmGrupos(c: string): string {
   return c.match(/.{1,4}/g)?.join("-") ?? c;
@@ -1894,27 +1915,46 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
   // RECONHECIMENTO em branco, alta o bastante para o carimbo do cartório —
   // como na planta de referência (pedido de 2026-10-14: antes eram caixinhas
   // com o nome dentro, sem lugar para carimbar).
-  const assinantes = d.proprietarios.slice(0, 2);
+  // Todos os requerentes assinam (pedido de 23/11/2026: antes eram no máximo 2).
+  // Até 3 donos: um embaixo do outro, cada um com a linha inteira, como sempre.
+  // De 4 em diante, ARRANJO COMPACTO: as assinaturas em duas colunas (metade
+  // direita da faixa), os donos do quadro de campos numa linha cada e os selos
+  // do cartório 4 por fileira — sem isso a barra lateral não cabia na A3.
+  const assinantes = d.proprietarios;
+  const compacto = assinantes.length >= 4;
   // com a imagem da assinatura do RT o espaço acima das linhas cresce, para ela
   // caber em tamanho legível (e os proprietários ganham o mesmo espaço)
   const ASSIN_CAP = d.assinaturaRt ? 44 : 30, ASSIN_BLOCO = 28, ASSIN_ENTRE = 20, ASSIN_ESPOLIO = 18;
-  const altAssinProp = ASSIN_CAP + assinantes.reduce((a, p, i) =>
-    a + ASSIN_BLOCO + (p.isEspolio && p.inventarianteNome ? ASSIN_ESPOLIO : 0) + (i > 0 ? ASSIN_ENTRE : 0), 0);
+  const colunasAssin = compacto ? 2 : 1;
+  // largura de cada linha de assinatura (a mesma conta do desenho)
+  const linhaAssinW = colunasAssin > 1 ? (SB_W / 2) / colunasAssin - 16 : SB_W / 2 - 24;
+  const ASSIN_2A_LINHA = 10.5;
+  const nomeAssin = (p: ProprietarioPlanta) => linhasDoNome(c, p.nome.toUpperCase(), 8.5, linhaAssinW, 6.5);
+  const extraFila = (fila: ProprietarioPlanta[]) => (fila.some((p) => nomeAssin(p).length > 1) ? ASSIN_2A_LINHA : 0);
+  const fileirasAssin: ProprietarioPlanta[][] = [];
+  for (let i = 0; i < assinantes.length; i += colunasAssin) fileirasAssin.push(assinantes.slice(i, i + colunasAssin));
+  const altAssinProp = ASSIN_CAP + fileirasAssin.reduce((a, fila, i) =>
+    a + ASSIN_BLOCO + extraFila(fila) + (fila.some((p) => p.isEspolio && p.inventarianteNome) ? ASSIN_ESPOLIO : 0) + (i > 0 ? ASSIN_ENTRE : 0), 0);
   const ASSIN_H = Math.max(ASSIN_CAP + 44, altAssinProp) + 6;
-  const SELO_CART_H = 118;
+  // Selos do cartório: um por quem assina (RT + requerentes), em fileiras
+  // iguais de no máximo 3 (4 no arranjo compacto).
+  const nSelos = 1 + assinantes.length;
+  const linhasSelo = Math.ceil(nSelos / (compacto ? 4 : 3));
 
   // PLANIMÉTRICO: legenda em duas colunas, campos em duas colunas (passo 25) e
   // a faixa das assinaturas e dos selos.
-  const PLANI_BAND_H = ASSIN_H + SELO_CART_H, CAMPO_PASSO = 25;
+  const CAMPO_PASSO = 25;
   const nLegenda = itensLegenda.length + (abrevLegenda ? 1 : 0);
   const hLegenda = 16 + Math.ceil(nLegenda / 2) * 13 + 6;
   const nCamposDir = (exibe.trt ? 1 : 0) + (exibe.matricula ? (posse ? 1 : 2) : 0) + 2;
-  const altPropr = 13 + d.proprietarios.reduce((a, p) => a + 24 + (p.isEspolio && p.inventarianteNome ? 24 : 0), 0);
+  const PASSO_DONO = compacto ? 12 : 24;
+  // compacto: "NOME · CPF" numa linha; se ela encolheria demais, o CPF desce
+  const colWCampos = SB_W / 2 - 20;
+  const donoEmUma = (p: ProprietarioPlanta) =>
+    colWCampos / c.fb.widthOfTextAtSize(textoWinAnsi(`${p.nome.toUpperCase()} · CPF: ${p.cpf}`), 1) >= 7.5;
+  const altPropr = 13 + d.proprietarios.reduce((a, p) =>
+    a + (compacto && !donoEmUma(p) ? 2 * PASSO_DONO : PASSO_DONO) + (p.isEspolio && p.inventarianteNome ? PASSO_DONO : 0), 0);
   const altEsq = (exibe.denominacao ? CAMPO_PASSO : 0) + altPropr;
-  const medirPlani = (passo: number) => SEC_TIT + hLegenda + 14 + Math.max(nCamposDir * passo, altEsq) + 8 + PLANI_BAND_H;
-  let hPlani = Math.min(medirPlani(CAMPO_PASSO), sbH * 0.4);
-  // piso: os campos da direita ainda cabem com passo 20 (o desenho adapta o passo)
-  const pisoPlani = Math.min(hPlani, medirPlani(20));
 
   // PLANTA DE SITUAÇÃO: a imagem ocupa a largura da barra; a seção pede a
   // altura correspondente, com um mínimo. Se nem o mínimo sobrar, o
@@ -1925,21 +1965,43 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     : null;
   const SITUACAO_MIN = sbH * 0.14;
   const situacaoAlvo = Math.max(SITUACAO_MIN, SEC_TIT + 12 + (satImg ? (SB_W - 12) * satImg.height / satImg.width : 200));
-  const fixos = hCarimbo + hPlani + hRodape;
-  let hQuadro = 0;
-  if (!semQuadro) {
-    const livre = sbH - fixos - situacaoAlvo;
-    hQuadro = Math.min(quadroTodas, sbH * 0.6, Math.max(livre, Math.min(quadroMin, sbH * 0.5)));
+
+  // A conta da barra com uma altura de selo; com muitos donos, se a planta de
+  // situação não ficar com o mínimo, os selos baixam (118 → 72 pt) antes de
+  // qualquer seção passar por cima de outra.
+  const repartir = (seloLinhaH: number) => {
+    const SELO_CART_H = seloLinhaH * linhasSelo;
+    const PLANI_BAND_H = ASSIN_H + SELO_CART_H;
+    const medirPlani = (passo: number) => SEC_TIT + hLegenda + 14 + Math.max(nCamposDir * passo, altEsq) + 8 + PLANI_BAND_H;
+    // Teto de 40% da barra — mas nunca abaixo do que os campos (no passo 20) e a
+    // faixa de assinaturas ocupam: com muitos requerentes o teto cortava a seção
+    // e as assinaturas subiam por cima dos campos.
+    let hPlani = Math.max(Math.min(medirPlani(CAMPO_PASSO), sbH * 0.4), medirPlani(20));
+    // piso: os campos da direita ainda cabem com passo 20 (o desenho adapta o passo)
+    const pisoPlani = Math.min(hPlani, medirPlani(20));
+    const fixos = hCarimbo + hPlani + hRodape;
+    let hQuadro = 0;
+    if (!semQuadro) {
+      const livre = sbH - fixos - situacaoAlvo;
+      hQuadro = Math.min(quadroTodas, sbH * 0.6, Math.max(livre, Math.min(quadroMin, sbH * 0.5)));
+    }
+    let hSituacao = sbH - fixos - hQuadro;
+    if (hSituacao < SITUACAO_MIN) {
+      const falta = SITUACAO_MIN - hSituacao;
+      const cedePlani = Math.min(falta, Math.max(0, hPlani - pisoPlani));
+      hPlani -= cedePlani;
+      const cedeQuadro = Math.min(falta - cedePlani, Math.max(0, hQuadro - sbH * 0.30));
+      hQuadro -= cedeQuadro;
+      hSituacao = sbH - hCarimbo - hPlani - hRodape - hQuadro;
+    }
+    return { SELO_LINHA_H: seloLinhaH, SELO_CART_H, PLANI_BAND_H, hPlani, hQuadro, hSituacao };
+  };
+  let arranjo = repartir(118);
+  for (const seloH of [104, 92, 82, 72]) {
+    if (arranjo.hSituacao >= SITUACAO_MIN - 0.5) break;
+    arranjo = repartir(seloH);
   }
-  let hSituacao = sbH - fixos - hQuadro;
-  if (hSituacao < SITUACAO_MIN) {
-    const falta = SITUACAO_MIN - hSituacao;
-    const cedePlani = Math.min(falta, Math.max(0, hPlani - pisoPlani));
-    hPlani -= cedePlani;
-    const cedeQuadro = Math.min(falta - cedePlani, Math.max(0, hQuadro - sbH * 0.30));
-    hQuadro -= cedeQuadro;
-    hSituacao = sbH - hCarimbo - hPlani - hRodape - hQuadro;
-  }
+  const { SELO_LINHA_H, SELO_CART_H, PLANI_BAND_H, hPlani, hQuadro, hSituacao } = arranjo;
   let yCursor = sbTop;
 
   // ---- QUADRO ANALÍTICO (tabela com grade, colunas centradas) ----
@@ -2114,6 +2176,22 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     texto(c, posse ? "Posseiro(s):" : "Proprietário(s):", colEsq, py, 7.5, { bold: true, cor: CINZA });
     let ppy = py - 12;
     for (const p of d.proprietarios) {
+      if (compacto) {
+        // muitos donos: nome e CPF na mesma linha (o CPF desce se não couber)
+        if (donoEmUma(p)) {
+          textoFit(c, `${p.nome.toUpperCase()} · CPF: ${p.cpf}`, colEsq, ppy, 8.5, colW, { bold: true });
+          ppy -= PASSO_DONO;
+        } else {
+          textoFit(c, p.nome.toUpperCase(), colEsq, ppy, 8.5, colW, { bold: true });
+          textoFit(c, `CPF: ${p.cpf}`, colEsq, ppy - PASSO_DONO, 8, colW);
+          ppy -= 2 * PASSO_DONO;
+        }
+        if (p.isEspolio && p.inventarianteNome) {
+          textoFit(c, `REP. P/ INV.: ${p.inventarianteNome.toUpperCase()} · CPF: ${p.inventarianteCpf ?? ""}`, colEsq, ppy, 8, colW);
+          ppy -= PASSO_DONO;
+        }
+        continue;
+      }
       textoFit(c, p.nome.toUpperCase(), colEsq, ppy, 10, colW, { bold: true });
       textoFit(c, `CPF: ${p.cpf}`, colEsq, ppy - 11, 9, colW);
       ppy -= 24;
@@ -2154,28 +2232,40 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     const prCx = sbX + SB_W * 3 / 4;
     texto(c, posse ? (assinantes.length > 1 ? "POSSEIROS" : "POSSEIRO") : (assinantes.length > 1 ? "PROPRIETÁRIOS" : "PROPRIETÁRIO"),
       prCx, bandTop - 9, 6.5, { bold: true, center: true, cor: CINZA });
+    // no arranjo compacto, duas colunas dentro da metade direita
+    const largCol = (SB_W / 2) / colunasAssin;
+    const linhaW = linhaAssinW;
     let ay = bandTop - ASSIN_CAP;
-    for (const [i, p] of assinantes.entries()) {
-      if (i > 0) ay -= ASSIN_ENTRE;
-      linha(c, prCx - colAssW / 2, ay, prCx + colAssW / 2, ay, 0.6);
-      textoFit(c, p.nome.toUpperCase(), prCx, ay - 10, 8.5, colAssW, { bold: true, center: true });
-      textoFit(c, `CPF: ${p.cpf}`, prCx, ay - 19, 7, colAssW, { center: true });
-      ay -= ASSIN_BLOCO;
-      if (p.isEspolio && p.inventarianteNome) {
-        textoFit(c, `REP. P/ INVENTARIANTE: ${p.inventarianteNome.toUpperCase()}`, prCx, ay, 7, colAssW, { bold: true, center: true });
-        textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, prCx, ay - 9, 7, colAssW, { center: true });
-        ay -= ASSIN_ESPOLIO;
+    for (const [fi, fila] of fileirasAssin.entries()) {
+      if (fi > 0) ay -= ASSIN_ENTRE;
+      for (const [k, p] of fila.entries()) {
+        const cx = colunasAssin > 1 ? meio + largCol * (k + 0.5) : prCx;
+        linha(c, cx - linhaW / 2, ay, cx + linhaW / 2, ay, 0.6);
+        // nome longo: duas linhas, em vez de letra miúda; o resto da fileira desce junto
+        const nl = nomeAssin(p);
+        nl.forEach((t, k) => textoFit(c, t, cx, ay - 10 - k * ASSIN_2A_LINHA, 8.5, linhaW, { bold: true, center: true }));
+        const desce = extraFila(fila);
+        textoFit(c, `CPF: ${p.cpf}`, cx, ay - 19 - desce, 7, linhaW, { center: true });
+        if (p.isEspolio && p.inventarianteNome) {
+          textoFit(c, `REP. P/ INVENTARIANTE: ${p.inventarianteNome.toUpperCase()}`, cx, ay - ASSIN_BLOCO - desce, 7, linhaW, { bold: true, center: true });
+          textoFit(c, `CPF: ${p.inventarianteCpf ?? ""}`, cx, ay - ASSIN_BLOCO - desce - 9, 7, linhaW, { center: true });
+        }
       }
+      ay -= ASSIN_BLOCO + extraFila(fila) + (fila.some((p) => p.isEspolio && p.inventarianteNome) ? ASSIN_ESPOLIO : 0);
     }
-    // Selos: um por quem assina (RT + até 2 proprietários), lado a lado, em
-    // branco — o cartório carimba ali o reconhecimento de firma.
+    // Selos: um por quem assina (RT + requerentes), em branco — o cartório
+    // carimba ali o reconhecimento de firma. Até 3 por fileira (4 no compacto).
     linha(c, sbX, seloTop, sbX + SB_W, seloTop, 0.8);
-    const nSelos = 1 + assinantes.length;
-    const seloW = SB_W / nSelos;
-    for (let i = 0; i < nSelos; i++) {
-      const sx = sbX + i * seloW;
-      if (i > 0) linha(c, sx, base, sx, seloTop, 0.5);
-      texto(c, "SELO DE RECONHECIMENTO", sx + seloW / 2, seloTop - 10, 6.5, { bold: true, center: true, cor: CINZA });
+    for (let lin = 0; lin < linhasSelo; lin++) {
+      const topoL = seloTop - lin * SELO_LINHA_H, baseL = topoL - SELO_LINHA_H;
+      if (lin > 0) linha(c, sbX, topoL, sbX + SB_W, topoL, 0.5);
+      const naLinha = Math.floor(nSelos / linhasSelo) + (lin < nSelos % linhasSelo ? 1 : 0);
+      const seloW = SB_W / naLinha;
+      for (let i = 0; i < naLinha; i++) {
+        const sx = sbX + i * seloW;
+        if (i > 0) linha(c, sx, baseL, sx, topoL, 0.5);
+        texto(c, "SELO DE RECONHECIMENTO", sx + seloW / 2, topoL - 10, 6.5, { bold: true, center: true, cor: CINZA });
+      }
     }
     yCursor -= h;
   }
@@ -2283,7 +2373,7 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
     const campos: [string, string][] = [
       // todos os donos (casal: o requerente e o segundo requerente), não só o primeiro
       [(posse ? "POSSEIRO" : "PROPRIETÁRIO") + (d.proprietarios.length > 1 ? "S" : ""),
-        d.proprietarios.map((p) => p.nome.trim()).filter(Boolean).join(" E ") || "—"],
+        juntarNomes(d.proprietarios.map((p) => p.nome.trim()).filter(Boolean)) || "—"],
       ["RESPONSÁVEL TÉCNICO", d.rt.nome || "—"],
       ["MUNICÍPIO", d.municipioUf],
       ["ESCALA", `1:${fmtMilhar(escala)}`],
@@ -2300,7 +2390,20 @@ export async function gerarPlantaPdf(d: DadosPlanta, diag?: DiagPlanta, opts: { 
       if (col > 0) linha(c, cx, cy, cx, cy + linhaH, 0.5);
       if (row > 0) linha(c, x0, cy + linhaH, x1, cy + linhaH, 0.5);
       texto(c, `${rot}:`, cx + 10, cy + linhaH - 18, 16, { bold: true, cor: CINZA });
-      textoFit(c, val, cx + 20, cy + 10, 28, meia - 40);
+      // muitos donos numa linha só encolhiam até ficar ilegível: em duas linhas
+      // (só quando a letra em duas linhas sai maior do que numa)
+      const nomes = i === 0 ? d.proprietarios.map((p) => p.nome.trim()).filter(Boolean) : [];
+      const larg = (t: string) => c.f.widthOfTextAtSize(textoWinAnsi(t), 1);
+      const meio = Math.ceil(nomes.length / 2);
+      const l1 = `${nomes.slice(0, meio).join(", ")},`, l2 = juntarNomes(nomes.slice(meio));
+      const tamUma = Math.min(28, (meia - 40) / larg(val));
+      const tamDuas = Math.min((linhaH - 26) / 2.15, (meia - 40) / Math.max(larg(l1), larg(l2)));
+      if (nomes.length > 2 && tamDuas > tamUma * 1.1) {
+        texto(c, textoWinAnsi(l1), cx + 20, cy + 10 + tamDuas * 1.1, tamDuas);
+        texto(c, textoWinAnsi(l2), cx + 20, cy + 10, tamDuas);
+      } else {
+        textoFit(c, val, cx + 20, cy + 10, 28, meia - 40);
+      }
     }
 
     // ÁREA TOTAL no canto do desenho, como no modelo

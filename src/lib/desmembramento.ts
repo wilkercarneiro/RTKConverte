@@ -388,7 +388,7 @@ export function quemRecebe(servico: Pick<Servico, "detentor_nome">, g: Gleba, pa
 /** Os dados da pessoa que mudam juntos quando quem recebe a área muda. */
 const CAMPOS_DA_PESSOA = [
   "detentor_nome", "detentor_cpf", "detentor_rg", "detentor_genero", "endereco_detentor",
-  "requerente2_nome", "requerente2_cpf", "requerente2_genero",
+  "requerente2_nome", "requerente2_cpf", "requerente2_genero", "requerentes_extras",
   "is_espolio", "inventariante_nome", "inventariante_cpf", "inventariante_rg",
 ] as const;
 
@@ -438,7 +438,7 @@ export function diferencasNoCabecalho(
   let trocaPessoa = false;
   if (txt(esperado.detentor_nome) && !mesmaPessoa(atual.detentor_nome, esperado.detentor_nome)) {
     trocaPessoa = true;
-    for (const k of CAMPOS_DA_PESSOA) patch[k] = (esperado as Record<string, unknown>)[k] ?? (k === "is_espolio" ? false : null);
+    for (const k of CAMPOS_DA_PESSOA) patch[k] = (esperado as Record<string, unknown>)[k] ?? (k === "is_espolio" ? false : k === "requerentes_extras" ? [] : null);
     linhas.push(`Quem recebe: ${txt(atual.detentor_nome) || "(vazio)"} → ${txt(esperado.detentor_nome)}`);
   } else if (soDigitos(esperado.detentor_cpf) && soDigitos(atual.detentor_cpf) !== soDigitos(esperado.detentor_cpf)) {
     patch.detentor_cpf = esperado.detentor_cpf;

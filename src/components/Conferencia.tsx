@@ -47,6 +47,7 @@ import type { DocHistorico } from "../lib/historico";
 import { abrirPlanta } from "./planta/VisualizadorPlanta";
 import { temRecurso } from "../lib/recursos";
 import { temPermissao } from "../lib/permissoes";
+import { RequerentesQueAssinam } from "./Requerentes";
 import { Avisos, BarraEtapas, BotaoPerigo, confirmar, Dica, ProximaAcao, Rotulo, Secao, StatusSalvamento, irPara as rolarAte, type Acao, type Passo } from "./ui";
 import { consumoDaNumeracao, numeracaoDosMarcos } from "../lib/codigos_marcos";
 import { previaDaPlanilha } from "../lib/planilha_sigef";
@@ -1821,29 +1822,12 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   </div>
                 </Secao>
 
-                {/* Segundo requerente mora nos Dados, ao lado do espólio: ele vai à
-                    planta e às peças, e o serviço sem SIGEF (área urbana) nunca
-                    chegaria lá se ele só aparecesse depois do PDF. */}
-                <Secao titulo="Segundo requerente"
-                  selo={<span className={`secao-selo ${servico.requerente2_nome ? "completa" : ""}`}>{servico.requerente2_nome || "nenhum"}</span>}
-                  abrirEm={!!servico.requerente2_nome}
-                  dica="cônjuge ou coproprietário que assina junto — sai na planta e nas peças">
-                  <div className="grade">
-                    <label>Nome do 2º requerente
-                      <input id="campo-requerente2" value={servico.requerente2_nome ?? ""} placeholder="Nome completo"
-                        onChange={(e) => campo("requerente2_nome", e.target.value || null)} />
-                    </label>
-                    <label>CPF do 2º requerente
-                      <input className="mono" value={servico.requerente2_cpf ?? ""} placeholder="000.000.000-00"
-                        onChange={(e) => campo("requerente2_cpf", e.target.value || null)} />
-                    </label>
-                    <label>Gênero do 2º requerente
-                      <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
-                        <option value="M">Masculino</option><option value="F">Feminino</option>
-                      </select>
-                    </label>
-                  </div>
-                </Secao>
+                {/* Requerentes moram nos Dados, ao lado do espólio: vão à planta e
+                    às peças, e o serviço sem SIGEF (área urbana) nunca chegaria lá
+                    se eles só aparecessem depois do PDF. Quantos assinam é escolha
+                    do operador (pedido de 23/11/2026). */}
+                <RequerentesQueAssinam servico={servico} posse={servico.tipo_imovel === "posse"}
+                  onMudar={(c) => setServico((s) => ({ ...s, ...c }))} />
 
                 <Secao titulo="Espólio e inventariante"
                   selo={<span className={`secao-selo ${servico.is_espolio ? "completa" : ""}`}>{servico.is_espolio ? "é espólio" : "não"}</span>}
