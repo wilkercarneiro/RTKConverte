@@ -242,6 +242,19 @@ function instalar() {
         }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
     }
+    // gerar-peças: guarda o pedido (com ou sem o PDF do SIGEF) e devolve um jogo de exemplo
+    if (u.includes("/functions/v1/gerar-pecas")) {
+      const corpo = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      const w = window as unknown as { __labPecas?: unknown[] };
+      (w.__labPecas ??= []).push({ ...corpo, pdf_base64: corpo.pdf_base64 ? "(pdf)" : undefined });
+      const arq = (t: string) => ({ titulo: t, url: urlDoLab(`${SID}/pecas/${t}.docx`) });
+      return new Response(JSON.stringify({
+        ok: true,
+        arquivos: ["1 - Memorial Descritivo", "2 - Memorial Tabular", "3 - Carta de Anuência", "4 - Declaração de Faixa de Domínio", "5 - Declaração de Respeito de Limites", "6 - Requerimento", "7 - Declaração de Reconhecimento"].map(arq),
+        resumo: { areaHa: "80,2764", perimetro: "3.781,52", trt: "BR20261123001", vertices: 14, cartas: 3 },
+        avisos: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (u.includes("/functions/v1/") || u.includes("/rest/v1/")) {
       return new Response(JSON.stringify({ ok: true, parcelas: { type: "FeatureCollection", features: [] }, sobreposicoes: [], encostos: [], avisos: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }

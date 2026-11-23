@@ -1802,3 +1802,6 @@ html.com-tela-cheia, html.com-tela-cheia body { overflow: hidden; }
   border-radius: var(--raio); background: var(--primaria-clara); color: var(--floresta); font-size: 13.5px; line-height: 1.45;
 }
 .area-veio-sinal { flex: none; font-size: 16px; line-height: 1.2; color: var(--primaria-escura); }
+
+/* "opcional" no título de etapa (ex.: Documento do SIGEF — área urbana não passa por ele) */
+.selo-opcional { display: inline-block; vertical-align: middle; margin-left: 8px; font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 2px 8px; border-radius: 999px; background: #F0F3F1; color: var(--texto-2); }

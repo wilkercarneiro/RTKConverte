@@ -179,6 +179,8 @@ export function Conferencia({ inicial, onVoltar }: { inicial: ResultadoParse; on
   const [rtExtrasEditado, setRtExtrasEditado] = useState(false);
   const editarRtExtras = (patch: Partial<typeof rtExtras>) => { setRtExtras((x) => ({ ...x, ...patch })); setRtExtrasEditado(true); };
   const [pecas, setPecas] = useState<PecasGeradas | null>(null);
+  // peças desta sessão geradas sem o PDF do SIGEF (área calculada, não SGL)
+  const [pecasDoCalculo, setPecasDoCalculo] = useState(false);
   const [gerandoPecas, setGerandoPecas] = useState(false);
   const [erroPecas, setErroPecas] = useState<string | null>(null);
   // monografia dos marcos (mais uma peça, gerada à parte)
@@ -1284,11 +1286,24 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     setGerandoPecas(true);
     setErroPecas(null);
     try {
+      // O PDF do SIGEF é opcional: imóvel que não passa pelo SIGEF (área
+      // urbana, por exemplo) gera as peças pelo cálculo do próprio sistema —
+      // os mesmos azimutes, distâncias e área do memorial. Com glebas, não:
+      // as linhas do banco misturam os anéis e o jogo de cada gleba sai dos
+      // memoriais do PDF.
       const pdf = await garantirSigef();
-      if (!pdf) { setGerandoPecas(false); setErroPecas("Envie o PDF do SIGEF na etapa anterior"); return; }
+      if (!pdf && temGlebas) {
+        setGerandoPecas(false);
+        setErroPecas("Com glebas, as peças saem do PDF do SIGEF (um memorial por gleba): envie o PDF na etapa 4.");
+        return;
+      }
       await salvar();
-      const r = await chamarFuncao<PecasGeradas>("gerar-pecas", { servico_id: servico.id, pdf_base64: pdf });
+      const r = await chamarFuncao<PecasGeradas>("gerar-pecas", {
+        servico_id: servico.id,
+        ...(pdf ? { pdf_base64: pdf } : { origem: "calculo" }),
+      });
       setPecas(r);
+      setPecasDoCalculo(!pdf);
       depoisDeGerar({ entrada: false });
       const nGlebas = r.resumo?.glebas?.length ?? 0;
       avisar("ok", nGlebas
@@ -1493,14 +1508,28 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
         detalhe: "memorial e planta de prévia gerados — os pontos saem numerados P-1, P-2…, sem consumir a numeração oficial do credenciado",
       };
     }
+    // Sem o PDF do SIGEF o serviço segue: a prévia é opcional (área urbana não
+    // passa pelo SIGEF). Com glebas as peças saem dos memoriais do PDF.
     if (!temSigef) {
-      return {
-        tom: "neutro",
-        titulo: "Certifique a planilha no SIGEF e envie o PDF de volta",
-        detalhe: "o PDF de prévia/certificação libera a planta oficial e as 7 peças técnicas",
-        rotuloBotao: "Enviar PDF",
-        onClick: () => irParaCampo("bloco-sigef"),
-      };
+      if (temGlebas) {
+        return {
+          tom: "neutro",
+          titulo: "Certifique a planilha no SIGEF e envie o PDF de volta",
+          detalhe: "com glebas, as peças de cada gleba saem dos memoriais do PDF do SIGEF",
+          rotuloBotao: "Enviar PDF",
+          onClick: () => irParaCampo("bloco-sigef"),
+        };
+      }
+      if (!pecasProntas) {
+        return {
+          tom: "neutro",
+          titulo: "Gere as peças técnicas — com ou sem o PDF do SIGEF",
+          detalhe: "passa pelo SIGEF? envie o PDF na etapa 4 e área e perímetro saem certificados · não passa (área urbana)? gere direto, pelo cálculo do sistema",
+          rotuloBotao: "Ir para as peças",
+          onClick: () => irParaCampo("bloco-pecas"),
+        };
+      }
+      return { tom: "pronto", titulo: "Serviço completo", detalhe: "memorial, planilha, planta e peças gerados sem o PDF do SIGEF — tudo disponível no histórico abaixo" };
     }
     if (!plantaUrl) {
       return {
@@ -1523,7 +1552,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
 
   // "Concluir serviço": tudo gerado → a próxima ação é fechar; concluído → o selo.
   // A conferência termina nos documentos; o completo, nas peças.
-  const prontoParaConcluir = pendencias.length === 0 && docsProntos && (ehConferencia || (!!plantaUrl && pecasProntas));
+  // Sem o PDF do SIGEF (opcional) a planta é a dos documentos gerados.
+  const plantaPronta = !!plantaUrl || (!temSigef && !temGlebas && docsProntos);
+  const prontoParaConcluir = pendencias.length === 0 && docsProntos && (ehConferencia || (plantaPronta && pecasProntas));
   const conclusao = useConclusao(servico, {
     pronto: prontoParaConcluir,
     falta: proxima.titulo.replace(/^\w/, (c) => c.toLowerCase()),
@@ -1564,7 +1595,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
     // etapa seguinte e o documento completo já nascem pelos anéis das glebas.
     ...(temGlebas ? [{ chave: "glebas" as Etapa, rotulo: ehDesm ? "Desmembramento" : ehDivisao ? "Divisão" : "Glebas", feita: glebasOrdens.length > 0 }] : []),
     { chave: "confrontantes", rotulo: "Confrontantes e vértices", feita: confrontantesPreenchidos > 0 },
-    { chave: "documentos", rotulo: "Documentos", feita: ehConferencia ? docsProntos : !!plantaUrl && pecasProntas },
+    { chave: "documentos", rotulo: "Documentos", feita: ehConferencia ? docsProntos : plantaPronta && pecasProntas },
   ];
   const passos: Passo[] = etapas.map((e) => ({
     rotulo: e.rotulo,
@@ -1787,6 +1818,30 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     <label>Denominação da parcela <input value={servico.denominacao_parcela ?? ""} placeholder="Parte 1" onChange={(e) => campo("denominacao_parcela", e.target.value)} /></label>
                     <label>Parcela número <input value={servico.parcela_numero ?? ""} placeholder="001" onChange={(e) => campo("parcela_numero", e.target.value)} /></label>
                     <label>Lado {sel(servico.lado, LADOS, (v) => campo("lado", v))}</label>
+                  </div>
+                </Secao>
+
+                {/* Segundo requerente mora nos Dados, ao lado do espólio: ele vai à
+                    planta e às peças, e o serviço sem SIGEF (área urbana) nunca
+                    chegaria lá se ele só aparecesse depois do PDF. */}
+                <Secao titulo="Segundo requerente"
+                  selo={<span className={`secao-selo ${servico.requerente2_nome ? "completa" : ""}`}>{servico.requerente2_nome || "nenhum"}</span>}
+                  abrirEm={!!servico.requerente2_nome}
+                  dica="cônjuge ou coproprietário que assina junto — sai na planta e nas peças">
+                  <div className="grade">
+                    <label>Nome do 2º requerente
+                      <input id="campo-requerente2" value={servico.requerente2_nome ?? ""} placeholder="Nome completo"
+                        onChange={(e) => campo("requerente2_nome", e.target.value || null)} />
+                    </label>
+                    <label>CPF do 2º requerente
+                      <input className="mono" value={servico.requerente2_cpf ?? ""} placeholder="000.000.000-00"
+                        onChange={(e) => campo("requerente2_cpf", e.target.value || null)} />
+                    </label>
+                    <label>Gênero do 2º requerente
+                      <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
+                        <option value="M">Masculino</option><option value="F">Feminino</option>
+                      </select>
+                    </label>
                   </div>
                 </Secao>
 
@@ -2433,15 +2488,15 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   Não montado na conferência: os handlers de SIGEF não podem ficar
                   acessíveis numa modalidade que não passa por ele. */}
               {!ehConferencia && (
-                <section className={`bloco cartao ${docsProntos && !temSigef ? "destaque" : ""} ${!docsProntos ? "apagado" : ""}`} id="bloco-sigef">
+                <section className={`bloco cartao ${docsProntos && !temSigef && temGlebas ? "destaque" : ""} ${!docsProntos ? "apagado" : ""}`} id="bloco-sigef">
                   <header>
-                    <h3><span className="num-etapa">4</span>Documento do SIGEF<Dica>após certificar a planilha, envie o PDF de prévia/certificação — ele libera a planta e as peças</Dica></h3>
+                    <h3><span className="num-etapa">4</span>Documento do SIGEF <span className="selo-opcional">opcional</span><Dica>imóvel que passa pelo SIGEF: certifique a planilha e envie o PDF de prévia/certificação — a planta e as peças saem com a área e o perímetro certificados. Imóvel que não passa (área urbana, por exemplo): pule esta etapa — as peças saem pelo cálculo do sistema e a planta é a dos documentos gerados.</Dica></h3>
                     {!docsProntos && <span className="desc">liberado após a geração do memorial, da planilha e da planta</span>}
                   </header>
                   {!docsProntos ? (
                     <p className="sub" style={{ margin: 0 }}>
                       Gere o Memorial (DOCX), a Planilha (ODS) e a Planta (PDF) no botão "Gerar documentos" do rodapé ·
-                      certifique no SIGEF · envie o PDF aqui · gere a Planta do SIGEF e as peças técnicas.
+                      se o imóvel passa pelo SIGEF, certifique e envie o PDF aqui · gere as peças técnicas.
                     </p>
                   ) : sigefB64 || salvo.sigef ? (
                     <div className="acoes-linha">
@@ -2458,8 +2513,10 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                     <label className="dropzone compacta destaque"
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) carregarSigef(f); }}>
-                      <b>Arraste o PDF de prévia do SIGEF</b>
-                      <span>com ele o sistema gera a Planta e as 7 peças técnicas</span>
+                      <b>Arraste o PDF de prévia do SIGEF (opcional)</b>
+                      <span>{temGlebas
+                        ? "com glebas, as peças de cada gleba saem dele"
+                        : "não passa pelo SIGEF (área urbana)? siga direto para as peças técnicas, abaixo"}</span>
                       <input type="file" accept=".pdf" hidden
                         onChange={(e) => { const f = e.target.files?.[0]; if (f) carregarSigef(f); e.target.value = ""; }} />
                     </label>
@@ -2690,10 +2747,11 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
             )}
 
             {/* ---- Peças técnicas ---- */}
-            {!ehConferencia && docsProntos && temSigef && (
+            {!ehConferencia && docsProntos && (
               <section className="bloco" id="bloco-pecas">
                 <header>
-                  <h3><span className="num-etapa">6</span>Peças técnicas<Dica>os dados abaixo + o memorial + o PDF do SIGEF viram as 7 peças (memorial, tabular, cartas, declarações, requerimento)</Dica></h3>
+                  <h3><span className="num-etapa">{temSigef ? 6 : 5}</span>Peças técnicas<Dica>os dados abaixo + o memorial + o PDF do SIGEF (se houver) viram as 7 peças (memorial, tabular, cartas, declarações, requerimento). Sem o PDF, área, perímetro, azimutes e distâncias saem do cálculo do sistema — os mesmos do memorial.</Dica></h3>
+                  {!temSigef && <span className="desc">{temGlebas ? "com glebas, envie o PDF do SIGEF na etapa 4" : "sem o PDF do SIGEF: pelo cálculo do sistema"}</span>}
                 </header>
 
                 {/* Só o que muda peça a peça fica à vista; a papelada do RT vem do
@@ -2710,6 +2768,9 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                       <option value="M">Masculino</option><option value="F">Feminino</option>
                     </select>
                   </label>
+                  <label>RG do detentor (opcional)
+                    <input value={servico.detentor_rg ?? ""} onChange={(e) => campo("detentor_rg", e.target.value || null)} />
+                  </label>
                   <label style={{ gridColumn: "span 2" }}>Endereço dos requerentes
                     <input placeholder="Rua ..., Nº ..., Bairro, Cidade, Estado, CEP:..." value={servico.endereco_detentor ?? ""} onChange={(e) => campo("endereco_detentor", e.target.value || null)} />
                   </label>
@@ -2725,28 +2786,6 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                 </div>
 
                 <div className="secoes" style={{ marginTop: 22 }}>
-                  <Secao titulo="Segundo requerente"
-                    selo={<span className={`secao-selo ${servico.requerente2_nome ? "completa" : ""}`}>{servico.requerente2_nome || "nenhum"}</span>}
-                    abrirEm={!!servico.requerente2_nome}
-                    dica="cônjuge ou co-proprietário que assina junto">
-                    <div className="grade">
-                      <label>Requerente 2 (opcional)
-                        <input value={servico.requerente2_nome ?? ""} onChange={(e) => campo("requerente2_nome", e.target.value || null)} />
-                      </label>
-                      <label>CPF do requerente 2
-                        <input className="mono" value={servico.requerente2_cpf ?? ""} onChange={(e) => campo("requerente2_cpf", e.target.value || null)} />
-                      </label>
-                      <label>Gênero do requerente 2
-                        <select value={servico.requerente2_genero ?? "M"} onChange={(e) => campo("requerente2_genero", e.target.value as "M" | "F")}>
-                          <option value="M">Masculino</option><option value="F">Feminino</option>
-                        </select>
-                      </label>
-                      <label>RG do detentor (opcional)
-                        <input value={servico.detentor_rg ?? ""} onChange={(e) => campo("detentor_rg", e.target.value || null)} />
-                      </label>
-                    </div>
-                  </Secao>
-
                   <Secao titulo="Dados do responsável técnico nas peças"
                     selo={(() => {
                       const n = contarPreenchidos([rtExtras.formacao, rtExtras.conselho_sigla, rtExtras.conselho_numero, rtExtras.identidade, rtExtras.cpf]);
@@ -2784,7 +2823,7 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
                   <div style={{ marginTop: 14 }}>
                     {pecas.resumo ? (
                       <p className="sub" style={{ margin: "0 0 8px" }}>
-                        Área SGL {pecas.resumo.areaHa} ha · perímetro {pecas.resumo.perimetro} m · TRT {pecas.resumo.trt} ·{" "}
+                        Área {pecasDoCalculo ? "calculada" : "SGL"} {pecas.resumo.areaHa} ha · perímetro {pecas.resumo.perimetro} m · TRT {pecas.resumo.trt} ·{" "}
                         {pecas.resumo.vertices} vértices · {pecas.resumo.cartas} carta(s) de anuência{pecas.resumo.via ? ` · via ${pecas.resumo.via}` : ""}
                       </p>
                     ) : (
@@ -2802,8 +2841,8 @@ ${v.lat_gms} / ${v.lon_gms}`.trim() }] : [];
               </section>
             )}
 
-            {/* ---- Monografia dos marcos ---- */}
-            {!ehConferencia && docsProntos && temSigef && (
+            {/* ---- Monografia dos marcos (do PDF do SIGEF ou, sem ele, do cálculo) ---- */}
+            {!ehConferencia && docsProntos && (
               <MonografiaMarcos
                 marcos={unirMarcos(vertices.filter((v) => v.tipo === "M").map((v) => v.codigo))}
                 prefixo={credenciado?.prefixo_vertice ?? null}
