@@ -657,6 +657,45 @@ export function moverDivisa(pr0: Projeto, res: Resultado, q: Quadra, a: Pt, b: P
   return aplicarArraste(pr, res, q, i, aneis, novos, destinos, dono, `Divisa deslocada ${fmt(Math.abs(desloc))} m — os lotes dos dois lados se ajustaram.`);
 }
 
+/**
+ * Divisa TRAVADA (pedido do Wilker, 25/11): a divisa lateral anda paralela e a junção
+ * do fundo corre pela linha de fundo levando JUNTO os lotes de trás — o fundo com
+ * fundo continua alinhado e nenhum lote ganha quina. Sem a trava só o lote da frente
+ * andava: a junção velha ficava no lote de trás e a linha de fundo dobrava ali (era o
+ * "ponto novo" que aparecia depois de alguns arrastes). Divisa de rua a rua (as duas
+ * pontas na borda) é o deslize de sempre.
+ */
+export function moverDivisaTravada(pr0: Projeto, res: Resultado, q: Quadra, a: Pt, b: Pt, desloc: number, dono = -1): Edicao {
+  const bA = naBorda(q, a), bB = naBorda(q, b);
+  if (bA === bB || Math.abs(desloc) < 1e-4) return moverDivisa(pr0, res, q, a, b, desloc, false, dono);
+  const { pr, i, aneis, destinos } = contornos(pr0, res, q);
+  const n = esquerda(unit(sub(b, a)));
+  const F = bA ? a : b, J = bA ? b : a;
+  const dDiv = unit(sub(F, J));
+  // a linha de fundo em J: os lados que saem de J (em qualquer lote) e não são a divisa
+  let f: Pt | null = null, compF = 0, melhor = -Infinity;
+  for (const an of aneis) {
+    const k = an.findIndex((p) => dist(p, J) < TOL);
+    if (k < 0) continue;
+    for (const viz of [an[(k + 1) % an.length], an[(k - 1 + an.length) % an.length]]) {
+      const L = dist(viz, J);
+      if (L < 0.3) continue;
+      const w = unit(sub(viz, J));
+      if (Math.abs(cross(w, dDiv)) < 0.5) continue;
+      const s = dot(w, n) * Math.sign(desloc);
+      if (s > melhor) { melhor = s; f = w; compF = L; }
+    }
+  }
+  if (!f || melhor < 0.2) return moverDivisa(pr0, res, q, a, b, desloc, false, dono);
+  // a junção anda pela linha de fundo até a componente normal dar o deslocamento pedido
+  // (sem passar da próxima junção: aí a linha de fundo mudaria de trecho)
+  const t = Math.min(Math.abs(desloc / dot(f, n)), compF - 0.3);
+  const J2 = soma(J, mult(f, t));
+  const F2 = pontoNaBorda(q, soma(F, mult(n, dot(sub(J2, J), n))));
+  const novos = normalizar(moverPontos(aneis, [{ de: F, para: F2 }, { de: J, para: J2 }]));
+  return aplicarArraste(pr, res, q, i, aneis, novos, destinos, dono, `Divisa deslocada ${fmt(Math.abs(dot(sub(J2, J), n)))} m com a trava: a junção do fundo andou junto e o fundo com fundo continua alinhado.`);
+}
+
 function deslizar(aneis: Pt[][], q: Quadra, a: Pt, b: Pt, desloc: number, livre: boolean, contorno = false): Pt[][] {
   const u = unit(sub(b, a));
   const n = esquerda(u);

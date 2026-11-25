@@ -207,6 +207,34 @@ export function editarMedidas(p: Parametros, patch: Partial<Parametros>): { para
   };
   ordenar({ min: "frenteMin", pad: "frente", max: "frenteMax", rot: "Frente", un: "m" });
   ordenar({ min: "profundidadeMin", pad: "profundidade", max: "profundidadeMax", rot: "Profundidade", un: "m" });
+  // quem digitou frente ou profundidade (mínima, padrão ou máxima) manda nas áreas:
+  // área mínima = frente mín. × prof. mín.; padrão = frente × prof.; máxima = frente máx. × prof. máx.
+  // Antes a área só acompanhava quando ainda estava no valor derivado — por isso
+  // "em algumas medidas calculava e em outras não".
+  // (a mínima digitada mexe na área mínima, a máxima na máxima, a padrão na padrão)
+  const DIM: Partial<Record<keyof Parametros, "min" | "pad" | "max">> = {
+    frenteMin: "min", profundidadeMin: "min", frente: "pad", profundidade: "pad", frenteMax: "max", profundidadeMax: "max",
+  };
+  const qual = editado ? DIM[editado] : undefined;
+  if (qual) {
+    const todos: [keyof Parametros, number, string, "min" | "pad" | "max"][] = [
+      ["areaMin", Math.max(125, Math.round(novo.frenteMin * novo.profundidadeMin)), "mínima", "min"],
+      ["areaPadrao", Math.round(novo.frente * novo.profundidade), "padrão", "pad"],
+      ["areaMax", Math.floor(novo.frenteMax * novo.profundidadeMax + 1e-6), "máxima", "max"],
+    ];
+    // (a ordem mín ≤ padrão ≤ máx e o teto da área máxima são acertados logo abaixo)
+    const alvo = todos.filter(([, , , f]) => f === qual);
+    const conta: Record<string, string> = {
+      areaMin: `${fmtN(novo.frenteMin)} × ${fmtN(novo.profundidadeMin)} m`,
+      areaPadrao: `${fmtN(novo.frente)} × ${fmtN(novo.profundidade)} m`,
+      areaMax: `${fmtN(novo.frenteMax)} × ${fmtN(novo.profundidadeMax)} m`,
+    };
+    for (const [k, v, nome] of alvo) {
+      if (Math.abs(q[k] - v) < 0.5) continue;
+      q[k] = v;
+      ajustes.push(`Área ${nome} ajustada para ${fmtN(v, 0)} m² (${conta[k]}).`);
+    }
+  }
   ordenar({ min: "areaMin", pad: "areaPadrao", max: "areaMax", rot: "Área", un: "m²" });
   // área padrão = frente × profundidade (quem digitou área manda na profundidade)
   const prod = novo.frente * novo.profundidade;
@@ -317,12 +345,27 @@ export interface Rua {
   /** raio do balão de retorno no fim do eixo (rua sem saída), m */
   balao?: number;
   /**
+   * Onde a rua fica em relação à linha desenhada (`eixo` guarda o TRAÇO do operador):
+   * sem valor = a linha é o eixo (rua centrada); "esquerda"/"direita" = a linha é o
+   * alinhamento de um lado e a rua inteira é gerada para a esquerda/direita dela
+   * (no sentido do desenho, do 1º ao último ponto).
+   */
+  lado?: "esquerda" | "direita";
+  /**
    * Corpo da rua pronto (anéis UTM): o loteamento importado traz o viário como
    * ele é no arquivo, e o cálculo usa estes polígonos no lugar da faixa em volta
    * do eixo. Anel anti-horário é o contorno; anel horário é furo (a quadra que a
    * rua cerca por todos os lados).
    */
   corpo?: Pt[][];
+}
+
+export interface PontoReferencia {
+  id: string;
+  /** "P1", "P2"… (o operador pode renomear) */
+  nome: string;
+  /** UTM */
+  p: Pt;
 }
 
 export interface AreaDesenhada {
@@ -450,6 +493,11 @@ export interface Projeto {
   sobrasPublicas?: { ponto: Pt; tipo: TipoArea }[];
   /** parâmetros dos projetos de água, esgoto, drenagem, energia e iluminação (as redes são recalculadas) */
   infra?: Partial<ParametrosInfra>;
+  /**
+   * Pontos de referência marcados com a ferramenta Medir (UTM): ficam na prancheta
+   * e o desenho de ruas, lotes e quadras gruda neles.
+   */
+  referencias?: PontoReferencia[];
   /**
    * Loteamento que chegou pronto (DXF, KML/KMZ, GeoJSON): as quadras são as do
    * arquivo, com os lotes desenhados (`QuadraCfg.lotes`) e o viário com corpo

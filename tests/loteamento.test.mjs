@@ -140,14 +140,16 @@ test("arraste nunca trava: quina puxada por cima do vizinho, alinhada ou pela ru
 test("divisa deslizando não abre fresta: fundo que é trecho do lado do vizinho e ponta na quina da rua", () => {
   for (const q of r0.quadras.filter((x) => x.lotes.length >= 4)) {
     // lotes + área pública feita de lotes da quadra (a divisa com a área verde também anda)
-    const publicas = (r, c) => r.areas.filter((x) => x.origem === "lotes" && x.cfg === c).reduce((s2, x) => s2 + x.area, 0);
-    const total = q.lotes.reduce((s2, x) => s2 + x.area, 0) + publicas(r0, q.cfg);
+    // (pela geometria dentro da quadra: a área verde que junta lotes de duas quadras é
+    // registrada numa só config, mas ao congelar a quadra a parte dela volta para ela)
+    const publicas = (r) => r.areas.filter((x) => x.origem === "lotes").reduce((s2, x) => s2 + intersecao(x.pols, [q.pol]).reduce((s3, y) => s3 + areaPol(y), 0), 0);
+    const total = q.lotes.reduce((s2, x) => s2 + x.area, 0) + publicas(r0);
     for (const l of q.lotes.filter((_, i) => i % 3 === 0)) for (const a of alcasDoLote(l, q).filter((x) => x.tipo === "divisa" && !x.naBorda)) {
       for (const d of [-1.5, 1.5]) {
         const ed = moverDivisa(pr0, r0, q, a.a, a.b, d, false, posicaoNoDesenho(pr0, r0, l));
         const rr = calcular(ed.pr, perimetro);
         const ls = rr.lotes.filter((x) => x.quadra === q.nome);
-        const soma = ls.reduce((s2, x) => s2 + x.area, 0) + publicas(rr, rr.quadras.find((x) => x.nome === q.nome)?.cfg ?? q.cfg);
+        const soma = ls.reduce((s2, x) => s2 + x.area, 0) + publicas(rr);
         assert.ok(Math.abs(soma - total) < 0.5, `${l.id}: divisa ${d} m abriu ${(total - soma).toFixed(2)} m² de fresta`);
       }
     }
@@ -866,13 +868,15 @@ test("edição livre: frente, área, unir, dividir e arrastar fora das faixas s�
   const q = r0.quadras.find((x) => x.fileiras === 2 && x.lotes.length > 10);
   const l = q.lotes.find((x) => !x.esquina && x.numero > 3);
   const sel = { tipo: "lotes", chaves: [{ quadra: l.quadra, fileira: l.fileira, indice: l.indice }] };
-  const f = executar(`frente ${p.frenteMax + 5}`, pr0, r0, sel);
+  // (abaixo da mínima: a planta gerada agora é regular — vizinhos de 10 m — e passar da
+  // máxima deslizando uma divisa só não alcança; a regra testada é a mesma: aplica e avisa)
+  const f = executar(`frente ${p.frenteMin - 2}`, pr0, r0, sel);
   assert.ok(f.pr && !f.erro, f.msg);
   assert.match(f.msg, /Atenção: .*fora das medidas do projeto/);
   // o lote editado aparece com aviso (não erro) e o desenho é do operador
   const rf = calcular(f.pr, perimetro);
   const lf = rf.lotes.find((x) => x.quadra === f.sel.chaves[0].quadra && x.indice === f.sel.chaves[0].indice);
-  assert.ok(lf.problemas.some((t) => /frente .* acima do máximo/.test(t)), lf.problemas.join("; "));
+  assert.ok(lf.problemas.some((t) => /frente .* (abaixo do mínimo|acima do máximo)/.test(t)), lf.problemas.join("; "));
   assert.ok(rf.problemas.filter((x) => x.alvo?.lote === lf.id).every((x) => x.nivel === "aviso"));
   const a = executar(`area ${p.areaMin - 10}`, pr0, r0, sel);
   assert.ok(a.pr && !a.erro, a.msg);

@@ -507,12 +507,15 @@ export function montarLoteamento(d: DesenhoImportado, base: Projeto, perimetro: 
 
   // terra de cada quadra: os lotes (frestas de até 5 cm fechadas) e, se o arquivo traz o polígono da quadra,
   // o que dele sobrar com corpo (não fresta) — vira área livre da quadra
+  // o viário desenhado no arquivo (o canteiro que o sistema põe no alinhamento da rua
+  // fica dentro do contorno da quadra exportada): não é área livre da quadra
+  const viarioDoArquivo = pols.filter((p) => p.classe === "viario").map((p) => p.pol);
   const terraQuadra = (g: GrupoQ): Poligono[] => {
     // (o fechamento das frestas apara a ponta muito aguda de um lote: os lotes entram inteiros de novo)
     const ls = g.lotes.map((l) => l.pol);
     let t = intersecao(uniao([...uniaoFechada(ls, 0.025), ...ls]), [gleba]);
     if (g.poligono) {
-      const livres = diferenca(intersecao([g.poligono.pol], [gleba]), [...t, ...uniaoLotes, ...areas.map((a) => a.pol)])
+      const livres = diferenca(intersecao([g.poligono.pol], [gleba]), [...t, ...uniaoLotes, ...areas.map((a) => a.pol), ...viarioDoArquivo])
         .filter((x) => areaPol(x) > 2 && espessura(x) > 0.3);
       if (livres.length) t = uniaoFechada([...t, ...livres], 0.005);
     }

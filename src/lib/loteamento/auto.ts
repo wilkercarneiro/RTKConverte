@@ -112,14 +112,16 @@ function angulosCandidatos(gleba: Pt[], vias: number[]): number[] {
 function malha(
   glebaPl: Poligono, ang: number, fy: number, fx: number, projeto: Projeto, vias: [Pt, Pt][], anel: Pt[] | null = null,
   transversais = true,
+  /** malha simétrica: passo entre ruas da família (v) e entre transversais (u) que fecham a gleba exata */
+  passos?: { v?: number; u?: number },
 ): EixoAuto[] {
   const p = projeto.params;
   const w = p.ruaLargura;
   const u: Pt = [Math.cos(ang), Math.sin(ang)], v = esquerda(u);
   const us = glebaPl.ext.map((q) => dot(q, u)), vs = glebaPl.ext.map((q) => dot(q, v));
   const u0 = Math.min(...us) - 50, u1 = Math.max(...us) + 50, v0 = Math.min(...vs), v1 = Math.max(...vs);
-  const passoV = 2 * p.profundidade + w;
-  const lq = Math.max(p.frente * 4, Math.floor(p.quadraCompMax / p.frente) * p.frente);
+  const passoV = passos?.v ?? 2 * p.profundidade + w;
+  const lq = passos?.u ? passos.u - w : Math.max(p.frente * 4, Math.floor(p.quadraCompMax / p.frente) * p.frente);
   const passoU = lq + w;
   const linhas: Pt[][] = [];
   const pt = (s: number, t: number): Pt => soma(mult(u, s), mult(v, t));
@@ -523,14 +525,80 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
     const umaFamilia = tr ? 0 : 6;
     const paraleloDivisa = dirDivisas.filter((x) => Math.abs(Math.sin(x.ang - ang)) < 0.06).reduce((s2, x) => s2 + x.comp, 0);
     const orientacao = compDivisas ? 6 * Math.min(1, paraleloDivisa / (0.25 * compDivisas)) : 0;
-    return n - 3 * longas - 5 * pequenas + 4 * acessos + umaFamilia + orientacao + a / 1e7;
+    return n - 3 * longas - 5 * pequenas + 4 * acessos + umaFamilia + orientacao - harmonia(r) + a / 1e7;
+  };
+  /**
+   * Desarmonia visível (pedido do Wilker, 25/11: "simetria, projeto harmônico, lotes bem
+   * distribuídos"): lote muito maior ou menor que o padrão, lote em diagonal (divisas
+   * fora do esquadro da rua) e quadras de tamanhos desencontrados custam na nota — a
+   * malha que dá 4 lotes a mais e um mosaico torto perde para a que fica regular.
+   */
+  const harmonia = (r: Resultado): number => {
+    let custo = 0;
+    for (const l of r.lotes) {
+      // o "lote" de vários mil m² (a cunha inteira que nada dividiu) é terra perdida, como a sobra
+      if (l.area > p.areaMax * 1.03) custo += (2.5 * (l.area - p.areaMax)) / p.areaPadrao;
+      if (l.angCorte !== undefined && Math.abs(90 - l.angCorte) > 12) custo += 0.4;
+      // esquina e ponta são maiores de propósito (absorvem a curva e a divisa torta)
+      if (l.esquina || l.ponta) continue;
+      const dev = Math.abs(l.area - p.areaPadrao) / p.areaPadrao;
+      if (dev > 0.25) custo += Math.min(0.8, 0.3 + (dev - 0.25));
+    }
+    // retalho que virou "canteiro" (viário) é buraco cinza no meio da quadra: terra perdida
+    for (const c of r.canteiros ?? []) custo += (1.5 * areaPol(c)) / p.areaPadrao;
+    // quadras de duas fileiras: comprimentos parecidos (o olho vê a malha regular)
+    const comps = r.quadras.filter((q) => q.fileiras >= 2 && q.lotes.length >= 6).map((q) => q.lotes.length);
+    if (comps.length >= 3) {
+      const m = comps.reduce((s2, x) => s2 + x, 0) / comps.length;
+      const cv = Math.sqrt(comps.reduce((s2, x) => s2 + (x - m) ** 2, 0) / comps.length) / m;
+      custo += 8 * Math.max(0, cv - 0.15);
+    }
+    return custo;
+  };
+  /**
+   * MALHA SIMÉTRICA: quantas quadras de duas fileiras cabem entre os extremos da
+   * gleba nesta direção, com a profundidade ajustada (até ±10% do padrão) para todas
+   * saírem IGUAIS — sem a faixa torta que o passo fixo deixa na última quadra. O mesmo
+   * no comprimento: as transversais dividem o comprimento em quadras iguais.
+   */
+  const simetricas = (ang: number): { d: number; fy: number; passoV: number; passoU: number; fx: number }[] => {
+    const u: Pt = [Math.cos(ang), Math.sin(ang)], v = esquerda(u);
+    const vs = ptsPl.map((q) => dot(q, v)), us = ptsPl.map((q) => dot(q, u));
+    const vMin = Math.min(...vs), vMax = Math.max(...vs), H = vMax - vMin;
+    const uMin = Math.min(...us), uMax = Math.max(...us), U = uMax - uMin;
+    // o extremo é de acesso quando a estrada corre por ele (paralela, perto da ponta)
+    const ehAcessoEm = (alvo: number, eixo: Pt, perp: Pt) => base.bordas.some((b, i) => {
+      if (!ehAcesso(b.tipo)) return false;
+      const a0 = ptsPl[i], b0 = ptsPl[(i + 1) % ptsPl.length];
+      if (dist(a0, b0) < 2 * p.frente || Math.abs(dot(unit(sub(b0, a0)), perp)) > 0.26) return false;
+      return Math.abs((dot(a0, eixo) + dot(b0, eixo)) / 2 - alvo) < p.profundidade;
+    });
+    const c0 = ehAcessoEm(vMin, v, v) ? 2 : 1, c1 = ehAcessoEm(vMax, v, v) ? 2 : 1;
+    const out: { d: number; fy: number; passoV: number; passoU: number; fx: number }[] = [];
+    const dMin = Math.max(p.profundidadeMin, 0.9 * p.profundidade), dMax = Math.min(p.profundidadeMax, 1.12 * p.profundidade);
+    const cands: { d: number; k: number }[] = [];
+    for (let k = 0; k < 80; k++) {
+      const d = (H - (k + 1) * w) / (c0 + 2 * k + c1);
+      if (d < dMin - 1e-6) break;
+      if (d <= dMax + 1e-6) cands.push({ d, k });
+    }
+    cands.sort((x, y) => Math.abs(x.d - p.profundidade) - Math.abs(y.d - p.profundidade));
+    for (const { d } of cands.slice(0, 2)) {
+      // comprimento: as transversais repartem o espaço entre os contornos das pontas
+      const e0 = ehAcessoEm(uMin, u, u) ? 0 : d + w / 2, e1 = ehAcessoEm(uMax, u, u) ? 0 : d + w / 2;
+      const Ur = U - e0 - e1;
+      const m = Math.max(1, Math.ceil(Ur / (p.quadraCompMax + w) - 1e-9));
+      const passoU = Ur / m;
+      out.push({ d, fy: c0 * d + w / 2, passoV: 2 * d + w, passoU, fx: e0 + passoU });
+    }
+    return out;
   };
 
   // Rua de contorno: uma profundidade de lote da divisa (APP do rio entra na
   // conta). Na estrada NÃO há rua paralela: os lotes dão frente para ela e as
   // ruas internas saem do contorno e chegam nela — o padrão das plantas
   // aprovadas da equipe (LOTEAMENTO NOVO, out/2026).
-  const distDivisa = (b: (typeof base.bordas)[number]) => p.profundidade + w / 2 + (b.tipo === "rio" ? b.faixa : 0);
+  const distDivisa = (b: (typeof base.bordas)[number], d = p.profundidade) => d + w / 2 + (b.tipo === "rio" ? b.faixa : 0);
   const anelEstrada = anelInterno(ptsPl, base.bordas.map((b) => (ehAcesso(b.tipo) ? 0 : distDivisa(b))), glebaPl, 2 * p.profundidade);
   // Contorno seletivo — a lógica da planta aprovada da equipe (IRAN, LOTEAMENTO
   // NOVO-A1): as ruas são UMA família paralela à divisa mais longa; nas divisas
@@ -538,14 +606,17 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
   // sobrar, lotes maiores); só na divisa que a família CRUZA corre a rua de
   // contorno, a uma profundidade de lote, e dela nascem as ruas da família, que
   // terminam na estrada. Na estrada não há rua paralela.
-  const anelDaFamilia = (ang: number) => anelInterno(ptsPl, base.bordas.map((b, i) => {
+  const anelDaFamilia = (ang: number, d = p.profundidade) => anelInterno(ptsPl, base.bordas.map((b, i) => {
     if (ehAcesso(b.tipo)) return 0;
     const a0 = ptsPl[i], b0 = ptsPl[(i + 1) % ptsPl.length];
     const paralela = Math.abs(Math.sin(Math.atan2(b0[1] - a0[1], b0[0] - a0[0]) - ang)) < 0.34; // até 20°
-    return paralela ? 0 : distDivisa(b);
-  }), glebaPl, 2 * p.profundidade);
+    return paralela ? 0 : distDivisa(b, d);
+  }), glebaPl, 2 * d);
 
-  const porAngulo: { ang: number; eixos: EixoAuto[]; nota: number; res: Resultado; tr: boolean }[] = [];
+  type Cand = { ang: number; eixos: EixoAuto[]; nota: number; tr: boolean; sim: boolean; nLotes: number };
+  const porAngulo: Cand[] = [];
+  /** todas as malhas avaliadas (a 2ª e a 3ª proposta saem daqui quando a gleba só tem 1–2 direções) */
+  const todos: Cand[] = [];
   for (const ang of angs) {
     const v = esquerda([Math.cos(ang), Math.sin(ang)]);
     const vMin = Math.min(...ptsPl.map((q) => dot(q, v)));
@@ -581,6 +652,7 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
       const eixos = malha(glebaPl, ang, fy, passoU / 2, base, viasPl, va, tr);
       const res = calcular(montar(eixos), perimetro, { busca: true });
       const n = nota(res, tr, ang);
+      todos.push({ ang, eixos, nota: n, tr, sim: false, nLotes: res.lotes.length });
       if (!melhor || n > melhor.nota) melhor = { eixos, nota: n, res, fy, anel: va, tr };
     }
     // ajuste fino da defasagem transversal com a melhor longitudinal
@@ -590,16 +662,83 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
       const eixos = malha(glebaPl, ang, fyMelhor, fx, base, viasPl, melhor!.anel, true);
       const res = calcular(montar(eixos), perimetro, { busca: true });
       const n = nota(res, true, ang);
+      todos.push({ ang, eixos, nota: n, tr: true, sim: false, nLotes: res.lotes.length });
       if (n > melhor!.nota) melhor = { eixos, nota: n, res, fy: fyMelhor, anel: melhor!.anel, tr: true };
     }
-    porAngulo.push({ ang, ...melhor! });
+    const m = melhor!;
+    porAngulo.push({ ang, eixos: m.eixos, nota: m.nota, tr: m.tr, sim: false, nLotes: m.res.lotes.length });
   }
   porAngulo.sort((a, b) => b.nota - a.nota);
+  // malha simétrica: quadras iguais de ponta a ponta (profundidade ajustada até ±10%).
+  // Só nas 4 melhores direções da busca (nas outras ela não chegaria à frente e
+  // dobrava o tempo da geração).
+  for (let k = 0; k < Math.min(4, porAngulo.length); k++) {
+    const ang = porAngulo[k].ang;
+    let melhorSim: Cand | null = null;
+    for (const s of simetricas(ang)) {
+      const bS: Projeto = { ...base, params: { ...p, profundidade: s.d } };
+      const aneisS = [
+        anelInterno(ptsPl, base.bordas.map((b) => (ehAcesso(b.tipo) ? 0 : distDivisa(b, s.d))), glebaPl, 2 * s.d),
+        anelDaFamilia(ang, s.d),
+      ].filter((x): x is Pt[] => !!x);
+      const vars: (Pt[] | null)[] = aneisS.length ? aneisS : [null];
+      for (const va of vars) for (const tr of [true, false]) {
+        const eixos = malha(glebaPl, ang, s.fy, s.fx, bS, viasPl, va, tr, { v: s.passoV, u: s.passoU });
+        const res = calcular(montar(eixos), perimetro, { busca: true });
+        const n = nota(res, tr, ang);
+        const c: Cand = { ang, eixos, nota: n, tr, sim: true, nLotes: res.lotes.length };
+        todos.push(c);
+        if (!melhorSim || n > melhorSim.nota) melhorSim = c;
+      }
+    }
+    if (melhorSim && melhorSim.nota >= porAngulo[k].nota) porAngulo[k] = melhorSim;
+  }
+  porAngulo.sort((a, b) => b.nota - a.nota);
+  // Sempre 3 propostas (pedido do Wilker): a gleba retangular só tem 2 direções — a
+  // terceira é a melhor malha de outro tipo (simétrica × defasada, com × sem
+  // transversais) que não repete uma já escolhida.
+  const quantas0 = op.quantas ?? 3;
+  const assinatura = (c: Cand) => c.eixos.map((e) => e.eixo.map((q) => `${Math.round(q[0] / 4)},${Math.round(q[1] / 4)}`).join(";")).sort().join("|");
+  if (porAngulo.length < quantas0) {
+    const vistos = new Set(porAngulo.map(assinatura));
+    const tipos = new Set(porAngulo.map((c) => `${c.ang.toFixed(3)}|${c.sim}|${c.tr}`));
+    const resto = todos.filter((c) => !tipos.has(`${c.ang.toFixed(3)}|${c.sim}|${c.tr}`)).sort((a, b) => b.nota - a.nota);
+    for (const c of resto) {
+      if (porAngulo.length >= quantas0) break;
+      const s = assinatura(c), t = `${c.ang.toFixed(3)}|${c.sim}|${c.tr}`;
+      if (vistos.has(s) || tipos.has(t) || !c.nLotes) continue;
+      vistos.add(s); tipos.add(t);
+      porAngulo.push(c);
+    }
+  }
 
   const quantas = op.quantas ?? 3;
   const props: Proposta[] = [];
   const notaFinal = new Map<Proposta, number>();
-  for (const c of porAngulo.slice(0, quantas)) {
+  // reservas: a busca é no cálculo rápido; no completo (linha central, áreas públicas,
+  // sobras anexadas) uma malha pode desandar (o lote-cunha de 20 mil m² do IRAN). Duas
+  // malhas a mais entram no cálculo completo e ficam as 3 melhores.
+  const fila = porAngulo.slice(0, quantas);
+  if (quantas > 1) {
+    const vistos = new Set(fila.map(assinatura));
+    for (const c of [...porAngulo.slice(quantas), ...todos.filter((x) => !porAngulo.includes(x)).sort((a, b) => b.nota - a.nota)]) {
+      if (fila.length >= quantas + 4) break;
+      const s = assinatura(c);
+      if (vistos.has(s) || !c.nLotes) continue;
+      vistos.add(s);
+      fila.push(c);
+    }
+  }
+  // planta ruim no cálculo completo: lote com pendência, terra sem destino ou "lote" gigante
+  const ruim = (r: Resultado) => r.problemas.some((q) => q.nivel === "erro") || r.quadro.sobras > 1 || r.lotes.some((l) => l.area > 2 * p.areaMax);
+  // propostas iguais no resultado (malhas diferentes que dão a mesma planta) contam uma vez
+  const chaveRes =(r: Resultado) => `${r.lotes.length}|${Math.round(r.quadro.lotes.area / 10)}|${r.ruas.length}`;
+  const jaTem = new Set<string>();
+  let completas = 0;
+  for (const c of fila) {
+    // as 3 primeiras sempre; as reservas só enquanto faltar proposta distinta ou para trocar uma ruim
+    if (completas >= quantas + 2 || (completas >= quantas && jaTem.size >= quantas && !props.some((x) => ruim(x.resultado)))) break;
+    completas++;
     let projeto = montar(c.eixos);
     projeto = nomearRuas(projeto, plano, c.ang);
     // a planta já sai ajustada: quadra de duas fileiras fundo com fundo pela linha central
@@ -607,6 +746,9 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
     if (op.reservarAreas !== false) projeto = reservarAreas(projeto, perimetro);
     const resultado = calcular(projeto, perimetro);
     const g = resultado.quadro.gleba;
+    const ch = chaveRes(resultado);
+    if (jaTem.has(ch)) continue;
+    jaTem.add(ch);
     props.push({
       titulo: "",
       angulo: c.ang,
@@ -623,7 +765,14 @@ export function gerarPropostas(base: Projeto, perimetro: Perimetro, op: OpcoesGe
   // a ordem é a da nota no cálculo completo (lotes, terra sem uso, harmonia,
   // quadra longa) — não só a contagem: a planta com mais lotes e retalho
   // grande não vem antes da que aproveita a gleba como a equipe faria
-  props.sort((a, b) => notaFinal.get(b)! - notaFinal.get(a)! || b.lotes - a.lotes);
+  // planta sem pendência vem sempre antes da que tem (o operador não recebe proposta com lote vermelho na frente)
+  const pend = (x: Proposta) => (ruim(x.resultado) ? 1 : 0);
+  // a harmonia decide entre plantas de rendimento parecido: a que perde mais de 15% dos
+  // lotes da melhor não vem na frente (o loteador não troca 50 lotes por 33 "mais bonitos")
+  const maxLotes = Math.max(0, ...props.filter((x) => !pend(x)).map((x) => x.lotes));
+  const rende = (x: Proposta) => (x.lotes >= 0.85 * maxLotes ? 0 : 1);
+  props.sort((a, b) => pend(a) - pend(b) || rende(a) - rende(b) || notaFinal.get(b)! - notaFinal.get(a)! || b.lotes - a.lotes);
+  props.splice(quantas);
   props.forEach((pr, i) => { pr.titulo = `Proposta ${String.fromCharCode(65 + i)}`; });
   return props;
 }
@@ -705,9 +854,30 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
     res = calcular(pr, perimetro, { rapido: true });
   }
 
+  // 1b. quadrinha (até 5 lotes) entre ruas que se cruzam em ângulo — o triângulo que
+  //     sobra no canto da malha — vira PRAÇA, dentro da meta de verde: os lotes dela
+  //     saem em leque, de tamanhos desencontrados, e quebram a harmonia da planta
+  //     (pedido do Wilker, 25/11). Nunca a de frente para a estrada.
+  const verdeAtual = () => res.quadro.verde + res.quadro.lazer;
+  if (!semVerde) {
+    const meta = (p.pctVerdeMin / 100) * G;
+    res = calcular(pr, perimetro, { manterSobras: true });
+    const cfgs = pr.quadras.map((c) => ({ ...c, ajustes: [...c.ajustes] }));
+    let verde = verdeAtual(), mudou = false;
+    const peq = res.quadras.filter((q) => q.lotes.length > 0 && q.lotes.length <= 5 && q.cfg < 0
+      && !q.lotes.some((l) => l.lados.some((x) => x.tipo === "via")) && verdeValida([q.pol]))
+      .sort((a, b) => a.area - b.area);
+    for (const q of peq) {
+      if (verde + q.area > 1.25 * meta) continue;
+      cfgs.push({ ancora: paraUtm(plano, ancoraDaQuadra(q)), ajustes: [], destino: "verde" });
+      verde += q.area;
+      mudou = true;
+    }
+    if (mudou) { pr = { ...pr, quadras: cfgs }; res = calcular(pr, perimetro, { rapido: true }); }
+  }
+
   // 2. área verde onde a terra vale menos: baixada, encosta íngreme, buraco,
   //    longe do acesso. Lote com frente para a estrada NUNCA vira área verde.
-  const verdeAtual = () => res.quadro.verde + res.quadro.lazer;
   let falta = (p.pctVerdeMin / 100) * G - verdeAtual();
   let quadrasCfg: QuadraCfg[] = [...pr.quadras];
   let guarda = 0;
@@ -762,10 +932,23 @@ export function reservarAreas(projeto: Projeto, perimetro: Perimetro): Projeto {
         const u = uniaoFechada([g.pol, l.pol]);
         return u.length === 1 && (perimetroDe(g.pol) + perimetroDe(l.pol) - perimetroDe(u[0])) / 2 >= 3;
       });
-      while (soma2 < faltaInst) {
-        const cands = livres.filter((l) => !grupo.includes(l) && (!grupo.length || encosta(l)));
-        if (!cands.length) break;
-        const l = cands.reduce((m, x) => (dLote(x) < dLote(m) ? x : m), cands[0]);
+      // (25/11) a partir da PONTA da quadra que fica mais perto do centro, coluna a coluna
+      // (frente e fundo juntos): um bloco retangular numa ponta. Crescendo do lote do meio,
+      // a área cortava a quadra em duas, com degraus — não era harmônico e o DXF exportado
+      // voltava como duas quadras.
+      const pos = (l: (typeof livres)[number]) => dot(sub(centroide(l.pol.ext), q.origem), q.u);
+      const ps = livres.map(pos);
+      const sMin = Math.min(...ps), sMax = Math.max(...ps);
+      const ponta = (s: number) => {
+        const ls = livres.filter((l) => Math.abs(pos(l) - s) < 0.6 * p.frente + 1);
+        return ls.length ? Math.min(...ls.map(dLote)) : Infinity;
+      };
+      const sentido = ponta(sMin) <= ponta(sMax) ? 1 : -1;
+      const ordem = [...livres].sort((a, b) => sentido * (pos(a) - pos(b)));
+      for (const l of ordem) {
+        if (soma2 >= faltaInst) break;
+        // o lote seguinte precisa encostar no bloco (fileira única ou a outra fileira da mesma coluna)
+        if (grupo.length && !encosta(l)) continue;
         grupo.push(l);
         soma2 += l.area;
         cfg.ajustes.push({ fileira: l.fileira, indice: Math.floor(l.indice + 1e-9), destino: "institucional" });

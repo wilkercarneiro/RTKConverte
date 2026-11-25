@@ -330,6 +330,29 @@ O loteamento já dividido no CAD, no QGIS ou no Google Earth vira o projeto daqu
 - **Árvore do clipper** (`geom.ts`, achado na importação): com StrictlySimple, o clipper às vezes põe um furo na raiz da árvore ou pendura o furo num "contorno" de área zero. É o furo que toca outro anel num ponto só, como a quadra que encosta na divisa pela quina. Antes, o furo virava terra (o viário importado ganhava a quadra inteira); agora ele volta para o contorno que o contém.
 - **Desempenho:** a importação roda num Web Worker (`importar.worker.ts`). O DXF de 207 lotes leva cerca de 2,5 s.
 
+## Pedidos de 25/11/2026 (geração harmônica e prancheta)
+
+- **Medidas do lote.** Mexer na frente ou na profundidade **mínima** recalcula a área mínima (frente mín. × prof. mín., nunca abaixo de 125 m²); na **padrão**, a área padrão; na **máxima**, a área máxima (`editarMedidas`, modelo.ts). Antes a área só acompanhava quando ainda estava no valor derivado — por isso "em algumas medidas calculava e em outras não". A área digitada à mão vale até a próxima mudança de frente/profundidade daquela faixa.
+- **Geração harmônica** (`auto.ts`, `calculo.ts`):
+  - faixa de uma fileira (a beirada entre o contorno e a divisa) fica no **esquadro da rua**; só inclina inteira quando as duas pontas são paralelas e a até 20° (antes as pontas de 45° dos cantos inclinavam a faixa toda a 30°: os lotes "em diagonal");
+  - **malha simétrica**: além do passo fixo com defasagens, o gerador calcula quantas quadras de duas fileiras cabem entre os extremos da gleba e ajusta a profundidade (até ±10% do padrão, dentro das faixas) para todas saírem iguais; o mesmo no comprimento (transversais repartindo em quadras iguais). Testada nas 4 melhores direções;
+  - a nota desconta **desarmonia** (lote fora de ±25% da área padrão — esquina e ponta não contam —, lote em diagonal, quadras de comprimentos desencontrados) e trata o "lote" gigante acima da área máxima como terra perdida;
+  - **sempre 3 propostas distintas** (a gleba retangular só tem 2 direções: a 3ª é a melhor malha de outro tipo); propostas iguais no resultado contam uma vez; até 2 malhas reservas entram no cálculo completo quando uma das 3 sai ruim;
+  - ordem: sem pendência primeiro; quem rende menos de 85% dos lotes da melhor não vem na frente; depois a nota;
+  - quadrinha de até 5 lotes (sem frente para a estrada, círculo de 10 m) vira praça dentro da meta de verde;
+  - institucional: bloco a partir da **ponta** da quadra central mais perto do centro, coluna a coluna (antes crescia do lote do meio, cortava a quadra em duas e com degraus).
+  - **terra que sumia**: na quadra estreita entre o contorno e uma rua, pedaços da quadra não viravam lote, área nem sobra — na tela era um buraco cinza e o quadro os contava como viário (a subtração não fechava com o viário desenhado: 23.152 × 22.105 m² no teste do DXF). Rede de segurança no cálculo completo (`calcular`, depois das quadras): o que da quadra não está ocupado volta como retalho e segue o caminho normal (entra no lote vizinho quando cabe).
+  - importação: o viário desenhado no arquivo não conta como área livre da quadra (`terraQuadra`, montar.ts).
+- **Bateria de geração** (scratchpad da sessão, `qa/gerar.mjs` + `qa/casos.mjs`): 18 glebas (lab, retângulo, retângulo girado, trapézio, L, triângulo, faixa longa, faixa funda, U côncavo, irregular, duas estradas, rio, pequena, grande de 50 ha, estrada no lado curto, chácaras, IRAN e EDILSON reais), 3 propostas cada, figura e métricas (lotes, % vendável, pendências, lotes em diagonal, 5+ quinas, dispersão de área, quadrinhas, sobra).
+- **Prancheta** (`prancheta.ts`, `Editor.tsx`, `Painel.tsx`):
+  - **Seta com laço**: arrastar contorna os lotes à mão; entra o lote cujo meio fica dentro (prévia verde durante o arraste). Clique com tremida de até 6 px continua clique.
+  - **Medir (M)**: a medida acompanha a linha em tempo real (trecho, total e azimute), cliques em cadeia; **digitar os metros** e Enter leva o ponto à distância exata na direção do cursor (vale para rua, lote, área, corte e quadra); **P** deixa um **ponto de referência** (`Projeto.referencias`, UTM) — o desenho gruda nele; a lista fica no painel sem seleção.
+  - **Rua (R)**: a rua entra **sem redesenhar o loteamento** (`manterLotesComRuaNova`: as quadras que a rua corta ou que o cruzamento muda são congeladas com os lotes de antes, recortados pelas quadras novas; lasca < 15% do lote e < 40 m² vira área livre). Barra flutuante: a linha é o **centro** ou a beira **esquerda/direita** da rua (`Rua.lado`; o `eixo` gravado é o traço e o cálculo desloca meia largura com `eixoDoTraco`); dá para trocar depois no painel.
+  - **Trava (X ou Shift no arraste)**, ligada por padrão: a quina só anda nos eixos do lote (cima/baixo, esquerda/direita); a divisa do fundo com fundo anda paralela e a junção corre pela linha de fundo levando os lotes de trás (`moverDivisaTravada`). **Causa dos "pontos novos"**: sem a trava só o lote da frente andava, a junção velha ficava no lote de trás e a linha de fundo dobrava ali (em 40 arrastes encadeados, 5 criaram 5ª–7ª quina).
+  - **Dividir em N** (2 a 60) com prévia da área de cada parte; as partes ficam selecionadas.
+  - **Ângulo das divisas** dos lotes selecionados (`girarLotes`, comando `girar N`): o pé de cada divisa na rua fica; a ponta corre pela linha de fundo; divisa atravessada com os dois lados selecionados gira inteira em torno da junção (o fundo com fundo continua alinhado); divisa de cabeceira que não tem para onde correr fica como está. Recusa giro que cruzaria divisas ou passaria da próxima quina.
+  - **Gerar quadra (Q)**: clica o começo e o fim da frente; o quadro pede comprimento, profundidade total, lotes por fileira, formato (1 ou 2 fileiras) e o lado; cada lote entra como lote desenhado (toma a terra que estiver embaixo).
+
 ## Como funciona por dentro
 
 - **Projeto = intenção.** A tabela `loteamentos` (migração 0021) guarda só parâmetros, ruas, áreas e ajustes. Quadras e lotes **nunca** são gravados: `calcular()` (`src/lib/loteamento/calculo.ts`) refaz tudo a cada mudança, em cerca de 10 ms para 200 lotes e 130 ms para 2.000. É isso que faz o resto se ajustar quando um lote, uma rua ou um parâmetro muda.
@@ -390,4 +413,5 @@ O loteamento já dividido no CAD, no QGIS ou no Google Earth vira o projeto daqu
   - o servidor só aceita ids do projeto recalculado (até 60);
   - o arco da esquina descrito como curva no memorial (sem "vértice A-?");
   - 60 lotes num pedido.
+- **`tests/loteamento_prancheta.test.mjs`** cobre os pedidos de 25/11: medidas recalculando as áreas, 3 propostas distintas e sem lote em diagonal, rua de um lado do traço, rua nova que mantém os lotes e não deixa lote sob ela, giro das divisas (área e quantidade iguais, sem sobreposição), gerar quadra, divisa travada sem quina nova, trava/distância/pontos de referência e dividir em 7.
 - **`npm run test:rls`** cobre o isolamento da tabela `loteamentos` entre escritórios.

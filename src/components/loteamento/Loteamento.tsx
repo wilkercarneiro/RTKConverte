@@ -444,14 +444,15 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
         <div className={`lot-area-trabalho${verAvisos ? " com-avisos" : ""}${painelRecolhido ? " painel-recolhido" : ""}`}>
           <nav className="lot-ferramentas" aria-label="Ferramentas">
             {([
-              ["selecionar", "Seta (V): clique seleciona · arraste uma caixa para selecionar vários lotes (da esquerda para a direita: os que ficam inteiros dentro; da direita para a esquerda: os que a caixa toca) · Shift soma · mover a vista: botão do meio/direito ou Espaço", "M5 3l14 9-6 1.5L10 20z"],
+              ["selecionar", "Seta (V): clique seleciona · arraste contornando os lotes (laço) para selecionar vários — entra o lote cujo meio fica dentro · Shift soma · mover a vista: botão do meio/direito ou Espaço", "M5 3l14 9-6 1.5L10 20z"],
               ["mao", "Mão (H): arrastar move a vista · clique seleciona", "M8 13V5.5a1.5 1.5 0 0 1 3 0V12M11 11V4.5a1.5 1.5 0 0 1 3 0V12M14 11.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5a6 6 0 0 1-5-2.7L3.6 14a1.5 1.5 0 0 1 2.5-1.6L8 15"],
-              ["rua", "Desenhar rua (R)", "M4 20 10 4M14 4l6 16M12 6v2M12 11v2M12 16v2"],
+              ["rua", "Desenhar rua (R): a rua entra sem redesenhar os lotes (só corta onde passa) · escolha se a linha é o centro ou a beira esquerda/direita da rua · digite os metros para a distância exata", "M4 20 10 4M14 4l6 16M12 6v2M12 11v2M12 16v2"],
+              ["quadra", "Gerar quadra (Q): clique o começo e o fim da frente, depois diga o tamanho, quantos lotes e o formato", "M3 6h18v12H3zM3 12h18M8 6v12M13 6v12M18 6v12"],
               ["lote", "Desenhar lote (L) — clique as quinas, Enter fecha; duplo clique na área livre rosa vira lote", "M4 4h16v16H4zM4 12h16M12 4v16"],
               ["cortar", "Cortar lotes com uma linha (C)", "M6 6a2 2 0 1 0 0 .01M6 18a2 2 0 1 0 0 .01M8 7l12 10M8 17l12-10"],
               ["frente", "Escolher a frente (T): com um lote selecionado, clique no lado que é a frente dele; sem lote, no lado da quadra que é o acesso", "M4 20h16M7 20V9l5-5 5 5v11M10 20v-5h4v5"],
               ["area", "Desenhar área pública (A)", "M4 6l7-3 9 5-2 11-10 2-5-6z"],
-              ["medir", "Medir (M)", "M3 17 17 3l4 4L7 21zM7 13l2 2M10 10l2 2M13 7l2 2"],
+              ["medir", "Medir (M): a medida acompanha a linha · digite os metros e Enter para ir ao ponto exato · P deixa um ponto de referência", "M3 17 17 3l4 4L7 21zM7 13l2 2M10 10l2 2M13 7l2 2"],
             ] as [Ferramenta, string, string][]).map(([f, t, d]) => (
               <button key={f} title={t} className={ferramenta === f ? "ativo" : ""} onClick={() => setFerramenta(f)}>
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"><path d={d} /></svg>
@@ -501,7 +502,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
                 if (e.giroMax > 30) return `uma lateral sairia ${fmt(e.giroMax, 0)}° do esquadro da rua`;
                 return null;
               }}
-              redes={verRedes && infra ? { r: infra, camadas: camadasRedes } : null} />
+              redes={verRedes && infra ? { r: infra, camadas: camadasRedes } : null} calc={calc} />
             {verRedes && (
               <PainelRedes r={infra} camadas={camadasRedes} onCamadas={setCamadasRedes} onFechar={() => setVerRedes(false)}
                 onParametros={() => { setEtapa("entregas"); setTimeout(() => document.getElementById("lot-infra")?.scrollIntoView({ behavior: "smooth" }), 80); }} />
@@ -562,13 +563,17 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
               <div>
                 <h4>No desenho</h4>
                 <ul>
-                  <li><b>Seta (V)</b>: <b>clique</b> seleciona o lote · <b>arraste uma caixa</b> para selecionar vários de uma vez (da esquerda para a direita: os lotes inteiros dentro dela; da direita para a esquerda: os que ela toca) · <b>Shift</b> soma · <b>duplo clique</b> seleciona a quadra</li>
+                  <li><b>Seta (V)</b>: <b>clique</b> seleciona o lote · <b>arraste contornando</b> os lotes (laço livre) para selecionar vários — entra o lote cujo meio fica dentro · <b>Shift</b> soma · <b>duplo clique</b> seleciona a quadra</li>
+                  <li><b>Trava (X)</b>: com ela ligada a quina só anda para cima/baixo ou para os lados do lote e a divisa do fundo com fundo leva a junção junto (nenhum lote ganha quina) · <b>Shift</b> segurado trava só durante o arraste</li>
+                  <li><b>Medir (M)</b>: a medida acompanha a linha em tempo real; clique vários pontos para somar · <b>digite os metros</b> e Enter: o ponto vai à distância exata na direção do cursor · <b>P</b> deixa um ponto de referência (ruas, lotes e quadras grudam nele)</li>
+                  <li><b>Gerar quadra (Q)</b>: clique o começo e o fim da frente; no quadro diga comprimento, profundidade, lotes por fileira e formato (1 ou 2 fileiras)</li>
                   <li><b>Mão (H)</b>: arrastar move o desenho · na seta, mova com o <b>botão do meio/direito</b> ou segurando <b>Espaço</b> · <b>roda do mouse</b> aproxima</li>
                   <li><b>Linha de fundo</b> (laranja, com a quadra ou vários lotes selecionados): a <b>barra</b> move a linha inteira; os <b>losangos</b> dobram a linha num ponto. As junções correm pelas divisas: o fundo com fundo continua alinhado</li>
                   <li><b>Lote selecionado</b>: arraste as <b>quinas</b> (quadrados) e as <b>divisas</b> (barras verdes). A quina na rua ou na divisa da gleba corre por ela; os lotes vizinhos se ajustam. <b>Alt</b> solta a quina da borda</li>
                   <li>Nada é bloqueado: o lote que sair das medidas fica vermelho e aparece na coluna de avisos, à esquerda</li>
                   <li><b>T</b> escolhe a frente: com um lote selecionado, clique no lado que é a frente dele (servidão, área verde, outro lote); sem lote, clique no lado da quadra que é o acesso dela. Na lista de confrontações do lote, ☆ faz o mesmo</li>
                   <li><b>L</b> desenha um lote (clique as quinas; ele se ajusta aos vizinhos) · duplo clique numa área livre rosa vira lote · <b>C</b> corta lotes com uma linha · <b>Delete</b> apaga o lote</li>
+                  <li><b>Rua (R)</b>: a rua entra sem redesenhar os lotes — só corta os que estão no caminho · antes de desenhar escolha se a linha é o <b>centro</b> ou a beira <b>esquerda/direita</b> da rua (dá para trocar depois no painel) · digite os metros para cada trecho exato</li>
                   <li><b>Rua selecionada</b>: arraste os pontos do eixo; o "+" dobra a rua</li>
                   <li><b>R</b> rua · <b>A</b> área · <b>M</b> medir · <b>V</b> seta · <b>H</b> mão · <b>F</b> enquadrar</li>
                   <li><b>Enter</b> termina o desenho · <b>Backspace</b> tira o último ponto · <b>Esc</b> cancela</li>

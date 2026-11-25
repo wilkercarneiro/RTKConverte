@@ -8,7 +8,7 @@
 // automático chama a mesma função para comparar propostas — não existe uma
 // segunda definição de "lote válido" em lugar nenhum.
 import {
-  antiHorario, areaAssinada, areaPol, areaPolAteCorte, dentroAnel, bufferLinha, caixa, centroide, circulo, cross, dentroPol,
+  antiHorario, eixoDoTraco, areaAssinada, areaPol, areaPolAteCorte, dentroAnel, bufferLinha, caixa, centroide, circulo, cross, dentroPol,
   diferenca, dist, distSegmento, dot, esquerda, faixaReferencial, intersecao, lerp, limparAnel, mult, offsetPols, soma, sub,
   giroEm, intersecaoRetas, perimetro as perimetroAnel, quinas, quinasAviso, quinasDe, quinasDetalhe, uniao, uniaoFechada, unit, verdeValida,
 } from "./geom.ts";
@@ -675,6 +675,8 @@ interface ResultadoQuadra {
  * um lote nanico ao lado. Acima disso o lote é dividido/aparado — ou avisado.
  */
 export const FOLGA_MAX = 1.03;
+/** giro máximo das divisas em leque numa quadra de duas fileiras (graus) — ajustável na bateria (LEQUE_MAX) */
+const LEQUE_MAX = Number((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.LEQUE_MAX) || 45;
 export const acimaDaArea = (a: number, p: Parametros) => a > p.areaMax * FOLGA_MAX + 0.5;
 /** Profundidade-limite: a máxima com a mesma folga de 3% da área e da frente (mín. 0,5 m) —
  *  o retalho que encosta no fundo e acrescenta 1 m num lote de 40 m não vira aviso. */
@@ -1467,7 +1469,8 @@ function dividirQuadra(
     // (na fileira única, que inclina inteira, até 30°)
     const limitar = (d: Pt): Pt => {
       const ang = Math.atan2(cross(c0, d), dot(c0, d));
-      const lim = ((fils.length === 1 ? 30 : 45) * Math.PI) / 180;
+      // (testado 25°: a linha central já refaz essas quadras e o IRAN piorou — fica 45°)
+      const lim = ((fils.length === 1 ? 30 : LEQUE_MAX) * Math.PI) / 180;
       const a = Math.max(-lim, Math.min(lim, ang));
       return [c0[0] * Math.cos(a) - c0[1] * Math.sin(a), c0[0] * Math.sin(a) + c0[1] * Math.cos(a)];
     };
@@ -1476,7 +1479,18 @@ function dividirQuadra(
     let cIni: Pt = c0, cFim: Pt = c0;
     if (fils.length === 1) {
       // fileira única: lotes paralelos; se as duas pontas inclinam para o mesmo lado, na média
-      if (dI && dF && Math.sign(cross(c0, dI)) === Math.sign(cross(c0, dF))) cIni = cFim = unit(soma(dI, dF));
+      // — mas só quando a faixa é um paralelogramo de verdade (pontas paralelas entre si,
+      // até 8°). Pontas que só inclinam para o mesmo lado (o corte de 45° do canto do
+      // contorno numa ponta, a estrada torta na outra) inclinavam a fileira INTEIRA até
+      // 30°: a faixa da beirada saía toda em diagonal. Ali os lotes ficam no esquadro da
+      // rua e só os da ponta absorvem a diagonal (o que a equipe desenha).
+      // A conta é nas pontas CRUAS (antes do limite de 30°: duas pontas de 45° viravam
+      // "paralelas a 30°") e a fileira só inclina inteira até 20° — lote a 30–45° da rua
+      // numa faixa inteira não é harmônico.
+      const sen20 = Math.sin((20 * Math.PI) / 180);
+      const paralelas = !!gi && !!gf && Math.abs(cross(gi, gf)) < Math.sin((8 * Math.PI) / 180)
+        && Math.abs(cross(c0, gi)) <= sen20 && Math.abs(cross(c0, gf)) <= sen20;
+      if (dI && dF && paralelas && Math.sign(cross(c0, dI)) === Math.sign(cross(c0, dF))) cIni = cFim = unit(soma(dI, dF));
     } else {
       // duas fileiras: leque de uma ponta à outra
       cIni = dI ?? c0; cFim = dF ?? c0;
@@ -2400,7 +2414,8 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
 
   // --- ruas (a importada traz o corpo pronto e pode não ter eixo: o corpo manda)
   const ruas: RuaCalc[] = projeto.ruas.filter((r) => r.eixo.length >= 2 || (r.corpo?.length ?? 0) > 0).map((r) => {
-    const eixo = r.eixo.length >= 2 ? r.eixo.map(P) : [];
+    // o eixo gravado é o TRAÇO do operador: a rua de um lado só sai deslocada meia largura (Rua.lado)
+    const eixo = r.eixo.length >= 2 ? eixoDoTraco(r.eixo.map(P), r.lado, r.largura) : [];
     const fixo = r.corpo?.length ? poligonosDosAneis(r.corpo.map((a) => a.map(P))) : [];
     let corpo = fixo.length ? fixo : bufferLinha(eixo, r.largura, "reta");
     if (!fixo.length && r.balao && r.balao > r.largura / 2 && eixo.length) corpo = uniao(corpo, [circulo(eixo[eixo.length - 1], r.balao)]);
@@ -2709,6 +2724,33 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     else if (!seq.length) quadrasVazias.push({ ...quadra, nome: q.cfg?.nome || `(sem frente ${quadrasVazias.length + 1})` });
   }
   ctx.acessosQuadra = undefined;
+
+  // --- rede de segurança (25/11): terra da quadra que não virou lote, área pública nem
+  //     sobra sumia da planta — o quadro a contava como viário (subtração) e na tela era
+  //     um buraco cinza no meio da quadra. Volta como retalho e segue o caminho de sempre
+  //     (entra no lote vizinho quando cabe; senão fica como área livre, visível).
+  if (!op.busca) {
+    const sobrepoe = (a: Poligono, b: Poligono) => {
+      const ca = caixa(a.ext), cb = caixa(b.ext);
+      return ca.min[0] <= cb.max[0] && ca.max[0] >= cb.min[0] && ca.min[1] <= cb.max[1] && ca.max[1] >= cb.min[1];
+    };
+    for (const qd of quadras) {
+      // só a quadra automática: a desenhada à mão (e a da linha central) é do operador —
+      // a área livre dela e as áreas públicas feitas de lotes dela entram mais adiante
+      if (qd.lotes.some((l) => l.manual) || qd.estruturada) continue;
+      const ocupado = [
+        ...qd.lotes.map((l) => l.pol),
+        ...areas.flatMap((a) => a.pols).filter((pg) => sobrepoe(pg, qd.pol)),
+        ...sobras.filter((pg) => sobrepoe(pg, qd.pol)),
+        // a área livre da quadra desenhada à mão é do operador (entra nas sobras mais adiante)
+        ...vazios.filter((pg) => sobrepoe(pg, qd.pol)),
+        ...canteiros.filter((pg) => sobrepoe(pg, qd.pol)),
+        ...lotes.filter((l) => l.quadra !== qd.nome && sobrepoe(l.pol, qd.pol)).map((l) => l.pol),
+      ];
+      const buracos = diferenca([qd.pol], ocupado).filter((x) => areaPol(x) > 1 && offsetPols([x], -0.15).length > 0);
+      if (buracos.length) sobras.push(...buracos);
+    }
+  }
 
   // --- retalhos encostados viram um só (o fundo aparado de vários lotes é UM retalho)
   if (sobras.length > 1 && !ctx.juntar) { const u = uniaoFechada(sobras); sobras.length = 0; sobras.push(...u); }

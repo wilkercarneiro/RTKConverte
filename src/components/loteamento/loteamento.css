@@ -399,3 +399,35 @@ button.grande { height: 46px; padding: 0 26px; font-size: 15px; }
 .lot-dados-estado { border-radius: 999px; padding: 2px 10px; font-size: 12px; background: var(--fundo-sutil, #f1f3f2); }
 .lot-dados-estado.salvo { color: var(--sucesso, #2e7d32); }
 .lot-dados-estado.erro { background: var(--perigo-claro); color: var(--perigo); }
+
+/* ---- prancheta, pedidos de 25/11: laço, medir, pontos de referência, lado da rua, trava, gerar quadra, dividir em N, giro ---- */
+.lot-laco { fill: rgba(23, 133, 82, 0.08); stroke: #126B42; stroke-width: 1.6; stroke-dasharray: 6 4; stroke-linejoin: round; }
+.lot-medir-trecho { font: 700 12px var(--mono); fill: #5B21B6; paint-order: stroke; stroke: #fff; stroke-width: 3.5px; text-anchor: middle; }
+.lot-digitado { font: 700 13px var(--mono); fill: #fff; }
+.lot-ref circle { fill: rgba(124, 58, 237, 0.18); stroke: #7C3AED; stroke-width: 2; }
+.lot-ref line { stroke: #7C3AED; stroke-width: 1.6; }
+.lot-ref text { font: 700 12px var(--mono); fill: #5B21B6; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
+.lot-flutua { position: absolute; top: 12px; left: 56px; right: 56px; margin: 0 auto; width: max-content; max-width: calc(100% - 112px); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 10px; background: rgb(255 255 255 / 96%); box-shadow: 0 4px 16px rgb(18 32 26 / 14%); font-size: 13px; z-index: 3; }
+.lot-flutua > span { font-weight: 700; color: var(--texto); }
+.lot-flutua > em { font-style: normal; color: var(--texto-2); font-size: 12px; }
+.lot-flutua button { height: 30px; padding: 0 10px; font-size: 13px; }
+.lot-flutua button.ativo, .lot-flutua button.ativo:hover:not(:disabled) { background: #178552; color: #fff; border-color: #178552; }
+.lot-flutua-trava { top: auto; bottom: 52px; }
+.lot-form-quadra { position: absolute; top: 12px; right: 12px; width: 320px; padding: 12px 14px; border-radius: 12px; background: #fff; box-shadow: 0 8px 28px rgb(18 32 26 / 22%); z-index: 4; font-size: 13px; }
+.lot-form-quadra header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.lot-form-quadra .grade { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+.lot-form-quadra label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--texto-2); }
+.lot-form-quadra label span { display: flex; align-items: center; gap: 4px; color: var(--texto-2); }
+.lot-form-quadra input, .lot-form-quadra select { width: 100%; min-width: 0; height: 30px; }
+.lot-form-quadra .botoes { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+.lot-dividir, .lot-girar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+.lot-dividir .rot, .lot-girar .rot { font-size: 12px; font-weight: 600; color: var(--texto-2); margin-right: 2px; display: inline-flex; align-items: center; gap: 4px; }
+.lot-dividir button, .lot-girar button { height: 30px; min-width: 34px; padding: 0 8px; }
+.lot-dividir input, .lot-girar input { width: 64px; height: 30px; text-align: center; }
+.lot-dividir small { flex-basis: 100%; color: var(--texto-2); font-size: 12px; }
+.lot-refs { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.lot-refs li { display: flex; align-items: center; gap: 8px; font: 12px var(--mono); color: var(--texto-2); }
+.lot-refs li span { flex: 1; }
+.lot-refs button.lot-ref-x, .lot-refs button.lot-ref-x:hover:not(:disabled) { color: var(--perigo, #C0262D); background: transparent; padding: 0 6px; height: 24px; font-size: 16px; }
+.lot-refs button.lot-ref-x:hover:not(:disabled) { background: var(--perigo-claro, #fde8e8); }
+.lot-form-quadra .grade label:nth-child(5) { grid-column: 1 / -1; }

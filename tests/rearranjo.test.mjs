@@ -15,7 +15,7 @@ import { chaveDoLote, executar } from "../src/lib/loteamento/acoes.ts";
 import { estruturaDeDivisas, fixarEstrutura, melhorEstrutura, normalizar, ordemDoDesenho } from "../src/lib/loteamento/edicao.ts";
 import { blocosTresFrentes, contornoUniao } from "../src/lib/loteamento/rearranjo.ts";
 import { alongamento } from "../src/lib/loteamento/linhaCentral.ts";
-import { areaPol, areaPols, centroide, intersecao, quinasAviso, uniao } from "../src/lib/loteamento/geom.ts";
+import { areaPol, areaPols, centroide, dentroPol, intersecao, quinasAviso, uniao } from "../src/lib/loteamento/geom.ts";
 
 function base() {
   const pr = projetoNovo("TESTE", perimetro.pts.length);
@@ -68,10 +68,18 @@ test("fundo com fundo nos lotes selecionados (duas fileiras): iguais, alinhados,
   const lotes = ordemDoDesenho(auto0, q);
   const est = estruturaDeDivisas(normalizar(lotes.map((l) => l.pol.ext)), q);
   const pares = est.comuns.filter((c) => est.ehFundo(c.a, c.b)).map((c) => c.lotes.map((k) => lotes[k]));
-  const sel = [...new Set(pares.slice(1, 5).flat())];
-  assert.ok(sel.length >= 6, "a quadra de teste tem colunas fundo com fundo");
+  const sel0 = [...new Set(pares.slice(1, 5).flat())];
+  assert.ok(sel0.length >= 6, "a quadra de teste tem colunas fundo com fundo");
+  // a geração de 25/11 já entrega a quadra regular (todos iguais, fundo com fundo): para o
+  // rearranjo ter o que fazer, um lote do meio da seleção fica 1,5 m mais largo antes
+  const l0 = sel0[2];
+  const per = executar(`frente ${(l0.frente + 1.5).toFixed(2).replace(".", ",")}`, auto0, rA, { tipo: "lotes", chaves: [chaveDoLote(l0)] });
+  assert.ok(per.pr, per.msg);
+  const prP = per.pr, rP = calcular(prP, perimetro);
+  const sel = [...new Set(sel0.map((l) => rP.lotes.find((x) => dentroPol(centroide(l.pol.ext), x.pol))).filter(Boolean))];
+  assert.equal(sel.length, sel0.length);
   for (const cmd of ["fundo com fundo", "igualar"]) {
-    const { s, novos } = rearranjar(auto0, rA, sel, cmd);
+    const { s, novos } = rearranjar(prP, rP, sel, cmd);
     // a linha de fundo continua nos lotes vizinhos: fica reta e no lugar, e cada fileira se
     // iguala por dentro (regra de 03/11 — antes a linha deslocava só neste trecho e fazia degrau)
     assert.match(s.msg, /m² cada — fundo com fundo|cada fileira ficou igual|linha de fundo ficou onde estava/, s.msg);

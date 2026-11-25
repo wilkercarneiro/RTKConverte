@@ -353,6 +353,44 @@ export function bufferLinha(linha: Pt[], largura: number, pontas: "reta" | "quad
   return daArvore(tree);
 }
 
+/**
+ * Polilinha deslocada `d` metros para a esquerda (d > 0) ou direita (d < 0) do
+ * sentido dela, com as dobras em esquadria (a interseção das retas deslocadas).
+ * É o eixo da rua gerada de um lado só do traço do operador.
+ */
+export function deslocarLinha(linha: Pt[], d: number): Pt[] {
+  if (linha.length < 2 || !d) return linha.map((q) => [q[0], q[1]] as Pt);
+  const segs: { a: Pt; b: Pt }[] = [];
+  for (let i = 0; i + 1 < linha.length; i++) {
+    const a = linha[i], b = linha[i + 1];
+    const L = dist(a, b);
+    if (L < 1e-9) continue;
+    const n: Pt = [-(b[1] - a[1]) / L * d, (b[0] - a[0]) / L * d];
+    segs.push({ a: [a[0] + n[0], a[1] + n[1]], b: [b[0] + n[0], b[1] + n[1]] });
+  }
+  if (!segs.length) return linha.map((q) => [q[0], q[1]] as Pt);
+  const out: Pt[] = [segs[0].a];
+  for (let i = 1; i < segs.length; i++) {
+    const s0 = segs[i - 1], s1 = segs[i];
+    const r = sub(s0.b, s0.a), q = sub(s1.b, s1.a);
+    const den = r[0] * q[1] - r[1] * q[0];
+    if (Math.abs(den) < 1e-9 * Math.hypot(...r) * Math.hypot(...q)) { out.push(s1.a); continue; }
+    const w = sub(s1.a, s0.a);
+    const t = (w[0] * q[1] - w[1] * q[0]) / den;
+    const x: Pt = [s0.a[0] + r[0] * t, s0.a[1] + r[1] * t];
+    // dobra muito aguda: a esquadria iria longe — fica nos dois pés
+    if (dist(x, s0.b) > 4 * Math.abs(d)) out.push(s0.b, s1.a); else out.push(x);
+  }
+  out.push(segs[segs.length - 1].b);
+  return out;
+}
+
+/** Eixo real da rua a partir do traço do operador e do lado escolhido (Rua.lado). */
+export function eixoDoTraco(traco: Pt[], lado: "esquerda" | "direita" | undefined, largura: number): Pt[] {
+  if (!lado || traco.length < 2) return traco;
+  return deslocarLinha(traco, (lado === "esquerda" ? 1 : -1) * (largura / 2));
+}
+
 /** Recuo (negativo) ou afastamento (positivo) de polígonos fechados. */
 /**
  * União que fecha frestas: lotes vizinhos cortados em passos diferentes podem

@@ -14,6 +14,7 @@ import {
 } from "./edicao.ts";
 import type { Edicao } from "./edicao.ts";
 import { rearranjarSelecao } from "./rearranjo.ts";
+import { girarLotes } from "./prancheta.ts";
 import type { AjusteLote, AreaDesenhada, Esquina, Parametros, Projeto, QuadraCfg, Rua, Sobra, TipoArea } from "./modelo.ts";
 
 /** Lote identificado pela posição (sobrevive à renumeração). */
@@ -173,10 +174,10 @@ export function moverFundo(pr: Projeto, res: Resultado, q: Quadra, ponto: Pt): P
   return ajustarQuadra(pr, res, q, { fundo: Math.max(1, Math.round(v * 100) / 100), fileiras: 2 });
 }
 
-export function adicionarRua(pr: Projeto, eixoUtm: Pt[], largura?: number): { pr: Projeto; id: string } {
+export function adicionarRua(pr: Projeto, eixoUtm: Pt[], largura?: number, lado?: Rua["lado"]): { pr: Projeto; id: string } {
   const id = novoId("m");
   const n = pr.ruas.length + 1;
-  const rua: Rua = { id, nome: `Rua ${String(n).padStart(2, "0")}`, largura: largura ?? pr.params.ruaLargura, eixo: eixoUtm };
+  const rua: Rua = { id, nome: `Rua ${String(n).padStart(2, "0")}`, largura: largura ?? pr.params.ruaLargura, eixo: eixoUtm, ...(lado ? { lado } : {}) };
   return { pr: { ...pr, ruas: [...pr.ruas, rua] }, id };
 }
 
@@ -252,7 +253,7 @@ export const renomearArea = (pr: Projeto, res: Resultado, id: string, nome: stri
 // ---------------------------------------------------------------------------
 
 /** "selecionar" = seta (clique seleciona, arrastar faz a caixa de seleção); "mao" = arrastar move a vista */
-export type Ferramenta = "selecionar" | "mao" | "rua" | "area" | "medir" | "lote" | "cortar" | "frente";
+export type Ferramenta = "selecionar" | "mao" | "rua" | "area" | "medir" | "lote" | "cortar" | "frente" | "quadra";
 
 export interface Saida {
   pr?: Projeto;
@@ -288,7 +289,8 @@ export const COMANDOS: { cmd: string; exemplo: string; desc: string; contexto: (
   { cmd: "unir", exemplo: "unir", desc: "une os lotes selecionados (um só: une ao vizinho de maior divisa)", contexto: ["lote"] },
   { cmd: "igualar", exemplo: "igualar", desc: "lotes selecionados da mesma quadra ficam com a mesma área (a soma dividida por igual; só as divisas entre eles deslizam)", contexto: ["lote"] },
   { cmd: "fundo com fundo", exemplo: "fundo com fundo 26", desc: "refaz a quadra pela linha central: fundo com fundo alinhado, laterais no esquadro da rua e lotes com a mesma área (o número é a quantidade de lotes; sem ele fica a de hoje)", contexto: ["quadra", "lote"] },
-  { cmd: "dividir", exemplo: "dividir 2", desc: "divide o lote em partes iguais, com as divisas na direção das laterais dele", contexto: ["lote"] },
+  { cmd: "dividir", exemplo: "dividir 2", desc: "divide o lote em quantas partes iguais quiser (2 a 60), com as divisas na direção das laterais dele", contexto: ["lote"] },
+  { cmd: "girar", exemplo: "girar 5", desc: "gira as divisas laterais dos lotes selecionados N graus (positivo = anti-horário); a frente de cada lote fica no mesmo lugar", contexto: ["lote"] },
   { cmd: "apagar", exemplo: "apagar", desc: "apaga o lote (a área fica livre para desenhar outro) · Delete", contexto: ["lote", "rua", "area"] },
   { cmd: "desenhar lote", exemplo: "desenhar lote", desc: "desenha um lote: clique as quinas, Enter fecha (L) · duplo clique na área livre rosa vira lote", contexto: ["nada", "lote", "quadra"] },
   { cmd: "definir", exemplo: "definir frente", desc: "escolher a frente: clique no lado do lote (ou da quadra) que é a frente dele (T)", contexto: ["lote", "quadra", "nada"] },
@@ -466,6 +468,16 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       const eU = conferirUnir(p, res, lotes);
       return { pr: ed.pr, sel: selDe(ed, lotes), msg: eU && !eU.startsWith("Não há") ? `${ed.msg} Atenção: ${eU}` : ed.msg };
     }
+    case "girar": case "angulo": case "ângulo": {
+      if (!lotes.length) return precisa("um ou mais lotes");
+      if (new Set(lotes.map((l) => l.quadra)).size > 1) return { msg: "Selecione lotes de uma quadra só para girar as divisas.", erro: true };
+      if (a1 === undefined || !Number.isFinite(n1)) return { msg: "Diga quantos graus — ex.: girar 5 (anti-horário) ou girar -5 (horário).", erro: true };
+      const qG = quadraDe(res, lotes[0].quadra);
+      const ed = qG ? girarLotes(pr, res, qG, lotes, n1) : null;
+      if (!ed) return { msg: "Não achei divisas para girar nesses lotes.", erro: true };
+      if (ed.erro) return { msg: ed.msg, erro: true };
+      return { pr: ed.pr, sel: ed.sel ? { tipo: "lotes", chaves: ed.sel.indices.map((indice) => ({ quadra: ed.sel!.quadra, fileira: 0, indice })) } : sel, msg: ed.msg };
+    }
     case "dividir": case "desmembrar": {
       if (lotes.length !== 1) return precisa("um lote");
       if (a1 !== undefined && !Number.isFinite(n1)) return { msg: `"${a1}" não é um número — ex.: dividir 3`, erro: true };
@@ -474,7 +486,8 @@ export function executar(texto: string, pr: Projeto, res: Resultado, sel: Seleca
       const eD = conferirDividir(p, lotes[0], n);
       const ed = dividirLote(pr, res, quadraDe(res, lotes[0].quadra)!, lotes[0], n);
       if (!ed) return { msg: "Não consegui dividir este lote em partes iguais (forma muito irregular) — use a ferramenta Cortar (C).", erro: true };
-      const selD: Selecao = ed.sel ? { tipo: "lotes", chaves: [{ quadra: ed.sel.quadra, fileira: 0, indice: ed.sel.indices[0] }] } : selDe(ed, lotes);
+      // as partes ficam selecionadas juntas (dá para igualar, unir ou girar logo em seguida)
+      const selD: Selecao = ed.sel ? { tipo: "lotes", chaves: ed.sel.indices.map((indice) => ({ quadra: ed.sel!.quadra, fileira: 0, indice })) } : selDe(ed, lotes);
       return { pr: ed.pr, sel: selD, msg: eD ? `${ed.msg} Atenção: ${eD} ${FORA}` : ed.msg };
     }
     case "verde": case "institucional": case "lazer": case "app": {

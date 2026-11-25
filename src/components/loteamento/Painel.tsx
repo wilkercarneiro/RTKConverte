@@ -13,7 +13,8 @@ import type { Selecao } from "../../lib/loteamento/acoes.ts";
 import { ROTULO_AREA } from "../../lib/loteamento/modelo.ts";
 import type { ModoDivisao, Projeto, Sobra, TipoArea } from "../../lib/loteamento/modelo.ts";
 import type { Pt } from "../../lib/loteamento/geom.ts";
-import { paraUtm } from "../../lib/loteamento/plano.ts";
+import { paraPlano, paraUtm } from "../../lib/loteamento/plano.ts";
+import { removerReferencia } from "../../lib/loteamento/prancheta.ts";
 import { cotaEm, declividadeEm } from "../../lib/loteamento/terreno.ts";
 import { Dica } from "../ui";
 import { Icone } from "../Icone";
@@ -55,6 +56,42 @@ export function CampoNum({ valor, onAplicar, casas = 2, sufixo, min = 0, desabil
         onKeyDown={(e) => { if (e.key === "Enter") { aplicar(); (e.target as HTMLInputElement).blur(); } if (e.key === "Escape") setTxt(formatar(valor)); }} />
       {sufixo && <em>{sufixo}</em>}
     </span>
+  );
+}
+
+/**
+ * Dividir o lote em quantas partes o operador quiser (2 a 60): atalhos 2/3/4 e
+ * um campo livre, com a prévia da área e da frente de cada parte.
+ */
+function DividirEm({ area, frente, onDividir }: { area: number; frente: number; onDividir: (n: number) => void }) {
+  const [n, setN] = useState(5);
+  const ok = Number.isFinite(n) && n >= 2 && n <= 60;
+  return (
+    <div className="lot-dividir">
+      <span className="rot">Dividir em</span>
+      {[2, 3, 4].map((k) => <button key={k} onClick={() => onDividir(k)} title={`${k} partes de ${fmt(area / k)} m²`}>{k}</button>)}
+      <input type="number" min={2} max={60} step={1} value={Number.isFinite(n) ? n : ""} aria-label="Número de partes"
+        onChange={(e) => setN(Math.round(Number(e.target.value)))}
+        onKeyDown={(e) => { if (e.key === "Enter" && ok) onDividir(n); }} />
+      <button className="principal" disabled={!ok} onClick={() => onDividir(n)}>Dividir</button>
+      {ok && <small>{n} × {fmt(area / n)} m² · frente ≈ {fmt(frente / n)} m</small>}
+    </div>
+  );
+}
+
+/**
+ * Ângulo das divisas dos lotes selecionados: cada lote fica no mesmo lugar da frente e
+ * as divisas laterais giram em torno do ponto delas na rua (os vizinhos se ajustam).
+ */
+function GirarDivisas({ onGirar }: { onGirar: (graus: number) => void }) {
+  const [g, setG] = useState(5);
+  return (
+    <div className="lot-girar">
+      <span className="rot">Ângulo das divisas<Dica>Gira as divisas laterais dos lotes selecionados em torno do ponto delas na rua: cada lote continua no mesmo lugar e muda só o ângulo. Positivo gira para a esquerda (anti-horário). Os vizinhos de fora ajustam a divisa comum.</Dica></span>
+      <button onClick={() => onGirar(-g)} title={`Girar ${g}° no sentido horário`}>↻ −{fmt(g, g % 1 ? 1 : 0)}°</button>
+      <input type="number" min={0.5} max={60} step={0.5} value={g} aria-label="Graus" onChange={(e) => setG(Math.max(0.5, Math.min(60, Number(e.target.value) || 0.5)))} />
+      <button onClick={() => onGirar(g)} title={`Girar ${g}° no sentido anti-horário`}>↺ +{fmt(g, g % 1 ? 1 : 0)}°</button>
+    </div>
   );
 }
 
@@ -155,10 +192,8 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
               <button className="verde" onClick={() => virarArea("verde")} title="O lote vira área verde">Área verde</button>
               <button className="inst" onClick={() => virarArea("institucional")} title="O lote vira área institucional">Institucional</button>
             </div>
-            <div className="lot-botoes lot-botoes-2">
-              <button onClick={() => onComando("dividir 2")}>Dividir em 2</button>
-              <button onClick={() => onComando("dividir 3")}>Dividir em 3</button>
-            </div>
+            <DividirEm area={l.area} frente={l.testada ?? l.frente} onDividir={(n) => onComando(`dividir ${n}`)} />
+            <GirarDivisas onGirar={(g) => onComando(`girar ${String(g).replace(".", ",")}`)} />
             <details className="lot-lados" open>
               <summary>Medidas e confrontações<Dica>☆ escolhe a frente do lote: o lado que dá para a servidão ou área verde (lote sem rua) ou a rua principal da esquina. Só o lado escolhido conta como frente. Ou use a ferramenta Frente (T) e clique no lado.</Dica></summary>
               <table>
@@ -211,6 +246,7 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
               </>
             );
           })()}
+          <GirarDivisas onGirar={(g) => onComando(`girar ${String(g).replace(".", ",")}`)} />
           <div className="lot-linha">
             <label>Frente de todos</label>
             <CampoNum valor={undefined} sufixo="m" onAplicar={(v) => { if (v !== undefined) onComando(`frente ${String(v).replace(".", ",")}`); }} />
@@ -359,6 +395,17 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
           <div className="lot-linha"><label>Largura total</label>
             <CampoNum valor={rua.largura} sufixo="m" min={3} onAplicar={(v) => v && onMudar(editarRua(projeto, rua.id, { largura: v }))} />
           </div>
+          <div className="lot-linha"><label>Posição<Dica>Em relação à linha que você desenhou: no centro (a linha é o eixo) ou a rua inteira para a esquerda/direita dela (a linha é a beira da rua), no sentido em que foi desenhada.</Dica></label>
+            <select value={projeto.ruas.find((r) => r.id === rua.id)?.lado ?? "centro"} onChange={(e) => {
+              const v = e.target.value;
+              onMudar(editarRua(projeto, rua.id, { lado: v === "esquerda" || v === "direita" ? v : undefined }));
+              onMsg(v === "centro" ? "A rua voltou a ficar centrada na linha desenhada." : `A rua agora fica à ${v} da linha desenhada.`);
+            }}>
+              <option value="centro">centrada na linha</option>
+              <option value="esquerda">à esquerda da linha</option>
+              <option value="direita">à direita da linha</option>
+            </select>
+          </div>
           <div className="lot-linha"><label>Balão no fim</label>
             <CampoNum valor={projeto.ruas.find((r) => r.id === rua.id)?.balao} sufixo="m de raio" onAplicar={(v) => onMudar(editarRua(projeto, rua.id, { balao: v || undefined }))} />
           </div>
@@ -401,6 +448,22 @@ export function Painel({ projeto, res, sel, onSel, onMudar, onFocar, onMsg, onCo
           <header><span className="lot-tag">Fundo com fundo</span></header>
           <p className="lot-dica">Refaz pela linha central cada quadra de duas fileiras: fundo com fundo alinhado, laterais no esquadro da rua e lotes com a mesma área. Só fica a quadra que melhora (as outras não mudam).</p>
           <button className="principal" onClick={() => onComando("fundo com fundo todas")}>Ajustar fundo com fundo em todas as quadras</button>
+        </section>
+      )}
+
+      {!lotes.length && !quadra && !rua && !area && (projeto.referencias?.length ?? 0) > 0 && (
+        <section className="lot-cartao">
+          <header><span className="lot-tag">Pontos de referência</span><h3>{projeto.referencias!.length} ponto{projeto.referencias!.length > 1 ? "s" : ""}<Dica>Deixados pela ferramenta Medir (tecla P). O desenho de ruas, lotes e quadras gruda neles.</Dica></h3></header>
+          <ul className="lot-refs">
+            {projeto.referencias!.map((r) => (
+              <li key={r.id}>
+                <button className="fantasma" onClick={() => onFocar(paraPlano(res.plano, r.p))} title="Ir até o ponto">⊕ {r.nome}</button>
+                <span>E {fmt(r.p[0], 2)} · N {fmt(r.p[1], 2)}</span>
+                <button className="fantasma lot-ref-x" onClick={() => { onMudar(removerReferencia(projeto, r.id)); onMsg(`Ponto ${r.nome} apagado.`); }} title="Apagar o ponto">×</button>
+              </li>
+            ))}
+          </ul>
+          <button className="fantasma" onClick={() => { onMudar({ ...projeto, referencias: [] }); onMsg("Pontos de referência apagados."); }}>Apagar todos</button>
         </section>
       )}
 
@@ -489,7 +552,8 @@ export function PainelRapido({ projeto, res, sel, onSel, onMudar, onMsg, onComan
     acoes.push({ rot: "Igualar", ico: ICO.igualar, cls: "forte", desab: !umaQuadra, fazer: () => onComando("igualar"), titulo: umaQuadra ? `Igualar áreas: todos com ${fmt(media)} m²` : "Selecione lotes de uma quadra só" });
     acoes.push({ rot: "Fundo c/ fundo", ico: ICO.fundo, desab: !umaQuadra, fazer: () => onComando("fundo com fundo"), titulo: `Ajustar fundo com fundo nos ${lotes.length} lotes` });
   }
-  if (lotes.length === 1) acoes.push({ rot: "Dividir", ico: ICO.dividir, fazer: () => onComando("dividir 2"), titulo: "Dividir o lote em 2" });
+  // dividir pede o número de partes: abre o painel, onde está o campo
+  if (lotes.length === 1) acoes.push({ rot: "Dividir…", ico: ICO.dividir, fazer: onAbrir, titulo: "Dividir o lote em quantas partes quiser (abre o painel)" });
   if (lotes.length) {
     acoes.push({ rot: lotes.length > 1 ? "Unir" : "Unir", ico: ICO.unir, fazer: () => onComando("unir"), titulo: lotes.length > 1 ? "Os selecionados viram um lote só" : "Une com o vizinho de maior divisa em comum" });
     acoes.push({ rot: "Apagar", ico: ICO.apagar, cls: "perigo", fazer: () => onComando("apagar"), titulo: "Apagar (Delete): a área fica livre" });
