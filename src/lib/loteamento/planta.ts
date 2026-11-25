@@ -72,8 +72,38 @@ const COR_AREA: Record<string, RGB> = {
   verde: rgb(0.78, 0.92, 0.7), institucional: rgb(0.99, 0.86, 0.68), lazer: rgb(0.78, 0.9, 0.96), app: rgb(0.74, 0.85, 0.96),
 };
 
-/** Geometria da folha: margens, barra lateral e faixa de baixo do desenho. */
-function moldura(folha: Folha) {
+// colunas do quadro de lotes, em múltiplos da altura da linha
+const QL_LARG = [2.7, 3.9, 3.9, 3.9, 3.9, 5.2];
+const QL_CAB = ["LOTE", "FRENTE", "LADO DIR.", "FUNDOS", "LADO ESQ.", "ÁREA (m²)"];
+
+/**
+ * Arranjo do quadro de lotes na coluna da esquerda da folha 1 (desde
+ * 25/11/2026; antes ia em folhas à parte). A altura da linha e o número de
+ * colunas saem do número de lotes: a maior letra que cabe na altura do desenho
+ * sem a coluna passar de 38% da largura útil.
+ */
+function arranjoQuadro(linhas: number, folha: Folha, alturaUtil: number, larguraUtil: number) {
+  const k = FOLHAS[folha][0] / 841;
+  const ideal = 9 * k;
+  const unid = QL_LARG.reduce((s, v) => s + v, 0); // largura de uma coluna em alturas de linha
+  const vao = 1.4; // entre colunas, em alturas de linha
+  const cabeca = 3.4; // título + nota, em alturas de linha
+  let melhor = { n: 1, lh: 0 };
+  for (let n = 1; n <= 8; n++) {
+    const porColuna = Math.ceil(linhas / n) + 1; // + cabeçalho da coluna
+    const lh = Math.min(ideal, alturaUtil / (porColuna + cabeca), (larguraUtil * 0.38) / (n * unid + (n - 1) * vao));
+    if (lh > melhor.lh + 1e-6) melhor = { n, lh };
+  }
+  const { n, lh } = melhor;
+  const larguraCol = unid * lh;
+  return { n, lh, larguraCol, vao: vao * lh, cabeca: cabeca * lh, largura: n * larguraCol + (n - 1) * vao * lh, porColuna: Math.ceil(linhas / n) };
+}
+
+/** Linhas do quadro de lotes: o cabeçalho de cada quadra e os lotes dela. */
+const linhasDoQuadro = (res: Resultado) => res.lotes.length + res.quadras.length;
+
+/** Geometria da folha: margens, barra lateral, quadro de lotes à esquerda e faixa de baixo do desenho. */
+function moldura(folha: Folha, res?: Resultado) {
   const [fw, fh] = FOLHAS[folha];
   const W = fw * MM, H = fh * MM;
   const k = fw / 841; // fator de tamanho de letra (A1 = 1)
@@ -81,12 +111,15 @@ function moldura(folha: Folha) {
   const larguraBarra = Math.max(150 * MM, (W - mL - mO) * 0.22);
   const barraX = W - mO - larguraBarra;
   const faixaBaixo = (H - 2 * mO) * 0.17;
-  const area = { x: mL + 6 * MM, y: mO + faixaBaixo, w: barraX - mL - 12 * MM, h: H - 2 * mO - faixaBaixo - 8 * MM };
-  return { W, H, k, mL, mO, larguraBarra, barraX, faixaBaixo, area };
+  const alturaDesenho = H - 2 * mO - faixaBaixo - 8 * MM;
+  const quadro = res && res.lotes.length ? arranjoQuadro(linhasDoQuadro(res), folha, alturaDesenho, barraX - mL - 12 * MM) : null;
+  const recuo = quadro ? quadro.largura + 10 * MM : 0;
+  const area = { x: mL + 6 * MM + recuo, y: mO + faixaBaixo, w: barraX - mL - 12 * MM - recuo, h: alturaDesenho };
+  return { W, H, k, mL, mO, larguraBarra, barraX, faixaBaixo, area, quadro };
 }
 
 export function escalaPara(res: Resultado, folha: Folha): number {
-  const { area } = moldura(folha);
+  const { area } = moldura(folha, res);
   const { min, max } = caixa(res.gleba.ext);
   const den = Math.max(((max[0] - min[0]) * 1000) / ((area.w * 0.95) / MM), ((max[1] - min[1]) * 1000) / ((area.h * 0.95) / MM));
   return ESCALAS.find((e) => e >= den) ?? Math.ceil(den / 1000) * 1000;
@@ -105,7 +138,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
   let situacao: PDFImage | null = null;
   if (c.situacao) { try { situacao = await pdf.embedPng(c.situacao); } catch { situacao = null; } }
 
-  const M = moldura(folha);
+  const M = moldura(folha, res);
   const { W, H, k, mL, mO, larguraBarra, barraX, area } = M;
   const page = new GravadorCena(pdf.addPage([W, H]));
   if (logo && c.logo) page.registrarImagem(logo, c.logo.bytes, c.logo.tipo);
@@ -288,7 +321,10 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
 
   // rosa dos ventos (alto, à esquerda, como na planta da equipe)
   obj("bussola", "bussola", "Rosa dos ventos");
-  rosaDosVentos(page, negrito, mL + 40 * MM * k, H - mO - 38 * MM * k, 26 * MM * k);
+  rosaDosVentos(page, negrito, area.x + 34 * MM * k, H - mO - 38 * MM * k, 26 * MM * k);
+
+  // quadro de lotes na coluna da esquerda: um objeto só, que o editor move inteiro
+  if (M.quadro) desenharQuadroDeLotes(page, res, fonte, negrito, M.quadro, mL + 6 * MM, H - mO - 6 * MM);
 
   // ---------------------------------------------------- faixa de baixo do desenho
   const yBase = mO + 8 * MM;
@@ -485,7 +521,7 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
     const perim = res.ladosGleba.reduce((s, l) => s + dist(l.a, l.b), 0);
     const campos: [string, string, number][] = [
       ["ESCALA", `1:${den}`, 0.13], ["ÁREA", `${fmt(res.quadro.gleba / 1e4, 4)} ha`, 0.2], ["PERÍMETRO", `${fmt(perim)} m`, 0.19],
-      ["DESENHISTA", c.desenhista || "—", 0.22], ["DATA", new Date().toLocaleDateString("pt-BR"), 0.14], ["FOLHA", `01/${String(1 + paginasQuadro(res, folha)).padStart(2, "0")}`, 0.12],
+      ["DESENHISTA", c.desenhista || "—", 0.22], ["DATA", new Date().toLocaleDateString("pt-BR"), 0.14], ["FOLHA", "01/01", 0.12],
     ];
     let xx = x0;
     for (const [rot, val, f] of campos) {
@@ -506,11 +542,8 @@ export async function gerarPlantaPdf(res: Resultado, pr: Projeto, perimetro: Per
     void y;
   }
 
-  // a folha 1 vira editável no visualizador (as folhas do quadro seguem como estão)
+  // a folha vira editável no visualizador (o quadro de lotes junto)
   embutirCena(pdf, { ...page.cena(), nomeFolha: folha });
-
-  // ================================================================ quadro de lotes
-  desenharQuadroDeLotes(pdf, res, pr, fonte, negrito, folha, den);
   return pdf.save();
 }
 
@@ -611,20 +644,17 @@ function detalheEsquina(page: PaginaPlanta, f: PDFFont, fb: PDFFont, x: number, 
 
 // ---------------------------------------------------------------------------
 
-function paginasQuadro(res: Resultado, folha: Folha): number {
-  const [fw, fh] = FOLHAS[folha];
-  const linhas = Math.floor(((fh - 20) * MM - 90) / 10.5);
-  const colunas = Math.max(1, Math.floor(((fw - 35) * MM) / 420));
-  return Math.max(1, Math.ceil((res.lotes.length + res.quadras.length * 2) / (linhas * colunas)));
-}
-
-function desenharQuadroDeLotes(pdf: PDFDocument, res: Resultado, pr: Projeto, fonte: PDFFont, negrito: PDFFont, folha: Folha, den: number) {
-  const [fw, fh] = FOLHAS[folha];
-  const W = fw * MM, H = fh * MM, mL = 25 * MM, mO = 10 * MM;
-  const larguraCol = 405, gap = 15;
-  const colunas = Math.max(1, Math.floor((W - mL - mO - 16) / (larguraCol + gap)));
-  const linhasPorCol = Math.floor((H - 2 * mO - 90) / 10.5);
-  const total = paginasQuadro(res, folha);
+/**
+ * Quadro de lotes na própria planta, a partir do canto de cima à esquerda
+ * (x0, yTopo). Tudo num objeto só da cena ("quadro-lotes"): no editor, um
+ * clique pega o quadro inteiro e ele se arrasta para onde ficar melhor.
+ */
+function desenharQuadroDeLotes(page: PaginaPlanta, res: Resultado, fonte: PDFFont, negrito: PDFFont,
+  q: NonNullable<ReturnType<typeof moldura>["quadro"]>, x0: number, yTopo: number) {
+  marcarObjeto(page, "quadro-lotes", "quadro-lotes", "Quadro de lotes");
+  const { lh, larguraCol, vao, porColuna } = q;
+  const larg = QL_LARG.map((u) => u * lh);
+  const tam = lh * 0.7;
   // linhas: cabeçalho de quadra + lotes
   const itens: ({ t: "q"; nome: string } | { t: "l"; cel: string[] })[] = [];
   for (const q of res.quadras) {
@@ -636,34 +666,34 @@ function desenharQuadroDeLotes(pdf: PDFDocument, res: Resultado, pr: Projeto, fo
       itens.push({ t: "l", cel: [String(l.numero).padStart(2, "0"), m(r.medidas[0]), m(r.medidas[1]), m(r.medidas[2]), m(r.medidas[3]), fmt(l.area)] });
     }
   }
-  const larg = [42, 66, 66, 66, 66, 99];
-  const cab = ["LOTE", "FRENTE", "LADO DIR.", "FUNDOS", "LADO ESQ.", "ÁREA (m²)"];
+  // título e nota
+  const tt = lh * 1.25;
+  texto(page, negrito, "QUADRO DE LOTES", x0, yTopo - tt, tt, CINZA(0));
+  texto(page, fonte, fit("Medidas em metros, de quem da rua olha o lote; áreas em m².", fonte, lh * 0.6, q.largura), x0, yTopo - tt - lh * 1.2, lh * 0.6, CINZA(0.3));
+  const yCab = yTopo - q.cabeca;
+  // a linha de texto fica a 30% da altura, a partir da base da faixa
+  const base = (yFaixa: number) => yFaixa + lh * 0.3;
   let i = 0;
-  for (let pg = 0; pg < total && i < itens.length; pg++) {
-    const page = pdf.addPage([W, H]);
-    page.drawRectangle({ x: mL, y: mO, width: W - mL - mO, height: H - 2 * mO, borderWidth: 1.4, borderColor: CINZA(0) });
-    texto(page, negrito, T(`QUADRO DE LOTES — ${pr.nome.toUpperCase()}`), mL + 12, H - mO - 26, 14, CINZA(0));
-    texto(page, fonte, T(`Medidas em metros (frente, lado direito, fundos e lado esquerdo de quem da rua olha o lote); áreas em m². Planta na escala 1:${fmt(den, 0)}. Folha ${String(pg + 2).padStart(2, "0")}/${String(total + 1).padStart(2, "0")}.`), mL + 12, H - mO - 42, 8, CINZA(0.3));
-    for (let c = 0; c < colunas && i < itens.length; c++) {
-      const x0 = mL + 12 + c * (larguraCol + gap);
-      let y = H - mO - 64;
-      let xx = x0;
-      page.drawRectangle({ x: x0, y: y - 3, width: larguraCol, height: 12, color: CINZA(0.88) });
-      cab.forEach((h, k) => { texto(page, negrito, T(h), xx + 3, y, 6.8, CINZA(0)); xx += larg[k]; });
-      y -= 11;
-      for (let lin = 0; lin < linhasPorCol && i < itens.length; lin++, i++) {
-        const it = itens[i];
-        if (it.t === "q") {
-          page.drawRectangle({ x: x0, y: y - 3, width: larguraCol, height: 10.5, color: rgb(0.89, 0.95, 0.91) });
-          texto(page, negrito, T(`QUADRA ${it.nome}`), x0 + 3, y, 7.2, rgb(0.05, 0.3, 0.2));
-        } else {
-          xx = x0;
-          it.cel.forEach((v, k) => { texto(page, k === 0 || k === 5 ? negrito : fonte, v, xx + 3, y, 7, CINZA(0.05)); xx += larg[k]; });
-          page.drawLine({ start: { x: x0, y: y - 3 }, end: { x: x0 + larguraCol, y: y - 3 }, thickness: 0.2, color: CINZA(0.75) });
-        }
-        y -= 10.5;
+  for (let c = 0; c < q.n && i < itens.length; c++) {
+    const xc = x0 + c * (larguraCol + vao);
+    let y = yCab - lh; // base da faixa do cabeçalho
+    page.drawRectangle({ x: xc, y, width: larguraCol, height: lh, color: CINZA(0.88) });
+    let xx = xc;
+    QL_CAB.forEach((h, k) => { texto(page, negrito, fit(h, negrito, tam * 0.85, larg[k] - lh * 0.3), xx + lh * 0.2, base(y), tam * 0.85, CINZA(0)); xx += larg[k]; });
+    for (let lin = 0; lin < porColuna && i < itens.length; lin++, i++) {
+      y -= lh;
+      const it = itens[i];
+      if (it.t === "q") {
+        page.drawRectangle({ x: xc, y, width: larguraCol, height: lh, color: rgb(0.89, 0.95, 0.91) });
+        texto(page, negrito, T(`QUADRA ${it.nome}`), xc + lh * 0.2, base(y), tam, rgb(0.05, 0.3, 0.2));
+      } else {
+        xx = xc;
+        it.cel.forEach((v, k) => { texto(page, k === 0 || k === 5 ? negrito : fonte, v, xx + lh * 0.2, base(y), tam, CINZA(0.05)); xx += larg[k]; });
+        page.drawLine({ start: { x: xc, y }, end: { x: xc + larguraCol, y }, thickness: 0.2, color: CINZA(0.75) });
       }
     }
+    // contorno da coluna
+    page.drawRectangle({ x: xc, y, width: larguraCol, height: yCab - y, borderColor: CINZA(0.2), borderWidth: 0.5 });
   }
 }
 

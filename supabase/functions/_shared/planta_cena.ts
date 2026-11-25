@@ -112,6 +112,7 @@ export const CAMADAS: Record<string, string> = {
   area: "Área total",
   // planta do loteamento
   "rotulo-lote": "Números e áreas dos lotes",
+  "quadro-lotes": "Quadro de lotes",
   quadra: "Letras das quadras",
   "area-publica": "Áreas públicas e remanescentes",
   secao: "Seção da rua",
