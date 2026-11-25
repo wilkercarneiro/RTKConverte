@@ -13,6 +13,7 @@ import { calcular, fmt } from "../../lib/loteamento/calculo.ts";
 import type { Resultado } from "../../lib/loteamento/calculo.ts";
 import type { Projeto } from "../../lib/loteamento/modelo.ts";
 import { carregarProjeto, perimetroDoServico, projetoInicial, salvarProjeto } from "../../lib/loteamento/persistencia.ts";
+import { nomeDoLoteamento } from "../../lib/loteamento/perimetro.ts";
 import { COMANDOS, chaveDoLote, comandoPesado, contextoDe, executar, executarEmSegundoPlano, lotesDaSelecao } from "../../lib/loteamento/acoes.ts";
 import { dentroPol } from "../../lib/loteamento/geom.ts";
 import { pontoInterno } from "../../lib/loteamento/auto.ts";
@@ -417,7 +418,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
       <header className="topo">
         <button className="fantasma voltar voltar-pagina" onClick={onVoltar}>← Serviços</button>
         <span className="sep" aria-hidden="true">/</span>
-        <h1 className="titulo">{projeto.nome}</h1>
+        <h1 className="titulo">{nomeDoLoteamento(projeto.nome, servico)}</h1>
         <span className="chip mod-loteamento">{rotuloCurto.loteamento}</span>
         {servico.nome_arquivo_txt && <span className="arquivo">{servico.nome_arquivo_txt}</span>}
         <StatusSalvamento estado={auto.estado} horaSalvo={auto.horaSalvo} />
@@ -547,7 +548,8 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
         <div className="conferencia-corpo fade">
           <Entregas servico={servico} projeto={projeto} res={res} perimetro={perimetro} onExportou={marcarExportado}
             onSalvar={() => armazenamento.salvar(servico.id, projeto)} onAbrir3D={temRecurso("loteamento.maquete3d") ? () => setVer3d(true) : undefined}
-            onMudarInfra={(infra) => mudar({ ...projeto, infra })} onServico={(p) => setServico((s) => ({ ...s, ...p }))} />
+            onMudarInfra={(infra) => mudar({ ...projeto, infra })} onServico={(p) => setServico((s) => ({ ...s, ...p }))}
+            onNome={(nome) => mudar({ ...projeto, nome: nomeDoLoteamento(nome, servico) })} />
           <div><button onClick={() => setEtapa("projeto")}>← Voltar ao projeto</button></div>
         </div>
       )}
@@ -587,7 +589,7 @@ export function Loteamento({ servico: servicoInicial, vertices, onVoltar, armaze
       {ver3d && res && projeto && (
         <BarreiraMaquete onFechar={() => setVer3d(false)}>
           <Suspense fallback={<div className="lot-3d-carregando">Abrindo a maquete 3D…</div>}>
-            <Visao3D projeto={projeto} res={res} perimetro={perimetro} fuso={fuso} onFechar={() => setVer3d(false)} />
+            <Visao3D projeto={{ ...projeto, nome: nomeDoLoteamento(projeto.nome, servico) }} res={res} perimetro={perimetro} fuso={fuso} onFechar={() => setVer3d(false)} />
           </Suspense>
         </BarreiraMaquete>
       )}

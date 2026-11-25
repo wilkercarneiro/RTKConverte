@@ -28,11 +28,14 @@ interface Credenciado { id: string; nome: string; prefixo_vertice: string }
 interface Props {
   servico: Servico;
   onMudar: (patch: Partial<Servico>) => void;
+  /** nome do loteamento (fica no projeto, não no serviço): título, memoriais e nome dos arquivos */
+  nome?: string;
+  onNome?: (nome: string) => void;
 }
 
 const dadosDe = (s: Servico): Dados => Object.fromEntries(CAMPOS_CLIENTE.map((c) => [c, s[c] ?? null])) as Dados;
 
-export const DadosCliente = forwardRef<DadosClienteRef, Props>(function DadosCliente({ servico, onMudar }, ref) {
+export const DadosCliente = forwardRef<DadosClienteRef, Props>(function DadosCliente({ servico, onMudar, nome, onNome }, ref) {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [rts, setRts] = useState<RT[]>([]);
   const [credenciados, setCredenciados] = useState<Credenciado[]>([]);
@@ -84,8 +87,9 @@ export const DadosCliente = forwardRef<DadosClienteRef, Props>(function DadosCli
   }
 
   const d = dadosDe(servico);
+  const semNome = !!onNome && (!nome?.trim() || nome.trim() === "Loteamento");
   const txt = (c: Campo) => (e: React.ChangeEvent<HTMLInputElement>) => mudar({ [c]: e.target.value || null } as Partial<Dados>);
-  const faltam = [!d.detentor_nome && "proprietário", !d.detentor_cpf && "CPF/CNPJ", !d.municipio && "município"].filter(Boolean) as string[];
+  const faltam = [semNome && "nome do loteamento", !d.detentor_nome && "proprietário", !d.detentor_cpf && "CPF/CNPJ", !d.municipio && "município"].filter(Boolean) as string[];
 
   return (
     <section className="bloco lot-dados-cliente">
@@ -98,6 +102,14 @@ export const DadosCliente = forwardRef<DadosClienteRef, Props>(function DadosCli
       {faltam.length > 0 && <p className="lot-dica">Falta {faltam.join(", ")}: sem isso o campo sai em branco (—) na planta e nos memoriais.</p>}
       {erro && <div className="lot-alerta erro">{erro}</div>}
       <div className="grade">
+        {onNome && (
+          <label><span>Nome do loteamento<Dica>Sai no título da planta, nos memoriais e no nome dos arquivos gerados.</Dica></span>
+            {/* grava ao sair do campo: o nome entra no projeto e cada mudança no projeto refaz o cálculo */}
+            <input key={nome} defaultValue={nome === "Loteamento" ? "" : (nome ?? "")} placeholder="Ex.: Residencial Boa Vista"
+              onBlur={(e) => { const v = e.target.value.trim(); if (v !== (nome ?? "").trim()) onNome(v); }}
+              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
+          </label>
+        )}
         <label><span>Cliente<Dica>Escolher o cliente cadastrado preenche o proprietário e o CPF/CNPJ.</Dica></span>
           <select value={d.cliente_id ?? ""} onChange={(e) => {
             const cli = clientes.find((c) => c.id === e.target.value) ?? null;

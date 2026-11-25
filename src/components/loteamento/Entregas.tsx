@@ -24,6 +24,7 @@ import { Miniatura } from "./Assistente";
 import { EntregasInfra } from "./EntregasInfra";
 import { EntregasLotes } from "./EntregasLotes";
 import { nomeArquivo } from "../../lib/loteamento/entregas.ts";
+import { nomeDoLoteamento } from "../../lib/loteamento/perimetro.ts";
 import { calcularInfra } from "../../lib/loteamento/infra/index.ts";
 import type { ParametrosInfra } from "../../lib/loteamento/infra/index.ts";
 import { pontosDasRedes } from "../../lib/loteamento/infra/saidas.ts";
@@ -42,6 +43,8 @@ interface Props {
   onMudarInfra?: (p: Partial<ParametrosInfra>) => void;
   /** dados do cliente/imóvel editados aqui (a tela de cima guarda o serviço) */
   onServico?: (patch: Partial<Servico>) => void;
+  /** muda o nome do loteamento (fica no projeto) */
+  onNome?: (nome: string) => void;
 }
 
 /** Os textos do carimbo que vêm do serviço — sempre os da tela, que o operador acabou de editar. */
@@ -87,7 +90,9 @@ async function lerCarimbo(s: Servico): Promise<DadosCarimbo> {
   };
 }
 
-export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalvar, onAbrir3D, onMudarInfra, onServico }: Props) {
+export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalvar, onAbrir3D, onMudarInfra, onServico, onNome }: Props) {
+  // o nome do loteamento — nunca o do arquivo do levantamento (mesma regra do servidor)
+  const nomeLot = nomeDoLoteamento(projeto.nome, servico);
   const [folha, setFolha] = useState<Folha>("A1");
   const [formato, setFormato] = useState<FormatoLocacao>("csv-nome-e-n");
   const [op, setOp] = useState<OpcoesLocacao>(LOCACAO_PADRAO);
@@ -147,7 +152,7 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalva
     await antesDoServidor();
     const { blob, nome } = await arquivoDaFuncao("entregar", corpo);
     const base = nome.replace(/\.pdf$/i, "");
-    abrirPlanta({ bytes: new Uint8Array(await blob.arrayBuffer()), nome: base, titulo: `Planta do loteamento · ${projeto.nome} · ${folha}`, servicoId: servico.id });
+    abrirPlanta({ bytes: new Uint8Array(await blob.arrayBuffer()), nome: base, titulo: `Planta do loteamento · ${nomeLot} · ${folha}`, servicoId: servico.id });
   });
   const locacao = () => fazer("locacao", () => doServidor("locacao", { formato, op, locarRedes }));
   const memoriais = () => fazer("memoriais", () => doServidor("memoriais"));
@@ -165,7 +170,7 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalva
       )}
       {erro && <div className="lot-alerta erro">{erro}</div>}
 
-      <DadosCliente ref={dadosRef} servico={servico} onMudar={(p) => onServico?.(p)} />
+      <DadosCliente ref={dadosRef} servico={servico} onMudar={(p) => onServico?.(p)} nome={projeto.nome} onNome={onNome} />
 
       {onAbrir3D && (
         <section className="lot-3d-chamada" onClick={onAbrir3D} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onAbrir3D(); } }}>
@@ -235,7 +240,7 @@ export function Entregas({ servico, projeto, res, perimetro, onExportou, onSalva
         </div>
       </section>
 
-      <EntregasLotes servicoId={servico.id} res={res} base={nomeArquivo(projeto.nome)} onSalvar={antesDoServidor} carimbo={() => comCarimbo()} onExportou={onExportou} />
+      <EntregasLotes servicoId={servico.id} res={res} base={nomeArquivo(nomeLot)} onSalvar={antesDoServidor} carimbo={() => comCarimbo()} onExportou={onExportou} />
 
       <EntregasInfra projeto={projeto} res={res} onExportou={onExportou} onMudarInfra={onMudarInfra}
         pedir={async (saida, extra) => doServidor(saida, { ...extra, carimbo: await comCarimbo() })} />

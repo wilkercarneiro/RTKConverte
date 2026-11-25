@@ -80,10 +80,25 @@ export function bordaDaEstrada(nome: string): Borda {
   return { tipo: "via", faixa: 0, nome };
 }
 
+/**
+ * Nome do loteamento — o que sai no título, nos memoriais e no nome dos
+ * arquivos. Nunca o nome do arquivo do levantamento: até 25/11/2026 o projeto
+ * nascia com o nome do TXT (quando a denominação ainda estava vazia) e ficava
+ * gravado assim; esse nome antigo agora é tratado como "sem nome".
+ */
+export function nomeDoLoteamento(nomeSalvo: string | null | undefined, servico: Pick<Servico, "denominacao" | "nome_arquivo_txt">): string {
+  const n = (nomeSalvo ?? "").trim();
+  const doArquivo = (servico.nome_arquivo_txt ?? "").trim();
+  const semExt = doArquivo.replace(/\.[^.]+$/, "");
+  const ehDoArquivo = !!doArquivo && [doArquivo, semExt, semExt.replace(/\.txt$/i, "")].some((x) => x.toLowerCase() === n.toLowerCase());
+  if (n && !ehDoArquivo && n !== "Loteamento") return n;
+  return (servico.denominacao ?? "").trim() || "Loteamento";
+}
+
 /** Projeto do banco (ou novo), já com as estradas do levantamento marcadas — e com o recuo legal das rodovias. */
 export function projetoInicial(salvo: Partial<Projeto> | null, servico: Servico, perimetro: Perimetro & { vias: boolean[] }): Projeto {
-  const nome = servico.denominacao || servico.nome_arquivo_txt?.replace(/\.txt$/i, "") || "Loteamento";
-  const p = normalizarProjeto(salvo, nome, perimetro.pts.length);
+  const nome = nomeDoLoteamento(salvo?.nome, servico);
+  const p = { ...normalizarProjeto(salvo, nome, perimetro.pts.length), nome };
   if (!salvo) {
     p.bordas = perimetro.pts.map((_, i): Borda => (perimetro.vias[i]
       ? bordaDaEstrada(perimetro.confrontantes[i] ?? "")
