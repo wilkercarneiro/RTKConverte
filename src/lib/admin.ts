@@ -277,6 +277,9 @@ export interface NovaEmpresa {
   aguardando_pagamento?: boolean;
   /** 0049: entra já e a mensalidade só começa no 1º crédito gasto */
   inicio_no_primeiro_credito?: boolean;
+  /** 0054: o período fechado (MONTHLY, BIMONTHLY, QUARTERLY, SEMIANNUALLY, YEARLY) e o valor dele (R$) */
+  ciclo?: string;
+  valor_periodo?: number | null;
 }
 export const criarEmpresa = (d: NovaEmpresa) =>
   chamarFuncao<{ ok: true; escritorio_id: string; user_id: string; login: string }>("superadmin", { acao: "criar_empresa", ...d });

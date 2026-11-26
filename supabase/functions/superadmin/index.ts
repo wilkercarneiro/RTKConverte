@@ -13,6 +13,9 @@
 //                        1ª mensalidade (a cobrança sai da função `cobranca`).
 //                        inicio_no_primeiro_credito (0049): nasce ativa e a
 //                        mensalidade só começa no 1º crédito gasto
+//                        ciclo (0054): MONTHLY | BIMONTHLY | QUARTERLY |
+//                        SEMIANNUALLY | YEARLY — o período fechado com a empresa;
+//                        valor_periodo: o valor combinado desse período (R$)
 //   adicionar_usuario  { escritorio_id, email, senha, papel? }
 //   redefinir_senha    { user_id, senha }   → volta a ser provisória
 //   remover_usuario    { user_id }          → apaga a conta do Auth
@@ -59,6 +62,9 @@ async function criarConta(svc: Svc, email: string, senha: string, nome?: string)
   return { id: data.user.id };
 }
 
+/** Os períodos que o Asaas aceita para a assinatura (0054; espelha CICLOS_EMPRESA de _shared/parcelas.ts). */
+const CICLOS_EMPRESA = ["MONTHLY", "BIMONTHLY", "QUARTERLY", "SEMIANNUALLY", "YEARLY"];
+
 async function criarEmpresa(svc: Svc, b: Record<string, unknown>) {
   const cnpj = soDigitos(String(b.cnpj ?? ""));
   const nome = String(b.nome ?? "").trim();
@@ -70,6 +76,14 @@ async function criarEmpresa(svc: Svc, b: Record<string, unknown>) {
   // 0049: entra já e a mensalidade só começa no 1º crédito gasto (a cobrança nasce na função `cobranca`)
   const noPrimeiroCredito = b.inicio_no_primeiro_credito === true;
   const status = b.aguardando_pagamento === true && !noPrimeiroCredito ? "aguardando_pagamento" : "ativo";
+  // 0054: o período fechado (em meses) e o valor combinado dele
+  const ciclo = b.ciclo == null || b.ciclo === "" ? "MONTHLY" : String(b.ciclo);
+  if (!CICLOS_EMPRESA.includes(ciclo)) return json({ erro: "Período inválido: use 1, 2, 3, 6 ou 12 meses." }, 400);
+  const valorPeriodo = b.valor_periodo == null || b.valor_periodo === "" ? null : Math.round(Number(b.valor_periodo) * 100) / 100;
+  if (valorPeriodo !== null && !(Number.isFinite(valorPeriodo) && valorPeriodo > 0 && valorPeriodo <= 1_000_000)) {
+    return json({ erro: "Valor do período inválido." }, 400);
+  }
+  const gravaCobranca = noPrimeiroCredito || ciclo !== "MONTHLY" || valorPeriodo !== null;
 
   if (!cnpjValido(cnpj)) return json({ erro: "CNPJ inválido." }, 400);
   if (nome.length < 2) return json({ erro: "Informe o nome da empresa." }, 400);
@@ -100,8 +114,11 @@ async function criarEmpresa(svc: Svc, b: Record<string, unknown>) {
     { escritorio_id: escId, key: "razao_social", value: nome },
     { escritorio_id: escId, key: "cnpj", value: cnpj },
   ]);
-  const { error: eCob } = eMem || eProv || eCfg || !noPrimeiroCredito ? { error: null }
-    : await svc.from("cobranca_empresas").insert({ escritorio_id: escId, ciclo: "MONTHLY", situacao: "sem_assinatura", inicio_no_primeiro_credito: true });
+  const { error: eCob } = eMem || eProv || eCfg || !gravaCobranca ? { error: null }
+    : await svc.from("cobranca_empresas").insert({
+      escritorio_id: escId, ciclo, situacao: "sem_assinatura", valor_periodo: valorPeriodo,
+      ...(noPrimeiroCredito ? { inicio_no_primeiro_credito: true } : {}),
+    });
   if (eMem || eProv || eCfg || eCob) {
     await svc.from("escritorios").delete().eq("id", escId);
     await svc.auth.admin.deleteUser(conta.id);

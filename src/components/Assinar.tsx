@@ -19,9 +19,9 @@ import {
   formatarDocumento, formatarTelefone, problemasDoCadastro, soDigitos,
 } from "../../supabase/functions/_shared/cnpj.ts";
 import {
-  cicloDe, ciclosAtivos, economia, maxParcelas, MESES, NOME_CICLO, normalizarRegras, totalComAdesao, valorDoPeriodo,
+  cicloDoCadastro, ciclosAtivos, economia, maxParcelas, MESES, NOME_CICLO, normalizarRegras, totalComAdesao, valorDoPeriodo,
 } from "../../supabase/functions/_shared/parcelas.ts";
-import type { Ciclo } from "../../supabase/functions/_shared/parcelas.ts";
+import type { CicloCadastro as Ciclo } from "../../supabase/functions/_shared/parcelas.ts";
 import { fmtReais } from "../../supabase/functions/_shared/precos.ts";
 import { mesesGratis, mensalidadeComCupom, MOTIVO_CUPOM, normalizarCodigo, primeiroPagamento, textosDoCupom } from "../../supabase/functions/_shared/cupons.ts";
 import { PagamentoCadastro, pagaPeloSite, ResumoAdesao } from "./PagamentoCadastro";
@@ -114,7 +114,7 @@ export function Assinar({ plano: planoUrl, ciclo: cicloUrl, convite, cupom: cupo
   const [f, setF] = useState<Campos>(() => ({ ...VAZIO, ...lerGuardado() }));
   const [tocado, setTocado] = useState<Record<string, boolean>>({});
   const [plano, setPlano] = useState<string | null>(planoUrl ?? null);
-  const [ciclo, setCiclo] = useState<Ciclo>(cicloDe(cicloUrl) ?? "MONTHLY");
+  const [ciclo, setCiclo] = useState<Ciclo>(cicloDoCadastro(cicloUrl) ?? "MONTHLY");
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<{ texto: string; entrar?: boolean } | null>(null);
   // pagou no passo 3: os três passos ficam feitos

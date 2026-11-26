@@ -299,3 +299,30 @@ convite, painel) e `tests/rls/cupons.sql` (no `npm run test:rls`). Telas:
 `#/lab/assinar/{cupom,gratis,pagamento-cupom}` e `#/lab/admin/config`.
 Publicação: `bash scripts/publicar-cupons.sh [--executar]` (0052 + função cobranca e
 as que dividem `asaas.ts`/`mensagens_cobranca.ts`) e logo depois o push da main.
+
+## Período em meses + "cobrar a partir do próximo mês" (0054, 26/11/2026)
+
+Pedido do Wilker: a Nova empresa ganha a 5ª forma de liberar e o período fechado com o cliente.
+
+- **Cinco formas de liberar** (Painel → Empresas → Nova empresa → Cobrança):
+  1. liberar depois do pagamento (a 1ª vence hoje);
+  2. liberar agora e cobrar (vence em 3 dias);
+  3. **liberar agora e cobrar a partir do próximo mês** — novo: a assinatura nasce no Asaas com o
+     1º vencimento um mês depois do cadastro (`somarMes`: dia 31 → último dia do mês), a empresa
+     fica `em_dia` até lá e o link já vai no WhatsApp. `cobrar_empresa { inicio: "proximo_mes" }`;
+  4. liberar agora e cobrar a partir do 1º crédito usado (0049);
+  5. liberar agora, sem cobrança.
+- **Período da cobrança:** 1, 2, 3, 6 ou 12 meses (mensal, bimestral, trimestral, semestral, anual).
+  São os ciclos da assinatura do Asaas em meses inteiros; 4, 5, 7… meses não existem lá.
+  `cobranca_empresas.ciclo` passa a aceitar `BIMONTHLY` e `QUARTERLY`.
+- **Valor do período:** com período > 1 mês aparece "Valor do trimestre (R$)" (etc.). Vazio =
+  mensalidade × meses, e a tela grava esse número explícito em `cobranca_empresas.valor_periodo`
+  (o que a equipe vê é o que vai ao Asaas, sem o desconto do autocadastro). `cobrancaDaEmpresa`
+  usa `valor_periodo` quando existe; sem ele, segue a conta antiga.
+- **Autocadastro (site/convite) não muda:** continua só mensal, semestral e anual (`cicloDoCadastro`).
+- **Webhook:** `aplicar_pagamento_asaas` agora empurra o vencimento 2 meses (bimestral) e 3
+  (trimestral); antes, tudo que não fosse semestral/anual empurrava 1 mês.
+- **Publicar:** `bash scripts/publicar-periodo.sh --executar` (0054 + cobranca + superadmin) e,
+  logo depois, o push da main (o site manda `ciclo`, `valor_periodo` e `inicio`, que a função
+  antiga ignoraria: cobraria mensal e em 3 dias).
+- Fica para depois: trocar o período/valor fechado de uma empresa que já existe (hoje só no cadastro).

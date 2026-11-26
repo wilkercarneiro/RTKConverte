@@ -42,7 +42,7 @@ import {
 import { fmtReais } from "../_shared/precos.ts";
 import type { CarteiraDoPlano } from "../_shared/mensagens_cobranca.ts";
 import {
-  cicloDe, configDasRegras, descricaoDaCompra, escolherParcelas, maxParcelas, MESES, NOME_CICLO, normalizarRegras,
+  cicloDe, cicloDoCadastro, configDasRegras, descontoDoCiclo, descricaoDaCompra, escolherParcelas, maxParcelas, MESES, NOME_CICLO, normalizarRegras,
   parcelamento, problemaDasRegras, regrasDe, somarMeses, totalComAdesao, valorDoPeriodo,
 } from "../_shared/parcelas.ts";
 import type { Ciclo, Parcelamento, RegrasPagamento } from "../_shared/parcelas.ts";
@@ -91,6 +91,8 @@ export interface EmpresaCobranca {
     /** 0052: a foto do cupom do cadastro (jsonb) e o fim do desconto da mensalidade */
     cupom?: unknown;
     cupom_desconto_ate?: string | null;
+    /** 0054: valor fechado do período com a equipe (null = mensalidade × meses) */
+    valor_periodo?: number | null;
   } | null;
 }
 
@@ -261,7 +263,10 @@ export function cobrancaDaEmpresa(cfg: Record<string, string>, e: EmpresaCobranc
   { ciclo: Ciclo; valor: number; cheio: number; mensalidade: number; cupom: Cupom | null } {
   const ciclo = cicloDe(e.cobranca?.ciclo) ?? "MONTHLY";
   const mensalidade = Number(e.mensalidade ?? 0);
-  const cheio = ciclo === "MONTHLY" ? mensalidade : valorDoPeriodo(mensalidade, ciclo, regrasDe(cfg).ciclos[ciclo].desconto);
+  // 0054: o valor fechado do período (empresa criada no painel) vale sobre a conta
+  const fechado = Number(e.cobranca?.valor_periodo ?? 0);
+  const cheio = fechado > 0 ? fechado
+    : ciclo === "MONTHLY" ? mensalidade : valorDoPeriodo(mensalidade, ciclo, descontoDoCiclo(regrasDe(cfg), ciclo));
   const cupom = cupomDe(e.cobranca?.cupom);
   const ref = vencimento !== undefined ? vencimento : (e.cobranca?.proximo_vencimento ?? null);
   const valor = mensalidadeComCupom(cheio, cupom, ref, e.cobranca?.cupom_desconto_ate ?? null);
@@ -891,7 +896,9 @@ async function cobrarEmpresa(d: Deps, cfg: Record<string, string>, b: Record<str
     const cupom = cupomDe(e.cobranca?.cupom);
     const isencaoPendente = mesesGratis(cupom) > 0 && !pagoAte && !e.cobranca?.asaas_assinatura_id
       && (e.cobranca?.situacao ?? "sem_assinatura") === "sem_assinatura";
-    const base1 = pagoAte ?? (b.liberada ? somarDias(hoje, 3) : hoje);
+    // 0054: "liberar agora e cobrar no próximo mês": a 1ª vence um mês depois do cadastro
+    const proximoMes = b.inicio === "proximo_mes" && !pagoAte;
+    const base1 = pagoAte ?? (proximoMes ? somarMes(hoje) : b.liberada ? somarDias(hoje, 3) : hoje);
     const primeiroVencimento = isencaoPendente ? vencimentoComIsencao(base1, cupom) : base1;
     // e o desconto que ainda não começou começa nesta 1ª cobrança
     if (cupom && !e.cobranca?.cupom_desconto_ate && fimDoDesconto(primeiroVencimento, cupom, ciclo)) {
@@ -914,7 +921,7 @@ async function cobrarEmpresa(d: Deps, cfg: Record<string, string>, b: Record<str
       status: primeira.status || "PENDING", link: primeira.invoiceUrl ?? null, vencimento: primeira.dueDate, ciclo,
     });
     await d.banco.salvarCobranca(e.id, {
-      asaas_cliente_id: cliente, asaas_assinatura_id: sub.id, valor, ciclo, situacao: pagoAte || isencaoPendente ? "em_dia" : "aguardando",
+      asaas_cliente_id: cliente, asaas_assinatura_id: sub.id, valor, ciclo, situacao: pagoAte || isencaoPendente || proximoMes ? "em_dia" : "aguardando",
       link_pagamento: primeira.invoiceUrl ?? null, proximo_vencimento: primeira.dueDate,
     });
     // empresa nova: o mês do crédito começa no dia do vencimento da mensalidade
@@ -1372,7 +1379,7 @@ async function pagarCadastro(d: Deps, cfg: Record<string, string>, u: Usuario, b
   if (b.forma === "cartao" && d.limite && !(await d.limite(`pagar-cadastro-ip:${ipDe(u)}`, 10, 3600))) throw new ErroUsuario(MUITAS_CHAMADAS.erro, MUITAS_CHAMADAS.status);
 
   const regras = regrasDe(cfg);
-  const ciclo = cicloDe(b.ciclo) ?? cicloDe(e.cobranca?.ciclo) ?? "MONTHLY";
+  const ciclo = cicloDoCadastro(b.ciclo) ?? cicloDoCadastro(e.cobranca?.ciclo) ?? "MONTHLY";
   if (!regras.ciclos[ciclo].ativo) throw new ErroUsuario(`O período ${NOME_CICLO[ciclo].toLowerCase()} não está disponível. Escolha outro.`);
   const mensalidade = Number(e.mensalidade ?? 0);
   if (!(mensalidade > 0)) throw new ErroUsuario("O plano desta conta está sem mensalidade. Fale com o suporte.", 409);
@@ -1626,7 +1633,7 @@ async function pagarCadastroParcelado(d: Deps, cfg: Record<string, string>, asaa
     ...(soAdesao ? { sem_periodo: true } : {}),
   });
   await d.banco.salvarCobranca(e.id, {
-    asaas_cliente_id: cliente, valor: valorDoPeriodo(Number(e.mensalidade ?? 0), ciclo, regras.ciclos[ciclo].desconto), ciclo, situacao: "aguardando", link_pagamento: null,
+    asaas_cliente_id: cliente, valor: valorDoPeriodo(Number(e.mensalidade ?? 0), ciclo, descontoDoCiclo(regras, ciclo)), ciclo, situacao: "aguardando", link_pagamento: null,
     ...(soAdesao ? { proximo_vencimento: soAdesao.primeira } : {}),
   });
   await marcarFimDoDesconto(d, e, cob.dueDate || hoje, ciclo);

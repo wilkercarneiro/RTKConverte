@@ -33,7 +33,13 @@ export function textoCreditos(carteiras: CarteiraDoPlano[]): string {
  * "cobrança semestral" ou "anuidade". Sem período = mensalidade (como antes).
  */
 export function nomeDaCobranca(ciclo?: string | null): string {
-  return ciclo === "YEARLY" ? "anuidade" : ciclo === "SEMIANNUALLY" ? "cobrança semestral" : "mensalidade";
+  return ciclo === "YEARLY" ? "anuidade" : ciclo === "SEMIANNUALLY" ? "cobrança semestral"
+    : ciclo === "QUARTERLY" ? "cobrança trimestral" : ciclo === "BIMONTHLY" ? "cobrança bimestral" : "mensalidade";
+}
+
+/** "mês", "trimestre", "ano"…: a cada quanto a cobrança volta (0054). */
+export function unidadeDaCobranca(ciclo?: string | null): string {
+  return ciclo === "YEARLY" ? "ano" : ciclo === "SEMIANNUALLY" ? "semestre" : ciclo === "QUARTERLY" ? "trimestre" : ciclo === "BIMONTHLY" ? "bimestre" : "mês";
 }
 
 /** Cobrança da mensalidade. Com `senha`, é a conta nova: leva os dados de acesso. */
@@ -42,7 +48,7 @@ export function mensagemCobranca(o: {
   vencimento?: string | null; url: string; login?: string | null; senha?: string | null; creditos?: string;
   /** a empresa já entra; o link é só da 1ª mensalidade */
   liberada?: boolean;
-  /** período da assinatura (MONTHLY, SEMIANNUALLY, YEARLY) */
+  /** período da assinatura (MONTHLY, BIMONTHLY, QUARTERLY, SEMIANNUALLY, YEARLY) */
   ciclo?: string | null;
 }): string {
   const nome = nomeDaCobranca(o.ciclo);
@@ -96,7 +102,7 @@ export function mensagemMensalidadeIniciada(o: {
     ...(o.link ? [o.link] : []),
     "",
     "Dá para pagar por Pix, boleto ou cartão. Se preferir, cadastre o cartão no sistema (Configurações → Plano e uso): ele paga esta e as próximas sozinho.",
-    `As próximas vencem no mesmo dia, a cada ${o.ciclo === "YEARLY" ? "ano" : o.ciclo === "SEMIANNUALLY" ? "semestre" : "mês"}, e os créditos do plano renovam junto. ${o.url}`,
+    `As próximas vencem no mesmo dia, a cada ${unidadeDaCobranca(o.ciclo)}, e os créditos do plano renovam junto. ${o.url}`,
   ].join("\n");
 }
 

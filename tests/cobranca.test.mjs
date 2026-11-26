@@ -492,6 +492,56 @@ test("empresa sem mensalidade não gera cobrança", async () => {
   assert.match(r.corpo.erro, /não tem mensalidade/);
 });
 
+// 0054: liberar agora e cobrar no próximo mês + período em meses com valor fechado
+test("liberar agora e cobrar no próximo mês: a 1ª vence um mês depois do cadastro e a empresa fica em dia", async () => {
+  const { asaas, banco, deps } = cenario({ cfg: { ...ASAAS_OK, ...ZAP } });
+  banco.empresas[EMPRESA.id].status = "ativo";
+  const sa = { id: "sa", email: "w@v.test", superadmin: true, escritorioId: null };
+  const r = await tratarAcao(deps, sa, { acao: "cobrar_empresa", escritorio_id: EMPRESA.id, senha: "Vt12345678ab", liberada: true, inicio: "proximo_mes" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const sub = asaas.chamadas.find((c) => c.caminho === "/subscriptions" && c.metodo === "POST").corpo;
+  assert.equal(sub.nextDueDate, "2026-11-30", "hoje é 30/10: vence em 30/11");
+  assert.equal(sub.cycle, "MONTHLY");
+  assert.equal(banco.cobrancas[EMPRESA.id].situacao, "em_dia", "até o vencimento não está devendo");
+  assert.equal(r.corpo.vencimento, "2026-11-30");
+  const texto = asaas.chamadas.find((c) => c.whatsapp).corpo.text;
+  assert.match(texto, /acesso já está liberado/);
+  assert.match(texto, /vence em 30\/11\/2026/);
+});
+
+test("período trimestral com valor fechado: assinatura QUARTERLY com o valor combinado, não mensalidade × 3", async () => {
+  const { asaas, banco, deps } = cenario({ cfg: { ...ASAAS_OK, ...ZAP } });
+  banco.cobrancas[EMPRESA.id] = { situacao: "sem_assinatura", ciclo: "QUARTERLY", valor_periodo: 500 };
+  const sa = { id: "sa", email: "w@v.test", superadmin: true, escritorioId: null };
+  const r = await tratarAcao(deps, sa, { acao: "cobrar_empresa", escritorio_id: EMPRESA.id, senha: "Vt12345678ab" });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const sub = asaas.chamadas.find((c) => c.caminho === "/subscriptions" && c.metodo === "POST").corpo;
+  assert.equal(sub.cycle, "QUARTERLY");
+  assert.equal(sub.value, 500);
+  assert.equal(sub.description, "Vertces: plano Profissional (trimestral)");
+  assert.equal(banco.pagamentos[0].ciclo, "QUARTERLY");
+  assert.match(r.corpo.mensagem, /primeira cobrança trimestral de R\$\s500,00/);
+});
+
+test("período anual sem valor fechado: mensalidade × 12 (com o desconto do autocadastro, como antes)", async () => {
+  const { asaas, banco, deps } = cenario({ cfg: { ...ASAAS_OK, ciclos: JSON.stringify({ YEARLY: { ativo: true, desconto: 10 } }) } });
+  banco.cobrancas[EMPRESA.id] = { situacao: "sem_assinatura", ciclo: "YEARLY" };
+  const r = await tratarAcao(deps, { id: "sa", superadmin: true }, { acao: "cobrar_empresa", escritorio_id: EMPRESA.id });
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  const sub = asaas.chamadas.find((c) => c.caminho === "/subscriptions" && c.metodo === "POST").corpo;
+  assert.equal(sub.cycle, "YEARLY");
+  assert.equal(sub.value, 2158.92, "199,90 × 12 − 10%");
+});
+
+test("o autocadastro não aceita bimestral/trimestral (só mensal, semestral e anual)", async () => {
+  const { cicloDe, cicloDoCadastro, cicloDosMeses } = await import("../supabase/functions/_shared/parcelas.ts");
+  assert.equal(cicloDe("trimestral"), "QUARTERLY");
+  assert.equal(cicloDoCadastro("trimestral"), null);
+  assert.equal(cicloDoCadastro("anual"), "YEARLY");
+  assert.equal(cicloDosMeses(2), "BIMONTHLY");
+  assert.equal(cicloDosMeses(4), null, "o Asaas não tem período de 4 meses");
+});
+
 test("conferir: o que foi pago no Asaas e não chegou pelo webhook é aplicado (e avisado)", async () => {
   const { asaas, banco, deps } = cenario({ cfg: { ...ASAAS_OK, ...ZAP } });
   const sa = { id: "sa", email: "w@v.test", superadmin: true, escritorioId: null };

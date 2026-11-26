@@ -83,7 +83,7 @@ function banco(svc: Svc): Banco {
         status: string; mensalidade: number | null; origem: string | null; plano: { nome: string; preco_mensal: number | null } | null;
       };
       const [cob, dono, sit, renova, mens] = await Promise.all([
-        svc.from("cobranca_empresas").select("asaas_cliente_id, asaas_assinatura_id, situacao, link_pagamento, valor, proximo_vencimento, ciclo, inicio_no_primeiro_credito, primeiro_credito_em, mensalidade_iniciada_em, cupom, cupom_desconto_ate")
+        svc.from("cobranca_empresas").select("asaas_cliente_id, asaas_assinatura_id, situacao, link_pagamento, valor, proximo_vencimento, ciclo, inicio_no_primeiro_credito, primeiro_credito_em, mensalidade_iniciada_em, cupom, cupom_desconto_ate, valor_periodo")
           .eq("escritorio_id", id).maybeSingle(),
         svc.from("membros_escritorio").select("user_id").eq("escritorio_id", id).eq("papel", "dono").order("created_at").limit(1).maybeSingle(),
         svc.rpc("situacao_creditos", { p_escritorio: id }),

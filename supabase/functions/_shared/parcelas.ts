@@ -26,20 +26,54 @@
 
 import { fmtReais } from "./precos.ts";
 
-export type Ciclo = "MONTHLY" | "SEMIANNUALLY" | "YEARLY";
-export const CICLOS: Ciclo[] = ["MONTHLY", "SEMIANNUALLY", "YEARLY"];
-export const MESES: Record<Ciclo, number> = { MONTHLY: 1, SEMIANNUALLY: 6, YEARLY: 12 };
-export const NOME_CICLO: Record<Ciclo, string> = { MONTHLY: "Mensal", SEMIANNUALLY: "Semestral", YEARLY: "Anual" };
+/**
+ * Todos os períodos de assinatura que o Asaas aceita em meses inteiros (0054):
+ * a empresa criada pela equipe pode fechar bimestral e trimestral também.
+ */
+export type Ciclo = "MONTHLY" | "BIMONTHLY" | "QUARTERLY" | "SEMIANNUALLY" | "YEARLY";
+/** Os períodos à venda no autocadastro (o link do site): só estes três. */
+export type CicloCadastro = "MONTHLY" | "SEMIANNUALLY" | "YEARLY";
+export const CICLOS: CicloCadastro[] = ["MONTHLY", "SEMIANNUALLY", "YEARLY"];
+/** Os períodos da empresa criada no painel, na ordem da lista de meses. */
+export const CICLOS_EMPRESA: Ciclo[] = ["MONTHLY", "BIMONTHLY", "QUARTERLY", "SEMIANNUALLY", "YEARLY"];
+export const MESES: Record<Ciclo, number> = { MONTHLY: 1, BIMONTHLY: 2, QUARTERLY: 3, SEMIANNUALLY: 6, YEARLY: 12 };
+export const NOME_CICLO: Record<Ciclo, string> = {
+  MONTHLY: "Mensal", BIMONTHLY: "Bimestral", QUARTERLY: "Trimestral", SEMIANNUALLY: "Semestral", YEARLY: "Anual",
+};
+/** "mês", "trimestre"…: a unidade do período ("por trimestre", "a cada trimestre"). */
+export const UNIDADE_CICLO: Record<Ciclo, string> = {
+  MONTHLY: "mês", BIMONTHLY: "bimestre", QUARTERLY: "trimestre", SEMIANNUALLY: "semestre", YEARLY: "ano",
+};
 /** O nome que vai na URL do link de cadastro (?ciclo=anual). */
-export const APELIDO_CICLO: Record<Ciclo, string> = { MONTHLY: "mensal", SEMIANNUALLY: "semestral", YEARLY: "anual" };
-
-const APELIDOS: Record<string, Ciclo> = {
-  mensal: "MONTHLY", monthly: "MONTHLY", semestral: "SEMIANNUALLY", semiannually: "SEMIANNUALLY", anual: "YEARLY", yearly: "YEARLY",
+export const APELIDO_CICLO: Record<Ciclo, string> = {
+  MONTHLY: "mensal", BIMONTHLY: "bimestral", QUARTERLY: "trimestral", SEMIANNUALLY: "semestral", YEARLY: "anual",
 };
 
-/** "anual", "YEARLY"… → o ciclo do Asaas; o resto → null. */
+const APELIDOS: Record<string, Ciclo> = {
+  mensal: "MONTHLY", monthly: "MONTHLY", bimestral: "BIMONTHLY", bimonthly: "BIMONTHLY", trimestral: "QUARTERLY", quarterly: "QUARTERLY",
+  semestral: "SEMIANNUALLY", semiannually: "SEMIANNUALLY", anual: "YEARLY", yearly: "YEARLY",
+};
+
+/** "anual", "YEARLY", "trimestral"… → o ciclo do Asaas; o resto → null. */
 export function cicloDe(x: unknown): Ciclo | null {
   return APELIDOS[String(x ?? "").trim().toLowerCase()] ?? null;
+}
+
+/** Só os períodos do autocadastro (mensal, semestral, anual); o resto → null. */
+export function cicloDoCadastro(x: unknown): CicloCadastro | null {
+  const c = cicloDe(x);
+  return c && (CICLOS as Ciclo[]).includes(c) ? (c as CicloCadastro) : null;
+}
+
+/** O ciclo do Asaas pela quantidade de meses (1, 2, 3, 6, 12); o resto → null. */
+export function cicloDosMeses(meses: unknown): Ciclo | null {
+  const n = Number(meses);
+  return CICLOS_EMPRESA.find((c) => MESES[c] === n) ?? null;
+}
+
+/** O desconto do período no autocadastro; bimestral e trimestral (só do painel) não têm. */
+export function descontoDoCiclo(r: Pick<RegrasPagamento, "ciclos">, ciclo: Ciclo): number {
+  return (r.ciclos as Partial<Record<Ciclo, RegraCiclo>>)[ciclo]?.desconto ?? 0;
 }
 
 export interface RegraCiclo { ativo: boolean; desconto: number }
@@ -51,7 +85,7 @@ export interface RegrasPagamento {
   /** % ao mês, acima das parcelas sem juros */
   juros_mes: number;
   /** desconto em % (0 a 50); o mensal é sempre 0 */
-  ciclos: Record<Ciclo, RegraCiclo>;
+  ciclos: Record<CicloCadastro, RegraCiclo>;
   /**
    * Taxa de adesão (0044): cobrada UMA vez, somada ao 1º pagamento do
    * autocadastro (Pix, cartão à vista ou parcelado junto com o período). 0 = sem
@@ -99,7 +133,7 @@ export function normalizarRegras(r: unknown): RegrasPagamento {
   const semJuros = entre(Math.floor(numero(x.parcelas_sem_juros, REGRAS_PADRAO.parcelas_sem_juros)), 1, max);
   const juros = Math.round(entre(numero(x.juros_mes, REGRAS_PADRAO.juros_mes), 0, LIMITE_JUROS) * 10000) / 10000;
   const brutos = (x.ciclos && typeof x.ciclos === "object" ? x.ciclos : {}) as Record<string, { ativo?: unknown; desconto?: unknown } | undefined>;
-  const ciclos = {} as Record<Ciclo, RegraCiclo>;
+  const ciclos = {} as Record<CicloCadastro, RegraCiclo>;
   for (const c of CICLOS) {
     const b = brutos[c];
     ciclos[c] = {
@@ -169,7 +203,7 @@ export function problemaDasRegras(r: unknown): string | null {
   return null;
 }
 
-export const ciclosAtivos = (r: RegrasPagamento): Ciclo[] => CICLOS.filter((c) => r.ciclos[c].ativo);
+export const ciclosAtivos = (r: RegrasPagamento): CicloCadastro[] => CICLOS.filter((c) => r.ciclos[c].ativo);
 
 /** Mensalidade × meses × (1 − desconto%), em centavos. */
 export function valorDoPeriodo(mensalidade: number, ciclo: Ciclo, desconto = 0): number {

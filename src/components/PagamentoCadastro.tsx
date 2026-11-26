@@ -8,7 +8,8 @@
 // espera; recusado, a mensagem do Asaas e o que foi digitado fica (menos o CVV).
 import { useEffect, useRef, useState } from "react";
 import { conferirPagamentos, minhaCobranca, pagarCadastro } from "../lib/cobranca";
-import type { Ciclo, MinhaCobranca, ResultadoPagarCadastro } from "../lib/cobranca";
+import type { MinhaCobranca, ResultadoPagarCadastro } from "../lib/cobranca";
+import type { CicloCadastro as Ciclo } from "../../supabase/functions/_shared/parcelas.ts";
 import {
   ciclosAtivos, economia, MESES, NOME_CICLO, normalizarRegras, opcoesDeParcelas, valorDoPeriodo,
 } from "../../supabase/functions/_shared/parcelas.ts";
@@ -108,7 +109,7 @@ export function PagamentoCadastro({ cobranca, vigiar = true, onConfirmado }: {
   const ativos = ciclosAtivos(regras);
   const mensalidade = Number(cobranca.mensalidade ?? 0);
   const ultimo = cobranca.ultimo_pagamento;
-  const [ciclo, setCiclo] = useState<Ciclo>(cobranca.ciclo && ativos.includes(cobranca.ciclo) ? cobranca.ciclo : (ativos[0] ?? "MONTHLY"));
+  const [ciclo, setCiclo] = useState<Ciclo>(cobranca.ciclo && (ativos as string[]).includes(cobranca.ciclo) ? (cobranca.ciclo as Ciclo) : (ativos[0] ?? "MONTHLY"));
   const [forma, setForma] = useState<"pix" | "cartao">("pix");
   const [n, setN] = useState(1);
   const [estado, setEstado] = useState<Estado>(ultimo?.status === "AWAITING_RISK_ANALYSIS" ? "analise" : "escolher");

@@ -245,7 +245,9 @@ export interface ResultadoCobranca {
   link: string; valor: number; vencimento: string | null; mensagem: string;
   whatsapp: { configurado: boolean; enviado: boolean; erro?: string };
 }
-export const cobrarEmpresa = (d: { escritorio_id: string; enviar_whatsapp?: boolean; login?: string; senha?: string; liberada?: boolean }) =>
+export const cobrarEmpresa = (d: { escritorio_id: string; enviar_whatsapp?: boolean; login?: string; senha?: string; liberada?: boolean;
+  /** 0054: a 1ª cobrança vence um mês depois de hoje (liberar agora e cobrar no próximo mês) */
+  inicio?: "proximo_mes" }) =>
   chamar<ResultadoCobranca>({ acao: "cobrar_empresa", ...d });
 /** 0049: o superadmin gera a mensalidade de quem já gastou o 1º crédito (a tela não chegou a gerar). */
 export const iniciarMensalidadeDaEmpresa = (escritorioId: string) =>

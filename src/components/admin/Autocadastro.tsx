@@ -14,7 +14,7 @@ import {
   CICLOS, LIMITE_TEXTO_ADESAO, maxParcelas, NOME_CICLO, normalizarRegras, parcelamento, problemaDasRegras, TEXTO_ADESAO_PADRAO,
   totalComAdesao, valorDoPeriodo,
 } from "../../../supabase/functions/_shared/parcelas.ts";
-import type { Ciclo } from "../../../supabase/functions/_shared/parcelas.ts";
+import type { CicloCadastro as Ciclo } from "../../../supabase/functions/_shared/parcelas.ts";
 import { formatarTelefone, soDigitos } from "../../../supabase/functions/_shared/cnpj.ts";
 import { fmtReais } from "../../../supabase/functions/_shared/precos.ts";
 import type { DadosAdmin } from "./PainelAdmin";

@@ -107,7 +107,8 @@ test("textos e datas: o que a tela e a fatura do Asaas mostram", () => {
   assert.equal(cicloDe("anual"), "YEARLY");
   assert.equal(cicloDe(" Semestral "), "SEMIANNUALLY");
   assert.equal(cicloDe("MONTHLY"), "MONTHLY");
-  assert.equal(cicloDe("bimestral"), null);
+  assert.equal(cicloDe("bimestral"), "BIMONTHLY", "0054: a empresa do painel pode ser bimestral");
+  assert.equal(cicloDe("quinzenal"), null);
   assert.equal(somarMeses("2026-11-05", 12), "2027-11-05");
   assert.equal(somarMeses("2026-08-31", 6), "2027-02-28");
   assert.equal(somarMeses("2026-01-31", 1), "2026-02-28");

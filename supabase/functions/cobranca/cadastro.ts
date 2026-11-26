@@ -41,9 +41,9 @@ import { enviarWhatsApp } from "../_shared/whatsapp.ts";
 import {
   mensagemCadastroComCupom, mensagemCadastroConvite, mensagemCadastroCriado, mensagemNovoCadastro, mensagemNovoConvite, textoCreditos,
 } from "../_shared/mensagens_cobranca.ts";
-import { cicloDe, maxParcelas, NOME_CICLO, regrasDe, valorDoPeriodo } from "../_shared/parcelas.ts";
+import { cicloDoCadastro, maxParcelas, NOME_CICLO, regrasDe, valorDoPeriodo } from "../_shared/parcelas.ts";
 import { fmtReais } from "../_shared/precos.ts";
-import type { Ciclo } from "../_shared/parcelas.ts";
+import type { CicloCadastro as Ciclo } from "../_shared/parcelas.ts";
 
 /** Limites do cadastro: [chave, máximo, janela em segundos]. */
 /** Tentativas de cupom por IP (conferir + cadastrar): [chave, máximo, janela em segundos]. */
@@ -161,7 +161,7 @@ async function cadastroCriar(d: Deps, ip: string | null, b: Record<string, unkno
   if (problema) throw new ErroUsuario(problema);
   const versao = String(b.versao_termos ?? "");
   if (!/^[\w.-]{1,40}$/.test(versao)) throw new ErroUsuario("Versão dos termos inválida. Recarregue a página e tente de novo.");
-  const ciclo = cicloDe(b.ciclo);
+  const ciclo = cicloDoCadastro(b.ciclo);
   if (!ciclo) throw new ErroUsuario("Escolha o período: mensal, semestral ou anual.");
   const planoId = String(b.plano_id ?? "");
   if (!porConvite && !/^[0-9a-f-]{36}$/i.test(planoId)) throw new ErroUsuario("Escolha um plano.");
