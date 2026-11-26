@@ -10,7 +10,7 @@ import type { Corte, Lote, Perimetro, Quadra, Resultado } from "./calculo.ts";
 import { paraPlano, paraUtm } from "./plano.ts";
 import { ROTULO_AREA, mudarLote, novoId } from "./modelo.ts";
 import {
-  acertarMedida, apagarLotes, melhorEstrutura, desenharLote, dividirLote, igualarAreas, mudarDestino, pedirEstrutura, posicaoNoDesenho, quadraDesenhada, temAreaPublicaDeLotes, unirComVizinho, unirLotes, voltarAoAutomatico,
+  acertarMedida, apagarLotes, fundirDesenhos, fundirTodos, melhorEstrutura, desenharLote, dividirLote, igualarAreas, mudarDestino, pedirEstrutura, posicaoNoDesenho, quadraDesenhada, temAreaPublicaDeLotes, unirComVizinho, unirLotes, voltarAoAutomatico,
 } from "./edicao.ts";
 import type { Edicao } from "./edicao.ts";
 import { rearranjarSelecao } from "./rearranjo.ts";
@@ -48,7 +48,7 @@ function garantirCfg(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: 
 }
 
 function comCfg(pr: Projeto, res: Resultado, q: Quadra, f: (c: QuadraCfg) => QuadraCfg): Projeto {
-  const { pr: p2, i } = garantirCfg(pr, res, q);
+  const { pr: p2, i } = garantirCfg(fundirDesenhos(pr, q), res, q);
   const quadras = p2.quadras.slice();
   quadras[i] = f({ ...quadras[i], ajustes: [...quadras[i].ajustes] });
   return { ...p2, quadras };
@@ -196,7 +196,8 @@ export function adicionarArea(pr: Projeto, anelUtm: Pt[], tipo: TipoArea): { pr:
  * Muda o tipo de uma área pública — seja ela desenhada, uma quadra inteira ou
  * um grupo de lotes. `null` devolve a área para o loteamento (vira lote de novo).
  */
-export function mudarArea(pr: Projeto, res: Resultado, id: string, tipo: TipoArea | null): Projeto {
+export function mudarArea(pr0: Projeto, res: Resultado, id: string, tipo: TipoArea | null): Projeto {
+  const pr = fundirTodos(pr0, res);
   const a = res.areas.find((x) => x.id === id);
   if (!a) return pr;
   if (a.origem === "desenho") {

@@ -8,7 +8,7 @@
 // automático chama a mesma função para comparar propostas — não existe uma
 // segunda definição de "lote válido" em lugar nenhum.
 import {
-  antiHorario, eixoDoTraco, areaAssinada, areaPol, areaPolAteCorte, dentroAnel, bufferLinha, caixa, centroide, circulo, cross, dentroPol,
+  antiHorario, eixoDoTraco, areaAssinada, diferencaSegura, distAnel, areaPol, areaPolAteCorte, dentroAnel, bufferLinha, caixa, centroide, circulo, cross, dentroPol,
   diferenca, dist, distSegmento, dot, esquerda, faixaReferencial, intersecao, lerp, limparAnel, mult, offsetPols, soma, sub,
   giroEm, intersecaoRetas, perimetro as perimetroAnel, quinas, quinasAviso, quinasDe, quinasDetalhe, uniao, uniaoFechada, unit, verdeValida,
 } from "./geom.ts";
@@ -148,6 +148,8 @@ export interface Quadra {
   /** quadra estruturada pela linha central (plano): a linha e o resumo do arranjo */
   linhaCentral?: Pt[];
   estruturada?: EstruturadaInfo;
+  /** configs desenhadas do mesmo pedaço entre ruas que o cálculo juntou nesta (a edição grava a fusão) */
+  fundidas?: number[];
 }
 
 /** Resumo da quadra estruturada (linhaCentral.ts) para o painel e a prancheta. */
@@ -310,6 +312,12 @@ interface Contexto {
   acessosQuadra?: [Pt, Pt][];
   /** corpo das ruas que vieram prontas (loteamento importado): o vizinho de um lado é a rua em que o ponto cai */
   ruasFixas?: Indice;
+  /** lotes desenhados pelo operador (plano) e a config de cada um: o corte em L não atravessa a quadra desenhada */
+  desenhados?: { pol: Poligono; cfg: number }[];
+  /** âncoras das quadras desenhadas que ficaram sem lote (guardam a letra): o corte que as criou continua */
+  ancorasVazias?: Pt[];
+  /** âncoras de todas as quadras desenhadas à mão */
+  ancorasDesenhadas?: Pt[];
 }
 
 /**
@@ -501,6 +509,27 @@ function partirEmL(ctx: Contexto, pol: Poligono): Poligono[] {
   const n = anel.length;
   if (n < 5) return [pol];
   const lados = anel.map((a, i) => classificar(ctx, a, anel[(i + 1) % n], null).tipo);
+  // quadra com frente para duas ruas OPOSTAS (a quadra comum entre ruas, de duas
+  // fileiras fundo com fundo ou de rua a rua) não é faixa de uma fileira: partir o
+  // canto convexo dela deixava duas quadras em triângulo (MAURICIO, 25/11/2026:
+  // G|F, H|I, K|J entre as transversais) e o "fundo com fundo" ficava impossível
+  const opostas = (() => {
+    const fr: { a: Pt; b: Pt; d: Pt; L: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      if (!ehFrente(lados[i])) continue;
+      const a = anel[i], b = anel[(i + 1) % n], L = dist(a, b);
+      if (L > 1) fr.push({ a, b, d: unit(sub(b, a)), L });
+    }
+    for (let i = 0; i < fr.length; i++) for (let j = i + 1; j < fr.length; j++) {
+      const x = fr[i], y = fr[j];
+      if (dot(x.d, y.d) > -Math.cos((35 * Math.PI) / 180)) continue;
+      // uma de frente para a outra: a projeção de uma sobre a outra se sobrepõe
+      const t0 = dot(sub(y.a, x.a), x.d), t1 = dot(sub(y.b, x.a), x.d);
+      const sob = Math.min(Math.max(t0, t1), x.L) - Math.max(Math.min(t0, t1), 0);
+      if (sob > Math.min(x.L, y.L) * 0.3 || sob > 15) return true;
+    }
+    return false;
+  })();
   const cortes: [Pt, Pt][] = [];
   for (let i = 0; i < n; i++) {
     const V = anel[i], A = anel[(i - 1 + n) % n], B = anel[(i + 1) % n];
@@ -510,6 +539,9 @@ function partirEmL(ctx: Contexto, pol: Poligono): Poligono[] {
     const a = unit(sub(A, V)), b = unit(sub(B, V));
     const ang = Math.acos(Math.max(-1, Math.min(1, dot(a, b))));
     if (ang > (160 * Math.PI) / 180) continue; // dobra suave de rua, não é canto
+    // esquina comum (perto do esquadro) da quadra entre ruas opostas: é o lote de
+    // esquina, não um corte (a ponta AGUDA entre duas ruas continua sendo cortada)
+    const esquinaComum = convexo && ang >= (70 * Math.PI) / 180;
     // canto aberto em que um dos braços é curto (a rua que passa pela ponta da
     // fileira): a fileira dobra nele com lote de esquina, como na planta da
     // equipe — partir aqui deixaria um triângulo e uma bissetriz torta
@@ -535,7 +567,44 @@ function partirEmL(ctx: Contexto, pol: Poligono): Poligono[] {
     // só parte FAIXA de uma fileira (a bissetriz bate na divisa logo ali); quadra
     // interna em L, cuja bissetriz bate noutra rua, é loteada inteira
     if (ehFrente(lados[ladoHit]) || tMin > 2.2 * ctx.prof) continue;
-    cortes.push([V, soma(V, mult(r, tMin))]);
+    // o corte não pode deixar quadra em triângulo (a cunha do canto convexo vira
+    // lotes de 3 quinas): fica uma quadra só, com o lote de esquina
+    const Q = soma(V, mult(r, tMin));
+    // o corte que atravessaria um lote desenhado pelo operador ("Gerar quadra", lote à
+    // mão) não é feito: a quadra dele fica inteira e o fundo com fundo continua possível
+    if (ctx.desenhados?.length) {
+      // (só o lote que o corte divide de verdade — cada lado com 25% dele ou mais; o lote
+      // do canto que só passa um pouco da linha não segura a faixa inteira)
+      const passos = Math.max(2, Math.ceil(tMin / 0.75));
+      const nrm = esquerda(r);
+      const tocados = new Set<{ pol: Poligono; cfg: number }>();
+      for (let k = 1; k < passos; k++) {
+        const X = soma(V, mult(r, (tMin * k) / passos));
+        for (const d of ctx.desenhados) if (dentroAnel(X, d.pol.ext) && distAnel(X, d.pol.ext) > 0.3) tocados.add(d);
+      }
+      // (dois ou mais lotes da MESMA quadra desenhada partidos: a quadra atravessa a linha.
+      // Um lote só — o lote "livre" que o operador desenhou por cima da divisa invisível,
+      // na quina — não segura o corte: a quadra vizinha continua com o nome dela)
+      const porCfg = new Map<number, number>();
+      for (const d of tocados) {
+        const A = areaPol(d.pol), a1 = areaPolAteCorte(d.pol, V, nrm, 0);
+        if (A > 0 && Math.min(a1, A - a1) >= 0.25 * A) porCfg.set(d.cfg, (porCfg.get(d.cfg) ?? 0) + 1);
+      }
+      if ([...porCfg.values()].some((k) => k >= 2)) continue;
+    }
+    if (esquinaComum) {
+      const partes = cortarPelaCorda(anel, V, Q);
+      // projeto que já tem quadra desenhada vazia no pedaço (guarda a letra): o corte fica,
+      // senão as letras das quadras seguintes mudariam num projeto já entregue
+      const guardaLetra = !!partes && partes.some((pc) => (ctx.ancorasVazias ?? []).some((x) => dentroAnel(x, pc)));
+      // (o triângulo que o operador já loteou à mão continua quadra: é o desenho dele)
+      const desenhada = !!partes && partes.some((pc) => (ctx.ancorasDesenhadas ?? []).some((x) => dentroAnel(x, pc)));
+      if (!guardaLetra) {
+        if (opostas) continue;
+        if (!desenhada && partes && partes.some((pc) => quinasDe(limparAnel(pc, 0.005)).length <= 3 && Math.abs(areaAssinada(pc)) >= 2 * ctx.areaMin)) continue;
+      }
+    }
+    cortes.push([V, Q]);
   }
   if (!cortes.length) return [pol];
   // corta pela corda, uma de cada vez, na peça que a contém (exato, sem clipper)
@@ -568,6 +637,24 @@ function partirEmL(ctx: Contexto, pol: Poligono): Poligono[] {
     if (!feito) break;
   }
   return out;
+}
+
+/** Lotes que se sobrepõem: o maior perde a parte do menor (some se ficar sem terra). */
+function tirarSobreposicoes(lotes: { pol: Poligono; area: number }[]): void {
+  for (let i = 0; i < lotes.length; i++) {
+    for (let j = 0; j < lotes.length; j++) {
+      if (i === j) continue;
+      const A = lotes[i], B = lotes[j];
+      if (A.area < B.area || (A.area === B.area && i > j)) continue; // A é o maior
+      const ca = caixa(A.pol.ext), cb = caixa(B.pol.ext);
+      if (ca.max[0] < cb.min[0] || cb.max[0] < ca.min[0] || ca.max[1] < cb.min[1] || cb.max[1] < ca.min[1]) continue;
+      const sob = intersecao([A.pol], [B.pol]).reduce((t, x) => t + areaPol(x), 0);
+      if (sob < 0.05) continue;
+      const resto = diferenca([A.pol], [B.pol]).filter((x) => areaPol(x) > 0.5).sort((x, y) => areaPol(y) - areaPol(x));
+      if (resto.length) { A.pol = { ext: limparAnel(resto[0].ext, 0.003), furos: resto[0].furos }; A.area = areaPol(A.pol); }
+      else { lotes.splice(i, 1); i = Math.max(-1, i - 1); break; }
+    }
+  }
 }
 
 /** Parte um anel simples em dois pela corda PQ (P e Q sobre a borda). */
@@ -1187,8 +1274,9 @@ function quadraDesenhada(ctx: Contexto, pol: Poligono, cfg: QuadraCfg, P: (q: Pt
     lotes.push({ pol: pg, area: areaPol(pg), fileira: 0, indice: k, ajustado: false, manual: true, frenteDefinida: ld.frente ? [P(ld.frente[0]), P(ld.frente[1])] : undefined });
     if (ld.destino) destinos.set(`0:${k}`, ld.destino);
   });
-  const livre = diferenca([pol], usados).filter((x) => areaPol(x) > 1);
-  const aLivre = livre.reduce((s2, x) => s2 + areaPol(x), 0);
+  const livre = diferencaSegura([pol], usados).filter((x) => areaPol(x) > 1);
+  // (o pedaço marcado como área pública — retalho que virou verde — não é área livre)
+  const aLivre = livre.filter((x) => !(ctx.marcas ?? []).some((m) => dentroPol(m, x))).reduce((s2, x) => s2 + areaPol(x), 0);
   if (aLivre > 1) problemas.push(`${fmt(aLivre)} m² sem lote (área livre — desenhe um lote nela ou mova as divisas)`);
   // referencial: a frente mais longa (o aviso de comprimento da quadra e os textos usam)
   const fr = ladosDe(ctx, pol, null).filter((l) => ehFrente(l.tipo));
@@ -2470,14 +2558,26 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
   interface QuadraTmp {
     pol: Poligono; cfgIdx: number; cfg: QuadraCfg | null; centro: Pt; res: ResultadoQuadra | null;
     destino?: TipoArea; modo: ModoDivisao; valor: number; sobra: Sobra;
+    /** configs desenhadas fundidas nesta quadra (as outras do mesmo pedaço) */
+    fundidas?: number[];
   }
   const tmp: QuadraTmp[] = [];
+  const aliasCfg = new Map<number, number>();
   // pedaço menor que um lote mínimo não é quadra (não cabe lote nele)
   const minQuadra = Math.max(p.areaMin, 40);
   // loteamento importado: a quadra do arquivo é a quadra — não se parte em L — e
   // as quadras do arquivo que se encostam sem rua no meio, que o recorte devolve
   // numa peça só, voltam a ser cada uma a terra dos seus lotes
   const desenhadas = projeto.importado ? cfgs.filter((x) => Array.isArray(x.c.lotes)) : [];
+  // lotes desenhados pelo operador ("Gerar quadra", lote à mão): o corte em L da
+  // divisão automática não passa por dentro deles — partia a quadra que o operador
+  // fez em duas e o "fundo com fundo" dela ficava impossível
+  if (!projeto.importado) {
+    ctx.ancorasVazias = projeto.quadras.filter((c) => Array.isArray(c.lotes) && c.lotes.length === 0).map((c) => P(c.ancora));
+    ctx.ancorasDesenhadas = projeto.quadras.filter((c) => Array.isArray(c.lotes)).map((c) => P(c.ancora));
+    ctx.desenhados = projeto.quadras.flatMap((c, cfg) => (Array.isArray(c.lotes) ? c.lotes : [])
+      .filter((l) => l.anel.length >= 3).map((l) => ({ pol: { ext: antiHorario(l.anel.map(P)), furos: [] as Pt[][] }, cfg })));
+  }
   const pecasQuadra = pedacos.flatMap((pp) => {
     const donos = desenhadas.length ? desenhadas.filter((x) => dentroPol(x.pt, pp)) : [];
     if (!donos.length) return partirEmL(ctx, pp);
@@ -2500,9 +2600,36 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     for (let i = cfgs.length - 1; i >= 0; i--) {
       if (!usadas.has(i) && dentroPol(cfgs[i].pt, bruto)) { cfgIdx = i; break; }
     }
+    let cfg = cfgIdx >= 0 ? cfgs[cfgIdx].c : null;
+    let fundidas: number[] | undefined;
+    // duas ou mais quadras desenhadas no mesmo pedaço entre ruas (o desenho ficou
+    // repartido quando a quadra era cortada em L): viram UMA quadra — a que tem
+    // mais lotes guarda todos, na ordem das configs
+    // (vale a config mais recente do pedaço, como sempre; só se ela é desenhada é que os
+    // outros desenhos do pedaço que não se sobrepõem a ela entram — desenho antigo
+    // embaixo de um "fundo com fundo" ou de outro desenho continua ignorado)
+    if (!projeto.importado && cfgIdx >= 0 && Array.isArray(cfg?.lotes) && cfg!.lotes.length > 0) {
+      const anel = (l: { anel: Pt[] }): Poligono => ({ ext: antiHorario(l.anel.map(P)), furos: [] });
+      let ocupado = uniao(cfg!.lotes.filter((l) => l.anel.length >= 3).map(anel));
+      const extras: number[] = [];
+      for (let i = cfgs.length - 1; i >= 0; i--) {
+        const c = cfgs[i].c;
+        if (i === cfgIdx || usadas.has(i) || !Array.isArray(c.lotes) || !c.lotes.length || !dentroPol(cfgs[i].pt, bruto)) continue;
+        const pols = c.lotes.filter((l) => l.anel.length >= 3).map(anel);
+        const sob = intersecao(pols, ocupado).reduce((s, x) => s + areaPol(x), 0);
+        const tot = pols.reduce((s, x) => s + areaPol(x), 0);
+        if (!(tot > 0) || sob > 0.05 * tot) continue;
+        extras.push(i);
+        ocupado = uniao(ocupado, pols);
+      }
+      if (extras.length) {
+        fundidas = extras;
+        cfg = { ...cfg!, lotes: [cfg!, ...extras.map((i) => cfgs[i].c)].flatMap((c) => c.lotes!) };
+        for (const i of extras) { usadas.add(i); aliasCfg.set(i, cfgIdx); }
+      }
+    }
     if (cfgIdx >= 0) usadas.add(cfgIdx);
-    const cfg = cfgIdx >= 0 ? cfgs[cfgIdx].c : null;
-    tmp.push({ pol: bruto, cfgIdx, cfg, centro: centroide(bruto.ext), res: null, destino: cfg?.destino, modo: "frente", valor: p.frente, sobra: p.sobra });
+    tmp.push({ pol: bruto, cfgIdx, cfg, centro: centroide(bruto.ext), res: null, destino: cfg?.destino, modo: "frente", valor: p.frente, sobra: p.sobra, fundidas });
   }
   // quadra inteira virou área: entra nos "fixos" antes de dividir as outras
   for (const q of tmp) {
@@ -2522,7 +2649,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       let pols = intersecao([{ ext: antiHorario(ld.anel.map(P)), furos: [] }], pedacos);
       if (publicasQ.length) pols = diferenca(pols, publicasQ);
       pols = pols.filter((x) => areaPol(x) > 0.05);
-      if (pols.length) livres.push({ ci, pols });
+      if (pols.length) livres.push({ ci: aliasCfg.get(ci) ?? ci, pols });
     }
   });
 
@@ -2639,6 +2766,9 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
       // divisa que morre a poucos metros da quina do contorno: o pé vai para a quina
       // (o lote não fica com a 5ª quina do pedacinho de divisa)
       if (!manual && !op.busca) encaixarNasQuinas(res.lotes, polEsq, p);
+      // rede de segurança (26/11): lote da divisão automática nunca por cima de outro (o
+      // lote dividido em dois que continuava inteiro por baixo das partes: G-15 × G-16)
+      if (!manual) tirarSobreposicoes(res.lotes);
       if (!manual) cacheQ.set(chave, res);
       // área livre da quadra desenhada fica como está (o operador decide o que fazer com ela)
       for (const s of res.sobras) (manual ? vazios : sobras).push(s);
@@ -2673,7 +2803,7 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
     const quadra: Quadra = {
       cfg: q.cfgIdx, nome, pol: polEsq, area: areaPol(polEsq), lotes: [], origem: res.origem, u: res.u, v: res.v,
       fundo: res.fundo, cortes: res.cortes, modo, valor, sobra, fileiras: res.fileiras, centro: q.centro,
-      ancoraUtm: q.cfg?.ancora, problemas: res.problemas, curvas, acessos: acessosQ,
+      ancoraUtm: q.cfg?.ancora, problemas: res.problemas, curvas, acessos: acessosQ, ...(q.fundidas ? { fundidas: q.fundidas } : {}),
       ...(res.linhaCentral ? { linhaCentral: res.linhaCentral, estruturada: res.estruturada } : {}),
     };
     let num = 0;
@@ -2747,7 +2877,11 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
         ...canteiros.filter((pg) => sobrepoe(pg, qd.pol)),
         ...lotes.filter((l) => l.quadra !== qd.nome && sobrepoe(l.pol, qd.pol)).map((l) => l.pol),
       ];
-      const buracos = diferenca([qd.pol], ocupado).filter((x) => areaPol(x) > 1 && offsetPols([x], -0.15).length > 0);
+      // (a diferença com dezenas de lotes de arestas coincidentes às vezes devolvia um lote
+      // inteiro como "buraco" — virava retalho somado ao vizinho, por cima dele: G-15 × G-16,
+      // 26/11; diferenca() agora subtrai um a um, e o buraco coberto por lote é descartado)
+      const buracos = diferencaSegura([qd.pol], ocupado).filter((x) => areaPol(x) > 1 && offsetPols([x], -0.15).length > 0)
+        .filter((x) => !qd.lotes.some((l) => intersecao([x], [l.pol]).reduce((t, y) => t + areaPol(y), 0) > 0.5 * areaPol(x)));
       if (buracos.length) sobras.push(...buracos);
     }
   }
@@ -2803,9 +2937,12 @@ export function calcular(projeto: Projeto, perimetro: Perimetro, op: OpcoesCalcu
   // --- retalho marcado como área pública (ponto dentro dele) sai das sobras
   (projeto.sobrasPublicas ?? []).forEach((m, k) => {
     const pt = P(m.ponto);
+    // (também na área livre da quadra desenhada: editar um lote congela a quadra e o
+    // retalho que era área verde passava a aparecer como área livre rosa)
     const i = sobras.findIndex((sb) => dentroPol(pt, sb));
-    if (i < 0) return;
-    const [sb] = sobras.splice(i, 1);
+    const j = i < 0 ? vazios.findIndex((sb) => dentroPol(pt, sb)) : -1;
+    if (i < 0 && j < 0) return;
+    const [sb] = i >= 0 ? sobras.splice(i, 1) : vazios.splice(j, 1);
     areas.push({ id: `sp${k}`, tipo: m.tipo, nome: "", pols: [sb], area: areaPol(sb), origem: "sobra", cfg: k });
     fixos.add(item(sb, m.tipo === "app" ? "faixa" : "area", `sp${k}`, ROTULO_AREA[m.tipo]));
   });

@@ -93,7 +93,36 @@ export function posicaoNoDesenho(pr: Projeto, res: Resultado, l: Lote): number {
  * config. Os lotes viram contornos na ordem da numeração; as áreas públicas
  * feitas de lotes da quadra também (com o destino delas).
  */
-export function contornos(pr: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: number; aneis: Pt[][]; destinos: Meta[] } {
+/**
+ * Grava no projeto a fusão que o cálculo fez (Quadra.fundidas): a quadra desenhada
+ * que ficou repartida em duas configs no mesmo pedaço entre ruas passa a ter todos
+ * os lotes na config principal, na mesma ordem do cálculo; as outras configs perdem
+ * o desenho (ficam só com a âncora). O resultado calcula igual.
+ */
+export function fundirDesenhos(pr: Projeto, q: Quadra): Projeto {
+  if (!q.fundidas?.length || q.cfg < 0 || !pr.quadras[q.cfg]) return pr;
+  const quadras = pr.quadras.slice();
+  const lotes = [...(quadras[q.cfg].lotes ?? [])];
+  for (const j of q.fundidas) {
+    const c = quadras[j];
+    if (!c) continue;
+    lotes.push(...(c.lotes ?? []));
+    const vazio: QuadraCfg = { ancora: c.ancora, ajustes: [] };
+    quadras[j] = vazio;
+  }
+  quadras[q.cfg] = { ...quadras[q.cfg], lotes };
+  return { ...pr, quadras };
+}
+
+/** `fundirDesenhos` de todas as quadras do resultado. */
+export function fundirTodos(pr: Projeto, res: Resultado): Projeto {
+  let out = pr;
+  for (const q of res.quadras) if (q.fundidas?.length) out = fundirDesenhos(out, q);
+  return out;
+}
+
+export function contornos(pr0: Projeto, res: Resultado, q: Quadra): { pr: Projeto; i: number; aneis: Pt[][]; destinos: Meta[] } {
+  const pr = fundirDesenhos(pr0, q);
   const pl = res.plano;
   const ic = cfgDe(pr, q, pl);
   if (ic >= 0 && Array.isArray(pr.quadras[ic].lotes)) {
@@ -189,7 +218,8 @@ export function gravar(pr: Projeto, res: Resultado, i: number, aneis: Pt[][], de
 }
 
 /** Volta a quadra a ser dividida pelo sistema (some o desenho do operador e a linha central). */
-export function voltarAoAutomatico(pr: Projeto, q: Quadra, pl?: Resultado["plano"]): Projeto {
+export function voltarAoAutomatico(pr0: Projeto, q: Quadra, pl?: Resultado["plano"]): Projeto {
+  const pr = fundirDesenhos(pr0, q);
   const i = cfgDe(pr, q, pl);
   if (i < 0 || (!Array.isArray(pr.quadras[i].lotes) && !pr.quadras[i].estrutura)) return pr;
   const quadras = pr.quadras.slice();
@@ -210,7 +240,8 @@ export function voltarAoAutomatico(pr: Projeto, q: Quadra, pl?: Resultado["plano
  * O desenho à mão sai (Ctrl+Z volta); a linha e as cabeceiras ficam em "auto" até
  * o cálculo escolher (`fixarEstrutura` grava o que ele escolheu).
  */
-export function pedirEstrutura(pr0: Projeto, res: Resultado, q: Quadra, op: { lotes?: number; esquinas?: "absorver" | "iguais"; manterLinha?: boolean } = {}): { pr: Projeto; i: number } {
+export function pedirEstrutura(pr00: Projeto, res: Resultado, q: Quadra, op: { lotes?: number; esquinas?: "absorver" | "iguais"; manterLinha?: boolean } = {}): { pr: Projeto; i: number } {
+  const pr0 = fundirDesenhos(pr00, q);
   const pl = res.plano;
   let i = cfgDe(pr0, q, pl);
   const quadras = pr0.quadras.slice();

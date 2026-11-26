@@ -334,6 +334,24 @@ function booleana(tipo: number, a: Poligono[], b: Poligono[]): Poligono[] {
 export const uniao = (a: Poligono[], b: Poligono[] = []): Poligono[] => booleana(ClipperLib.ClipType.ctUnion, a, b);
 export const diferenca = (a: Poligono[], b: Poligono[]): Poligono[] =>
   b.length ? booleana(ClipperLib.ClipType.ctDifference, a, b) : booleana(ClipperLib.ClipType.ctUnion, a, []);
+/**
+ * Diferença para "o que sobrou da quadra" com dezenas de lotes de arestas coincidentes: a
+ * operação única do Clipper às vezes devolvia um lote inteiro como sobra (26/11: G-15 × G-16;
+ * área livre de 1.093 m² em cima de 5 lotes da quadra desenhada), e unir antes também falhava
+ * noutro caso. Subtrair um de cada vez (só os que encostam no que resta) é estável. Só para
+ * achar terra sem lote — as divisões exatas continuam com a operação única.
+ */
+export function diferencaSegura(a: Poligono[], b: Poligono[]): Poligono[] {
+  if (b.length < 20) return diferenca(a, b);
+  let resto = a;
+  for (const x of b) {
+    if (!resto.length) break;
+    const cx = caixa(x.ext);
+    const toca = resto.some((r) => { const cr = caixa(r.ext); return cr.min[0] <= cx.max[0] && cr.max[0] >= cx.min[0] && cr.min[1] <= cx.max[1] && cr.max[1] >= cx.min[1]; });
+    if (toca) resto = booleana(ClipperLib.ClipType.ctDifference, resto, [x]);
+  }
+  return resto;
+}
 export const intersecao = (a: Poligono[], b: Poligono[]): Poligono[] => booleana(ClipperLib.ClipType.ctIntersection, a, b);
 
 /**

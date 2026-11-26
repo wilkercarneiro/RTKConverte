@@ -8,12 +8,12 @@
 // Tudo devolve um projeto novo (o desfazer vem de graça) e usa as mesmas peças da
 // edição livre (`contornos`/`gravar` congelam a quadra nos lotes desenhados).
 import {
-  antiHorario, areaPol, cross, dentroPol, diferenca, dist, distSegmento, dot, esquerda, intersecao, lerp, limparAnel, mult, soma, sub, unit,
+  antiHorario, areaPol, cross, dentroPol, diferenca, dist, distSegmento, dot, esquerda, intersecao, lerp, limparAnel, mult, quinasAviso, soma, sub, uniaoFechada, unit,
 } from "./geom.ts";
 import type { Poligono, Pt } from "./geom.ts";
 import type { Lote, Quadra, Resultado } from "./calculo.ts";
 import { fmt } from "./calculo.ts";
-import { contornos, desenharLote, gravar, naBordaDaQuadra, normalizar } from "./edicao.ts";
+import { apagarLotes, contornos, desenharLote, gravar, naBordaDaQuadra, normalizar, posicaoNoDesenho, unirLotes } from "./edicao.ts";
 import type { Edicao, Meta } from "./edicao.ts";
 import { pontoInterno } from "./auto.ts";
 import { paraPlano, paraUtm } from "./plano.ts";
@@ -55,6 +55,7 @@ export function manterLotesComRuaNova(pr0: Projeto, res0: Resultado, pr1: Projet
     const pedacos = todas1.filter((Q) => intersecao([Q.pol], [q0.pol]).reduce((s, x) => s + areaPol(x), 0) > 1);
     if (!pedacos.length) continue;
     if (q0.cfg >= 0) removidas.add(q0.cfg);
+    for (const j of q0.fundidas ?? []) removidas.add(j);
     for (const Q of pedacos) {
       const lotes: LoteDesenhado[] = [];
       let maior: Poligono | null = null;
@@ -320,7 +321,85 @@ export function lotesDaQuadra(q: PedidoQuadra): Pt[][] {
  * Desenha a quadra pedida: cada lote entra como um lote desenhado (toma a terra de
  * lotes, área livre e quadras que estiverem embaixo, como a ferramenta Lote).
  */
-export function gerarQuadra(pr0: Projeto, res0: Resultado, pedido: PedidoQuadra, calc: Calc): Edicao | null {
+/**
+ * O desenho pedido que fica a poucos metros da borda da quadra embaixo dele encosta
+ * nela (a folga é repartida por igual entre os lotes): sem isso, a tira entre o
+ * desenho e a rua sobrava dos lotes antigos como lotes picados de 6 quinas.
+ */
+export function encostarNaQuadra(res: Resultado, pedido: PedidoQuadra, frente: number, profundidade: number): PedidoQuadra {
+  const n = Math.max(1, Math.round(pedido.lotes));
+  const v = pedido.lado === "esquerda" ? esquerda(pedido.u) : mult(esquerda(pedido.u), -1);
+  const P = (s: number, t: number): Pt => soma(pedido.a, soma(mult(pedido.u, s), mult(v, t)));
+  const centro = P(pedido.comprimento / 2, pedido.profundidade / 2);
+  const q = [...res.quadras, ...(res.quadrasVazias ?? [])].find((x) => dentroPol(centro, x.pol));
+  if (!q) return pedido;
+  // extensão da quadra nas direções do desenho, medida pelas retas que passam pelo meio do desenho
+  const ss = q.pol.ext.map((x) => dot(sub(x, pedido.a), pedido.u));
+  const tt = q.pol.ext.map((x) => dot(sub(x, pedido.a), v));
+  const qs0 = Math.min(...ss), qs1 = Math.max(...ss), qt0 = Math.min(...tt), qt1 = Math.max(...tt);
+  const folgaS = Math.max(4, 0.6 * frente), folgaT = Math.max(3, 0.5 * profundidade);
+  let s0 = 0, s1 = pedido.comprimento, t0 = 0, t1 = pedido.profundidade;
+  if (qs0 < s0 && s0 - qs0 <= folgaS) s0 = qs0;
+  if (qs1 > s1 && qs1 - s1 <= folgaS) s1 = qs1;
+  if (qt0 < t0 && t0 - qt0 <= folgaT) t0 = qt0;
+  if (qt1 > t1 && qt1 - t1 <= folgaT * pedido.fileiras) t1 = qt1;
+  if (s0 === 0 && s1 === pedido.comprimento && t0 === 0 && t1 === pedido.profundidade) return pedido;
+  void n;
+  return { ...pedido, a: P(s0, t0), comprimento: s1 - s0, profundidade: t1 - t0 };
+}
+
+function limparSobrasDoDesenho(pr0: Projeto, res0: Resultado, aneis: Pt[][], calc: Calc, nominal: number): { pr: Projeto; n: number } | null {
+  const p = pr0.params;
+  const perim = (pg: Poligono) => pg.ext.reduce((s2, q, i) => s2 + dist(q, pg.ext[(i + 1) % pg.ext.length]), 0);
+  const contato = (a: Poligono, b: Poligono) => { const u = uniaoFechada([a, b]); return u.length === 1 && !u[0].furos.length ? (perim(a) + perim(b) - perim(u[0])) / 2 : 0; };
+  const gerados = aneis.map((an) => ({ ext: antiHorario(an), furos: [] as Pt[][] }));
+  const ehGerado = (l: Lote) => gerados.some((g) => dentroPol(pontoInterno(l.pol), g));
+  let pr = pr0, res = res0, n = 0;
+  const chave = (l: Lote) => pontoInterno(l.pol).map((x) => x.toFixed(1)).join(",");
+  const pulados = new Set<string>();
+  const juntados = new Set<string>();
+  for (let guarda = 0; guarda < 40; guarda++) {
+    // ruim: pequeno, torto, raso demais ou sem frente — o lote gerado que caiu na cunha
+    // da ponta da quadra, ou a tira que sobrou do lote antigo
+    // (o tamanho que o operador PEDIU manda: lote gerado abaixo do mínimo do projeto é escolha
+    // dele — só o pedaço bem menor que o pedido, a cunha torta ou sem frente é que junta)
+    const ehRuim = (l: Lote) => !juntados.has(chave(l)) && (quinasAviso(l.pol.ext) > 4 || !(l.frente > 0.5)
+      || (ehGerado(l) ? l.area < 0.6 * nominal : l.area < Math.min(p.areaMin - 0.5, 0.6 * nominal) || l.area < 0.4 * nominal));
+    const ruim = res.lotes.find((l) => ehRuim(l) && !pulados.has(chave(l))
+      && (ehGerado(l) || res.lotes.some((g) => g.quadra === l.quadra && ehGerado(g) && contato(g.pol, l.pol) >= 1)));
+    if (!ruim) break;
+    const q = res.quadras.find((x) => x.nome === ruim.quadra);
+    if (!q) break;
+    // o vizinho que recebe: gerado primeiro (o desenho do operador é a régua), o mais encostado
+    const viz = res.lotes.filter((g) => g.quadra === ruim.quadra && g !== ruim)
+      .map((g) => ({ g, c: contato(g.pol, ruim.pol) })).filter((x) => x.c >= 1)
+      .map((x) => ({ ...x, u: uniaoFechada([x.g.pol, ruim.pol])[0] }))
+      .filter((x) => x.u && quinasAviso(limparAnel(x.u.ext, 0.005)) <= 4)
+      .sort((a, b) => Number(ehGerado(b.g)) - Number(ehGerado(a.g)) || b.c - a.c);
+    let feito = false;
+    for (const { g } of viz) {
+      const ed = unirLotes(pr, res, q, [posicaoNoDesenho(pr, res, g), posicaoNoDesenho(pr, res, ruim)]);
+      const r2 = ed && !ed.erro ? calc(ed.pr) : null;
+      if (!ed || !r2 || r2.lotes.length !== res.lotes.length - 1) continue;
+      pr = ed.pr; res = r2; n++; feito = true;
+      // o lote que recebeu não recebe de novo (sem cascata)
+      const novo = r2.lotes.find((x) => dentroPol(pontoInterno(g.pol), x.pol));
+      if (novo) juntados.add(chave(novo));
+      break;
+    }
+    if (!feito) {
+      // sem vizinho que fique com 4 quinas: a sobra pequena vira área livre (o operador decide)
+      const ed = ruim.area < p.areaMin - 0.5 ? apagarLotes(pr, res, q, [posicaoNoDesenho(pr, res, ruim)]) : null;
+      const r2 = ed && !ed.erro ? calc(ed.pr) : null;
+      if (!ed || !r2) { pulados.add(chave(ruim)); continue; }
+      pr = ed.pr; res = r2; n++;
+    }
+  }
+  return n ? { pr, n } : null;
+}
+
+export function gerarQuadra(pr0: Projeto, res0: Resultado, pedido0: PedidoQuadra, calc: Calc): Edicao | null {
+  const pedido = encostarNaQuadra(res0, pedido0, pr0.params.frente, pr0.params.profundidade);
   const aneis = lotesDaQuadra(pedido);
   let pr = pr0, res: Resultado | null = res0;
   let feitos = 0, areaTotal = 0;
@@ -336,6 +415,11 @@ export function gerarQuadra(pr0: Projeto, res0: Resultado, pedido: PedidoQuadra,
     res = calc(pr);
   }
   if (!feitos) return { pr: pr0, msg: "A quadra caiu toda em rua, área pública ou fora da gleba — escolha outro lugar.", erro: true };
+  // sobra dos lotes antigos encostada no desenho (tira entre ele e a rua, pedaço do
+  // lote cortado ao meio): pequena ou torta, entra no lote gerado vizinho
+  const nominal = (pedido.comprimento / Math.max(1, Math.round(pedido.lotes))) * (pedido.profundidade / pedido.fileiras);
+  const juntadas = res ? limparSobrasDoDesenho(pr, res, aneis, calc, nominal) : null;
+  if (juntadas) { pr = juntadas.pr; }
   const ped = aneis.length;
   return {
     pr,

@@ -845,7 +845,11 @@ export function montar(E: Estrutura, cfg: Config): Layout {
     let T = AQ / N, W = { W0: 0, W1: 0 };
     let tr1: Tr = null, tr2: Tr = null, m1 = 0, m2 = 0, n = 0;
     let base: { F: Fileiras; C: Pt[] } | null = null;
+    // (26/11) o aviso só vale se o equilíbrio falhou na iteração FINAL — antes saía na
+    // primeira, mesmo quando as seguintes equilibravam (alarme falso na planta)
+    let semEquilibrio = false;
     for (let it = 0; it < 12; it++) {
+      semEquilibrio = false;
       m1 = lotesCab(1, modo1, T); m2 = lotesCab(2, modo2, T);
       if ((N - m1 - m2 - j0 - j1) % 2 !== 0) {
         if (modo1 !== "direta" && cfg.m1 === undefined) m1 += 1;
@@ -871,11 +875,20 @@ export function montar(E: Estrutura, cfg: Config): Layout {
           return s.S1 - s.S2 - (w.W0 + w.W1);
         };
         let lo = -12, hi = 12, flo = dif(lo), fhi = dif(hi);
-        if (!(flo < 0 && fhi > 0)) { lo = -30; hi = 30; flo = dif(lo); fhi = dif(hi); }
+        const f0 = dif(0);
+        // já equilibrada onde está (a quadra rasa em que ±12 m sai dela): nada a deslocar
+        const tolE = 1e-6 * Math.max(1, Math.abs(AQ));
+        if (Math.abs(f0) <= tolE) { /* Cuse = Cbase0 */ }
+        else {
+        if (!(flo < 0 && fhi > 0)) {
+          // busca o intervalo de deslocamento que existe (a linha dentro da quadra) a partir do zero
+          for (const lim of [6, 3, 1.5, 30]) { const a = dif(-lim), b = dif(lim); if (a < 0 && b > 0) { lo = -lim; hi = lim; flo = a; fhi = b; break; } if ((f0 < 0 && b > 0) ) { lo = 0; hi = lim; flo = f0; fhi = b; break; } if (f0 > 0 && a < 0) { lo = -lim; hi = 0; flo = a; fhi = f0; break; } }
+        }
         if (flo < 0 && fhi > 0) {
           for (let k = 0; k < 50 && hi - lo > 1e-5; k++) { const mm = (lo + hi) / 2, fm = dif(mm); if (fm < 0) lo = mm; else hi = mm; }
           Cuse = deslocar(Cbase0, (lo + hi) / 2);
-        } else if (it === 0 && !avisos.includes("não consegui equilibrar as fileiras deslocando a linha central")) avisos.push("não consegui equilibrar as fileiras deslocando a linha central");
+        } else semEquilibrio = true;
+        }
       }
       base = fileiras(Cuse, tr1, tr2);
       if (!base) throw new Error("linha central fora da quadra");
@@ -885,6 +898,7 @@ export function montar(E: Estrutura, cfg: Config): Layout {
       if (cfg.C || Math.abs(Tn - T) < 1e-7) { T = Tn; break; }
       T = Tn;
     }
+    if (semEquilibrio && !avisos.includes("não consegui equilibrar as fileiras deslocando a linha central")) avisos.push("não consegui equilibrar as fileiras deslocando a linha central");
     return { T, W, base: base!, tr1, tr2, m1, m2, n };
   };
   let sol = resolverT(0, 0);

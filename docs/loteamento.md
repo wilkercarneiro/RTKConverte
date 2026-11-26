@@ -353,6 +353,30 @@ O loteamento já dividido no CAD, no QGIS ou no Google Earth vira o projeto daqu
   - **Ângulo das divisas** dos lotes selecionados (`girarLotes`, comando `girar N`): o pé de cada divisa na rua fica; a ponta corre pela linha de fundo; divisa atravessada com os dois lados selecionados gira inteira em torno da junção (o fundo com fundo continua alinhado); divisa de cabeceira que não tem para onde correr fica como está. Recusa giro que cruzaria divisas ou passaria da próxima quina.
   - **Gerar quadra (Q)**: clica o começo e o fim da frente; o quadro pede comprimento, profundidade total, lotes por fileira, formato (1 ou 2 fileiras) e o lado; cada lote entra como lote desenhado (toma a terra que estiver embaixo).
 
+## Correções de 26/11/2026 (quadras partidas, geração e bateria de 100+ cenários)
+
+Relato do Wilker: a geração ainda trazia modelos com defeito e, mesmo criando a quadra à mão, o "fundo com fundo" não funcionava "porque ele divide as quadras".
+
+- **Como a quadra é identificada.** Quadra é a terra cercada por ruas, áreas públicas e a divisa da gleba (o "pedaço" que sobra da gleba menos o viário). A divisão automática ainda pode cortar uma faixa de UMA fileira que dobra uma esquina (corte em L, `partirEmL`). Esse corte estava partindo também a quadra comum entre duas ruas opostas — no MAURICIO ("Area para Lotear") as quadras entre as transversais saíam em dois triângulos (G|F, H|I, K|J, A|B), cada metade com uma letra, e o fundo com fundo ficava impossível. Agora:
+  - o canto em esquadro (≥ 70°) da quadra que tem frente para duas ruas opostas não é cortado; a ponta aguda entre duas ruas continua sendo;
+  - corte que deixaria uma quadra em triângulo não é feito (fica o lote de esquina);
+  - o corte não atravessa uma quadra desenhada pelo operador (dois ou mais lotes dela partidos); um lote "livre" de canto não segura o corte;
+  - desenhos que ficaram repartidos em duas configs do mesmo pedaço viram UMA quadra (`Quadra.fundidas`); a primeira edição grava a fusão no projeto (`fundirDesenhos`). Desenho antigo que se sobrepõe ao atual continua ignorado;
+  - projeto já entregue não muda de letra: quadra desenhada que ficou vazia (guarda a letra) ou triângulo já loteado à mão mantêm o corte antigo. Conferido nos 11 projetos reais salvos: 10 idênticos, só o MAURICIO muda (7 quadras inteiras no lugar de 11 pedaços, os mesmos 80 lotes).
+- **Gerar quadra.** O desenho que fica a poucos metros da borda da quadra encosta nela (a folga é repartida entre os lotes pedidos); sobra pequena, torta ou sem frente dos lotes antigos — e o lote gerado que cai na cunha da ponta — entra no lote gerado vizinho (sem cascata; o tamanho que o operador pediu manda, mesmo abaixo do mínimo do projeto). Os lotes gerados ficam numa quadra só e o fundo com fundo fecha nela.
+- **Geração.**
+  - gleba estreita travava a geração (passo negativo das transversais simétricas → laço sem fim, 4 GB de memória: POR DO SOL e VITAO); corrigido na origem e com trava no laço;
+  - família nova "faixa": UMA rua ao longo da gleba comprida (na beira, uma fileira; no meio, duas), terminando onde as duas beiradas dela ainda estão na gleba, com balão de retorno na ponta que não chega à estrada. POR DO SOL: 16–17 lotes sem pendência (à mão foram 15);
+  - proposta sem lote ou com menos de 60% dos lotes da melhor não é entregue (antes completava as 3 com malha vazia);
+  - ordem: sem pendência → rendimento → sem aviso nenhum (lote fora das medidas, quadra acima do comprimento máximo, rua morrendo na divisa) → nota; a busca de reservas continua até ter uma proposta limpa;
+  - quadra acima do comprimento máximo custa mais na nota;
+  - área verde: janelas por colunas a partir da ponta da quadra (lote estreito e raso — 7 × 20 — nunca fechava a praça mínima numa fileira só; a meta de 10% ficava em 6%);
+  - conserto final: lote de 5+ quinas pode unir ao vizinho ou entrar na área pública encostada; último recurso para qualquer lote ainda fora das medidas ou lasca (quina < 20°), aceitando perder o lote; lote só vira área pública se a área continua praça de verdade (≥ 300 m², corpo de 10 m);
+  - retalho marcado como área verde (`sobrasPublicas`) continuava verde só na quadra automática: editar um lote congelava a quadra e o retalho virava área livre rosa. Corrigido;
+  - aviso "não consegui equilibrar as fileiras" saía na 1ª iteração mesmo quando as seguintes equilibravam (e quando a quadra já estava equilibrada): só sai se falhar no fim;
+  - lotes sobrepostos (G-15 × G-16 no trapézio com pontos de GPS): a diferença do Clipper com dezenas de lotes de arestas coincidentes às vezes devolvia um lote inteiro como "buraco", que virava retalho somado ao vizinho. `diferencaSegura` (subtrai um a um) nos pontos que procuram terra sem lote, e rede de segurança `tirarSobreposicoes` na quadra automática.
+- **Bateria** (fora do Git, no scratchpad da sessão): 103 glebas (24 formas, giros, acessos, rio/rodovia, 8 conjuntos de parâmetros, contornos com pontos de GPS, escalas e as 5 glebas reais do banco) × até 3 propostas, validadas por um conferente independente (sobreposição, terra sem destino, área livre, ruas soltas ou sem saída, lotes fora das medidas, quinas, lascas, áreas públicas picadas, metas, rendimento), mais a bateria de manuseio (gerar quadra ×3, fundo com fundo, igualar, dividir, unir, fundo com fundo em todas) sobre cada proposta. Teste permanente: `tests/loteamento_quadras.test.mjs`.
+
 ## Como funciona por dentro
 
 - **Projeto = intenção.** A tabela `loteamentos` (migração 0021) guarda só parâmetros, ruas, áreas e ajustes. Quadras e lotes **nunca** são gravados: `calcular()` (`src/lib/loteamento/calculo.ts`) refaz tudo a cada mudança, em cerca de 10 ms para 200 lotes e 130 ms para 2.000. É isso que faz o resto se ajustar quando um lote, uma rua ou um parâmetro muda.
