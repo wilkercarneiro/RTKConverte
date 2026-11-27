@@ -510,6 +510,8 @@ export function ConsultaImovel({ ir, fontes = fontesReais, inicial, atualizarEnd
     transferirArea({
       nome: im.fonte === "car" ? (mun?.nome ? `Imóvel em ${mun.nome}` : "Imóvel") : im.titulo,
       perimetro: anel, nomes: im.aneis.length === 1 ? im.nomes : undefined,
+      // várias partes: vão todas, e o CAR as recebe como glebas da área total
+      ...(im.aneis.length > 1 ? { glebas: im.aneis.map((a, i) => ({ nome: `Parte ${i + 1}`, anel: a })) } : {}),
       // a medição de campo segue com a origem e a frase dela: o CAR diz o mesmo que no caminho direto do Campo
       ...origemParaOCar(im),
       uf: mun?.uf ?? im.uf ?? null, municipio: mun?.nome ?? im.municipio ?? null,

@@ -20,12 +20,16 @@ export function useSobreposicaoCar(projeto: ProjetoCar | null, uf: string | null
   const [st, setSt] = useState<EstadoVizinhos>({ carregando: false, dados: null, erro: null });
   const [versao, setVersao] = useState(0);
   const perimetro = projeto?.perimetro;
+  // com glebas: a consulta e o cruzamento cobrem todas
+  const glebas = projeto?.glebas;
+  const outras = useMemo(() => (glebas ?? []).map((g) => g.anel), [glebas]);
+  const todos = useMemo(() => [...(perimetro ?? []), ...outras.flat()], [perimetro, outras]);
   const dadosRef = useRef<VizinhosDoCar | null>(null);
   dadosRef.current = st.dados;
   const forcar = useRef(false);
   // nova consulta só se o perímetro saiu da caixa já consultada (o ajuste não sai)
-  const precisa = !!perimetro && perimetro.length >= 3 && (!st.dados || !dentroDaCaixa(perimetro, st.dados.caixa));
-  const chave = precisa ? JSON.stringify(perimetro!.map((p) => [Math.round(p[0] * 1e5), Math.round(p[1] * 1e5)])) : "";
+  const precisa = !!perimetro && perimetro.length >= 3 && (!st.dados || !dentroDaCaixa(todos, st.dados.caixa));
+  const chave = precisa ? JSON.stringify(todos.map((p) => [Math.round(p[0] * 1e5), Math.round(p[1] * 1e5)])) : "";
 
   useEffect(() => {
     if (!perimetro || perimetro.length < 3) return;
@@ -34,7 +38,7 @@ export function useSobreposicaoCar(projeto: ProjetoCar | null, uf: string | null
     let vivo = true;
     setSt((s) => ({ ...s, carregando: true, erro: null }));
     const t = setTimeout(() => {
-      fonte(perimetro, uf)
+      fonte(perimetro, uf, outras)
         .then((d) => { if (vivo) setSt({ carregando: false, dados: d, erro: null }); })
         .catch((e) => { if (vivo) setSt((s) => ({ carregando: false, dados: s.dados, erro: e instanceof Error ? e.message : String(e) })); });
     }, 400);
@@ -45,9 +49,12 @@ export function useSobreposicaoCar(projeto: ProjetoCar | null, uf: string | null
   const ajuste: AjusteSobreposicao | null = useMemo(() => {
     if (!perimetro || perimetro.length < 3 || !st.dados) return null;
     try {
-      return ajustarSobreposicao(perimetro, st.dados.vizinhos, { ignorar: reg?.ignorar, forcar: reg?.forcar, nomesVertices: projeto?.nomesVertices });
+      return ajustarSobreposicao(perimetro, st.dados.vizinhos, {
+        ignorar: reg?.ignorar, forcar: reg?.forcar, nomesVertices: projeto?.nomesVertices,
+        ...(outras.length ? { outras, nomesOutras: (glebas ?? []).map((g) => g.nomesVertices) } : {}),
+      });
     } catch { return null; }
-  }, [perimetro, st.dados, reg?.ignorar, reg?.forcar]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [perimetro, outras, st.dados, reg?.ignorar, reg?.forcar]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { ...st, ajuste, deNovo: () => { forcar.current = true; setVersao((v) => v + 1); } };
 }

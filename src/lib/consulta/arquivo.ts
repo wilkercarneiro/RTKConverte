@@ -51,7 +51,9 @@ export function areaDoArquivo(nome: string, texto: string): { imovel: ImovelEnco
   if (/\.gpx$/i.test(nome) || /<gpx[\s>]/i.test(texto.slice(0, 2000))) {
     const g = lerGpx(texto);
     poligonos = [[g.perimetro]];
-    nomes = g.nomes; avisos = g.avisos; titulo = g.nome || base;
+    // a Consulta não tem a lista de poligonais do CAR: o aviso dela não vale aqui
+    nomes = g.nomes; avisos = g.avisos.filter((a) => !/lista de poligonais/.test(a)); titulo = g.nome || base;
+    if (g.poligonos && g.poligonos.length > 1) avisos.push(`O GPX tem ${g.poligonos.length} trilhas fechadas; a consulta usa a maior.`);
   } else if (/\.(geo)?json$/i.test(nome) || /^\s*[{[]/.test(texto)) {
     let j: unknown;
     try { j = JSON.parse(texto); } catch { throw new Error("O arquivo não é um GeoJSON válido."); }
@@ -65,8 +67,15 @@ export function areaDoArquivo(nome: string, texto: string): { imovel: ImovelEnco
   } else {
     const k = lerKml(texto);
     if (k.perimetro.length < 3) throw new Error("Não achei um polígono no KML.");
-    poligonos = [[k.perimetro]];
-    nomes = k.nomes; avisos = [...k.avisos]; titulo = k.nome || base;
+    // várias poligonais (glebas): entram as que o CAR também usaria (o polígono dentro de outro fica de fora)
+    const partes = k.poligonos?.filter((p) => p.incluir) ?? [];
+    poligonos = partes.length > 1 ? partes.map((p) => [p.anel]) : [[k.perimetro]];
+    nomes = partes.length > 1 ? undefined : k.nomes;
+    avisos = k.avisos.filter((a) => !/lista de poligonais/.test(a)); titulo = k.nome || base;
+    if (k.poligonos && k.poligonos.length > 1) {
+      const fora = k.poligonos.length - partes.length;
+      avisos.push(`O arquivo tem ${k.poligonos.length} polígonos: ${partes.length > 1 ? `${partes.length} entram como partes da mesma área` : "entra o maior"}${fora ? ` (${fora} dentro de outro ficou de fora)` : ""}.`);
+    }
     if (k.rios.length) avisos.push(`${k.rios.length} linha(s) aberta(s) do arquivo ficaram de fora (rios/estradas não entram na consulta).`);
   }
   const { aneis, furos } = contornosExternos(poligonos);

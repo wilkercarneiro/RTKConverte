@@ -14,7 +14,8 @@ function diferenca(m2: number): string {
 }
 
 export function EscolhaBaseArea({ perimetro, valor, onMudar, compacta = false }: {
-  perimetro: LonLat[];
+  /** o perímetro, ou os anéis das glebas (a área é a da união) */
+  perimetro: LonLat[] | LonLat[][];
   valor: BaseAreaCar;
   onMudar: (b: BaseAreaCar) => void;
   /** no painel do projeto: rótulos curtos */

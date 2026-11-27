@@ -33,6 +33,7 @@ import { CorpoInvalido, dentroDoLimite, lerJson, LIMITE_MB, MUITAS_CHAMADAS } fr
 import { conferirContorno } from "../_shared/contorno.ts";
 import type { AnelLonLat } from "../_shared/contorno.ts";
 import { arquivoDoCar, projetoCarDoBanco, SAIDAS_CAR } from "../../../src/lib/car/entregas.ts";
+import { aneisDoImovel } from "../../../src/lib/car/motor.ts";
 import type { SaidaCar } from "../../../src/lib/car/entregas.ts";
 import { arquivoDoLoteamento, SAIDAS_LOTEAMENTO } from "../../../src/lib/loteamento/entregas.ts";
 import type { PedidoLoteamento, SaidaLoteamento } from "../../../src/lib/loteamento/entregas.ts";
@@ -146,7 +147,8 @@ Deno.serve(async (req) => {
       if (error) throw error;
       const projeto = projetoCarDoBanco((linha?.projeto ?? null) as never, s.denominacao);
       if (projeto.perimetro.length < 3) return json({ erro: "O projeto deste serviço não tem o perímetro do imóvel." }, 422);
-      const contorno = await conferirContorno(supa, servico_id, [projeto.perimetro as AnelLonLat]);
+      // com glebas, o contorno é o de todas (o banco une os anéis)
+      const contorno = await conferirContorno(supa, servico_id, aneisDoImovel(projeto) as AnelLonLat[]);
       if (contorno) return json({ erro: contorno.erro }, contorno.status);
       arquivo = area
         // o CAR não tem fuso: DXF e TXT saem no fuso UTM do meio do imóvel

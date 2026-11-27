@@ -20,6 +20,7 @@
 //
 // Sem DOMParser de propósito, como o KML: o mesmo código roda nos testes do node.
 import type { KmlLido, LonLat } from "./kml.ts";
+import { glebasDoArquivo } from "./kml.ts";
 
 /** Ponto de passagem do GPS. */
 export interface PontoGps {
@@ -232,13 +233,18 @@ export function lerGpx(texto: string): GpxLido {
     }).filter((x) => x.anel.length >= 3).sort((a, b) => areaGrau(b.anel) - areaGrau(a.anel));
     if (prep.length) {
       const p = prep[0];
-      if (prep.length > 1) avisos.push(`O GPX tem ${prep.length} trilhas fechadas; usei a maior${p.nome ? ` (${p.nome})` : ""} como área total do imóvel.`);
+      // várias trilhas fechadas: em geral é a mesma divisa andada mais de uma vez — entra a maior; as outras
+      // ficam na lista da prévia, desligadas, para marcar quando forem glebas do mesmo imóvel
+      if (prep.length > 1) avisos.push(`O GPX tem ${prep.length} trilhas fechadas; usei a maior${p.nome ? ` (${p.nome})` : ""} como área total do imóvel. Se as outras forem glebas do mesmo imóvel, marque-as na lista de poligonais.`);
       if (p.bruto > p.anel.length + 2) avisos.push(`Trilha de ${p.bruto} pontos simplificada para ${p.anel.length} vértices (tolerância de 0,5 m; o SICAR recusa vértice colado no outro).`);
       if (!anelSimples(p.anel)) avisos.push("A trilha se cruza em algum ponto — confira o desenho antes de seguir.");
       if (wpts.length) avisos.push(`${wpts.length} ponto(s) de passagem do arquivo ficaram de fora: o perímetro veio da trilha.`);
       const abertas = linhas.length - fechadas.length;
       if (abertas) avisos.push(`${abertas} trilha(s) aberta(s) ficaram de fora (não fecham o contorno).`);
-      return { nome: nomeMeta ?? p.nome, perimetro: p.anel, nomes: undefined, rios: [], avisos, pontos: null };
+      const poligonos = prep.length > 1
+        ? glebasDoArquivo(prep).map((g, i) => (i === 0 || !g.incluir ? g : { ...g, incluir: false, motivo: "outra trilha fechada (a mesma divisa andada de novo?)" }))
+        : undefined;
+      return { nome: nomeMeta ?? p.nome, perimetro: p.anel, nomes: undefined, rios: [], avisos, pontos: null, ...(poligonos ? { poligonos } : {}) };
     }
   }
 

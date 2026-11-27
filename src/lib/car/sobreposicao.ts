@@ -29,7 +29,7 @@
 //     terreno do cliente sozinho; fica para a pessoa conferir (13/11/2026).
 import { antiHorario, areaPol, areaPols, centroide, dentroAnel, diferenca, dist, intersecao, offsetPols, tirarBicos, uniao } from "../loteamento/geom.ts";
 import type { Anel, Poligono } from "../loteamento/geom.ts";
-import { paraGeo, planoDe } from "./motor.ts";
+import { paraGeo, planoDe, uniaoDasGlebas } from "./motor.ts";
 import type { PlanoCar } from "./motor.ts";
 import type { LonLat } from "./kml.ts";
 import type { PoligonoGeo } from "./shapefile.ts";
@@ -74,6 +74,10 @@ export interface AjusteSobreposicao {
   perimetro: LonLat[] | null;
   /** nome de cada vértice do perímetro novo (os do original continuam com o nome) */
   nomesVertices?: (string | null)[];
+  /** com glebas: as OUTRAS glebas depois do corte (a que o corte não tocou volta igual) */
+  outras?: LonLat[][];
+  /** os nomes dos vértices de cada uma das outras glebas */
+  nomesOutras?: ((string | null)[] | undefined)[];
   antesM2: number;
   depoisM2: number;
   /** o que saiu do imóvel (para o mapa) */
@@ -138,11 +142,23 @@ function semVerticesColados(anel: Anel, proibido: Poligono[], originais: Anel): 
 export function ajustarSobreposicao(
   perimetro: LonLat[],
   vizinhos: VizinhoCar[],
-  op: { ignorar?: string[]; forcar?: string[]; nomesVertices?: (string | null)[] } = {},
+  op: {
+    ignorar?: string[]; forcar?: string[]; nomesVertices?: (string | null)[];
+    /** as outras glebas da área total (o imóvel é a união de todas) */
+    outras?: LonLat[][];
+    nomesOutras?: ((string | null)[] | undefined)[];
+  } = {},
 ): AjusteSobreposicao {
-  const pl = planoDe(perimetro);
-  const imovel: Poligono = { ext: antiHorario(perimetro.map(pl.para)), furos: [] };
-  const antesM2 = areaPol(imovel);
+  // cada gleba é cortada à parte (a gleba que o corte não toca volta igual); a área total é a união
+  // os nomes andam com o anel (o filtro não desalinha um do outro)
+  const outrasOk = (op.outras ?? []).map((anel, i) => ({ anel, nomes: op.nomesOutras?.[i] })).filter((x) => x.anel.length >= 3);
+  const aneisGeo = [perimetro, ...outrasOk.map((x) => x.anel)];
+  const nomesGeo = [op.nomesVertices, ...outrasOk.map((x) => x.nomes)];
+  const todos = aneisGeo.flat();
+  const pl = planoDe(todos);
+  const glebas: Poligono[] = aneisGeo.map((a) => ({ ext: antiHorario(a.map(pl.para)), furos: [] }));
+  const imovel = uniaoDasGlebas(glebas.map((g) => g.ext)).imovel;
+  const antesM2 = areaPols(imovel);
   const ignorar = new Set(op.ignorar ?? []);
   const forcar = new Set(op.forcar ?? []);
   const vazio: AjusteSobreposicao = { itens: [], perimetro: null, antesM2, depoisM2: antesM2, recorte: [], lascasM2: 0, restanteM2: 0 };
@@ -154,75 +170,95 @@ export function ajustarSobreposicao(
   for (const v of unicos) {
     const pol = vizinhoNoPlano(pl, v);
     if (!pol.length) continue;
-    const area = areaPols(intersecao([imovel], pol));
+    const area = areaPols(intersecao(imovel, pol));
     if (area < SOBREPOSICAO_MIN_M2) continue;
     const areaViz = areaPols(pol);
     const pctImovel = (100 * area) / antesM2;
     const pctVizinho = areaViz > 0 ? (100 * area) / areaViz : 0;
+    // com glebas, a certificação (ou o CAR) de UMA gleba também é o próprio imóvel:
+    // sem isto a gleba vizinha seria cortada a 10 cm da outra
+    const daGleba = glebas.length > 1 && glebas.some((g) => {
+      const ag = areaPol(g), ai = areaPols(intersecao([g], pol));
+      return ag > 0 && areaViz > 0 && ai / ag >= 0.8 && ai / areaViz >= 0.8;
+    });
     let decisao: DecisaoSobreposicao = "cortado";
     if (ignorar.has(v.codigo)) decisao = "ignorado";
     else if (!forcar.has(v.codigo)) {
       if (situacaoInativa(v.situacao)) decisao = "inativo";
-      else if (pctImovel >= 80 && pctVizinho >= 80) decisao = "proprio";
+      else if ((pctImovel >= 80 && pctVizinho >= 80) || daGleba) decisao = "proprio";
       else if (pctImovel > 50) decisao = "grande";
     }
     comCorte.push({ item: { fonte: v.fonte, codigo: v.codigo, rotulo: v.rotulo, situacao: v.situacao ?? null, areaM2: area, pctImovel, pctVizinho, decisao }, pol });
   }
-  const itens = comCorte.map((c) => c.item).sort((a, b) => b.areaM2 - a.areaM2);
-  if (!comCorte.some((c) => c.item.decisao === "cortado")) return { ...vazio, itens };
+  const itensOrdenados = () => comCorte.map((c) => c.item).sort((a, b) => b.areaM2 - a.areaM2);
+  if (!comCorte.some((c) => c.item.decisao === "cortado")) return { ...vazio, itens: itensOrdenados() };
 
-  // corta; vizinho inteiro dentro (o corte vira furo) sai da lista e o corte é refeito
-  let pedacos: Poligono[] = [];
-  for (let tentativa = 0; tentativa <= comCorte.length; tentativa++) {
+  // corta cada gleba; vizinho inteiro dentro (o corte vira furo) sai da lista e o corte é refeito;
+  // gleba que sumiria inteira: os vizinhos dela voltam a "grande" (decisão de gente) e o corte é refeito
+  let cortes: ({ maior: Poligono; lascas: Poligono[] } | null)[] = [];
+  for (let tentativa = 0; tentativa <= comCorte.length + glebas.length; tentativa++) {
     const cortar = comCorte.filter((c) => c.item.decisao === "cortado");
-    if (!cortar.length) return { ...vazio, itens };
+    if (!cortar.length) return { ...vazio, itens: itensOrdenados() };
     const faca = uniao(cortar.flatMap((c) => offsetPols(c.pol, FOLGA_M)));
-    pedacos = diferenca([imovel], faca).sort((a, b) => areaPol(b) - areaPol(a));
-    const maior = pedacos[0];
-    if (!maior) break;
-    if (!maior.furos.length) break;
-    let marcou = false;
-    for (const f of maior.furos) {
-      const c = centroide(f);
-      const dono = cortar.find((x) => x.pol.some((p) => dentroAnel(c, p.ext)));
-      if (dono) { dono.item.decisao = "dentro"; marcou = true; }
+    let refazer = false;
+    cortes = [];
+    for (const g of glebas) {
+      if (areaPols(intersecao([g], faca)) < 1e-6) { cortes.push(null); continue; }
+      const pedacos = diferenca([g], faca).sort((a, b) => areaPol(b) - areaPol(a));
+      const maior = pedacos[0];
+      if (!maior || maior.ext.length < 3) {
+        for (const c of cortar) if (areaPols(intersecao([g], c.pol)) >= SOBREPOSICAO_MIN_M2) c.item.decisao = "grande";
+        refazer = true;
+        break;
+      }
+      if (maior.furos.length) {
+        let marcou = false;
+        for (const f of maior.furos) {
+          const ce = centroide(f);
+          const dono = cortar.find((x) => x.pol.some((p) => dentroAnel(ce, p.ext)));
+          if (dono) { dono.item.decisao = "dentro"; marcou = true; }
+        }
+        if (marcou) { refazer = true; break; }
+      }
+      cortes.push({ maior: { ext: maior.ext, furos: [] }, lascas: pedacos.slice(1) });
     }
-    if (!marcou) { pedacos = [{ ext: maior.ext, furos: [] }, ...pedacos.slice(1)]; break; }
+    if (!refazer) break;
+    if (tentativa === comCorte.length + glebas.length) return { ...vazio, itens: itensOrdenados() };
   }
-  const maior = pedacos[0];
-  if (!maior || maior.ext.length < 3) {
-    // o corte apagaria o imóvel inteiro: nada é aplicado e os vizinhos voltam a "grande"
-    for (const c of comCorte) if (c.item.decisao === "cortado") c.item.decisao = "grande";
-    return { ...vazio, itens: comCorte.map((c) => c.item).sort((a, b) => b.areaM2 - a.areaM2) };
-  }
+  if (!cortes.some(Boolean)) return { ...vazio, itens: itensOrdenados() };
 
   const cortados = comCorte.filter((c) => c.item.decisao === "cortado");
   const proibido = uniao(cortados.flatMap((c) => c.pol));
-  const ext = semVerticesColados(tirarBicos(antiHorario(maior.ext)), proibido, imovel.ext);
-  const novoPlano: Poligono = { ext, furos: [] };
-  const novo = paraGeo(pl, [novoPlano], perimetro)[0].ext;
+  const novosPlano: Poligono[] = glebas.map((g, i) => {
+    const c = cortes[i];
+    return c ? { ext: semVerticesColados(tirarBicos(antiHorario(c.maior.ext)), proibido, g.ext), furos: [] } : g;
+  });
+  const novos = novosPlano.map((g, i) => (cortes[i] ? paraGeo(pl, [g], todos)[0].ext : aneisGeo[i]));
 
   // nomes: o vértice que é o mesmo do original (paraGeo devolve o ponto exato) leva o nome
-  let nomesVertices: (string | null)[] | undefined;
-  if (op.nomesVertices?.length === perimetro.length) {
-    const nomePor = new Map(perimetro.map((p, i) => [`${p[0]},${p[1]}`, op.nomesVertices![i]]));
-    nomesVertices = novo.map((p) => nomePor.get(`${p[0]},${p[1]}`) ?? null);
-  }
+  const nomesNovos = novos.map((novo, i) => {
+    const nomes = nomesGeo[i], orig = aneisGeo[i];
+    if (!cortes[i]) return nomes;
+    if (nomes?.length !== orig.length) return undefined;
+    const nomePor = new Map(orig.map((p, k) => [`${p[0]},${p[1]}`, nomes[k]]));
+    return novo.map((p) => nomePor.get(`${p[0]},${p[1]}`) ?? null);
+  });
 
-  // conferência no perímetro que vai ser gravado (já em grau e de volta)
-  const pl2 = planoDe(novo);
-  const imovel2: Poligono = { ext: antiHorario(novo.map(pl2.para)), furos: [] };
+  // conferência nas glebas que vão ser gravadas (já em grau e de volta)
+  const pl2 = planoDe(novos.flat());
+  const imovel2 = uniaoDasGlebas(novos.map((a) => antiHorario(a.map(pl2.para)))).imovel;
   const restanteM2 = cortados.reduce((s, c) => {
     const v = unicos.find((x) => x.codigo === c.item.codigo && x.fonte === c.item.fonte)!;
-    return s + areaPols(intersecao([imovel2], vizinhoNoPlano(pl2, v)));
+    return s + areaPols(intersecao(imovel2, vizinhoNoPlano(pl2, v)));
   }, 0);
 
-  const depoisM2 = areaPol(imovel2);
-  const recorte = paraGeo(pl, diferenca([imovel], [novoPlano]), perimetro);
-  const lascasM2 = pedacos.slice(1).reduce((s, p) => s + areaPol(p), 0);
+  const depoisM2 = areaPols(imovel2);
+  const recorte = paraGeo(pl, diferenca(imovel, uniaoDasGlebas(novosPlano.map((g) => g.ext)).imovel), todos);
+  const lascasM2 = cortes.reduce((s, c) => s + (c ? areaPols(c.lascas) : 0), 0);
   return {
-    itens: comCorte.map((c) => c.item).sort((a, b) => b.areaM2 - a.areaM2),
-    perimetro: novo, ...(nomesVertices ? { nomesVertices } : {}),
+    itens: itensOrdenados(),
+    perimetro: novos[0], ...(nomesNovos[0] ? { nomesVertices: nomesNovos[0] } : {}),
+    ...(glebas.length > 1 ? { outras: novos.slice(1), nomesOutras: nomesNovos.slice(1) } : {}),
     antesM2, depoisM2, recorte, lascasM2, restanteM2,
   };
 }

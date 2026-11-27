@@ -9,8 +9,8 @@ import { rotuloCurto } from "../../lib/modalidades";
 import { useAutosave } from "../../lib/ux";
 import type { Servico } from "../../lib/types";
 import {
-  FAIXAS_APP, ajustarReserva, ajustarVegetacao, calcularCar, fmtHa, fmtNum, fmtPct, normalizarProjetoCar, projetoNovo, reservaPorLado,
-  vegetacaoPorLado,
+  FAIXAS_APP, aneisDoImovel, ajustarReserva, ajustarVegetacao, calcularCar, comGlebas, fmtHa, fmtNum, fmtPct, normalizarProjetoCar, projetoNovo,
+  reservaPorLado, temGlebas, uniaoDasGlebas, vegetacaoPorLado,
 } from "../../lib/car/motor.ts";
 import type { ProjetoCar, ResultadoCar } from "../../lib/car/motor.ts";
 import { CAMADAS, nomeArquivo } from "../../lib/car/saidas.ts";
@@ -27,7 +27,8 @@ import { fraseDoAjuste } from "../../lib/car/sobreposicao.ts";
 import type { AjusteSobreposicao } from "../../lib/car/sobreposicao.ts";
 import { motivosIncompleta } from "../../lib/car/vizinhos.ts";
 import type { FonteVizinhos } from "../../lib/car/vizinhos.ts";
-import { antiHorario, diferenca } from "../../lib/loteamento/geom.ts";
+import { antiHorario, areaAssinada, diferenca } from "../../lib/loteamento/geom.ts";
+import type { GlebaCar } from "../../lib/car/motor.ts";
 import { vizinhosNoMapa } from "../../lib/car/mapaVizinhos.ts";
 import type { VizinhoNoMapa } from "../../lib/car/mapaVizinhos.ts";
 import type { Poligono, Pt } from "../../lib/loteamento/geom.ts";
@@ -83,6 +84,16 @@ function comPerimetro(p: ProjetoCar, perimetro: ProjetoCar["perimetro"], nomes: 
   return { ...resto, perimetro, ...(nomes && nomes.length === perimetro.length && nomes.some(Boolean) ? { nomesVertices: nomes } : {}) };
 }
 
+/** As outras glebas com os anéis que o ajuste devolveu (o nome de cada uma fica). */
+function glebasAjustadas(p: ProjetoCar, a: AjusteSobreposicao): GlebaCar[] | undefined {
+  if (!p.glebas?.length || !a.outras) return p.glebas;
+  return p.glebas.map((g, i): GlebaCar => {
+    const anel = a.outras![i] ?? g.anel;
+    const nomes = a.nomesOutras?.[i];
+    return { nome: g.nome, anel, ...(nomes && nomes.length === anel.length && nomes.some(Boolean) ? { nomesVertices: nomes } : {}) };
+  });
+}
+
 export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, fonteVizinhos }: {
   servico: Servico; onVoltar: () => void; armazenamento?: ArmazenamentoCar;
   /** de onde vêm os vizinhos (CAR/SIGEF) da sobreposição; o laboratório passa respostas gravadas */
@@ -127,9 +138,11 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, 
     if (!projeto) return null;
     try { return calcularCar(projeto); } catch { return null; }
   }, [projeto]);
-  // o perímetro do CAR (lon/lat do KML) para o cartão de restrições; muda só quando o perímetro muda
+  // o perímetro do CAR (lon/lat do KML; com glebas, todas) para o cartão de restrições; muda só quando o perímetro muda
   const perimetroCar = projeto?.perimetro;
-  const aneisRestricoes = useMemo(() => (perimetroCar && perimetroCar.length >= 3 ? [perimetroCar as [number, number][]] : []), [perimetroCar]);
+  const glebasCar = projeto?.glebas;
+  const aneisRestricoes = useMemo(() => (perimetroCar && perimetroCar.length >= 3 ? aneisDoImovel({ perimetro: perimetroCar, glebas: glebasCar }) as [number, number][][] : []),
+    [perimetroCar, glebasCar]);
 
   const mostrar = useCallback((t: string, erro = false) => setMsg({ t, erro }), []);
 
@@ -148,10 +161,11 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, 
       cortes.set(k, { fonte: i.fonte, codigo: i.codigo, rotulo: i.rotulo, areaM2: (ja?.areaM2 ?? 0) + i.areaM2 });
     }
     const novo = reacomodar({
-      ...comPerimetro(p, a.perimetro, a.nomesVertices),
+      ...comGlebas(comPerimetro(p, a.perimetro, a.nomesVertices), glebasAjustadas(p, a)),
       sobreposicao: {
         original: reg?.original ?? p.perimetro,
         ...(reg?.original ? (reg.nomesOriginais ? { nomesOriginais: reg.nomesOriginais } : {}) : (p.nomesVertices ? { nomesOriginais: p.nomesVertices } : {})),
+        ...(reg?.original ? (reg.glebasOriginais ? { glebasOriginais: reg.glebasOriginais } : {}) : (p.glebas?.length ? { glebasOriginais: p.glebas } : {})),
         cortes: [...cortes.values()],
         antesM2: reg?.original ? reg.antesM2 : a.antesM2,
         depoisM2: a.depoisM2,
@@ -181,8 +195,8 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, 
     if (!projeto || !reg?.original) return;
     const ignorar = [...new Set([...reg.ignorar, ...reg.cortes.map((c) => c.codigo)])];
     mudar(reacomodar({
-      ...comPerimetro(projeto, reg.original, reg.nomesOriginais),
-      sobreposicao: { ...reg, original: null, nomesOriginais: undefined, cortes: [], depoisM2: reg.antesM2, ignorar, forcar: reg.forcar.filter((c) => !ignorar.includes(c)) },
+      ...comGlebas(comPerimetro(projeto, reg.original, reg.nomesOriginais), reg.glebasOriginais ?? projeto.glebas),
+      sobreposicao: { ...reg, original: null, nomesOriginais: undefined, glebasOriginais: undefined, cortes: [], depoisM2: reg.antesM2, ignorar, forcar: reg.forcar.filter((c) => !ignorar.includes(c)) },
     }));
     ajustesSeguidos.current = 0;
     mostrar("Ajuste desfeito: o terreno voltou ao perímetro do arquivo, com a sobreposição. O SEIA/SICAR vai acusar.");
@@ -195,6 +209,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, 
       ...projeto,
       sobreposicao: {
         original: reg?.original ?? null, ...(reg?.nomesOriginais ? { nomesOriginais: reg.nomesOriginais } : {}),
+        ...(reg?.glebasOriginais ? { glebasOriginais: reg.glebasOriginais } : {}),
         cortes: reg?.cortes ?? [], antesM2: reg?.antesM2 ?? 0, depoisM2: reg?.depoisM2 ?? 0, em: reg?.em ?? "",
         ignorar: (reg?.ignorar ?? []).filter((c) => c !== codigo), forcar: [...new Set([...(reg?.forcar ?? []), codigo])],
       },
@@ -204,12 +219,15 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, 
   const desenhoSob = useMemo(() => {
     if (!res || !projeto) return { vizinhos: [] as VizinhoNoMapa[], recorte: [] as Poligono[] };
     const pl = res.plano;
-    const vizinhos = vizinhosNoMapa(res.imovel.ext, sob.dados?.vizinhos ?? [], pl.para, sob.ajuste?.itens ?? [],
+    const vizinhos = vizinhosNoMapa(res.imovel.flatMap((p) => p.ext), sob.dados?.vizinhos ?? [], pl.para, sob.ajuste?.itens ?? [],
       projeto.sobreposicao?.original ? projeto.sobreposicao.cortes : []);
     const orig = projeto.sobreposicao?.original;
     let recorte: Poligono[] = [];
     if (orig && orig.length >= 3) {
-      try { recorte = diferenca([{ ext: antiHorario(orig.map(pl.para)), furos: [] }], [res.imovel]).filter((p) => Math.abs(p.ext.length) >= 3); } catch { /* sem desenho */ }
+      try {
+        const antes = aneisDoImovel({ perimetro: orig, glebas: projeto.sobreposicao?.glebasOriginais ?? projeto.glebas });
+        recorte = diferenca(uniaoDasGlebas(antes.map((a) => antiHorario(a.map(pl.para)))).imovel, res.imovel).filter((p) => Math.abs(p.ext.length) >= 3);
+      } catch { /* sem desenho */ }
     }
     return { vizinhos, recorte };
   }, [res, projeto, sob.dados, sob.ajuste]);
@@ -466,7 +484,17 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, 
             <header><h3>Quadro de áreas</h3></header>
             <table className="car-quadro">
               <tbody>
-                <tr><td><i style={{ background: COR.imovel }} />Área total</td><td>{fmtHa(a.imovel)}</td><td>100%</td></tr>
+                <tr><td><i style={{ background: COR.imovel }} />Área total{temGlebas(projeto) && <small className="car-quadro-sub"> · {res.glebas.length} glebas</small>}</td><td>{fmtHa(a.imovel)}</td><td>100%</td></tr>
+                {/* com glebas: cada uma (a área total é a união — a divisa comum não conta duas vezes) */}
+                {temGlebas(projeto) && res.glebas.map((g, i) => {
+                  const nome = i === 0 ? projeto.nomeGleba : projeto.glebas?.[i - 1]?.nome;
+                  const m2 = Math.abs(areaAssinada(g)) * res.fatorArea;
+                  return (
+                    <tr key={`g${i}`} className="car-quadro-gleba">
+                      <td title={nome ?? undefined}>Gleba {i + 1}{nome ? ` · ${nome}` : ""}</td><td>{fmtHa(m2)}</td><td>{fmtPct((100 * m2) / a.imovel)}</td>
+                    </tr>
+                  );
+                })}
                 <tr><td><i style={{ background: COR.reserva }} />Reserva legal</td><td>{fmtHa(a.reserva)}</td>
                   <td className={res.reservaOk ? "" : "car-falta"}>{fmtPct(res.pctReserva)}</td></tr>
                 {(veg.poligonos.length > 0 || a.vegetacao > 0) && (
@@ -478,7 +506,7 @@ export function Car({ servico: servicoInicial, onVoltar, armazenamento = BANCO, 
             </table>
             {a.appNaReserva > 0.01 && <p className="car-dica">{fmtHa(a.appNaReserva)} da APP estão dentro da reserva legal.</p>}
             {/* serviço antigo (sem a escolha gravada) segue na área igual, como sempre foi */}
-            <EscolhaBaseArea compacta perimetro={projeto.perimetro} valor={projeto.baseArea ?? "albers"}
+            <EscolhaBaseArea compacta perimetro={aneisRestricoes} valor={projeto.baseArea ?? "albers"}
               onMudar={(b) => mudar({ ...projeto, baseArea: b })} />
             <label className="car-check">
               <input type="checkbox" checked={projeto.produtivaSemApp} onChange={(e) => mudar({ ...projeto, produtivaSemApp: e.target.checked })} />

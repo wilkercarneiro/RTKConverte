@@ -7,11 +7,11 @@ import { UFS } from "../../lib/domains";
 import { guardar, lembrar } from "../../lib/ux";
 import type { DefinicaoServico } from "../../lib/modalidades";
 import type { Servico } from "../../lib/types";
-import { lerKml } from "../../lib/car/kml.ts";
-import type { KmlLido } from "../../lib/car/kml.ts";
+import { glebasDoArquivo, lerKml } from "../../lib/car/kml.ts";
+import type { KmlLido, LonLat } from "../../lib/car/kml.ts";
 import { avisosDosPontos, lerGpx, perimetroDosPontos } from "../../lib/car/gpx.ts";
 import type { PontoGps } from "../../lib/car/gpx.ts";
-import { calcularCar, fmtHa, fmtNum, projetoNovo } from "../../lib/car/motor.ts";
+import { aneisDoImovel, calcularCar, fmtHa, fmtNum, projetoNovo } from "../../lib/car/motor.ts";
 import type { BaseAreaCar, ProjetoCar } from "../../lib/car/motor.ts";
 import { EscolhaBaseArea } from "./BaseArea";
 import { criarServicoCar } from "../../lib/car/persistencia.ts";
@@ -24,6 +24,7 @@ import { pedirAbrirMedicao } from "../../lib/campo/ponte.ts";
 import { hashNoLaboratorio } from "../../lib/laboratorio_destino";
 import { textosDaAreaLevada } from "../../lib/car/area_levada.ts";
 import { consultarMunicipio } from "../../lib/consulta/ambiente.ts";
+import { medir } from "../../lib/consulta/geometria.ts";
 import "./car.css";
 
 async function textoDoArquivo(f: File): Promise<string> {
@@ -33,6 +34,12 @@ async function textoDoArquivo(f: File): Promise<string> {
   if (!kml) throw new Error("O KMZ não tem nenhum arquivo .kml dentro.");
   return kml.async("string");
 }
+
+/** Centro (média dos vértices) de um anel no plano: onde vai o número da gleba na prévia. */
+const centroDe = (a: [number, number][]): [number, number] => [a.reduce((t, p) => t + p[0], 0) / a.length, a.reduce((t, p) => t + p[1], 0) / a.length];
+
+/** Área de uma gleba sozinha, na base UTM (a mesma da Consulta e do SIGEF), para a lista. */
+const areaDoAnel = (anel: LonLat[]) => medir([anel]).areaM2;
 
 /** O que foi lido: o perímetro e, no GPX de pontos, os pontos para ligar/desligar. */
 interface Lido { arquivo: string; kml: KmlLido; pontos: PontoGps[] | null; /** veio de uma ferramenta (Consultar imóvel, Medir no campo), não de arquivo */ origem?: string; /** a área e as partes que a origem mostrou */ levada?: { areaOrigemM2?: number; partes?: number }; /** a frase da origem ("Área medida no campo hoje às 14:32 (GPS do celular, ±3,3 m)") */ frase?: string }
@@ -53,6 +60,8 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
   const [lido, setLido] = useState<Lido | null>(null);
   /** pontos do GPS tirados do perímetro (índice em lido.pontos) */
   const [fora, setFora] = useState<Set<number>>(new Set());
+  /** arquivo com várias poligonais (glebas): quais entram na área total (índice em lido.kml.poligonos) */
+  const [marcadas, setMarcadas] = useState<boolean[]>([]);
   const [nome, setNome] = useState("");
   const [uf, setUf] = useState(() => lembrar("uf") ?? "");
   const [municipio, setMunicipio] = useState("");
@@ -76,8 +85,11 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
     const a = pegarAreaTransferida();
     if (!a) return;
     const nomeArq = `${(a.nome || "area").normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\w-]+/g, "_").slice(0, 60) || "area"}.kml`;
-    setLido({ arquivo: nomeArq, kml: { nome: a.nome, perimetro: a.perimetro, nomes: a.nomes, rios: [], avisos: [] }, pontos: null, origem: a.origem,
+    // a área com várias partes chega com todas: entram como glebas da área total
+    const poligonos = a.glebas && a.glebas.length > 1 ? glebasDoArquivo(a.glebas.filter((g) => g.anel.length >= 3)) : undefined;
+    setLido({ arquivo: nomeArq, kml: { nome: a.nome, perimetro: a.perimetro, nomes: a.nomes, rios: [], avisos: [], ...(poligonos ? { poligonos } : {}) }, pontos: null, origem: a.origem,
       levada: { areaOrigemM2: a.areaOrigemM2, partes: a.partes }, frase: a.frase });
+    setMarcadas(poligonos?.map((g) => g.incluir) ?? []);
     if (a.volta) setVeio(a);
     setFora(new Set());
     setNome(a.nome);
@@ -105,6 +117,7 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
       const lidoGpx = gpx ? lerGpx(texto) : null;
       const kml: KmlLido = lidoGpx ?? lerKml(texto);
       setLido({ arquivo: f.name, kml, pontos: lidoGpx?.pontos ?? null });
+      setMarcadas(kml.poligonos?.map((g) => g.incluir) ?? []);
       setFora(new Set());
       setNome((kml.nome ?? f.name).replace(/\.(km[lz]|gpx)$/i, ""));
     } catch (e) {
@@ -113,35 +126,59 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
     }
   }
 
+  /** as glebas marcadas: a 1ª vira o perímetro do projeto, as outras as glebas (só com várias poligonais) */
+  const glebasMarcadas = useMemo(() => (lido?.kml.poligonos ?? []).filter((_, i) => marcadas[i]), [lido, marcadas]);
+
   /** o perímetro em uso: o do arquivo, ou o refeito sem os pontos tirados */
   const entrada = useMemo((): KmlLido | null => {
     if (!lido) return null;
+    if (lido.kml.poligonos) {
+      const [p1] = glebasMarcadas;
+      return p1 ? { ...lido.kml, perimetro: p1.anel, nomes: p1.nomes } : null;
+    }
     if (!lido.pontos || !fora.size) return lido.kml;
     const r = perimetroDosPontos(lido.pontos.filter((_, i) => !fora.has(i)));
     const nomes = lido.pontos.map((p, i) => (fora.has(i) ? p.nome ?? `#${i + 1}` : null)).filter(Boolean).join(", ");
     return { ...lido.kml, perimetro: r.anel, nomes: r.nomes, avisos: [...avisosDosPontos(r, lido.pontos.length - fora.size), `${fora.size} ponto(s) fora do perímetro: ${nomes}.`] };
-  }, [lido, fora]);
+  }, [lido, fora, glebasMarcadas]);
 
   const previa = useMemo(() => {
     if (!lido || !entrada || entrada.perimetro.length < 3) return null;
-    const pr: ProjetoCar = { ...projetoNovo(nome, entrada.perimetro, entrada.rios, entrada.nomes), baseArea: base };
+    const [p1, ...outras] = glebasMarcadas;
+    const pr: ProjetoCar = {
+      ...projetoNovo(nome, entrada.perimetro, entrada.rios, entrada.nomes,
+        outras.map((g) => ({ nome: g.nome, anel: g.anel, ...(g.nomes ? { nomesVertices: g.nomes } : {}) })), p1?.nome),
+      baseArea: base,
+    };
     const res = calcularCar(pr);
-    const pts = res.imovel.ext;
+    // todos os polígonos do arquivo entram no enquadramento (os desmarcados também aparecem, apagados)
+    const doArquivo = (lido.kml.poligonos ?? []).map((g) => g.anel.map(res.plano.para));
+    const pts = [...res.imovel.flatMap((p) => p.ext), ...doArquivo.flat()];
     const todos = [...pts, ...(lido.pontos ?? []).map((p) => res.plano.para([p.lon, p.lat]))];
     const xs = todos.map((p) => p[0]), ys = todos.map((p) => p[1]);
     const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
     const s = 200 / Math.max(x1 - x0, y1 - y0, 1);
     const xy = (p: [number, number]): [number, number] => [16 + (p[0] - x0) * s, 18 + (y1 - p[1]) * s];
     const tela = (p: [number, number]) => xy(p).map((v) => v.toFixed(1)).join(",");
+    const caminho = (a: [number, number][]) => "M" + a.map(tela).join("L") + "Z";
     return {
-      pr, area: res.area.imovel,
-      levada: lido.origem ? textosDaAreaLevada(entrada.perimetro, res.area.imovel, lido.levada) : null,
-      d: "M" + pts.map(tela).join("L") + "Z",
+      pr, area: res.area.imovel, aneis: aneisDoImovel(pr),
+      levada: lido.origem ? textosDaAreaLevada(aneisDoImovel(pr), res.area.imovel, lido.levada) : null,
+      d: res.imovel.map((p) => caminho(p.ext) + p.furos.map(caminho).join("")).join(""),
+      glebas: doArquivo.map((a, i) => ({ d: caminho(a), marcada: !!marcadas[i], rotulo: xy(centroDe(a)) })),
       rios: pr.rios.map((r) => "M" + r.linha.map((g) => tela(res.plano.para(g))).join("L")),
       pontos: (lido.pontos ?? []).map((p) => ({ nome: p.nome, xy: xy(res.plano.para([p.lon, p.lat])) })),
       w: 52 + (x1 - x0) * s, h: 36 + (y1 - y0) * s,
     };
-  }, [lido, entrada, nome, base]);
+  }, [lido, entrada, nome, base, glebasMarcadas, marcadas]);
+
+  function alternarGleba(i: number) {
+    const m = [...marcadas];
+    m[i] = !m[i];
+    if (!m.some(Boolean)) { setErro("A área total precisa de pelo menos uma gleba."); return; }
+    setErro(null);
+    setMarcadas(m);
+  }
 
   function alternarPonto(i: number) {
     if (!lido?.pontos) return;
@@ -224,8 +261,16 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
 
         {lido && entrada && previa && (
           <div className="car-novo-previa">
-            <svg width={previa.w} height={previa.h} viewBox={`0 0 ${previa.w} ${previa.h}`} aria-hidden={!lido.pontos}>
+            <svg width={previa.w} height={previa.h} viewBox={`0 0 ${previa.w} ${previa.h}`} aria-hidden={!lido.pontos && !previa.glebas.length}>
               <path d={previa.d} fill="#F5C54233" stroke="#C99A12" strokeWidth={2} />
+              {/* várias poligonais: cada uma, clicável (a desmarcada fica tracejada e apagada) */}
+              {previa.glebas.map((g, i) => (
+                <g key={`g${i}`} className={`car-gleba-previa${g.marcada ? "" : " fora"}`} onClick={() => alternarGleba(i)}>
+                  <title>{g.marcada ? "Na área total — clique para tirar" : "Fora da área total — clique para pôr"}</title>
+                  <path d={g.d} fill={g.marcada ? "transparent" : "#9CA3AF22"} stroke={g.marcada ? "#8A6D0B" : "#9CA3AF"} strokeWidth={1.2} strokeDasharray="5 4" />
+                  <text x={g.rotulo[0]} y={g.rotulo[1]}>{i + 1}</text>
+                </g>
+              ))}
               {previa.rios.map((d, i) => <path key={i} d={d} fill="none" stroke="#1565C0" strokeWidth={2.5} />)}
               {previa.pontos.map((p, i) => (
                 <g key={i} className={`car-ponto${fora.has(i) ? " fora" : ""}`} onClick={() => alternarPonto(i)}>
@@ -237,13 +282,27 @@ export function CarNovo({ definicao, clienteId, pedidoId, usarCreditoGeral = fal
             </svg>
             <div className="car-novo-dados">
               <p className="car-novo-area"><b>{fmtHa(previa.area)}</b>
-                {" "}· {fmtNum(previa.area, 2)} m² · {entrada.perimetro.length} vértices
+                {" "}· {fmtNum(previa.area, 2)} m² · {previa.aneis.reduce((t, a) => t + a.length, 0)} vértices
+                {previa.aneis.length > 1 && <> · {previa.aneis.length} glebas</>}
                 {entrada.rios.length > 0 && <> · {entrada.rios.length} rio(s) no arquivo</>}</p>
+              {lido.kml.poligonos && (
+                <fieldset className="car-glebas">
+                  <legend>Poligonais do arquivo<Dica>Cada polígono do arquivo é uma gleba. As marcadas formam a área total do imóvel: as que se encostam viram um polígono só, e todas saem no MESMO shapefile (AREA_IMOVEL). O polígono que está dentro de outro (a reserva desenhada no CAD, uma cópia) já vem desmarcado.</Dica></legend>
+                  {lido.kml.poligonos.map((g, i) => (
+                    <label key={i} className={`car-gleba-item${marcadas[i] ? "" : " fora"}`}>
+                      <input type="checkbox" checked={!!marcadas[i]} onChange={() => alternarGleba(i)} />
+                      <span className="car-gleba-num">{i + 1}</span>
+                      <span className="car-gleba-nome">{g.nome ?? `Polígono ${i + 1}`}{g.motivo && !marcadas[i] && <small> · {g.motivo}</small>}</span>
+                      <b>{fmtHa(areaDoAnel(g.anel))}</b>
+                    </label>
+                  ))}
+                </fieldset>
+              )}
               {/* a mesma área da origem só na base UTM; na de área igual a frase diria uma coisa falsa */}
               {lido.origem && (base === "utm"
                 ? <p className="car-dica car-novo-veio" role="note">{lido.frase ?? `Área de ${lido.origem}`} — a mesma que você viu lá.</p>
                 : <p className="car-dica" role="note">{lido.frase ?? `Área de ${lido.origem}`}. Lá ela aparece em UTM; aqui, na projeção de área igual que você escolheu.</p>)}
-              <EscolhaBaseArea perimetro={entrada.perimetro} valor={base} onMudar={(b) => { setBase(b); guardar("car-base-area", b); }} />
+              <EscolhaBaseArea perimetro={previa.aneis} valor={base} onMudar={(b) => { setBase(b); guardar("car-base-area", b); }} />
               {previa.levada?.linhaPartes && <p className="car-dica" role="note">⚠ {previa.levada.linhaPartes}</p>}
               {entrada.avisos.map((a) => <p key={a} className="car-dica">⚠ {a}</p>)}
               {lido.pontos && <p className="car-dica">Clique num ponto do desenho para tirá-lo do perímetro (a sede, um ponto de outro dia) ou pô-lo de volta.</p>}

@@ -193,7 +193,7 @@ test("vegetação e produtiva em grau sem aresta cruzada (SICAR 3001)", () => {
   const pr = base();
   pr.reserva.poligonos = reservaPorLado(pr, 0, 0);
   pr.vegetacao.alvoHa = 0.3;
-  const lados = calcularCar(pr).imovel.ext.length;
+  const lados = calcularCar(pr).imovel[0].ext.length;
   let testados = 0;
   for (let lado = 1; lado < lados; lado += 2) for (const giro of [-30, 0, 30]) {
     let p;

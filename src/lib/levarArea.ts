@@ -79,7 +79,7 @@ export async function areaDoServico(servicoId: string): Promise<AreaParaLevar> {
   const aneis = aneisDoPerimetro(prontas);
   if (!aneis.length) throw new Error("O serviço não tem o perímetro da área: são precisos ao menos 3 vértices.");
   const txt = gerarTxtLevantamento(prontas);
-  // o CAR leva um anel só: o maior (as outras partes ficam de fora, e ele avisa pela área)
+  // `perimetro` é o maior anel; com várias partes, todas vão em `glebas` (o CAR as leva como glebas da área total)
   const maior = aneis.reduce((a, b) => (b.utm.length > a.utm.length ? b : a));
   const areaM2 = aneis.reduce((t, f) => t + (typeof f.props.area_ha === "number" ? f.props.area_ha * 1e4 : 0), 0);
   const tipo = rotuloCurto[chaveDoServico(s)];
@@ -106,6 +106,7 @@ export async function areaDoServico(servicoId: string): Promise<AreaParaLevar> {
     area: {
       nome,
       perimetro: maior.geo.map((g): LonLat => [g[0], g[1]]),
+      ...(aneis.length > 1 ? { glebas: aneis.map((f, i) => ({ nome: f.nome?.trim() || `Parte ${i + 1}`, anel: f.geo.map((g): LonLat => [g[0], g[1]]) })) } : {}),
       origem: `Serviço ${tipo.toLowerCase()} · ${nome}`,
       frase: `Área do serviço ${tipo.toLowerCase()} "${nome}": ${txt.pontos} ponto${txt.pontos === 1 ? "" : "s"}${txt.partes > 1 ? ` em ${txt.partes} partes` : ""}${leva}`,
       uf: s.uf, municipio: s.municipio,

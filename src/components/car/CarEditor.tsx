@@ -11,11 +11,11 @@
 // Duplo clique numa aresta do item selecionado insere vértice; num vértice, apaga.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PointerEvent as RPointerEvent, WheelEvent as RWheelEvent } from "react";
-import { caixa, dentroPol, dist, distPolilinha, distSegmento } from "../../lib/loteamento/geom.ts";
+import { caixa, centroide, dentroPol, dist, distPolilinha, distSegmento } from "../../lib/loteamento/geom.ts";
 import type { Anel, Poligono, Pt } from "../../lib/loteamento/geom.ts";
 import type { VizinhoNoMapa } from "../../lib/car/mapaVizinhos.ts";
 import type { ProjetoCar, ResultadoCar } from "../../lib/car/motor.ts";
-import { fmtNum } from "../../lib/car/motor.ts";
+import { aneisDoImovel, fmtNum, ladosDoImovel } from "../../lib/car/motor.ts";
 import type { LonLat } from "../../lib/car/kml.ts";
 import { pontoNoElemento } from "../../lib/zoom";
 import { BotaoTelaCheia } from "../TelaCheia";
@@ -98,8 +98,11 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
     return () => ro.disconnect();
   }, []);
 
+  // com glebas o imóvel tem várias partes: os lados de todas, na ordem do "Encostar"
+  const lados = useMemo(() => ladosDoImovel(res.imovel), [res.imovel]);
+  const contornoImovel = useMemo(() => res.imovel.flatMap((p) => [p.ext, ...p.furos]), [res.imovel]);
   const enquadrar = useCallback(() => {
-    const { min, max } = caixa(res.imovel.ext);
+    const { min, max } = caixa(res.imovel.flatMap((p) => p.ext));
     const m = 0.1;
     const s = Math.min(tam.w / ((max[0] - min[0]) * (1 + 2 * m) || 1), tam.h / ((max[1] - min[1]) * (1 + 2 * m) || 1));
     setV({ cx: (min[0] + max[0]) / 2, cy: (min[1] + max[1]) / 2, s });
@@ -182,32 +185,34 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
     const tolM = TOL / vv.s;
     let melhor: Pt | null = null, dm = tolM;
     const testar = (q: Pt) => { if (ignorar && dist(q, ignorar) < 1e-6) return; const d = dist(p, q); if (d < dm) { dm = d; melhor = q; } };
-    for (const q of res.imovel.ext) testar(q);
+    for (const a of contornoImovel) for (const q of a) testar(q);
+    // com glebas, os vértices da divisa entre elas também encaixam
+    if (res.glebas.length > 1) for (const g of res.glebas) for (const q of g) testar(q);
     for (const r of reservasPlano) for (const q of r) testar(q);
     for (const r of vegetacaoPlano) for (const q of r) testar(q);
     for (const r of riosPlano) for (const q of r.l) testar(q);
     for (const q of desenho) testar(q);
     if (melhor) return melhor;
-    // sobre o lado do perímetro
-    const anel = res.imovel.ext;
+    // sobre o lado do perímetro (de qualquer parte, e da divisa entre glebas)
     let lado: Pt | null = null, dl = tolM * 0.8;
-    for (let i = 0; i < anel.length; i++) {
-      const a = anel[i], b = anel[(i + 1) % anel.length];
-      const { d, t } = distSegmento(p, a, b);
-      if (d < dl) { dl = d; lado = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
+    for (const anel of res.glebas.length > 1 ? [...contornoImovel, ...res.glebas] : contornoImovel) {
+      for (let i = 0; i < anel.length; i++) {
+        const a = anel[i], b = anel[(i + 1) % anel.length];
+        const { d, t } = distSegmento(p, a, b);
+        if (d < dl) { dl = d; lado = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
+      }
     }
     return lado ?? p;
-  }, [vv.s, res.imovel, reservasPlano, vegetacaoPlano, riosPlano, desenho]);
+  }, [vv.s, contornoImovel, res.glebas, reservasPlano, vegetacaoPlano, riosPlano, desenho]);
 
   const ladoPerto = useCallback((p: Pt): number | null => {
-    const anel = res.imovel.ext;
     let melhor: number | null = null, dm = (TOL * 1.4) / vv.s;
-    for (let i = 0; i < anel.length; i++) {
-      const d = distSegmento(p, anel[i], anel[(i + 1) % anel.length]).d;
+    lados.forEach((l, i) => {
+      const d = distSegmento(p, l.a, l.b).d;
       if (d < dm) { dm = d; melhor = i; }
-    }
+    });
     return melhor;
-  }, [res.imovel, vv.s]);
+  }, [lados, vv.s]);
 
   /** vértice do item selecionado sob o cursor */
   const verticePerto = useCallback((p: Pt): { alvo: Alvo; j: number } | null => {
@@ -385,7 +390,12 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
   const selPts = sel ? pontosDe(sel) : [];
   const cursor = ferramenta === "mover" ? (arraste.current?.tipo === "pan" ? "grabbing" : "default") : "crosshair";
   const previa = desenho.length && mouse ? [...desenho, encaixar(mouse)] : desenho;
-  const anel = res.imovel.ext;
+  const nVertices = lados.length;
+  const pathImovel = res.imovel.map(pathPol).join("");
+  // nome dos pontos do GPS de cada gleba (a 1ª é o perímetro)
+  const nomesPorGleba = [projeto.nomesVertices, ...(projeto.glebas ?? []).map((g) => g.nomesVertices)];
+  const verticesComNome = aneisDoImovel(projeto).flatMap((a, gi) => a.map((g, k) => ({ g, nome: nomesPorGleba[gi]?.[k] ?? null, chave: `${gi}-${k}` })))
+    .filter((x) => x.nome);
 
   return (
     <div className="car-prancheta" ref={caixaRef} style={{ cursor }}
@@ -413,7 +423,7 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
                 strokeWidth={z.estado === "encosta" ? 1.8 : 2.4} strokeDasharray="8 5" vectorEffect="non-scaling-stroke" />
             </g>
           )))}
-          <path d={pathPol(res.imovel)} fill={satelite ? "rgba(255,255,255,0.06)" : "#F3F1EA"} stroke="none" />
+          <path d={pathImovel} fill={satelite ? "rgba(255,255,255,0.06)" : "#F3F1EA"} stroke="none" />
           {res.produtiva.map((p, i) => <path key={`p${i}`} d={pathPol(p)} fill={COR.produtiva} fillOpacity={0.28} stroke="none" />)}
           {res.reserva.map((p, i) => <path key={`r${i}`} d={pathPol(p)} fill={COR.reserva} fillOpacity={0.5} stroke={COR.reserva} strokeWidth={2} vectorEffect="non-scaling-stroke" />)}
           {res.vegetacao.map((p, i) => <path key={`v${i}`} d={pathPol(p)} fill={COR.vegetacao} fillOpacity={0.45} stroke={COR.vegetacao} strokeWidth={2} vectorEffect="non-scaling-stroke" />)}
@@ -425,7 +435,12 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
               <path d={pathPol(p)} fill="url(#car-hachura-recorte)" stroke={COR_RECORTE} strokeWidth={1.5} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
             </g>
           ))}
-          <path d={pathPol(res.imovel)} fill="none" stroke={COR.imovel} strokeWidth={2.5} vectorEffect="non-scaling-stroke" />
+          {/* com glebas: o contorno de cada uma, fino e tracejado (a divisa interna que a área total apagou) */}
+          {res.glebas.length > 1 && res.glebas.map((g, i) => (
+            <path key={`gl${i}`} className="car-gleba" d={pathLinha(g) + "Z"} fill="none" stroke={satelite ? "#FFF8E1" : "#8A6D0B"}
+              strokeWidth={1.2} strokeDasharray="7 5" vectorEffect="non-scaling-stroke" opacity={0.95} />
+          ))}
+          <path d={pathImovel} fill="none" stroke={COR.imovel} strokeWidth={2.5} vectorEffect="non-scaling-stroke" />
           {/* contorno dos polígonos de reserva como foram desenhados (podem passar do imóvel) */}
           {reservasPlano.map((r, i) => r.length >= 3 && (
             <path key={`rd${i}`} d={pathLinha(r) + "Z"} fill="none" stroke={sel?.tipo === "reserva" && sel.i === i ? "#fff" : COR.reserva}
@@ -439,8 +454,8 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
             <path key={r.id} d={pathLinha(r.l)} fill="none" stroke={sel?.tipo === "rio" && sel.id === r.id ? "#fff" : COR.rio}
               strokeWidth={sel?.tipo === "rio" && sel.id === r.id ? 4 : 3} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           ))}
-          {ferramenta === "lado" && ladoHover !== null && (
-            <path d={pathLinha([anel[ladoHover], anel[(ladoHover + 1) % anel.length]])} stroke="#fff" strokeWidth={6} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+          {ferramenta === "lado" && ladoHover !== null && lados[ladoHover] && (
+            <path d={pathLinha([lados[ladoHover].a, lados[ladoHover].b])} stroke="#fff" strokeWidth={6} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
           )}
           {previa.length > 0 && (
             <path d={pathLinha(previa) + (fechaPoligono(ferramenta) && previa.length > 2 ? "Z" : "")}
@@ -469,16 +484,20 @@ export function CarEditor({ projeto, res, ferramenta, onFerramenta, sel, onSel, 
           return <text key={`t${r.id}`} x={m[0]} y={m[1] - 8} className="car-rotulo">{r.nome} · APP {fmtNum(r.faixa, 0)} m</text>;
         })}
         {/* nome dos pontos do GPS nos vértices do imóvel (quando os lados têm espaço na tela) */}
-        {projeto.nomesVertices && (vv.s * Math.sqrt(Math.max(1, res.area.imovel))) / Math.max(1, anel.length) > 9 && projeto.perimetro.map((g, k) => {
-          const nome = projeto.nomesVertices?.[k];
-          if (!nome) return null;
+        {verticesComNome.length > 0 && (vv.s * Math.sqrt(Math.max(1, res.area.imovel))) / Math.max(1, nVertices) > 9 && verticesComNome.map(({ g, nome, chave }) => {
           const t = tela(pl.para(g));
           return (
-            <g key={`n${k}`} className="car-vertice">
+            <g key={`n${chave}`} className="car-vertice">
               <circle cx={t[0]} cy={t[1]} r={3.2} />
               <text x={t[0] + 6} y={t[1] - 6}>{nome}</text>
             </g>
           );
+        })}
+        {/* o número de cada gleba no meio dela */}
+        {res.glebas.length > 1 && res.glebas.map((g, i) => {
+          const t = tela(centroide(g));
+          if (t[0] < 0 || t[1] < 0 || t[0] > W || t[1] > H) return null;
+          return <text key={`gn${i}`} x={t[0]} y={t[1]} className="car-gleba-rotulo">Gleba {i + 1}</text>;
         })}
         {selPts.map((q, k) => { const t = tela(q); return <circle key={k} cx={t[0]} cy={t[1]} r={5} className="car-alca" />; })}
         {desenho.map((q, k) => { const t = tela(q); return <circle key={`d${k}`} cx={t[0]} cy={t[1]} r={k === 0 ? 6 : 4} className="car-alca desenho" />; })}

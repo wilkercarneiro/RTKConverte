@@ -14,6 +14,18 @@ export type LonLat = [number, number];
 
 export interface LinhaKml { nome: string; linha: LonLat[] }
 
+/** Um polígono do arquivo que pode entrar como gleba da área total. */
+export interface PoligonoLido {
+  nome: string | null;
+  /** anel aberto, em grau */
+  anel: LonLat[];
+  nomes?: (string | null)[];
+  /** entra na área total ao abrir (a pessoa liga e desliga na prévia) */
+  incluir: boolean;
+  /** por que veio desligado ("está dentro da gleba 1") */
+  motivo?: string;
+}
+
 export interface KmlLido {
   /** nome do documento (ou do placemark do perímetro) */
   nome: string | null;
@@ -23,6 +35,11 @@ export interface KmlLido {
   nomes?: (string | null)[];
   rios: LinhaKml[];
   avisos: string[];
+  /**
+   * Com mais de um polígono no arquivo (glebas): todos, do maior para o menor.
+   * `perimetro` continua sendo o maior. Ausente = um polígono só.
+   */
+  poligonos?: PoligonoLido[];
 }
 
 /** Dois pontos iguais em grau: 1e-8° ≈ 1 mm. */
@@ -52,7 +69,7 @@ const fechada = (l: LonLat[]) =>
   l.length >= 4 && Math.abs(l[0][0] - l[l.length - 1][0]) <= IGUAL && Math.abs(l[0][1] - l[l.length - 1][1]) <= IGUAL;
 
 /** Área em grau² (só para escolher o maior anel). */
-function areaGrau(anel: LonLat[]): number {
+export function areaGrau(anel: LonLat[]): number {
   let s = 0;
   for (let i = 0; i < anel.length; i++) {
     const a = anel[i], b = anel[(i + 1) % anel.length];
@@ -109,9 +126,47 @@ export function lerKml(texto: string): KmlLido {
   }
   validos.sort((a, b) => areaGrau(b.anel) - areaGrau(a.anel));
   const principal = validos[0];
-  if (validos.length > 1) {
-    avisos.push(`O KML tem ${validos.length} polígonos; usei o maior${principal.nome ? ` (${principal.nome})` : ""} como área total do imóvel e ignorei os outros.`);
+  // glebas (27/11/2026): os polígonos do arquivo são as glebas da área total — entram todos,
+  // menos o que está dentro de outro (reserva desenhada no CAD, divisão interna, cópia repetida)
+  const poligonos = validos.length > 1 ? glebasDoArquivo(validos) : undefined;
+  if (poligonos) {
+    const dentro = poligonos.filter((p) => !p.incluir).length;
+    avisos.push(`O arquivo tem ${validos.length} polígonos: ${dentro ? `${validos.length - dentro} entraram` : "entraram todos"} como glebas da área total, num shapefile só. Na lista de poligonais, marque ou desmarque o que é do imóvel.`);
   }
   if (linhas.length) avisos.push(`${linhas.length} linha(s) aberta(s) entraram como rio — confira a faixa de APP de cada uma.`);
-  return { nome: nomeDoc ?? principal.nome, perimetro: principal.anel, rios: linhas, avisos };
+  return { nome: nomeDoc ?? principal.nome, perimetro: principal.anel, rios: linhas, avisos, ...(poligonos ? { poligonos } : {}) };
+}
+
+/** Ponto dentro do anel (em grau; serve para conferir se um polígono está dentro do outro). */
+function dentroGrau(p: LonLat, anel: LonLat[]): boolean {
+  let d = false;
+  for (let i = 0, j = anel.length - 1; i < anel.length; j = i++) {
+    const a = anel[i], b = anel[j];
+    if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0]) d = !d;
+  }
+  return d;
+}
+
+/** Quase todo o anel `a` cai dentro de `b` (≥ 90% dos vértices e o centro)? */
+function dentroDe(a: LonLat[], b: LonLat[]): boolean {
+  const n = a.filter((p) => dentroGrau(p, b)).length;
+  const cx = a.reduce((s, p) => s + p[0], 0) / a.length, cy = a.reduce((s, p) => s + p[1], 0) / a.length;
+  return n >= 0.9 * a.length && dentroGrau([cx, cy], b);
+}
+
+/**
+ * Os polígonos do arquivo como glebas (do maior para o menor). Entra todo
+ * polígono que não está dentro de um maior: o que está dentro vem desligado
+ * (é a reserva, uma divisão interna ou o mesmo polígono repetido).
+ */
+export function glebasDoArquivo(aneis: { nome: string | null; anel: LonLat[]; nomes?: (string | null)[] }[]): PoligonoLido[] {
+  const ordenados = [...aneis].sort((a, b) => areaGrau(b.anel) - areaGrau(a.anel));
+  return ordenados.map((p, i) => {
+    const dono = ordenados.findIndex((q, j) => j < i && dentroDe(p.anel, q.anel));
+    return {
+      nome: p.nome, anel: p.anel, ...(p.nomes ? { nomes: p.nomes } : {}),
+      incluir: dono < 0,
+      ...(dono >= 0 ? { motivo: `está dentro do polígono ${dono + 1}${ordenados[dono].nome ? ` (${ordenados[dono].nome})` : ""}` } : {}),
+    };
+  });
 }

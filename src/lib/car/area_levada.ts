@@ -15,7 +15,7 @@ export interface TextosAreaLevada {
   areaM2: number;
   /** "No módulo do CAR (…): 2,7532 ha, 21 m² a mais…" — null quando é igual */
   linhaCar: string | null;
-  /** "Levada a maior parte: 743,42 de 743,85 ha…" — null quando a área tinha uma parte só */
+  /** "Entrou 1 de 3 partes: 743,42 de 743,85 ha…" — null quando nada ficou de fora */
   linhaPartes: string | null;
 }
 
@@ -24,15 +24,18 @@ function diferenca(m2: number): string {
   return a >= 10_000 ? `${fmtNum(a / 10_000, 4)} ha` : `${fmtNum(a, a < 10 ? 1 : 0)} m²`;
 }
 
-export function textosDaAreaLevada(perimetro: LonLat[], areaCarM2: number, origem: { areaOrigemM2?: number; partes?: number } = {}): TextosAreaLevada {
-  const areaM2 = medir([perimetro]).areaM2;
+export function textosDaAreaLevada(perimetroOuAneis: LonLat[] | LonLat[][], areaCarM2: number, origem: { areaOrigemM2?: number; partes?: number } = {}): TextosAreaLevada {
+  // com glebas (27/11/2026) o CAR leva as partes marcadas: um anel ou vários
+  const aneis = (typeof perimetroOuAneis[0]?.[0] === "number" ? [perimetroOuAneis] : perimetroOuAneis) as LonLat[][];
+  const areaM2 = medir(aneis).areaM2;
   const d = areaCarM2 - areaM2;
   const linhaCar = Math.abs(d) < 0.5 ? null
     : `No módulo do CAR (projeção de área igual): ${fmtHa(areaCarM2)}, ${diferenca(d)} a ${d > 0 ? "mais" : "menos"} só pela projeção. As porcentagens de reserva legal e APP saem desse cálculo.`;
   const partes = origem.partes ?? 1;
   const total = origem.areaOrigemM2;
-  const linhaPartes = partes > 1 && total != null && total - areaM2 >= 0.5
-    ? `Levada a maior parte: ${fmtAreaCurta(areaM2)} de ${fmtAreaCurta(total)}. O CAR é um polígono só; ${partes - 1 === 1 ? "a outra parte" : `as outras ${partes - 1} partes`} (${diferenca(total - areaM2)}) ${partes - 1 === 1 ? "ficou" : "ficaram"} de fora.`
+  const fora = partes - aneis.length;
+  const linhaPartes = partes > 1 && fora > 0 && total != null && total - areaM2 >= 0.5
+    ? `${aneis.length === 1 ? "Entrou" : "Entraram"} ${aneis.length} de ${partes} partes: ${fmtAreaCurta(areaM2)} de ${fmtAreaCurta(total)}. ${fora === 1 ? "A outra parte" : `As outras ${fora} partes`} (${diferenca(total - areaM2)}) ${fora === 1 ? "ficou" : "ficaram"} de fora — marque na lista para entrar${fora === 1 ? "" : "em"} na área total.`
     : null;
   return { areaM2, linhaCar, linhaPartes };
 }

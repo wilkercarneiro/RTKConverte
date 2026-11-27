@@ -25,7 +25,7 @@ export interface VizinhosDoCar {
 }
 
 /** Quem traz os vizinhos (o laboratório troca por respostas gravadas). */
-export type FonteVizinhos = (perimetro: LonLat[], uf: string | null) => Promise<VizinhosDoCar>;
+export type FonteVizinhos = (perimetro: LonLat[], uf: string | null, outras?: LonLat[][]) => Promise<VizinhosDoCar>;
 
 /** Margem da caixa consultada: o perímetro pode andar um pouco sem consultar de novo. */
 export const MARGEM_CAIXA_M = 300;
@@ -51,11 +51,12 @@ const basesReais = async (): Promise<BasesVizinhos> => {
   return { carNaCaixa, consultarSigef: sigef.consultarSigef, sincronizarSigef: (a, uf) => sigef.sincronizarSigef(a, uf) };
 };
 
-export const vizinhosReais: FonteVizinhos = async (perimetro, uf) => consultarVizinhos(perimetro, uf, await basesReais());
+export const vizinhosReais: FonteVizinhos = async (perimetro, uf, outras = []) => consultarVizinhos(perimetro, uf, await basesReais(), outras);
 
-export async function consultarVizinhos(perimetro: LonLat[], uf: string | null, bases: BasesVizinhos): Promise<VizinhosDoCar> {
+/** `outras`: as outras glebas da área total (a caixa e o SIGEF cobrem todas). */
+export async function consultarVizinhos(perimetro: LonLat[], uf: string | null, bases: BasesVizinhos, outras: LonLat[][] = []): Promise<VizinhosDoCar> {
   const { carNaCaixa, consultarSigef, sincronizarSigef } = bases;
-  const aneis = [perimetro];
+  const aneis = [perimetro, ...outras.filter((a) => a.length >= 3)];
   const caixa = caixaComMargem(aneis, MARGEM_CAIXA_M);
   const [o, s, l, n] = caixa;
   const ufs = [...new Set([uf, ...[[o, s], [l, s], [l, n], [o, n], [(o + l) / 2, (s + n) / 2]].flatMap(([x, y]) => ufsCandidatas(x, y))]

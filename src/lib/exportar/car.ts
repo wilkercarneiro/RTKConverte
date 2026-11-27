@@ -7,7 +7,7 @@
 // azimute e a distância de cada lado (SEGMENTOS) e cada área, o seu nome.
 //
 // O CAR não tem fuso: o DXF e o TXT saem no fuso UTM do meio do imóvel.
-import { calcularCar } from "../car/motor.ts";
+import { aneisDoImovel, calcularCar, pontosDoImovel } from "../car/motor.ts";
 import type { ProjetoCar, ResultadoCar } from "../car/motor.ts";
 import { CAMADAS, poligonosDaCamada } from "../car/saidas.ts";
 import type { CamadaCar } from "../car/saidas.ts";
@@ -25,7 +25,7 @@ const r4 = (v: number) => Math.round(v * 1e4) / 1e4;
 /** Os polígonos de cada camada no plano do cálculo (de área igual), na ordem de `poligonosDaCamada`. */
 function noPlano(res: ResultadoCar, c: CamadaCar): Poligono[] {
   switch (c) {
-    case "imovel": return [res.imovel];
+    case "imovel": return res.imovel;
     case "reserva": return res.reserva;
     case "vegetacao": return res.vegetacao;
     case "produtiva": return res.produtiva;
@@ -46,7 +46,7 @@ export function camadasDoCar(pr: ProjetoCar, res: ResultadoCar = calcularCar(pr)
         nome: pols.length > 1 ? `${def.titulo} ${i + 1}` : def.titulo,
         tipo: "poligono", geo: p.ext, furosGeo: p.furos,
         // a área do quadro do CAR (plano de área igual), não a do desenho em grau
-        props: { area_ha: r4((id === "imovel" ? res.area.imovel : planos[i] ? areaPol(planos[i]) * res.fatorArea : 0) / 1e4) },
+        props: { area_ha: r4((id === "imovel" && pols.length === 1 ? res.area.imovel : planos[i] ? areaPol(planos[i]) * res.fatorArea : 0) / 1e4) },
       })),
     };
   });
@@ -56,10 +56,12 @@ export function camadasDoCar(pr: ProjetoCar, res: ResultadoCar = calcularCar(pr)
   });
   camadas.push({
     nome: "VERTICES", cor: "#E53935", rotulos: 1,
-    feicoes: pr.perimetro.map((p, i): Feicao => ({ nome: pr.nomesVertices?.[i]?.trim() || `V${i + 1}`, tipo: "ponto", geo: [p] })),
+    // com glebas, os vértices de todas (a numeração segue de uma gleba para a outra)
+    feicoes: aneisDoImovel(pr).flatMap((anel, g) => anel.map((p, i) => ({ p, nome: (g === 0 ? pr.nomesVertices : pr.glebas?.[g - 1]?.nomesVertices)?.[i]?.trim() || null })))
+      .map(({ p, nome }, k): Feicao => ({ nome: nome || `V${k + 1}`, tipo: "ponto", geo: [p] })),
   });
   return camadas;
 }
 
 /** Fuso UTM do meio do imóvel: é o do DXF e do TXT da coletora. */
-export const fusoDoCar = (pr: ProjetoCar): number => fusoDoMeio(pr.perimetro);
+export const fusoDoCar = (pr: ProjetoCar): number => fusoDoMeio(pontosDoImovel(pr));

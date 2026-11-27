@@ -195,7 +195,7 @@ const cruzamentos = (anel) => {
 
 test("camadas em grau sem aresta cruzada, em todo lado e giro da reserva", () => {
   const pr = base();
-  const lados = calcularCar(pr).imovel.ext.length;
+  const lados = calcularCar(pr).imovel[0].ext.length;
   for (let lado = 0; lado < lados; lado++) for (const giro of [-60, -30, 0, 30, 60]) {
     const p = { ...pr, reserva: { ...pr.reserva, lado, giro, poligonos: reservaPorLado(pr, lado, giro) } };
     const res = calcularCar(p);

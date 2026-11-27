@@ -30,8 +30,14 @@ export interface AreaTransferida {
   /** a área que a tela de origem MOSTROU (todas as partes, motor único): o CarNovo
    *  confronta com o perímetro que chegou e diz o que ficou de fora */
   areaOrigemM2?: number;
-  /** quantas partes a área tinha na origem (o CAR leva só a maior) */
+  /** quantas partes a área tinha na origem */
   partes?: number;
+  /**
+   * Todas as partes (glebas) da área, quando ela tem mais de uma — o CAR leva
+   * todas como glebas da área total (27/11/2026). `perimetro` continua sendo a
+   * maior, para quem só usa um anel.
+   */
+  glebas?: { nome: string | null; anel: LonLat[]; nomes?: (string | null)[] }[];
   /** a frase que a tela de entrada mostra sobre a área ("Área medida no campo hoje às 14:32 (GPS do celular, ±3,3 m)") */
   frase?: string;
   /** o "← Voltar" da tela de entrada leva de volta à ferramenta de origem, não ao Início */

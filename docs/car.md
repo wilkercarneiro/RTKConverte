@@ -24,6 +24,23 @@ O nome de cada ponto do GPS aparece nos vértices da prancheta.
 
 Exemplo real: `tests/fixtures/car/PONTOS.gpx`. São 9 pontos do eTrex 10 (218 a 226), que formam 0,6017 ha.
 
+### Área com glebas (várias poligonais no mesmo arquivo)
+
+Desde 27/11/2026 o arquivo com mais de um polígono é lido como **as glebas da área total**, não mais só o maior.
+
+- Na tela de entrada aparece a lista "Poligonais do arquivo": cada uma com o número, o nome e a área. Clicar na lista ou no desenho marca e desmarca.
+- Entram todas, menos o polígono que está **dentro** de outro (a reserva desenhada no CAD, uma divisão interna, uma cópia). Esse vem desmarcado, com o motivo.
+- No GPX com várias trilhas fechadas entra só a maior (em geral é a mesma divisa andada de novo); as outras ficam na lista para marcar.
+- A área total é a **união** das glebas:
+  - as que se encostam viram um polígono só, e a divisa comum some;
+  - vértice de uma gleba a menos de 5 cm da outra é encaixado nela, para que levantamentos diferentes não deixem fresta;
+  - as glebas separadas viram partes do **mesmo registro** no `AREA_IMOVEL.shp`: um shapefile só, um registro só.
+- Avisos: glebas que se sobrepõem (a área conta uma vez), vão entre glebas, e partes a menos de 1 m sem se encostar.
+- A reserva legal é a porcentagem da área **total**. "Encostar" faz a faixa na gleba do lado clicado; se aquela parte for pequena demais, o sistema avisa. "Desenhar" pode pôr a reserva em mais de uma gleba, e "Ajustar" leva o conjunto à porcentagem.
+- A sobreposição com vizinhos corta cada gleba à parte. A certificação no SIGEF (ou o CAR) de **uma** gleba conta como o próprio imóvel e não corta a gleba vizinha.
+- A área levada da Consulta ou de outro serviço ("Usar a área em outro serviço") chega com todas as partes, já como glebas.
+- No projeto, a 1ª gleba fica em `perimetro`, e as outras em `glebas`. O serviço de uma poligonal não muda nada.
+
 ## Camadas
 
 - **Reserva legal.** Encostada num lado, com a porcentagem exata e um giro, ou desenhada à mão. O botão "Ajustar" leva a área à porcentagem.
@@ -41,6 +58,7 @@ Exemplo real: `tests/fixtures/car/PONTOS.gpx`. São 9 pontos do eTrex 10 (218 a 
 ## Testes
 
 - `tests/car.test.mjs` cobre a reserva, a APP e o shapefile do escritório.
+- `tests/car_glebas.test.mjs` cobre a área com glebas (`tests/fixtures/car/TRES_GLEBAS.kml`): duas glebas encostadas com divisa desencontrada em centímetros, uma separada, e a reserva desenhada no CAD dentro da primeira. Laboratório: `#/lab/car/glebas`.
 - `tests/car_gpx_vegetacao.test.mjs` cobre:
   - o GPX real;
   - a ordem dos pontos;

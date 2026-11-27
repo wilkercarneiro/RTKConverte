@@ -3,7 +3,7 @@
 import JSZip from "jszip";
 import { gravarShapefile, juntarNoZip } from "./shapefile.ts";
 import type { ArquivosShp, PoligonoGeo } from "./shapefile.ts";
-import { fmtNum, paraGeo } from "./motor.ts";
+import { aneisDoImovel, fmtNum, paraGeo, pontosDoImovel, temGlebas } from "./motor.ts";
 import { areaPol } from "../loteamento/geom.ts";
 import type { ProjetoCar, ResultadoCar } from "./motor.ts";
 
@@ -17,11 +17,15 @@ export const CAMADAS: { id: CamadaCar; arquivo: string; titulo: string; nomeDbf:
   { id: "app", arquivo: "APP", titulo: "Área de preservação permanente", nomeDbf: "APP", cor: "#3B8BD9" },
 ];
 
-/** Os polígonos (em grau) de cada camada. O imóvel sai EXATAMENTE como veio no KML. */
+/**
+ * Os polígonos (em grau) de cada camada. O imóvel de uma poligonal sai
+ * EXATAMENTE como veio no KML; com glebas, sai a união delas (as que se
+ * encostam viram um polígono só) com os vértices do arquivo voltando exatos.
+ */
 export function poligonosDaCamada(pr: ProjetoCar, res: ResultadoCar, c: CamadaCar): PoligonoGeo[] {
-  if (c === "imovel") return [{ ext: pr.perimetro, furos: [] }];
+  if (c === "imovel") return temGlebas(pr) ? paraGeo(res.plano, res.imovel, pontosDoImovel(pr)) : [{ ext: pr.perimetro, furos: [] }];
   const pols = c === "reserva" ? res.reserva : c === "vegetacao" ? res.vegetacao : c === "app" ? res.app : res.produtiva;
-  return paraGeo(res.plano, pols, pr.perimetro);
+  return paraGeo(res.plano, pols, pontosDoImovel(pr));
 }
 
 export function shapefileDaCamada(pr: ProjetoCar, res: ResultadoCar, c: CamadaCar): ArquivosShp | null {
@@ -98,7 +102,8 @@ export function gerarKmlVegetacao(pr: ProjetoCar, res: ResultadoCar, d: DadosVeg
     return `<Placemark><name>Vegetação nativa${pols.length > 1 ? ` ${i + 1}` : ""} — ${ha(area)} ha</name><styleUrl>#vegetacao</styleUrl>`
       + `<description><![CDATA[<table>${tabela}</table>]]></description><ExtendedData>${dados}</ExtendedData>${poligonoKml(p)}</Placemark>`;
   }).join("\n");
-  const imovel = `<Placemark><name>${esc(pr.nome)} — área total (referência)</name><styleUrl>#imovel</styleUrl>${poligonoKml({ ext: pr.perimetro, furos: [] })}</Placemark>`;
+  const imovel = poligonosDaCamada(pr, res, "imovel").map((p, i, todos) =>
+    `<Placemark><name>${esc(pr.nome)} — área total${todos.length > 1 ? ` ${i + 1}` : ""} (referência)</name><styleUrl>#imovel</styleUrl>${poligonoKml(p)}</Placemark>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(pr.nome)} — Vegetação nativa (${ha(res.area.vegetacao)} ha)</name>
 <description>${esc(`Vegetação nativa excedente cedida${ben.nome ? ` ao imóvel ${ben.nome}` : ""}${ben.car ? ` (CAR ${ben.car})` : ""} para compensação de reserva legal.`)}</description>
@@ -115,11 +120,17 @@ export function gerarKmlCar(pr: ProjetoCar, res: ResultadoCar): string {
   const estilos = CAMADAS.map((c) => `<Style id="${c.id}"><LineStyle><color>${kmlCor(c.cor, "ff")}</color><width>2</width></LineStyle><PolyStyle><color>${kmlCor(c.cor, c.id === "imovel" ? "00" : "66")}</color></PolyStyle></Style>`).join("");
   const marcas = CAMADAS.flatMap((c) => poligonosDaCamada(pr, res, c.id).map((p, i, todos) =>
     `<Placemark><name>${esc(c.titulo)}${todos.length > 1 ? ` ${i + 1}` : ""}</name><styleUrl>#${c.id}</styleUrl>${poligonoKml(p)}</Placemark>`)).join("\n");
+  // com glebas: o contorno de cada uma, para conferir a divisa interna que a área total apagou
+  const glebas = temGlebas(pr) ? aneisDoImovel(pr).map((a, i) => {
+    const nome = i === 0 ? pr.nomeGleba : pr.glebas?.[i - 1]?.nome;
+    return `<Placemark><name>Gleba ${i + 1}${nome ? ` — ${esc(nome)}` : ""}</name><Style><LineStyle><color>ffffffff</color><width>1.5</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>${poligonoKml({ ext: a, furos: [] })}</Placemark>`;
+  }).join("\n") : "";
   const rios = pr.rios.filter((r) => r.linha.length >= 2).map((r) =>
     `<Placemark><name>${esc(r.nome)} (APP ${r.faixa} m)</name><Style><LineStyle><color>ffd98b3b</color><width>3</width></LineStyle></Style><LineString><coordinates>${r.linha.map(([x, y]) => `${x.toFixed(12)},${y.toFixed(12)},0`).join(" ")}</coordinates></LineString></Placemark>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(pr.nome)} — CAR</name>${estilos}
 ${marcas}
+${glebas}
 ${rios}
 </Document></kml>
 `;

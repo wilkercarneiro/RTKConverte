@@ -58,7 +58,7 @@ test("área de várias partes → CAR: diz quanto ficou de fora", () => {
   const grande = q(-41.2, -12.4, 0.01), pequena = q(-41.15, -12.4, 0.002);
   const total = medir([grande, pequena]).areaM2;
   const t = textosDaAreaLevada(grande, calcularCar(projetoNovo("I", grande, [])).area.imovel, { areaOrigemM2: total, partes: 2 });
-  assert.match(t.linhaPartes, /^Levada a maior parte: 120,\d\d ha de 125,\d\d ha\. O CAR é um polígono só; a outra parte \([\d,]+ ha\) ficou de fora\.$/);
+  assert.match(t.linhaPartes, /^Entrou 1 de 2 partes: 120,\d\d ha de 125,\d\d ha\. A outra parte \([\d,]+ ha\) ficou de fora — marque na lista para entrar na área total\.$/);
 });
 
 test("Campo → Consulta → CAR → Voltar → CAR (duas vezes): a frase é a do caminho direto e nada se acumula", () => {
