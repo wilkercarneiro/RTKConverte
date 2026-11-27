@@ -19,7 +19,7 @@ import type { Projeto } from "../../lib/loteamento/modelo.ts";
 import { adicionarArea, adicionarRua, chaveDoLote, editarRua, lotesDaSelecao, quadraDe } from "../../lib/loteamento/acoes.ts";
 import type { Ferramenta, Selecao } from "../../lib/loteamento/acoes.ts";
 import { alcasDoLote, cortarLotes, definirFrente, desenharLote, ladosRetos, linhasDeFundo, moverDivisa, moverDivisaTravada, moverLinhaCentral, moverLinhaDeFundo, moverPontoDeFundo, moverQuina, naBordaDaQuadra, posicaoNoDesenho } from "../../lib/loteamento/edicao.ts";
-import { adicionarReferencia, eixosDoLote, gerarQuadra, lotesDaQuadra, manterLotesComRuaNova, pontoNaDistancia, travarNoEixo } from "../../lib/loteamento/prancheta.ts";
+import { adicionarReferencia, eixosDoLote, gerarQuadra, ladoLivreDaRua, lotesDaQuadra, manterLotesComRuaNova, pontoNaDistancia, travarNoEixo } from "../../lib/loteamento/prancheta.ts";
 import type { PedidoQuadra } from "../../lib/loteamento/prancheta.ts";
 import { eixoDoTraco } from "../../lib/loteamento/geom.ts";
 import { alternarAcesso } from "../../lib/loteamento/acoes.ts";
@@ -383,15 +383,18 @@ export function Editor({ projeto, res, fuso, sel, onSel, ferramenta, onFerrament
   // ---------------- teclado ----------------
   const terminar = useCallback(() => {
     if (ferramenta === "rua" && desenho.length >= 2) {
-      const lado = ladoRua === "centro" ? undefined : ladoRua;
+      // traço pela borda da quadra (os pontos da quina dela): a rua vai para o lado sem
+      // lote em vez de comer meia largura da quadra que o operador fez
+      const ladoAuto = ladoRua === "centro" ? ladoLivreDaRua(res, desenho, projeto.params.ruaLargura) : undefined;
+      const lado = ladoRua === "centro" ? ladoAuto : ladoRua;
       const { pr: prRua, id } = adicionarRua(projeto, desenho.map((q) => paraUtm(res.plano, q)), undefined, lado);
       // o desenho que já existe fica: a rua só corta os lotes por onde passa (as outras
       // quadras não são redivididas pelo sistema)
-      const m = calc ? manterLotesComRuaNova(projeto, res, prRua, calc) : { pr: prRua, cortados: 0, livres: 0 };
+      const m = calc ? manterLotesComRuaNova(projeto, res, prRua, calc) : { pr: prRua, cortados: 0, livres: 0, vazias: 0 };
       onMudar(m.pr);
       onSel({ tipo: "rua", id });
-      const onde = lado ? ` à ${lado} da linha desenhada` : " centrada na linha desenhada";
-      onMsg(`Rua criada${onde}. Os lotes ficaram onde estavam${m.cortados ? ` — ${m.cortados} lote(s) cortados pela rua${m.livres ? `, ${m.livres} pedaço(s) pequeno(s) viraram área livre (rosa)` : ""}` : ""}. No painel dá para trocar o lado da rua; Ctrl+Z desfaz.`);
+      const onde = ladoAuto ? ` à ${ladoAuto} da linha desenhada, do lado sem lote (a linha corre pela borda da quadra)` : lado ? ` à ${lado} da linha desenhada` : " centrada na linha desenhada";
+      onMsg(`Rua criada${onde}. Os lotes ficaram onde estavam${m.cortados ? ` — ${m.cortados} lote(s) cortados pela rua${m.livres ? `, ${m.livres} pedaço(s) pequeno(s) viraram área livre (rosa)` : ""}` : ""}${m.vazias ? `; a terra sem lote do outro lado ficou livre (rosa)` : ""}. No painel dá para trocar o lado da rua; Ctrl+Z desfaz.`);
     } else if (ferramenta === "area" && desenho.length >= 3) {
       const { pr, id } = adicionarArea(projeto, desenho.map((q) => paraUtm(res.plano, q)), "verde");
       onMudar(pr);

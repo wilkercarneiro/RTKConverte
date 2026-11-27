@@ -8,7 +8,7 @@
 // Tudo devolve um projeto novo (o desfazer vem de graça) e usa as mesmas peças da
 // edição livre (`contornos`/`gravar` congelam a quadra nos lotes desenhados).
 import {
-  antiHorario, areaPol, cross, dentroPol, diferenca, dist, distSegmento, dot, esquerda, intersecao, lerp, limparAnel, mult, quinasAviso, soma, sub, uniaoFechada, unit,
+  antiHorario, areaPol, bufferLinha, caixa, cross, dentroPol, eixoDoTraco, diferenca, dist, distSegmento, dot, esquerda, intersecao, lerp, limparAnel, mult, quinasAviso, soma, sub, uniaoFechada, unit,
 } from "./geom.ts";
 import type { Poligono, Pt } from "./geom.ts";
 import type { Lote, Quadra, Resultado } from "./calculo.ts";
@@ -36,15 +36,17 @@ const assinatura = (ls: { pol: Poligono }[]) =>
  * ANTES, recortados pelas quadras novas. Os lotes que a rua atravessa ficam menores;
  * o pedaço pequeno demais para lote vira área livre (rosa). As outras quadras não mudam.
  */
-export function manterLotesComRuaNova(pr0: Projeto, res0: Resultado, pr1: Projeto, calc: Calc): { pr: Projeto; cortados: number; livres: number } {
+export function manterLotesComRuaNova(pr0: Projeto, res0: Resultado, pr1: Projeto, calc: Calc): { pr: Projeto; cortados: number; livres: number; vazias: number } {
   let pr = pr1;
   let cortados = 0, livres = 0;
   const removidas = new Set<number>();
   const novas: QuadraCfg[] = [];
   const r1 = calc(pr1);
-  if (!r1) return { pr: pr1, cortados, livres };
+  if (!r1) return { pr: pr1, cortados, livres, vazias: 0 };
   const pl = res0.plano;
   const todas1 = [...r1.quadras, ...(r1.quadrasVazias ?? [])];
+  const vazios: Poligono[] = [];
+  let vazias = 0;
   for (const q0 of res0.quadras) {
     if (!q0.lotes.length) continue;
     // os lotes que hoje ocupam a terra desta quadra
@@ -79,7 +81,13 @@ export function manterLotesComRuaNova(pr0: Projeto, res0: Resultado, pr1: Projet
         lotes.push(ld);
         if (!maior || ad > areaPol(maior)) maior = { ext: anel, furos: [] };
       });
-      if (!lotes.length || !maior) continue;
+      if (!lotes.length || !maior) {
+        // pedaço que a rua separou sem nenhum lote (a área livre da quadra do operador, do
+        // outro lado da rua nova): continua livre (rosa). Sem config ele virava uma quadra
+        // automática e o sistema loteava a terra que o operador não definiu como quadra.
+        vazios.push(Q.pol);
+        continue;
+      }
       const base: QuadraCfg = q0.cfg >= 0 && pr0.quadras[q0.cfg] ? { ...pr0.quadras[q0.cfg] } : { ancora: [0, 0], ajustes: [] };
       delete base.estrutura;
       base.ajustes = [];
@@ -89,14 +97,51 @@ export function manterLotesComRuaNova(pr0: Projeto, res0: Resultado, pr1: Projet
       novas.push({ ...base, lotes });
     }
   }
-  if (!novas.length) return { pr: pr1, cortados, livres };
+  // o pedaço vazio vira quadra do operador sem lote (`lotes: []`) — só se nenhum outro
+  // pedaço congelado nem quadra que continua no projeto já tem a âncora nele
+  const anc = (c: QuadraCfg) => paraPlano(pl, c.ancora);
+  const ficam = pr1.quadras.filter((_, i) => !removidas.has(i));
+  for (const V of vazios) {
+    if ([...novas, ...ficam].some((c) => dentroPol(anc(c), V))) continue;
+    novas.push({ ancora: paraUtm(pl, pontoInterno(V)), ajustes: [], lotes: [] });
+    vazias++;
+  }
+  if (!novas.length) return { pr: pr1, cortados, livres, vazias };
   // os lotes congelados vêm dos contornos JÁ normalizados de cada quadra; costura os
   // vértices compartilhados entre os pedaços da mesma quadra (a divisa na rua nova)
-  const quadras = pr1.quadras.filter((_, i) => !removidas.has(i)).concat(novas.map((c) => ({
+  const quadras = pr1.quadras.filter((_, i) => !removidas.has(i)).concat(novas.map((c) => (!c.lotes?.length ? c : {
     ...c, lotes: normalizar(c.lotes!.map((l) => l.anel.map((p) => paraPlano(pl, p)))).map((an, k) => ({ ...c.lotes![k], anel: an.map((p) => paraUtm(pl, p)) })),
   })));
   pr = { ...pr1, quadras };
-  return { pr, cortados, livres };
+  return { pr, cortados, livres, vazias };
+}
+
+/**
+ * Rua traçada pela borda de lotes que já existem (o operador clica os pontos da quina da
+ * quadra que ele fez): centrada no traço ela comeria meia largura dos lotes. Se um dos
+ * lados do traço não pega lote nenhum, a rua vai inteira para esse lado e a quadra fica
+ * como está. Traço que passa por dentro dos lotes (os dois lados pegam lote) ou longe
+ * deles fica centrado. Devolve o lado (ou undefined = centrada). `traco` no plano.
+ */
+export function ladoLivreDaRua(res: Resultado, traco: Pt[], largura: number): "esquerda" | "direita" | undefined {
+  if (traco.length < 2 || !(largura > 0)) return undefined;
+  const corpo = (lado: "esquerda" | "direita" | undefined) => bufferLinha(eixoDoTraco(traco, lado, largura), largura, "reta");
+  const cx = caixa(traco);
+  const perto = res.lotes.filter((l) => {
+    const b = caixa(l.pol.ext);
+    return b.max[0] >= cx.min[0] - largura && b.min[0] <= cx.max[0] + largura && b.max[1] >= cx.min[1] - largura && b.min[1] <= cx.max[1] + largura;
+  });
+  if (!perto.length) return undefined;
+  const come = (lado: "esquerda" | "direita" | undefined) => {
+    const c = corpo(lado);
+    return perto.reduce((s, l) => s + intersecao([l.pol], c).reduce((a, x) => a + areaPol(x), 0), 0);
+  };
+  const centro = come(undefined);
+  if (centro < 1) return undefined;
+  const esq = come("esquerda"), dir = come("direita");
+  const [lado, menor, maior] = esq <= dir ? ["esquerda" as const, esq, dir] : ["direita" as const, dir, esq];
+  // um lado livre (até 1 m² ou 3% do que a rua centrada comeria) e o outro cheio de lote
+  return menor <= Math.max(1, 0.03 * centro) && maior > 4 * Math.max(1, menor) ? lado : undefined;
 }
 
 // ---------------------------------------------------------------------------
